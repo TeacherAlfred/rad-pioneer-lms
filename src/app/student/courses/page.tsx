@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { 
-  ChevronLeft, Lock, CheckCircle2, Play, 
-  Target, Zap, BarChart3, ArrowRight, Loader2
-} from "lucide-react";
+import { ChevronLeft, Lock, CheckCircle2, Play, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -15,7 +12,7 @@ export default function CourseRoadmapPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [courseData, setCourseData] = useState<any>(null);
-  const [missions, setMissions] = useState<any[]>([]);
+  const [modules, setModules] = useState<any[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
 
   useEffect(() => {
@@ -25,177 +22,103 @@ export default function CourseRoadmapPage() {
       const localUser = JSON.parse(sessionData);
 
       try {
-        // 1. Fresh Profile
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
         if (profile) setUserProfile(profile);
 
-        // 2. Get Enrollment
         const { data: enrollment } = await supabase
           .from('enrollments')
-          .select('*, courses:course_id(*)')
+          .select('course_id, courses(*)')
           .eq('student_id', localUser.id)
           .maybeSingle();
 
-        if (!enrollment) {
-          console.error("👻 GHOST_CHECK: No enrollment record found.");
-          setLoading(false);
-          return;
-        }
-        setCourseData(enrollment.courses);
+        if (enrollment) {
+          const rawCourse = enrollment.courses as any;
+          setCourseData(Array.isArray(rawCourse) ? rawCourse[0] : rawCourse);
 
-        // 3. Get Modules
-        const { data: modules } = await supabase
-          .from('modules')
-          .select('id')
-          .eq('course_id', enrollment.course_id);
-
-        const moduleIds = modules?.map(m => m.id) || [];
-        console.log("👻 GHOST_CHECK: Module IDs found:", moduleIds);
-
-        if (moduleIds.length > 0) {
-          // 4. Get Missions
-          const { data: allMissions, error: mError } = await supabase
-            .from('missions')
-            .select(`
-              *,
-              tech_archive ( xp_earned, score, student_id )
-            `)
-            .in('module_id', moduleIds)
+          const { data: modulesData } = await supabase
+            .from('modules')
+            .select(`*, missions (*, tech_archive(student_id))`)
+            .eq('course_id', enrollment.course_id)
             .order('order_index', { ascending: true });
 
-          if (mError) console.error("👻 GHOST_CHECK: DB Mission Error:", mError);
-          console.log("👻 GHOST_CHECK: Raw Missions from DB:", allMissions);
-
-          // 5. Process Progress Logic
-          let foundCurrent = false;
-          const processed = allMissions?.map((m: any) => {
-            const submission = m.tech_archive?.find((s: any) => s.student_id === localUser.id);
-            const isDone = !!submission;
-            const isCurrent = !isDone && !foundCurrent;
-            if (isCurrent) foundCurrent = true;
-
-            return {
-              ...m,
-              status: isDone ? 'completed' : isCurrent ? 'current' : 'locked',
-              xpEarned: submission?.xp_earned || 0,
-              quizScore: submission?.score || 0
-            };
-          });
-
-          console.log("👻 GHOST_CHECK: Render-ready missions:", processed);
-          setMissions(processed || []);
+          if (modulesData) {
+            let prevComplete = true; 
+            const processed = modulesData.map((mod: any) => {
+              const sortedMissions = mod.missions.sort((a: any, b: any) => a.order_index - b.order_index);
+              const processedMissions = sortedMissions.map((m: any) => {
+                // ROBUST ID CHECK
+                const isDone = m.tech_archive?.some((a: any) => 
+                    String(a.student_id).toLowerCase() === String(localUser.id).toLowerCase()
+                );
+                const status = isDone ? 'completed' : (prevComplete ? 'unlocked' : 'locked');
+                prevComplete = isDone;
+                return { ...m, status };
+              });
+              return { ...mod, missions: processedMissions };
+            });
+            setModules(processed);
+          }
         }
-      } catch (err) {
-        console.error("ROADMAP_INIT_ERROR:", err);
-      } finally {
-        setLoading(false);
-      }
+      } catch (err) { console.error(err); } finally { setLoading(false); }
     }
     fetchRoadmap();
   }, [router]);
 
-  if (loading) return (
-    <div className="h-screen bg-[#020617] flex items-center justify-center">
-      <Loader2 className="animate-spin text-rad-blue" size={40} />
-    </div>
-  );
+  if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
 
   const currentXP = userProfile?.xp || 0;
   const isEngineer = currentXP >= 1000;
   const stats = {
     xp: currentXP,
     level: isEngineer ? 2 : 1,
-    currentLevel: { 
-      name: isEngineer ? "Engineer" : "Technician", 
+    currentLevel: {
+      name: isEngineer ? "Engineer" : "Technician",
       code: isEngineer ? "ENG-02" : "TECH-01",
-      accentColor: "#5574a9", 
-      xpRequired: 1000
+      accentColor: isEngineer ? "#4ade80" : "#60a5fa",
+      floor: isEngineer ? 1000 : 0
     },
-    nextLevel: { name: "Engineer", xpRequired: 1000 }
+    nextLevel: { name: isEngineer ? "Senior Engineer" : "Engineer", xpRequired: isEngineer ? 2500 : 1000 }
   };
 
   return (
     <DashboardClientWrapper initialStats={stats}>
-      <main className="min-h-screen lg:mr-80 bg-[#020617] text-white p-6 md:p-12 text-left">
-        <div className="max-w-4xl mx-auto space-y-10 relative z-10">
-          
-          <header className="space-y-6">
-            <Link href="/student/dashboard" className="flex items-center gap-2 text-slate-500 hover:text-white transition-colors text-[10px] font-black uppercase tracking-widest">
-              <ChevronLeft size={16} /> Return to Bridge
-            </Link>
-            
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-              <div className="space-y-2">
-                <h1 className="text-5xl font-black italic uppercase tracking-tighter leading-none">
-                  Mission <span className="text-rad-blue">Roadmap</span>
-                </h1>
-                <p className="text-slate-500 font-bold uppercase text-[10px] tracking-[0.3em]">
-                  Sector: {courseData?.title || "Assigning..."}
-                </p>
-              </div>
-
-              <div className="flex gap-3">
-                <div className="bg-white/5 border border-white/10 p-4 rounded-3xl text-center min-w-[100px]">
-                  <Zap size={14} className="text-rad-yellow mx-auto mb-1" />
-                  <p className="text-[8px] font-black uppercase text-slate-600">Total XP</p>
-                  <p className="text-lg font-black italic">{currentXP}</p>
-                </div>
-                <div className="bg-white/5 border border-white/10 p-4 rounded-3xl text-center min-w-[100px]">
-                  <BarChart3 size={14} className="text-rad-blue mx-auto mb-1" />
-                  <p className="text-[8px] font-black uppercase text-slate-600">Uplinks</p>
-                  <p className="text-lg font-black italic">{missions.filter(m => m.status === 'completed').length}/{missions.length}</p>
-                </div>
-              </div>
+      <main className="min-h-screen lg:mr-80 relative overflow-hidden text-left bg-[#020617] pb-24">
+        <div className="max-w-4xl mx-auto p-6 md:p-12 space-y-12 relative z-10">
+          <header className="flex items-center gap-6 border-b border-white/5 pb-8">
+            <Link href="/student/dashboard" className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all"><ChevronLeft size={20} /></Link>
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 mb-1">Course_Roadmap</p>
+              <h1 className="text-4xl font-black tracking-tighter text-white uppercase italic leading-none">{courseData?.title}</h1>
             </div>
           </header>
 
-          <section className="relative space-y-6">
-            <div className="absolute left-[39px] top-10 bottom-10 w-1 bg-white/5 rounded-full hidden md:block" />
-
-            {missions.length > 0 ? (
-              missions.map((mission, index) => (
-                <div key={mission.id} className="relative flex items-start gap-8 group">
-                  <div className={`mt-2 w-20 h-20 rounded-[24px] flex items-center justify-center shrink-0 z-10 border-4 transition-all ${
-                    mission.status === 'completed' ? 'bg-rad-green/10 border-rad-green text-rad-green shadow-[0_0_20px_rgba(34,197,94,0.2)]' :
-                    mission.status === 'current' ? 'bg-rad-blue/20 border-rad-blue text-rad-blue animate-pulse' :
-                    'bg-white/5 border-white/10 text-slate-800'
-                  }`}>
-                    {mission.status === 'completed' ? <CheckCircle2 size={32} /> :
-                     mission.status === 'current' ? <Play fill="currentColor" size={32} /> :
-                     <Lock size={32} />}
-                  </div>
-
-                  <div className={`flex-1 p-8 rounded-[40px] border transition-all ${
-                    mission.status === 'locked' ? 'bg-white/2 border-white/5 opacity-40' : 'bg-white/5 border-white/10 hover:bg-white/[0.08]'
-                  }`}>
-                    <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-                      <div className="space-y-1">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">Mission {index + 1}</span>
-                        <h3 className="text-2xl font-black italic uppercase text-white tracking-tight">{mission.title}</h3>
-                        {mission.status === 'completed' && (
-                          <p className="text-[9px] font-black uppercase text-rad-green tracking-widest">Archive Secured</p>
-                        )}
+          <section className="space-y-12">
+            {modules.map((mod) => (
+              <div key={mod.id} className="space-y-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 font-black border border-blue-500/20">M{mod.order_index}</div>
+                  <h2 className="text-xl font-black uppercase italic tracking-tight text-white">{mod.title}</h2>
+                </div>
+                <div className="grid gap-4 pl-6 md:pl-14 border-l-2 border-white/5 ml-5">
+                  {mod.missions.map((m: any) => (
+                    <div key={m.id} className={`relative p-6 rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${m.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : m.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 'bg-blue-500/10 border-blue-500/30 shadow-xl'}`}>
+                      <div className={`absolute -left-[39px] md:-left-[71px] w-6 h-6 rounded-full flex items-center justify-center border-4 border-[#020617] ${m.status === 'completed' ? 'bg-green-400' : m.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
+                        {m.status === 'completed' ? <CheckCircle2 size={12} className="text-[#020617]" /> : m.status === 'locked' ? <Lock size={10} className="text-[#020617]" /> : <div className="w-2 h-2 bg-[#020617] rounded-full" />}
                       </div>
-
-                      {mission.status !== 'locked' && (
-                        <Link 
-                          href={`/student/lesson/${mission.id}`}
-                          className={`px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${
-                            mission.status === 'completed' ? 'bg-white/5 text-white' : 'bg-white text-black hover:scale-105'
-                          }`}
-                        >
-                          {mission.status === 'completed' ? 'Review' : 'Enter Mission'}
+                      <div className="space-y-1">
+                        <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${m.status === 'completed' ? 'text-green-400' : 'text-blue-400'}`}>Milestone_{m.order_index}</span>
+                        <h3 className="text-2xl font-black italic uppercase text-white tracking-tight">{m.title}</h3>
+                      </div>
+                      {m.status !== 'locked' && (
+                        <Link href={`/student/lesson/${m.id}`} className={`px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${m.status === 'completed' ? 'bg-white/10 text-white' : 'bg-white text-black hover:scale-105'}`}>
+                          {m.status === 'completed' ? 'Review Archive' : 'Enter Mission'}
                         </Link>
                       )}
                     </div>
-                  </div>
+                  ))}
                 </div>
-              ))
-            ) : (
-              <div className="p-20 text-center opacity-30 italic font-black uppercase tracking-widest text-xs border-2 border-dashed border-white/5 rounded-[48px]">
-                Uplink Error: No Missions Found in this Sector
               </div>
-            )}
+            ))}
           </section>
         </div>
       </main>
