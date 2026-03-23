@@ -3,24 +3,49 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  
+  /* RAD Brand Palette - Official HEX Codes */
+  --rad-blue: #5574a9;
+  --rad-purple: #5d4385;
+  --rad-teal: #45a79a;
+  --rad-green: #88be56;
+  --rad-yellow: #d7a94a;
+  --rad-red: #b83b3c;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  
+  /* Custom Brand Utilities */
+  --color-rad-blue: var(--rad-blue);
+  --color-rad-purple: var(--rad-purple);
+  --color-rad-teal: var(--rad-teal);
+  --color-rad-green: var(--rad-green);
+  --color-rad-yellow: var(--rad-yellow);
+  --color-rad-red: var(--rad-red);
+
+  /* Typography */
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-brand: var(--font-geist-sans); /* Using Geist as a stand-in for Quan Slim */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #020617; /* Slate-950 for deep contrast */
+    --foreground: #f8fafc;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Selection Color from Brand Teal */
+::selection {
+  background-color: rgba(69, 167, 154, 0.3);
+  color: white;
 }
