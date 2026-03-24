@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { 
-  ChevronLeft, Lock, CheckCircle2, Play, Loader2, 
-  Zap, BarChart3, ChevronDown, ChevronUp 
+  ChevronLeft, Lock, CheckCircle2, Loader2, 
+  Zap, BarChart3, ChevronDown, ChevronUp, ShieldCheck, ShieldAlert
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -40,45 +40,71 @@ export default function CourseRoadmapPage() {
           const rawCourse = enrollment.courses as any;
           setCourseData(Array.isArray(rawCourse) ? rawCourse[0] : rawCourse);
 
+          // 1. Flat Query: Get pure modules and missions
           const { data: modulesData } = await supabase
             .from('modules')
-            .select(`*, missions (*, tech_archive(student_id))`)
+            .select(`*, missions (*)`)
             .eq('course_id', enrollment.course_id)
             .order('order_index', { ascending: true });
 
+          // 2. Flat Query: Get pure completion data
+          const { data: techArchive } = await supabase.from('tech_archive').select('mission_id').eq('student_id', localUser.id);
+          const completedMissions = new Set((techArchive || []).map(t => t.mission_id));
+
+          const { data: quizAttempts } = await supabase.from('quiz_attempts').select('module_id, passed, score').eq('student_id', localUser.id);
+          
+          // Map quiz attempts to their best scores
+          const quizMap = (quizAttempts || []).reduce((acc: any, curr: any) => {
+            if (!acc[curr.module_id]) acc[curr.module_id] = { passed: false, bestScore: 0 };
+            if (curr.passed) acc[curr.module_id].passed = true;
+            if (curr.score > acc[curr.module_id].bestScore) acc[curr.module_id].bestScore = curr.score;
+            return acc;
+          }, {});
+
           if (modulesData) {
-            let prevComplete = true; 
+            let globalPrevComplete = true; // Week 1 is open by default
             let activeModId: string | null = null;
             let totalMissions = 0;
             let totalCompleted = 0;
 
             const processed = modulesData.map((mod: any) => {
-              const sortedMissions = mod.missions.sort((a: any, b: any) => a.order_index - b.order_index);
+              const moduleQuiz = quizMap[mod.id] || { passed: false, bestScore: 0 };
+              const isQuizPassed = moduleQuiz.passed;
+              const bestScore = moduleQuiz.bestScore;
+
+              const sortedMissions = (mod.missions || []).sort((a: any, b: any) => a.order_index - b.order_index);
               
+              let prevMissionInModuleDone = true; 
+
               const processedMissions = sortedMissions.map((m: any) => {
                 totalMissions++;
-                const isDone = m.tech_archive?.some((a: any) => 
-                    String(a.student_id).toLowerCase() === String(localUser.id).toLowerCase()
-                );
+                const isDone = completedMissions.has(m.id);
                 if (isDone) totalCompleted++;
                 
-                const status = isDone ? 'completed' : (prevComplete ? 'unlocked' : 'locked');
+                const status = isDone ? 'completed' : (globalPrevComplete && prevMissionInModuleDone ? 'unlocked' : 'locked');
                 
-                // If this is the first unlocked mission, this is the "active" module
-                if (status === 'unlocked' && !activeModId) {
-                  activeModId = mod.id;
-                }
+                if (status === 'unlocked' && !activeModId) activeModId = mod.id;
 
-                prevComplete = isDone;
+                prevMissionInModuleDone = isDone;
                 return { ...m, status };
               });
 
-              return { ...mod, missions: processedMissions };
+              const allMissionsDone = processedMissions.every((m: any) => m.status === 'completed');
+              const quizStatus = isQuizPassed ? 'completed' : (allMissionsDone ? 'unlocked' : 'locked');
+              
+              if (quizStatus === 'unlocked' && !activeModId) activeModId = mod.id;
+
+              globalPrevComplete = isQuizPassed; 
+
+              return { 
+                ...mod, 
+                missions: processedMissions, 
+                quiz: { status: quizStatus, passed: isQuizPassed, bestScore } 
+              };
             });
 
             setModules(processed);
             setCompletionStats({ completed: totalCompleted, total: totalMissions });
-            // Default open the module containing the active mission
             setOpenModuleId(activeModId || (processed.length > 0 ? processed[0].id : null));
           }
         }
@@ -108,7 +134,6 @@ export default function CourseRoadmapPage() {
       <main className="min-h-screen lg:mr-80 relative overflow-hidden text-left bg-[#020617] pb-24">
         <div className="max-w-4xl mx-auto p-6 md:p-12 space-y-12 relative z-10">
           
-          {/* HEADER WITH XP & UPLINK CARDS (MATCHES DASHBOARD) */}
           <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-white/5 pb-8">
             <div className="flex items-center gap-6">
               <Link href="/student/dashboard" className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all shadow-xl">
@@ -146,18 +171,11 @@ export default function CourseRoadmapPage() {
           <section className="space-y-6">
             {modules.map((mod) => {
               const isOpen = openModuleId === mod.id;
-              
               return (
                 <div key={mod.id} className="bg-white/[0.02] border border-white/5 rounded-[40px] overflow-hidden transition-all shadow-2xl">
-                  {/* Module Header - Clickable */}
-                  <button 
-                    onClick={() => setOpenModuleId(isOpen ? null : mod.id)}
-                    className="w-full flex items-center justify-between p-8 hover:bg-white/5 transition-all text-left"
-                  >
+                  <button onClick={() => setOpenModuleId(isOpen ? null : mod.id)} className="w-full flex items-center justify-between p-8 hover:bg-white/5 transition-all text-left">
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 font-black border border-blue-500/20">
-                        M{mod.order_index}
-                      </div>
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black border ${mod.quiz?.passed ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'}`}>M{mod.order_index}</div>
                       <div>
                         <h2 className="text-xl font-black uppercase italic tracking-tight text-white">{mod.title}</h2>
                         <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">{mod.description}</p>
@@ -166,47 +184,36 @@ export default function CourseRoadmapPage() {
                     {isOpen ? <ChevronUp className="text-slate-500" /> : <ChevronDown className="text-slate-500" />}
                   </button>
 
-                  {/* Collapsible Mission Grid */}
                   {isOpen && (
-                    <div className="p-8 pt-0 grid gap-4 pl-12 md:pl-20 border-l-2 border-blue-500/20 ml-12 mb-8">
+                    <div className="p-8 pt-0 grid gap-4 pl-12 md:pl-20 border-l-2 border-blue-500/20 ml-14 mb-8">
                       {mod.missions.map((m: any) => (
-                        <div 
-                          key={m.id} 
-                          className={`relative p-6 rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${
-                            m.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : 
-                            m.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 
-                            'bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_rgba(59,130,246,0.1)]'
-                          }`}
-                        >
-                          <div className={`absolute -left-[39px] md:-left-[71px] w-6 h-6 rounded-full flex items-center justify-center border-4 border-[#020617] ${
-                            m.status === 'completed' ? 'bg-green-400' : 
-                            m.status === 'locked' ? 'bg-slate-700' : 
-                            'bg-blue-400 animate-pulse'
-                          }`}>
-                            {m.status === 'completed' ? <CheckCircle2 size={12} className="text-[#020617]" /> : 
-                             m.status === 'locked' ? <Lock size={10} className="text-[#020617]" /> : 
-                             <div className="w-2 h-2 bg-[#020617] rounded-full" />}
+                        <div key={m.id} className={`relative p-6 rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${m.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : m.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_rgba(59,130,246,0.1)]'}`}>
+                          <div className={`absolute -left-[39px] md:-left-[71px] w-6 h-6 rounded-full flex items-center justify-center border-4 border-[#020617] ${m.status === 'completed' ? 'bg-green-400' : m.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
+                            {m.status === 'completed' ? <CheckCircle2 size={12} className="text-[#020617]" /> : m.status === 'locked' ? <Lock size={10} className="text-[#020617]" /> : <div className="w-2 h-2 bg-[#020617] rounded-full" />}
                           </div>
-                          
                           <div className="space-y-1">
-                            <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${
-                              m.status === 'completed' ? 'text-green-400' : 'text-blue-400'
-                            }`}>Milestone_{m.order_index}</span>
+                            <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${m.status === 'completed' ? 'text-green-400' : 'text-blue-400'}`}>Milestone_{m.order_index}</span>
                             <h3 className="text-2xl font-black italic uppercase text-white tracking-tight">{m.title}</h3>
                           </div>
-
                           {m.status !== 'locked' && (
-                            <Link 
-                              href={`/student/lesson/${m.id}`} 
-                              className={`px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${
-                                m.status === 'completed' ? 'bg-white/10 text-white' : 'bg-white text-black hover:scale-105'
-                              }`}
-                            >
-                              {m.status === 'completed' ? 'Review Archive' : 'Enter Mission'}
-                            </Link>
+                            <button onClick={() => window.location.href = `/student/lesson/${m.id}`} className={`px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${m.status === 'completed' ? 'bg-white/10 text-white' : 'bg-white text-black hover:scale-105 shadow-xl'}`}>{m.status === 'completed' ? 'Review Archive' : 'Enter Mission'}</button>
                           )}
                         </div>
                       ))}
+
+                      <div className={`relative p-8 mt-6 rounded-[32px] border-2 transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${mod.quiz?.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : mod.quiz?.status === 'completed' ? 'bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_40px_rgba(234,179,8,0.1)]' : 'bg-blue-500/10 border-blue-500/50 shadow-[0_0_40px_rgba(59,130,246,0.2)]'}`}>
+                        <div className={`absolute -left-[39px] md:-left-[71px] w-8 h-8 rounded-full flex items-center justify-center border-4 border-[#020617] ${mod.quiz?.status === 'completed' ? 'bg-yellow-400' : mod.quiz?.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
+                          {mod.quiz?.status === 'completed' ? <ShieldCheck size={16} className="text-[#020617]" /> : mod.quiz?.status === 'locked' ? <Lock size={12} className="text-[#020617]" /> : <ShieldAlert size={16} className="text-[#020617]" />}
+                        </div>
+                        <div className="space-y-1">
+                          <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${mod.quiz?.status === 'completed' ? 'text-yellow-400' : 'text-blue-400'}`}>Knowledge_Uplink</span>
+                          <h3 className="text-3xl font-black italic uppercase text-white tracking-tight">Level-Up Checkpoint</h3>
+                          {mod.quiz?.status === 'completed' && <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400 mt-2">Best Score: {mod.quiz?.bestScore}%</p>}
+                        </div>
+                        {mod.quiz?.status !== 'locked' && (
+                          <button onClick={() => window.location.href = `/student/quiz/${mod.id}`} className={`px-8 py-5 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${mod.quiz?.status === 'completed' ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-500/30' : 'bg-blue-500 text-black hover:scale-105 shadow-[0_0_20px_rgba(59,130,246,0.4)]'}`}>{mod.quiz?.status === 'completed' ? 'Review Checkpoint' : 'Start Checkpoint'}</button>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

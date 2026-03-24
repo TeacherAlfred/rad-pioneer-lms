@@ -4,7 +4,8 @@ import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, CheckCircle2, Play, Camera, Pencil, X,
-  Trophy, ArrowRight, Loader2, Zap, ShieldAlert, Terminal as TerminalIcon, Search, Check, Cpu, Power, ShieldCheck, Code2, BookOpen, ChevronDown, ChevronRight
+  Trophy, ArrowRight, Loader2, Zap, ShieldAlert, Terminal as TerminalIcon, 
+  Search, Check, Cpu, Power, ShieldCheck, Code2, BookOpen, ChevronDown, ChevronRight
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -40,11 +41,9 @@ export default function LessonPlayerPage() {
 
   const [displayedLore, setDisplayedLore] = useState("");
   const [isTyping, setIsTyping] = useState(true);
-  
   const [revealedVocab, setRevealedVocab] = useState<any[]>([]);
   const [expandedVocab, setExpandedVocab] = useState<Record<string, boolean>>({});
 
-  // NEW DYNAMIC BLUEPRINT STATE
   const [blueprint, setBlueprint] = useState({
     goal: [] as string[],
     goal_custom: "",
@@ -56,7 +55,6 @@ export default function LessonPlayerPage() {
       briefing: "Mission_Briefing", console: "System_Console", verifyBtn: "Run Simulation", successCode: "UPLINK_AUTHORIZED",
   };
 
-  // DYNAMIC BLUEPRINT CONFIG PARSING
   const defaultPrompts = {
       goal: { question: "What is your objective?", type: "single", options: ["Complete the level", "Other"] },
       verification: { question: "How do you know it works?", type: "multiple", options: ["Visual change", "Other"] }
@@ -64,6 +62,7 @@ export default function LessonPlayerPage() {
   const prompts = mission?.mission_config?.prompts || defaultPrompts;
 
   const toggleOption = (promptKey: 'goal' | 'verification', option: string, isMultiple: boolean) => {
+    if (isReadOnly) return;
     setBlueprint(prev => {
       const current = prev[promptKey];
       if (isMultiple) {
@@ -75,31 +74,31 @@ export default function LessonPlayerPage() {
   };
 
   const defineCustomBlocks = (config: any) => {
-    delete Blockly.Blocks['gamedev_event'];
-    delete Blockly.Blocks['gamedev_action'];
+    delete (Blockly.Blocks as any)['gamedev_event'];
+    delete (Blockly.Blocks as any)['gamedev_action'];
 
     const events = config?.events || [{ label: "RIGHT ARROW", value: "RIGHT_ARROW" }];
     const actions = config?.actions || [{ label: "MOVE 10 STEPS", value: "MOVE_10" }];
 
-    Blockly.Blocks['gamedev_event'] = {
-      init: function() {
+    (Blockly.Blocks as any)['gamedev_event'] = {
+      init: function(this: any) {
         this.appendDummyInput().appendField("WHEN").appendField(new Blockly.FieldDropdown(events.map((e:any)=>[e.label, e.value])), "EVENT_TYPE").appendField("PRESSED");
         this.setNextStatement(true, null); this.setColour("#f59e0b");
       }
     };
 
-    Blockly.Blocks['gamedev_action'] = {
-      init: function() {
+    (Blockly.Blocks as any)['gamedev_action'] = {
+      init: function(this: any) {
         this.appendDummyInput().appendField("ACTION:").appendField(new Blockly.FieldDropdown(actions.map((a:any)=>[a.label, a.value])), "ACTION_TYPE");
         this.setPreviousStatement(true, null); this.setNextStatement(true, null); this.setColour("#3b82f6");
       }
     };
 
-    javascriptGenerator.forBlock['gamedev_event'] = function(block: any) {
+    (javascriptGenerator as any).forBlock['gamedev_event'] = function(block: any) {
       const type = block.getFieldValue('EVENT_TYPE'); return `highlightBlock("${block.id}");\nonEvent("${type}");\n`;
     };
     
-    javascriptGenerator.forBlock['gamedev_action'] = function(block: any) {
+    (javascriptGenerator as any).forBlock['gamedev_action'] = function(block: any) {
       const action = block.getFieldValue('ACTION_TYPE'); return `highlightBlock("${block.id}");\nexecuteAction("${action}");\n`;
     };
   };
@@ -149,7 +148,7 @@ export default function LessonPlayerPage() {
   };
 
   const endSimulation = () => {
-      setIsRunning(false); setIsExecuting(false); setSimLogs([]); workspace.current?.highlightBlock(null);
+    setIsRunning(false); setIsExecuting(false); setSimLogs([]); workspace.current?.highlightBlock(null);
   };
 
   const triggerLoreTyping = (text: string) => {
@@ -174,8 +173,6 @@ export default function LessonPlayerPage() {
         const regex = new RegExp(`\\b${escapedTerm}\\b`, 'i');
         return regex.test(displayedLore);
     });
-
-    newlyRevealed.sort((a: any, b: any) => a.term.localeCompare(b.term));
 
     if (newlyRevealed.length !== revealedVocab.length) {
         setRevealedVocab(newlyRevealed);
@@ -216,7 +213,6 @@ export default function LessonPlayerPage() {
 
         const { data: archiveData } = await supabase.from('tech_archive').select('*').eq('mission_id', id).eq('student_id', localUser.id).maybeSingle();
         if (archiveData) {
-          // IF READ ONLY: Load the final combined strings into the state
           setBlueprint({ 
             goal: [archiveData.description], goal_custom: "", 
             verification: [archiveData.win_condition], verification_custom: "" 
@@ -247,12 +243,13 @@ export default function LessonPlayerPage() {
 
     workspace.current = Blockly.inject(blocklyDiv.current, {
       toolbox: { kind: 'categoryToolbox', contents: toolboxContents },
-      theme: pioneerTheme, grid: { spacing: 20, length: 3, colour: '#1e293b', snap: true }, zoom: { controls: true, wheel: true, startScale: 1.0 }, trashcan: true
+      theme: pioneerTheme, 
+      grid: { spacing: 20, length: 3, colour: '#1e293b', snap: true }, 
+      zoom: { controls: true, wheel: true, startScale: 1.0 }, 
+      trashcan: true
     });
 
     workspace.current.addChangeListener((e) => {
-        if (e.type === Blockly.Events.BLOCK_DRAG && !(e as any).isStart) (workspace.current?.getToolbox() as Blockly.Toolbox)?.clearSelection();
-        if (e.type === Blockly.Events.CLICK) (workspace.current?.getToolbox() as Blockly.Toolbox)?.clearSelection();
         if (e.type !== Blockly.Events.UI && e.type !== Blockly.Events.FINISHED_LOADING && workspace.current) {
             setLiveCode(formatPseudocode(javascriptGenerator.workspaceToCode(workspace.current)));
         }
@@ -287,7 +284,6 @@ export default function LessonPlayerPage() {
   const confirmCapture = () => { if (tempCaptureBlob) { setImagePreview(URL.createObjectURL(tempCaptureBlob)); setShowCapturePreview(false); } };
 
   const handleComplete = async () => {
-    // Combine selections and custom text into a single comma-separated string for the DB
     const finalGoal = isReadOnly ? blueprint.goal[0] : [...blueprint.goal.filter(o => o !== 'Other'), blueprint.goal.includes('Other') ? blueprint.goal_custom : ""].filter(Boolean).join(", ");
     const finalVerification = isReadOnly ? blueprint.verification[0] : [...blueprint.verification.filter(o => o !== 'Other'), blueprint.verification.includes('Other') ? blueprint.verification_custom : ""].filter(Boolean).join(", ");
 
@@ -303,20 +299,41 @@ export default function LessonPlayerPage() {
         const { data: urlData } = supabase.storage.from('tech-archive-assets').getPublicUrl(`blueprints/${fileName}`);
         finalUrl = urlData.publicUrl;
       }
-      await supabase.from('tech_archive').upsert({
+      
+      const { error: archiveError } = await supabase.from('tech_archive').upsert({
         student_id: user.id, mission_id: mission.id, title: mission.title,
         description: finalGoal, win_condition: finalVerification,
-        media_url: finalUrl, status: 'pending', xp_earned: mission.xp_reward
+        media_url: finalUrl, status: 'completed', xp_earned: mission.xp_reward || 50,
+        type: 'blueprint'
       }, { onConflict: 'student_id,mission_id' });
 
+      if (archiveError) {
+        console.error("TECH ARCHIVE ERROR:", archiveError);
+        alert(`Database Error: ${archiveError.message}`);
+        setIsSaving(false);
+        return; 
+      }
+
       if (!isReadOnly) {
-        const newXP = (user.xp || 0) + mission.xp_reward;
+        const newXP = (user.xp || 0) + (mission.xp_reward || 50);
         await supabase.from('profiles').update({ xp: newXP }).eq('id', user.id);
+        
+        // ---------- NEW ARCHITECTURE FIX ----------
+        // Wipe the active_task pointer so the dashboard is forced to recalculate 
+        // and find the next mission!
+        await supabase.from('enrollments').update({ active_task: null }).eq('student_id', user.id);
+        // ------------------------------------------
+
         localStorage.setItem("pioneer_session", JSON.stringify({ ...user, xp: newXP }));
       }
       setIsCompleted(true);
       confetti({ particleCount: 200, spread: 70, origin: { y: 0.6 } });
-    } catch (err) { console.error(err); } finally { setIsSaving(false); }
+    } catch (err) { 
+      console.error(err); 
+      alert("An unexpected error occurred during the uplink.");
+    } finally { 
+      setIsSaving(false); 
+    }
   };
 
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
@@ -324,11 +341,15 @@ export default function LessonPlayerPage() {
 
   return (
     <main className="h-screen text-white flex flex-col overflow-hidden bg-[#020617] font-sans">
-      <style>{` .blocklyToolboxContents { padding-top: 32px !important; } .blocklyTreeRow { margin-bottom: 4px !important; } .blocklyFlyoutScrollbar { display: none !important; } `}</style>
+      <style>{` 
+        .blocklyToolboxContents { padding-top: 48px !important; } 
+        .blocklyTreeRow { margin-bottom: 12px !important; } 
+        .blocklyFlyoutScrollbar { display: none !important; } 
+      `}</style>
 
       <nav className="h-20 border-b border-white/5 px-8 flex items-center justify-between z-30 bg-[#020617]">
         <div className="flex items-center gap-6 text-left">
-          <Link href="/student/dashboard" className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all"><ArrowLeft size={18} /></Link>
+          <button onClick={() => window.location.href = '/student/courses'} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all"><ArrowLeft size={18} /></button>
           <div>
             <p className="text-[9px] font-black uppercase tracking-[0.3em] text-blue-400 leading-none">{mission.modules?.title} // {mission.title}</p>
             <h1 className="text-xl font-black uppercase italic tracking-tighter leading-none mt-1">Milestone_{mission.order_index}</h1>
@@ -353,10 +374,10 @@ export default function LessonPlayerPage() {
               <span className={`text-[10px] font-black uppercase tracking-widest leading-none text-blue-500`}>{theme.briefing}</span>
             </div>
             <div className={`bg-blue-500/5 border border-blue-500/10 rounded-[32px] p-6`}>
-               <p className={`text-sm leading-loose text-blue-400`}>
-                 <span dangerouslySetInnerHTML={{ __html: getFormattedLore() }} />
-                 {isTyping && <span className={`inline-block w-2 h-4 ml-1 align-middle animate-pulse bg-blue-500`} />}
-               </p>
+                <p className={`text-sm leading-loose text-blue-400`}>
+                  <span dangerouslySetInnerHTML={{ __html: getFormattedLore() }} />
+                  {isTyping && <span className={`inline-block w-2 h-4 ml-1 align-middle animate-pulse bg-blue-500`} />}
+                </p>
             </div>
           </div>
 
@@ -392,31 +413,22 @@ export default function LessonPlayerPage() {
               </motion.div>
             )}
           </AnimatePresence>
-
         </aside>
 
         <section className="flex-1 p-8 overflow-y-auto no-scrollbar space-y-10 relative">
           <div className="max-w-5xl mx-auto space-y-10">
-            
-            {/* VIDEO PLAYER */}
-            <div className="relative aspect-video rounded-[48px] overflow-hidden border border-white/10 bg-black shadow-2xl flex items-center justify-between px-6">
+            <div className="relative aspect-video rounded-[48px] overflow-hidden border border-white/10 bg-black shadow-2xl">
                 <div className="absolute top-6 left-6 flex items-center gap-2 px-4 py-2 bg-black/60 backdrop-blur-md rounded-2xl border border-white/10 z-10">
                     <Camera size={14} className="text-blue-400" />
                     <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">Capture_Required</span>
                 </div>
-               <iframe src={mission.video_url} className="w-full h-full absolute inset-0" allowFullScreen />
+                <iframe src={mission.video_url} className="w-full h-full" allowFullScreen />
             </div>
 
-            {/* WORKSPACE & TRANSLATOR */}
             <div className="space-y-4">
                <div className="flex items-center justify-between px-4">
                   <div className="flex flex-col gap-2">
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Workspace // Logic_Check</h3>
-                    <div className="flex flex-wrap gap-2">
-                       {mission.mission_config?.concepts?.map((concept: string, i: number) => (
-                           <span key={i} className="text-[8px] font-black uppercase tracking-widest text-blue-400 bg-blue-500/10 px-3 py-1 rounded-md border border-blue-500/20">{concept}</span>
-                       ))}
-                    </div>
                   </div>
                   {!isReadOnly && (
                     <button onClick={startCapture} className="flex items-center gap-2 px-6 py-2 bg-blue-500 text-black rounded-full text-[10px] font-black uppercase tracking-widest shadow-[0_0_20px_rgba(59,130,246,0.4)] hover:scale-105 transition-all">
@@ -426,7 +438,7 @@ export default function LessonPlayerPage() {
                </div>
 
                <div className="flex gap-6 h-[550px]">
-                  <div className="flex-1 rounded-[32px] overflow-hidden border border-white/10 relative bg-[#020617] shadow-xl">
+                  <div className="flex-1 rounded-b-[32px] rounded-t-lg overflow-hidden border border-white/10 relative bg-[#020617] shadow-xl">
                     <div ref={blocklyDiv} className="w-full h-full" />
                   </div>
                   <div className="w-[340px] flex flex-col rounded-[32px] overflow-hidden border border-white/10 bg-[#0f172a] shadow-2xl">
@@ -450,87 +462,52 @@ export default function LessonPlayerPage() {
                </div>
             </div>
             
-            {/* DYNAMIC BLUEPRINT SECTION */}
             <div className="grid grid-cols-2 gap-6 pb-20">
-              
-              {/* GOAL PROMPT */}
               <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[32px] p-6">
                  <label className="text-[10px] font-black uppercase text-slate-500">{prompts.goal.question}</label>
-                 
-                 {isReadOnly ? (
-                    <p className="text-sm font-medium text-blue-300 bg-blue-500/10 p-4 rounded-2xl border border-blue-500/20">{blueprint.goal[0]}</p>
-                 ) : (
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap gap-2">
-                         {prompts.goal.options.map((opt: string) => {
-                             const isSelected = blueprint.goal.includes(opt);
-                             return (
-                                <button key={opt} onClick={() => toggleOption('goal', opt, prompts.goal.type === 'multiple')}
-                                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${isSelected ? 'bg-blue-500 text-black border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30 hover:text-white'}`}
-                                >
-                                  {opt}
-                                </button>
-                             )
-                         })}
-                      </div>
-                      <AnimatePresence>
-                        {blueprint.goal.includes("Other") && (
-                            <motion.input initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                                type="text" value={blueprint.goal_custom} onChange={e => setBlueprint(p => ({...p, goal_custom: e.target.value}))}
-                                placeholder="Type your own answer..."
-                                className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white outline-none focus:border-blue-500 transition-colors mt-2"
-                            />
-                        )}
-                      </AnimatePresence>
+                 <div className="space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                       {prompts.goal.options.map((opt: string) => {
+                           const isSelected = blueprint.goal.includes(opt);
+                           return (
+                             <button key={opt} onClick={() => toggleOption('goal', opt, prompts.goal.type === 'multiple')}
+                               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${isSelected ? 'bg-blue-500 text-black border-blue-500' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30'}`}
+                             >
+                               {opt}
+                             </button>
+                           )
+                       })}
                     </div>
-                 )}
+                 </div>
               </div>
 
-              {/* VERIFICATION PROMPT */}
               <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[32px] p-6">
                  <label className="text-[10px] font-black uppercase text-slate-500">{prompts.verification.question}</label>
-                 
-                 {isReadOnly ? (
-                    <p className="text-sm font-medium text-green-300 bg-green-500/10 p-4 rounded-2xl border border-green-500/20">{blueprint.verification[0]}</p>
-                 ) : (
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap gap-2">
-                         {prompts.verification.options.map((opt: string) => {
-                             const isSelected = blueprint.verification.includes(opt);
-                             return (
-                                <button key={opt} onClick={() => toggleOption('verification', opt, prompts.verification.type === 'multiple')}
-                                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${isSelected ? 'bg-green-500 text-black border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30 hover:text-white'}`}
-                                >
-                                  {opt}
-                                </button>
-                             )
-                         })}
-                      </div>
-                      <AnimatePresence>
-                        {blueprint.verification.includes("Other") && (
-                            <motion.input initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-                                type="text" value={blueprint.verification_custom} onChange={e => setBlueprint(p => ({...p, verification_custom: e.target.value}))}
-                                placeholder="Type your own answer..."
-                                className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white outline-none focus:border-green-500 transition-colors mt-2"
-                            />
-                        )}
-                      </AnimatePresence>
+                 <div className="space-y-4">
+                    <div className="flex flex-wrap gap-2">
+                       {prompts.verification.options.map((opt: string) => {
+                           const isSelected = blueprint.verification.includes(opt);
+                           return (
+                             <button key={opt} onClick={() => toggleOption('verification', opt, prompts.verification.type === 'multiple')}
+                               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${isSelected ? 'bg-green-500 text-black border-green-500' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30'}`}
+                             >
+                               {opt}
+                             </button>
+                           )
+                       })}
                     </div>
-                 )}
+                 </div>
               </div>
-
             </div>
           </div>
 
           <AnimatePresence>
             {isRunning && (
-              <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
                 className="absolute bottom-12 right-12 w-96 bg-[#0f172a] border border-white/10 rounded-[32px] shadow-2xl overflow-hidden z-50">
                 <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/40">
                    <div className="flex items-center gap-2 text-blue-400 text-[10px] font-black uppercase tracking-widest"><Cpu size={14} /> {theme.console}</div>
-                   <div className="flex items-center gap-2">
-                      <button onClick={endSimulation} className="p-1 text-red-500 hover:bg-red-500/10 rounded-md"><Power size={16} /></button>
-                   </div>
+                   <button onClick={endSimulation} className="p-1 text-red-500 hover:bg-red-500/10 rounded-md"><Power size={16} /></button>
                 </div>
                 <div className="p-6 h-64 overflow-y-auto font-mono text-[11px] space-y-2 no-scrollbar">
                    {simLogs.map((log, idx) => (
@@ -547,33 +524,33 @@ export default function LessonPlayerPage() {
 
       <AnimatePresence>
         {showCapturePreview && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95 backdrop-blur-xl p-6">
-            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} className="max-w-4xl w-full bg-[#020617] border border-white/10 rounded-[48px] overflow-hidden shadow-2xl">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95 backdrop-blur-xl p-6">
+            <div className="max-w-4xl w-full bg-[#020617] border border-white/10 rounded-[48px] overflow-hidden shadow-2xl">
               <div className="p-8 border-b border-white/5 flex justify-between items-center">
                 <h3 className="text-xl font-black italic uppercase tracking-tighter text-white">Review_Snapshot</h3>
                 <button onClick={() => setShowCapturePreview(false)} className="text-slate-500 hover:text-white"><X size={24} /></button>
               </div>
-              <div className="p-8 bg-black/40 relative group text-center">
-                {tempCaptureBlob && <img src={URL.createObjectURL(tempCaptureBlob)} className="w-full h-auto rounded-3xl border border-white/10 shadow-lg contrast-125 mx-auto" alt="Capture Preview" /> }
+              <div className="p-8 bg-black/40 text-center">
+                {tempCaptureBlob && <img src={URL.createObjectURL(tempCaptureBlob)} className="w-full h-auto rounded-3xl border border-white/10 mx-auto" alt="Preview" /> }
               </div>
               <div className="p-8 border-t border-white/5 flex gap-4">
-                <button onClick={() => setShowCapturePreview(false)} className="flex-1 py-4 rounded-2xl border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/5 transition-all text-slate-400">Discard</button>
-                <button onClick={confirmCapture} className="flex-1 py-4 rounded-2xl bg-blue-500 text-black text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:scale-[1.02] transition-all"><Check size={16} /> Confirm Snapshot</button>
+                <button onClick={() => setShowCapturePreview(false)} className="flex-1 py-4 rounded-2xl border border-white/10 text-[10px] font-black uppercase tracking-widest text-slate-400">Discard</button>
+                <button onClick={confirmCapture} className="flex-1 py-4 rounded-2xl bg-blue-500 text-black text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2">Confirm Snapshot</button>
               </div>
-            </motion.div>
-          </motion.div>
+            </div>
+          </div>
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {isCompleted && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-[70] flex items-center justify-center bg-[#020617]/95 backdrop-blur-xl p-6">
-            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} className="max-w-md w-full bg-white/[0.03] border border-white/10 rounded-[56px] p-12 text-center space-y-8">
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#020617]/95 backdrop-blur-xl p-6">
+            <div className="max-w-md w-full bg-white/[0.03] border border-white/10 rounded-[56px] p-12 text-center space-y-8">
               <div className="w-24 h-24 rounded-[32px] flex items-center justify-center mx-auto border bg-green-500/20 border-green-500/30"><Trophy size={40} className="text-green-400" /></div>
               <h2 className="text-4xl font-black italic uppercase tracking-tighter text-white">Mission <br /><span className="text-green-400">Accomplished</span></h2>
-              <Link href="/student/dashboard" className="flex items-center justify-center gap-3 w-full py-6 rounded-3xl font-black uppercase italic bg-white text-black hover:scale-105 transition-all shadow-2xl">Return to Command <ArrowRight size={18} /></Link>
-            </motion.div>
-          </motion.div>
+              <button onClick={() => window.location.href = '/student/dashboard'} className="flex items-center justify-center gap-3 w-full py-6 rounded-3xl font-black uppercase italic bg-white text-black hover:scale-105 transition-all shadow-2xl">Return to Command <ArrowRight size={18} /></button>
+            </div>
+          </div>
         )}
       </AnimatePresence>
     </main>
