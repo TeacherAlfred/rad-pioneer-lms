@@ -40,8 +40,6 @@ export default function LessonPlayerPage() {
   const [showCapturePreview, setShowCapturePreview] = useState(false);
   const [tempCaptureBlob, setTempCaptureBlob] = useState<Blob | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  
-  // NEW: State to hold our archive history array
   const [imageHistory, setImageHistory] = useState<string[]>([]);
 
   const [displayedLore, setDisplayedLore] = useState("");
@@ -50,16 +48,9 @@ export default function LessonPlayerPage() {
   const [expandedVocab, setExpandedVocab] = useState<Record<string, boolean>>({});
 
   const [blueprint, setBlueprint] = useState({
-    goal: [] as string[],
-    goal_custom: "",
-    verification: [] as string[],
-    verification_custom: ""
+    mvp: [] as string[],
+    beyond: ""
   });
-
-  const defaultPrompts = {
-    goal: { question: "What is your objective?", type: "single", options: ["Complete the level", "Other"] },
-    verification: { question: "How do you know it works?", type: "multiple", options: ["Visual change", "Other"] }
-  };
 
   const theme = mission?.mission_config?.theme || {
       briefing: "Mission_Briefing", console: "System_Console", verifyBtn: "Test Logic", successCode: "LOGIC_VERIFIED",
@@ -72,10 +63,10 @@ export default function LessonPlayerPage() {
     return [{
       type: 'capture',
       media_url: mission.video_url,
-      lore_text: mission.lore_text || mission.mission_config?.lore_text || "Execute the sequence.",
+      lore_text: mission.lore_text || "Execute the sequence.",
       vocabulary: mission.mission_config?.vocabulary || [],
       win_sequence: mission.mission_config?.win_sequence || [],
-      prompts: mission.mission_config?.prompts || defaultPrompts
+      prompts: { mvp: { question: "MVP Options", options: [] }, beyond: { question: "Beyond MVP" } }
     }];
   }, [mission]);
 
@@ -85,17 +76,17 @@ export default function LessonPlayerPage() {
   const isBlueprintStep = currentStepData.type === 'blueprint';
   const isCaptureStep = currentStepData.type === 'capture';
   const isCodeStep = !isIntroStep && !isBlueprintStep && !isCaptureStep; 
-  const isBlueprintValid = blueprint.goal.length > 0 && blueprint.verification.length > 0;
+  
+  const isBlueprintValid = blueprint.mvp.length > 0;
 
-  const toggleOption = (promptKey: 'goal' | 'verification', option: string, isMultiple: boolean) => {
+  const toggleMvpOption = (option: string) => {
     if (isReadOnly) return;
     setBlueprint(prev => {
-      const current = prev[promptKey];
-      if (isMultiple) {
-        return { ...prev, [promptKey]: current.includes(option) ? current.filter(o => o !== option) : [...current, option] };
-      } else {
-        return { ...prev, [promptKey]: current.includes(option) ? [] : [option] };
-      }
+      const current = prev.mvp;
+      if (current.includes(option)) return { ...prev, mvp: current.filter(o => o !== option) };
+      // Increased internal limit to 4 to accommodate the workaround
+      if (current.length >= 4) return prev; 
+      return { ...prev, mvp: [...current, option] };
     });
   };
 
@@ -215,11 +206,10 @@ export default function LessonPlayerPage() {
         
         if (archiveData) {
           setBlueprint({ 
-            goal: [archiveData.description], goal_custom: "", 
-            verification: [archiveData.win_condition], verification_custom: "" 
+            mvp: archiveData.description ? archiveData.description.split(", ") : [], 
+            beyond: archiveData.win_condition || "" 
           });
           
-          // Decode the comma-separated history string
           const urls = archiveData.media_url ? archiveData.media_url.split(',') : [];
           setImageHistory(urls);
           setImagePreview(urls[0] || null);
@@ -270,26 +260,15 @@ export default function LessonPlayerPage() {
 
   useEffect(() => {
     if (isCodeStep && workspace.current) {
-      setTimeout(() => {
-        if (workspace.current) Blockly.svgResize(workspace.current);
-      }, 50);
+      setTimeout(() => { if (workspace.current) Blockly.svgResize(workspace.current); }, 50);
     }
   }, [isCodeStep]);
 
-  // --- REPLAY MISSION LOGIC ---
   const handleReplayMission = () => {
-    setIsReadOnly(false);
-    setCurrentStepIndex(0);
-    setStepVerified(false);
-    // Setting this to null forces them to take a new snapshot to pass!
-    setImagePreview(null); 
-    setTempCaptureBlob(null);
-    setSimLogs([]);
-    setRevealedVocab([]);
-    setExpandedVocab({});
-    if (workspace.current) {
-      workspace.current.clear();
-    }
+    setIsReadOnly(false); setCurrentStepIndex(0); setStepVerified(false);
+    setImagePreview(null); setTempCaptureBlob(null); setSimLogs([]);
+    setRevealedVocab([]); setExpandedVocab({});
+    if (workspace.current) workspace.current.clear();
   };
 
   const runSimulation = async () => {
@@ -320,7 +299,6 @@ export default function LessonPlayerPage() {
             }
             await new Promise(r => setTimeout(r, 600)); 
             workspace.current.highlightBlock(null);
-
             currentBlock = currentBlock.getNextBlock();
         }
         if (currentStack.length > 0) userStacks.push(currentStack.join(','));
@@ -334,17 +312,13 @@ export default function LessonPlayerPage() {
     
     for (const item of winSequence) {
          if (eventValues.includes(item)) {
-             if (currentExpectedStack.length > 0) {
-                 expectedStacks.push(currentExpectedStack.join(','));
-             }
+             if (currentExpectedStack.length > 0) expectedStacks.push(currentExpectedStack.join(','));
              currentExpectedStack = [item];
          } else {
              currentExpectedStack.push(item);
          }
     }
-    if (currentExpectedStack.length > 0) {
-        expectedStacks.push(currentExpectedStack.join(','));
-    }
+    if (currentExpectedStack.length > 0) expectedStacks.push(currentExpectedStack.join(','));
 
     const isSuccess = expectedStacks.length > 0 && expectedStacks.every(expected => userStacks.includes(expected));
 
@@ -358,34 +332,20 @@ export default function LessonPlayerPage() {
     setIsExecuting(false);
   };
 
-  const endSimulation = () => {
-    setIsRunning(false); setIsExecuting(false); setSimLogs([]); workspace.current?.highlightBlock(null);
-  };
-
-  const advanceToNextStep = () => {
-    setStepVerified(false);
-    endSimulation();
-    setCurrentStepIndex(prev => prev + 1);
-  };
+  const endSimulation = () => { setIsRunning(false); setIsExecuting(false); setSimLogs([]); workspace.current?.highlightBlock(null); };
+  const advanceToNextStep = () => { setStepVerified(false); endSimulation(); setCurrentStepIndex(prev => prev + 1); };
 
   const startCapture = async () => {
     try {
-      const stream = await (navigator.mediaDevices as any).getDisplayMedia({
-        video: { displaySurface: "browser", selfBrowserSurface: "include", preferCurrentTab: true },
-        audio: false,
-      });
+      const stream = await (navigator.mediaDevices as any).getDisplayMedia({ video: { displaySurface: "browser", selfBrowserSurface: "include", preferCurrentTab: true }, audio: false });
       const video = document.createElement("video");
-      video.srcObject = stream;
-      video.play();
+      video.srcObject = stream; video.play();
       video.onloadedmetadata = () => {
         setTimeout(() => {
           const canvas = document.createElement("canvas");
           canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-          const ctx = canvas.getContext("2d");
-          ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob((blob) => {
-            if (blob) { setTempCaptureBlob(blob); setShowCapturePreview(true); }
-          }, "image/png");
+          const ctx = canvas.getContext("2d"); ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => { if (blob) { setTempCaptureBlob(blob); setShowCapturePreview(true); } }, "image/png");
           stream.getTracks().forEach((track: MediaStreamTrack) => track.stop());
         }, 600);
       };
@@ -395,42 +355,32 @@ export default function LessonPlayerPage() {
   const confirmCapture = () => { if (tempCaptureBlob) { setImagePreview(URL.createObjectURL(tempCaptureBlob)); setShowCapturePreview(false); } };
 
   const handleComplete = async () => {
-    const finalGoal = isReadOnly ? blueprint.goal[0] : [...blueprint.goal.filter(o => o !== 'Other'), blueprint.goal.includes('Other') ? blueprint.goal_custom : ""].filter(Boolean).join(", ");
-    const finalVerification = isReadOnly ? blueprint.verification[0] : [...blueprint.verification.filter(o => o !== 'Other'), blueprint.verification.includes('Other') ? blueprint.verification_custom : ""].filter(Boolean).join(", ");
+    const finalMVP = blueprint.mvp.join(", ");
+    const finalBeyond = blueprint.beyond;
 
-    if (!finalGoal || !finalVerification || !imagePreview) {
+    if (!finalMVP || !imagePreview) {
       alert("Incomplete Uplink! Ensure you have answered the Blueprint and captured a snapshot."); return;
     }
     setIsSaving(true);
     try {
-      // Setup our history array payload
       let newHistoryArray = [...imageHistory];
-
       if (tempCaptureBlob) {
         const fileName = `${user.id}-${id}-${Date.now()}.png`;
         await supabase.storage.from('tech-archive-assets').upload(`blueprints/${fileName}`, tempCaptureBlob);
         const { data: urlData } = supabase.storage.from('tech-archive-assets').getPublicUrl(`blueprints/${fileName}`);
-        
-        // Prepend the brand new URL to the top of the array
         newHistoryArray = [urlData.publicUrl, ...imageHistory];
       }
       
-      // Convert back to comma-separated string for Supabase TEXT field
       const newHistoryString = newHistoryArray.filter(Boolean).join(',');
 
       const { error: archiveError } = await supabase.from('tech_archive').upsert({
         student_id: user.id, mission_id: mission.id, title: mission.title,
-        description: finalGoal, win_condition: finalVerification,
+        description: finalMVP, win_condition: finalBeyond, 
         media_url: newHistoryString, status: 'completed', xp_earned: mission.xp_reward || 50,
         type: 'blueprint'
       }, { onConflict: 'student_id,mission_id' });
 
-      if (archiveError) {
-        console.error("TECH ARCHIVE ERROR:", archiveError);
-        alert(`Database Error: ${archiveError.message}`);
-        setIsSaving(false);
-        return; 
-      }
+      if (archiveError) { alert(`Database Error: ${archiveError.message}`); setIsSaving(false); return; }
 
       if (!isReadOnly) {
         const newXP = (user.xp || 0) + (mission.xp_reward || 50);
@@ -439,34 +389,15 @@ export default function LessonPlayerPage() {
         localStorage.setItem("pioneer_session", JSON.stringify({ ...user, xp: newXP }));
       }
       
-      // Immediately lock in the new state so the gallery updates
-      setImageHistory(newHistoryArray);
-      setImagePreview(newHistoryArray[0]);
-      setIsReadOnly(true);
-      setIsCompleted(true);
+      setImageHistory(newHistoryArray); setImagePreview(newHistoryArray[0]);
+      setIsReadOnly(true); setIsCompleted(true);
       confetti({ particleCount: 200, spread: 70, origin: { y: 0.6 } });
-    } catch (err) { 
-      console.error(err); 
-      alert("An unexpected error occurred during the uplink.");
-    } finally { 
-      setIsSaving(false); 
-    }
+    } catch (err) { alert("An unexpected error occurred during the uplink."); } finally { setIsSaving(false); }
   };
 
   const renderMediaContent = (url: string | undefined) => {
-    if (!url) {
-      return (
-        <div className="w-full h-full flex items-center justify-center bg-slate-900">
-          <div className="text-center opacity-30">
-            <Play size={48} className="mx-auto mb-4" />
-            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Visual_Data_Offline</p>
-          </div>
-        </div>
-      );
-    }
-    if (url.includes("youtube.com") || url.includes("youtu.be")) {
-      return <iframe src={url} className="w-full h-full object-cover" allowFullScreen />;
-    }
+    if (!url) return <div className="w-full h-full flex items-center justify-center bg-slate-900"><div className="text-center opacity-30"><Play size={48} className="mx-auto mb-4" /><p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Visual_Data_Offline</p></div></div>;
+    if (url.includes("youtube.com") || url.includes("youtu.be")) return <iframe src={url} className="w-full h-full object-cover" allowFullScreen />;
     return <video src={url} className="w-full h-full object-cover" controls autoPlay loop muted playsInline />;
   };
 
@@ -475,11 +406,7 @@ export default function LessonPlayerPage() {
 
   return (
     <main className="h-screen text-white flex flex-col overflow-hidden bg-[#020617] font-sans">
-      <style>{` 
-        .blocklyToolboxContents { padding-top: 48px !important; } 
-        .blocklyTreeRow { margin-bottom: 12px !important; } 
-        .blocklyFlyoutScrollbar { display: none !important; } 
-      `}</style>
+      <style>{` .blocklyToolboxContents { padding-top: 48px !important; } .blocklyTreeRow { margin-bottom: 12px !important; } .blocklyFlyoutScrollbar { display: none !important; } `}</style>
 
       <nav className="h-20 border-b border-white/5 px-8 flex items-center justify-between z-30 bg-[#020617] shrink-0">
         <div className="flex items-center gap-6 text-left">
@@ -488,9 +415,7 @@ export default function LessonPlayerPage() {
             <p className="text-[9px] font-black uppercase tracking-[0.3em] text-blue-400 leading-none">
               {mission.modules?.title} // Task {currentStepIndex + 1} of {steps.length}
             </p>
-            <h1 className="text-xl font-black uppercase italic tracking-tighter leading-none mt-1">
-              Milestone_{mission.order_index}: {mission.title}
-            </h1>
+            <h1 className="text-xl font-black uppercase italic tracking-tighter leading-none mt-1">Milestone_{mission.order_index}: {mission.title}</h1>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -557,10 +482,7 @@ export default function LessonPlayerPage() {
                 <div className="space-y-3">
                   <AnimatePresence>
                     {revealedVocab.map((vocab: any) => (
-                      <motion.div 
-                        key={vocab.term} layout initial={{ opacity: 0, scale: 0.9, x: -20 }} animate={{ opacity: 1, scale: 1, x: 0 }} 
-                        className="bg-purple-500/5 border border-purple-500/20 rounded-2xl overflow-hidden"
-                      >
+                      <motion.div key={vocab.term} layout initial={{ opacity: 0, scale: 0.9, x: -20 }} animate={{ opacity: 1, scale: 1, x: 0 }} className="bg-purple-500/5 border border-purple-500/20 rounded-2xl overflow-hidden">
                          <button onClick={() => toggleVocab(vocab.term)} className="w-full flex items-center justify-between p-4 text-left hover:bg-purple-500/10 transition-colors">
                             <h4 className="text-[11px] font-black uppercase tracking-widest text-purple-400">{vocab.term}</h4>
                             {expandedVocab[vocab.term] ? <ChevronDown size={14} className="text-purple-400" /> : <ChevronRight size={14} className="text-purple-400" />}
@@ -622,49 +544,66 @@ export default function LessonPlayerPage() {
                </div>
             </div>
             
-            {(isBlueprintStep || (isCaptureStep && isReadOnly)) && currentStepData.prompts && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-10">
-                <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[32px] p-8 shadow-xl">
-                   <label className="text-xs font-black uppercase text-slate-400 tracking-widest">{currentStepData.prompts.goal.question}</label>
-                   <div className="space-y-4 pt-2">
-                      <div className="flex flex-wrap gap-3">
-                         {currentStepData.prompts.goal.options.map((opt: string) => {
-                             const isSelected = blueprint.goal.includes(opt);
-                             return (
-                               <button key={opt} onClick={() => toggleOption('goal', opt, currentStepData.prompts.goal.type === 'multiple')}
-                                 className={`px-5 py-3 rounded-2xl text-sm font-bold transition-all border ${isSelected ? 'bg-blue-500 text-black border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30 hover:bg-white/5'}`}
-                               >
-                                 {opt}
-                               </button>
-                             )
-                         })}
-                      </div>
-                   </div>
-                </div>
+            {(() => {
+              if (!(isBlueprintStep || (isCaptureStep && isReadOnly)) || !currentStepData.prompts) return null;
+              
+              const prompts = currentStepData.prompts;
+              const mvpData = prompts.mvp || prompts.goal || { question: "Select your MVP Features:", options: [] };
+              const beyondData = prompts.beyond || prompts.verification || { question: "Beyond MVP: What next?" };
 
-                <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[32px] p-8 shadow-xl">
-                   <label className="text-xs font-black uppercase text-slate-400 tracking-widest">{currentStepData.prompts.verification.question}</label>
-                   <div className="space-y-4 pt-2">
-                      <div className="flex flex-wrap gap-3">
-                         {currentStepData.prompts.verification.options.map((opt: string) => {
-                             const isSelected = blueprint.verification.includes(opt);
-                             return (
-                               <button key={opt} onClick={() => toggleOption('verification', opt, currentStepData.prompts.verification.type === 'multiple')}
-                                 className={`px-5 py-3 rounded-2xl text-sm font-bold transition-all border ${isSelected ? 'bg-green-500 text-black border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30 hover:bg-white/5'}`}
-                               >
-                                 {opt}
-                               </button>
-                             )
-                         })}
-                      </div>
-                   </div>
+              // Display math to show a max of 3, subtracting 1 from the internal count (safeguarded at 0)
+              const displayCount = Math.max(0, Math.min(3, blueprint.mvp.length - 1));
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-10">
+                  
+                  {/* MVP Selection Area */}
+                  <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[32px] p-8 shadow-xl">
+                     <div className="flex justify-between items-end">
+                       <label className="text-xs font-black uppercase text-slate-400 tracking-widest">{mvpData.question}</label>
+                       <span className={`text-[10px] font-black tracking-widest ${displayCount >= 3 ? 'text-green-400' : 'text-slate-500'}`}>
+                         {displayCount}/3 SELECTED
+                       </span>
+                     </div>
+                     <div className="space-y-4 pt-2">
+                        <div className="flex flex-wrap gap-3">
+                           {(mvpData.options || []).map((opt: string) => {
+                               const isSelected = blueprint.mvp.includes(opt);
+                               // Disabled if they haven't selected this one AND they've hit the internal limit of 4
+                               const isDisabled = !isSelected && blueprint.mvp.length >= 4;
+                               return (
+                                 <button key={opt} onClick={() => toggleMvpOption(opt)} disabled={isDisabled && !isReadOnly}
+                                   className={`px-5 py-3 rounded-2xl text-sm font-bold transition-all border ${isSelected ? 'bg-blue-500 text-black border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : isDisabled ? 'bg-black/20 text-slate-600 border-white/5 cursor-not-allowed opacity-50' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30 hover:bg-white/5'}`}
+                                 >
+                                   {opt}
+                                 </button>
+                               )
+                           })}
+                        </div>
+                     </div>
+                  </div>
+
+                  {/* Beyond MVP Text Area */}
+                  <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[32px] p-8 shadow-xl flex flex-col">
+                     <label className="text-xs font-black uppercase text-slate-400 tracking-widest">
+                       {beyondData.question} <span className="opacity-50 lowercase tracking-normal">(Optional)</span>
+                     </label>
+                     <div className="pt-2 flex-1 flex">
+                        <textarea 
+                          value={blueprint.beyond}
+                          onChange={(e) => !isReadOnly && setBlueprint(prev => ({...prev, beyond: e.target.value}))}
+                          readOnly={isReadOnly}
+                          placeholder="e.g. After my MVP works, I plan to add background music and create a title screen..."
+                          className="w-full flex-1 bg-black/40 border border-white/10 rounded-2xl p-4 text-sm text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors resize-none"
+                        />
+                     </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {isCaptureStep && (
                <div className="flex flex-col items-center justify-center p-12 bg-white/5 border border-white/10 rounded-[48px] space-y-8 shadow-2xl relative overflow-hidden">
-                 
                  {isReadOnly && (
                     <div className="absolute top-6 left-6 flex items-center gap-2 px-4 py-2 bg-green-500/20 backdrop-blur-md rounded-2xl border border-green-500/30 z-10">
                         <CheckCircle2 size={14} className="text-green-400" />
@@ -672,7 +611,6 @@ export default function LessonPlayerPage() {
                     </div>
                   )}
                   
-                  {/* THE NEW HISTORY GALLERY DISPLAY */}
                   {isReadOnly && imageHistory.length > 0 ? (
                      <div className="space-y-6 w-full max-w-3xl mx-auto relative z-10 pt-8">
                         <div className="rounded-[32px] overflow-hidden border-2 border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.2)] relative bg-black">
