@@ -85,6 +85,8 @@ export default function LandingPage() {
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [formError, setFormError] = useState("");
+  
   const [formData, setFormData] = useState({
     parentName: "",
     email: "",
@@ -92,7 +94,8 @@ export default function LandingPage() {
     studentName: "",
     studentAge: "",
     selectedPrograms: [] as string[],
-    smartHomeMode: "" 
+    smartHomeMode: "",
+    botField: "" // Honeypot field for spam bots
   });
 
   useEffect(() => {
@@ -147,18 +150,19 @@ export default function LandingPage() {
   const next = () => setIndex((prev) => (prev + 1) % featuredPrograms.length);
   const prev = () => setIndex((prev) => (prev - 1 + featuredPrograms.length) % featuredPrograms.length);
 
-  // --- FORM HANDLERS ---
   const handleOpenRegister = (prefilledProgram?: string) => {
     setSubmitSuccess(false);
+    setFormError("");
     setFormData({
       parentName: "", email: "", phone: "", studentName: "", studentAge: "",
       selectedPrograms: prefilledProgram ? [prefilledProgram] : [],
-      smartHomeMode: "" 
+      smartHomeMode: "", botField: ""
     });
     setIsRegisterOpen(true);
   };
 
   const toggleProgram = (program: string) => {
+    setFormError("");
     setFormData(prev => ({
       ...prev,
       selectedPrograms: prev.selectedPrograms.includes(program)
@@ -169,13 +173,39 @@ export default function LandingPage() {
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError("");
+    
+    // 1. SPAM HONEYPOT CHECK
+    // If a bot filled out this hidden field, fake a success and stop execution
+    if (formData.botField) {
+      setSubmitSuccess(true);
+      setTimeout(() => setIsRegisterOpen(false), 3000); 
+      return;
+    }
+
+    // 2. PHONE NUMBER VALIDATION
+    // Allows optional +, spaces, dashes, and requires 9-15 digits
+    const phoneRegex = /^\+?[0-9\s\-()]{9,15}$/;
+    if (!phoneRegex.test(formData.phone.trim())) {
+      setFormError("Please enter a valid phone number.");
+      return;
+    }
+
+    // 3. STUDENT AGE VALIDATION
+    const age = parseInt(formData.studentAge);
+    if (isNaN(age) || age < 5 || age > 18) {
+      setFormError("Student age must be a number between 5 and 18.");
+      return;
+    }
+
+    // 4. PROGRAM SELECTION VALIDATION
     if (formData.selectedPrograms.length === 0) {
-      alert("Please select at least one program of interest.");
+      setFormError("Please select at least one program of interest.");
       return;
     }
 
     if (formData.selectedPrograms.includes("Term Program - Smart Home Systems") && !formData.smartHomeMode) {
-      alert("Please select whether you prefer Online or In-Person for the Smart Home Systems program.");
+      setFormError("Please select an attendance mode (Online/In-Person) for the Term Program.");
       return;
     }
 
@@ -194,9 +224,9 @@ export default function LandingPage() {
         .insert([{
           parent_name: formData.parentName,
           email: formData.email,
-          phone: formData.phone,
+          phone: formData.phone.trim(),
           student_name: formData.studentName,
-          student_age: parseInt(formData.studentAge),
+          student_age: age,
           interested_programs: finalProgramsList, 
           status: 'new' 
         }]);
@@ -208,7 +238,7 @@ export default function LandingPage() {
       
     } catch (error: any) {
       console.error("Registration failed:", error.message);
-      alert("Failed to submit registration. Please try again or contact us directly.");
+      setFormError("Database error: Could not submit registration. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -238,7 +268,7 @@ export default function LandingPage() {
         </div>
       </nav>
 
-{/* 2. HERO SECTION - OPTION 3: THE CINEMATIC EDITORIAL */}
+      {/* 2. HERO SECTION */}
       <section className="relative min-h-[100dvh] md:min-h-[85vh] flex items-center px-8 overflow-hidden pt-44 md:pt-20">
         <div className="absolute inset-0 z-0 overflow-hidden bg-[#020617]">
           <video autoPlay muted loop playsInline className="w-full h-full object-cover opacity-40 grayscale mix-blend-luminosity">
@@ -247,13 +277,12 @@ export default function LandingPage() {
           <div className="absolute inset-0 bg-gradient-to-r from-[#020617] via-[#020617]/50 to-transparent" />
         </div>
         
-        {/* Massive Background Acronym */}
-        <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 overflow-hidden pointer-events-none flex justify-center opacity-30 select-none z-0">
-          <h1 className="text-[30vw] font-black italic tracking-tighter leading-none text-transparent" style={{ WebkitTextStroke: '2px rgba(255,255,255,0.2)' }}>
+        <div aria-hidden="true" className="absolute top-1/2 -translate-y-1/2 left-0 right-0 overflow-hidden pointer-events-none flex justify-center opacity-30 select-none z-0">
+          <div className="text-[30vw] font-black italic tracking-tighter leading-none text-transparent" style={{ WebkitTextStroke: '2px rgba(255,255,255,0.2)' }}>
             <span className="text-rad-teal/20" style={{ WebkitTextStroke: '2px rgba(45,212,191,0.5)' }}>R</span>
             <span className="text-rad-blue/20" style={{ WebkitTextStroke: '2px rgba(96,165,250,0.5)' }}>A</span>
             <span className="text-rad-purple/20" style={{ WebkitTextStroke: '2px rgba(192,132,252,0.5)' }}>D</span>
-          </h1>
+          </div>
         </div>
         
         <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: "easeOut" }} className="max-w-7xl mx-auto w-full relative z-10">
@@ -263,22 +292,29 @@ export default function LandingPage() {
               <span className="text-[10px] font-black uppercase tracking-[0.3em] text-rad-blue leading-none">2026 Intake Open</span>
             </div>
             
-            <h2 className="font-black uppercase italic tracking-tighter leading-[0.9] text-5xl md:text-[80px] text-white drop-shadow-2xl">
-              Redefining <br /> African <br /> Dreams.
-            </h2>
+            <h1 className="font-black uppercase italic tracking-tighter leading-[0.85] text-5xl md:text-[90px] drop-shadow-2xl">
+              <span className="text-rad-teal">
+                <span className="text-7xl md:text-[130px]">R</span>edefining
+              </span> <br />
+              <span className="text-rad-blue">
+                <span className="text-7xl md:text-[130px]">A</span>frican
+              </span> <br />
+              <span className="text-rad-purple">
+                <span className="text-7xl md:text-[130px]">D</span>reams.
+              </span>
+            </h1>
             
             <div className="pl-6 border-l-2 border-rad-teal space-y-4">
-              <p className="text-lg md:text-xl text-white font-medium italic leading-relaxed">
+              <p className="text-lg md:text-xl text-white font-medium italic leading-relaxed drop-shadow-md">
                 Empowering the African child to build globally impactful solutions.
               </p>
-              <p className="text-sm md:text-base text-slate-400 font-light italic leading-relaxed">
+              <p className="text-sm md:text-base text-slate-300 font-light italic leading-relaxed drop-shadow-md">
                 We believe in re-igniting the brilliance of their dreams, empowering them with the confidence to shape their future.
               </p>
             </div>
           </div>
         </motion.div>
       </section>
-
 
       {/* 3. CENTERED AUTO-SCROLLING DISPLAY */}
       <section className="py-16 md:py-24 px-6 md:px-8 relative min-h-[100dvh] md:min-h-0 flex flex-col justify-center">
@@ -386,15 +422,15 @@ export default function LandingPage() {
       </section>
 
       {/* 5. MOBILE EVENTS GALLERY */}
-      <motion.section initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: "easeOut" }} className="md:hidden py-16 pl-6 relative border-t border-white/5 mt-10">
-        <div className="space-y-1 mb-8 pr-6">
+      <motion.section initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: "easeOut" }} className="md:hidden py-16 relative border-t border-white/5 mt-10">
+        <div className="space-y-1 mb-8 px-6">
           <h2 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-600 leading-none mb-2">Academy Memories</h2>
           <p className="text-3xl font-black uppercase italic tracking-tight text-white">Past Events</p>
         </div>
         
-        <div className="flex overflow-x-auto gap-4 snap-x snap-mandatory pb-8 pr-6 no-scrollbar">
+        <div className="flex overflow-x-auto gap-4 snap-x snap-mandatory pb-8 px-6 w-full no-scrollbar">
            {pastEvents.map((item) => (
-              <div key={item.id} onClick={() => item.gallery.length > 0 && setSelectedEvent(item)} className={`min-w-[80vw] snap-center rounded-[32px] overflow-hidden bg-white/[0.02] border border-white/5 p-4 flex flex-col active:scale-[0.98] transition-transform select-none ${item.gallery.length > 0 ? 'cursor-pointer shadow-lg' : 'opacity-50 grayscale'}`} onContextMenu={(e) => e.preventDefault()}>
+              <div key={item.id} onClick={() => item.gallery.length > 0 && setSelectedEvent(item)} className={`min-w-[85vw] shrink-0 snap-center rounded-[32px] overflow-hidden bg-white/[0.02] border border-white/5 p-4 flex flex-col active:scale-[0.98] transition-transform select-none ${item.gallery.length > 0 ? 'cursor-pointer shadow-lg' : 'opacity-50 grayscale'}`} onContextMenu={(e) => e.preventDefault()}>
                 <div className="w-full h-56 bg-[#0f172a] rounded-[24px] overflow-hidden relative shadow-inner">
                   <Image src={item.thumbnail || '/logo/rad-logo_white_2.png'} alt={item.title} fill className="object-cover opacity-80" draggable={false} />
                   {item.gallery.length > 0 ? (
@@ -481,6 +517,19 @@ export default function LandingPage() {
                 ) : (
                   <form onSubmit={handleRegisterSubmit} className="space-y-8">
                     
+                    {/* Error Message Display */}
+                    {formError && (
+                      <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium">
+                        {formError}
+                      </div>
+                    )}
+
+                    {/* HIDDEN HONEYPOT FIELD FOR SPAM BOTS */}
+                    <div className="hidden" aria-hidden="true">
+                      <label htmlFor="botField">Do not fill this out if you are human</label>
+                      <input type="text" id="botField" name="botField" value={formData.botField} onChange={e => setFormData({...formData, botField: e.target.value})} tabIndex={-1} autoComplete="off" />
+                    </div>
+                    
                     <div className="space-y-6">
                       <div className="flex items-center gap-2 border-b border-white/10 pb-2">
                         <Users size={16} className="text-rad-blue" />
@@ -494,7 +543,7 @@ export default function LandingPage() {
                         </div>
                         <div className="space-y-2">
                           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Contact Number *</label>
-                          <input required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rad-blue transition-colors" placeholder="+27 XX XXX XXXX" />
+                          <input required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rad-blue transition-colors" placeholder="e.g. +27 82 123 4567" />
                         </div>
                         <div className="space-y-2 md:col-span-2">
                           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Email Address *</label>
@@ -526,14 +575,7 @@ export default function LandingPage() {
                           const needsModeSelection = prog === "Term Program - Smart Home Systems";
                           
                           return (
-                            <div 
-                              key={prog} 
-                              className={`flex flex-col p-4 rounded-xl border-2 transition-all duration-300 ${
-                                isSelected 
-                                  ? 'bg-gradient-to-br from-rad-teal/20 to-[#0f172a] border-rad-teal shadow-lg shadow-rad-teal/20 text-white' 
-                                  : 'bg-[#0f172a] border-white/5 text-slate-500 hover:border-white/20'
-                              }`}
-                            >
+                            <div key={prog} className={`flex flex-col p-4 rounded-xl border-2 transition-all duration-300 ${isSelected ? 'bg-gradient-to-br from-rad-teal/20 to-[#0f172a] border-rad-teal shadow-lg shadow-rad-teal/20 text-white' : 'bg-[#0f172a] border-white/5 text-slate-500 hover:border-white/20'}`}>
                               <div className="flex items-start gap-3 cursor-pointer group" onClick={() => toggleProgram(prog)}>
                                 <div className="mt-0.5 shrink-0 transition-transform group-active:scale-90">
                                   {isSelected ? <CheckSquare size={20} className="text-rad-teal fill-rad-teal/20" /> : <Square size={20} className="group-hover:text-slate-300" />}
@@ -545,25 +587,11 @@ export default function LandingPage() {
                                 <div className="mt-4 pl-8 flex flex-col gap-2">
                                   <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Select Mode *</p>
                                   <label className="flex items-center gap-2 cursor-pointer">
-                                    <input 
-                                      type="radio" 
-                                      name="smartHomeMode" 
-                                      value="Online" 
-                                      checked={formData.smartHomeMode === "Online"} 
-                                      onChange={(e) => setFormData({...formData, smartHomeMode: e.target.value})} 
-                                      className="accent-rad-teal" 
-                                    />
+                                    <input type="radio" name="smartHomeMode" value="Online" checked={formData.smartHomeMode === "Online"} onChange={(e) => setFormData({...formData, smartHomeMode: e.target.value})} className="accent-rad-teal" />
                                     <span className="text-xs text-white">Online</span>
                                   </label>
                                   <label className="flex items-center gap-2 cursor-pointer">
-                                    <input 
-                                      type="radio" 
-                                      name="smartHomeMode" 
-                                      value="In-Person" 
-                                      checked={formData.smartHomeMode === "In-Person"} 
-                                      onChange={(e) => setFormData({...formData, smartHomeMode: e.target.value})} 
-                                      className="accent-rad-teal" 
-                                    />
+                                    <input type="radio" name="smartHomeMode" value="In-Person" checked={formData.smartHomeMode === "In-Person"} onChange={(e) => setFormData({...formData, smartHomeMode: e.target.value})} className="accent-rad-teal" />
                                     <span className="text-xs text-white">In-Person (Menlyn, PTA)</span>
                                   </label>
                                 </div>
