@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { MissionProvider } from "@/context/MissionContext";
 import LevelUpCelebration from "@/components/effects/LevelUpCelebration";
+import { PHProvider } from './providers'; // <-- 1. IMPORT POSTHOG PROVIDER
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,15 +33,18 @@ export default function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning className="dark">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} min-h-full bg-slate-950 text-slate-50 antialiased`}
-        suppressHydrationWarning
-      >
-        <MissionProvider initialStats={mockInitialStats}>
-          {children}
-          <LevelUpCelebration />
-        </MissionProvider>
-      </body>
+      {/* 2. WRAP THE BODY WITH POSTHOG */}
+      <PHProvider> 
+        <body
+          className={`${geistSans.variable} ${geistMono.variable} min-h-full bg-slate-950 text-slate-50 antialiased`}
+          suppressHydrationWarning
+        >
+          <MissionProvider initialStats={mockInitialStats}>
+            {children}
+            <LevelUpCelebration />
+          </MissionProvider>
+        </body>
+      </PHProvider>
     </html>
   );
 }
