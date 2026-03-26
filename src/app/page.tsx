@@ -26,7 +26,7 @@ const INITIAL_PROGRAMS = [
     fallbackImage: "/events/polokwane-session.jpg", 
     isVideo: false,
     accent: "bg-rad-teal",
-    formLabel: "Home Automation Bootcamp (PLK)" // UPDATED
+    formLabel: "Home Automation Bootcamp (PLK)" 
   },
   {
     id: "prog-1",
@@ -64,8 +64,8 @@ const EVENT_FOLDERS = [
   { id: "gallery-3", title: "Pretoria Bootcamp", location: "Menlyn, Pretoria", folderName: "pretoria-bootcamp" }
 ];
 
-// CONSOLIDATED: Exactly 3 core options.
 const ALL_PROGRAM_OPTIONS = [
+  "Demo LMS Access",
   "Home Automation Bootcamp (PLK)",
   "Game Creator Bootcamp (Online)",
   "Term Program - Smart Home Systems"
@@ -230,41 +230,55 @@ export default function LandingPage() {
         </div>
 
         <div className="hidden md:flex items-center gap-8">
-          <button onClick={() => handleOpenRegister()} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">Request Access</button>
-          <Link href="/login" className="px-6 py-3 rounded-full bg-white text-[#020617] text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg">Student Login</Link>
+          <button onClick={() => handleOpenRegister("Demo LMS Access")} className="px-6 py-3 rounded-full bg-white text-[#020617] text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg">Request Access</button>
         </div>
 
         <div className="flex md:hidden flex-col items-center gap-3 mt-2 w-full max-w-[250px]">
-          <Link href="/login" className="w-full text-center py-3.5 rounded-full bg-white text-[#020617] text-[11px] font-black uppercase tracking-widest shadow-lg">Student Login</Link>
-          <button onClick={() => handleOpenRegister()} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors pb-2">Request Access</button>
+          <button onClick={() => handleOpenRegister("Demo LMS Access")} className="w-full text-center py-3.5 rounded-full bg-white text-[#020617] text-[11px] font-black uppercase tracking-widest shadow-lg">Request Access</button>
         </div>
       </nav>
 
-      {/* 2. HERO SECTION */}
+{/* 2. HERO SECTION - OPTION 3: THE CINEMATIC EDITORIAL */}
       <section className="relative min-h-[100dvh] md:min-h-[85vh] flex items-center px-8 overflow-hidden pt-44 md:pt-20">
-        <div className="absolute inset-0 z-0 overflow-hidden">
-          <video autoPlay muted loop playsInline className="w-full h-full object-cover opacity-40 grayscale-[0.2]">
+        <div className="absolute inset-0 z-0 overflow-hidden bg-[#020617]">
+          <video autoPlay muted loop playsInline className="w-full h-full object-cover opacity-40 grayscale mix-blend-luminosity">
             <source src="/video_clips/Learning Should Be Fun_1080p.mp4" type="video/mp4" />
           </video>
-          <div className="absolute inset-0 bg-gradient-to-r from-[#020617] via-[#020617]/40 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[#020617]" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#020617] via-[#020617]/50 to-transparent" />
+        </div>
+        
+        {/* Massive Background Acronym */}
+        <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 overflow-hidden pointer-events-none flex justify-center opacity-30 select-none z-0">
+          <h1 className="text-[30vw] font-black italic tracking-tighter leading-none text-transparent" style={{ WebkitTextStroke: '2px rgba(255,255,255,0.2)' }}>
+            <span className="text-rad-teal/20" style={{ WebkitTextStroke: '2px rgba(45,212,191,0.5)' }}>R</span>
+            <span className="text-rad-blue/20" style={{ WebkitTextStroke: '2px rgba(96,165,250,0.5)' }}>A</span>
+            <span className="text-rad-purple/20" style={{ WebkitTextStroke: '2px rgba(192,132,252,0.5)' }}>D</span>
+          </h1>
         </div>
         
         <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: "easeOut" }} className="max-w-7xl mx-auto w-full relative z-10">
-          <div className="max-w-4xl space-y-6">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-white/60">
-              <Zap size={12} fill="currentColor" />
-              <span className="text-[9px] font-black uppercase tracking-widest leading-none">Registration Open for 2026</span>
+          <div className="max-w-3xl space-y-8 backdrop-blur-[2px]">
+            <div className="inline-flex items-center gap-3 px-1">
+              <div className="w-8 h-[1px] bg-rad-blue" />
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-rad-blue leading-none">2026 Intake Open</span>
             </div>
-            <h1 className="text-6xl md:text-[110px] font-black uppercase italic tracking-tighter leading-[0.85]">
-              Building <br /><span className="text-rad-blue">African</span> <br />Giants.
-            </h1>
-            <p className="text-base md:text-lg text-slate-400 font-medium max-w-xl italic">
-              Elite technology training for the next generation of leaders in digital skills.
-            </p>
+            
+            <h2 className="font-black uppercase italic tracking-tighter leading-[0.9] text-5xl md:text-[80px] text-white drop-shadow-2xl">
+              Redefining <br /> African <br /> Dreams.
+            </h2>
+            
+            <div className="pl-6 border-l-2 border-rad-teal space-y-4">
+              <p className="text-lg md:text-xl text-white font-medium italic leading-relaxed">
+                Empowering the African child to build globally impactful solutions.
+              </p>
+              <p className="text-sm md:text-base text-slate-400 font-light italic leading-relaxed">
+                We believe in re-igniting the brilliance of their dreams, empowering them with the confidence to shape their future.
+              </p>
+            </div>
           </div>
         </motion.div>
       </section>
+
 
       {/* 3. CENTERED AUTO-SCROLLING DISPLAY */}
       <section className="py-16 md:py-24 px-6 md:px-8 relative min-h-[100dvh] md:min-h-0 flex flex-col justify-center">
@@ -514,18 +528,22 @@ export default function LandingPage() {
                           return (
                             <div 
                               key={prog} 
-                              className={`flex flex-col p-4 rounded-xl border transition-all ${isSelected ? 'bg-rad-blue/10 border-rad-blue/50 text-white' : 'bg-[#0f172a] border-white/5 text-slate-400 hover:border-white/20'}`}
+                              className={`flex flex-col p-4 rounded-xl border-2 transition-all duration-300 ${
+                                isSelected 
+                                  ? 'bg-gradient-to-br from-rad-teal/20 to-[#0f172a] border-rad-teal shadow-lg shadow-rad-teal/20 text-white' 
+                                  : 'bg-[#0f172a] border-white/5 text-slate-500 hover:border-white/20'
+                              }`}
                             >
-                              <div className="flex items-start gap-3 cursor-pointer" onClick={() => toggleProgram(prog)}>
-                                <div className="mt-0.5 shrink-0">
-                                  {isSelected ? <CheckSquare size={18} className="text-rad-blue" /> : <Square size={18} />}
+                              <div className="flex items-start gap-3 cursor-pointer group" onClick={() => toggleProgram(prog)}>
+                                <div className="mt-0.5 shrink-0 transition-transform group-active:scale-90">
+                                  {isSelected ? <CheckSquare size={20} className="text-rad-teal fill-rad-teal/20" /> : <Square size={20} className="group-hover:text-slate-300" />}
                                 </div>
-                                <span className="text-sm font-medium leading-snug">{prog}</span>
+                                <span className={`text-sm font-bold leading-snug transition-colors ${isSelected ? 'text-white' : 'group-hover:text-slate-300'}`}>{prog}</span>
                               </div>
 
                               {isSelected && needsModeSelection && (
                                 <div className="mt-4 pl-8 flex flex-col gap-2">
-                                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Select Mode *</p>
+                                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Select Mode *</p>
                                   <label className="flex items-center gap-2 cursor-pointer">
                                     <input 
                                       type="radio" 
@@ -533,9 +551,9 @@ export default function LandingPage() {
                                       value="Online" 
                                       checked={formData.smartHomeMode === "Online"} 
                                       onChange={(e) => setFormData({...formData, smartHomeMode: e.target.value})} 
-                                      className="accent-rad-blue" 
+                                      className="accent-rad-teal" 
                                     />
-                                    <span className="text-xs text-slate-300">Online</span>
+                                    <span className="text-xs text-white">Online</span>
                                   </label>
                                   <label className="flex items-center gap-2 cursor-pointer">
                                     <input 
@@ -544,9 +562,9 @@ export default function LandingPage() {
                                       value="In-Person" 
                                       checked={formData.smartHomeMode === "In-Person"} 
                                       onChange={(e) => setFormData({...formData, smartHomeMode: e.target.value})} 
-                                      className="accent-rad-blue" 
+                                      className="accent-rad-teal" 
                                     />
-                                    <span className="text-xs text-slate-300">In-Person (Menlyn, PTA)</span>
+                                    <span className="text-xs text-white">In-Person (Menlyn, PTA)</span>
                                   </label>
                                 </div>
                               )}
