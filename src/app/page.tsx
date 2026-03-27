@@ -161,6 +161,22 @@ export default function LandingPage() {
     setIsRegisterOpen(true);
   };
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      
+      if (params.get('register') === 'plk-bootcamp') {
+        // Wait a fraction of a second so the background page animations can load smoothly
+        setTimeout(() => {
+          handleOpenRegister("Home Automation Bootcamp (PLK)");
+        }, 300);
+        
+        // Clean the URL afterward so if they hit "refresh", the modal doesn't force-open again
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }
+  }, []);
+
   const toggleProgram = (program: string) => {
     setFormError("");
     setFormData(prev => ({
