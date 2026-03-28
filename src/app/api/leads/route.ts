@@ -6,11 +6,22 @@ export async function GET(request: Request) {
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
-  // Meta calls this to verify your endpoint exists
-  if (mode === 'subscribe' && token === process.env.FB_VERIFY_TOKEN) {
+  const serverToken = process.env.FB_VERIFY_TOKEN;
+
+  // Log to Vercel console so you can see it in your dashboard
+  console.log("--- Webhook Debug ---");
+  console.log("Token from URL:", token);
+  console.log("Token on Server:", serverToken);
+
+  if (mode === 'subscribe' && token === serverToken) {
     return new Response(challenge, { status: 200 });
   }
-  return new Response('Verification failed', { status: 403 });
+
+  // If it fails, return a message telling us why
+  return new Response(
+    `Verification failed. URL token: ${token}, Server token: ${serverToken ? 'EXISTS' : 'MISSING'}`, 
+    { status: 403 }
+  );
 }
 
 export async function POST(request: Request) {
