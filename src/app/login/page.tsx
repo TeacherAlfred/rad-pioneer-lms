@@ -40,15 +40,24 @@ export default function LoginPage() {
 
     try {
       if (mode === "staff" || mode === "parent") {
-        const { error: authError } = await supabase.auth.signInWithPassword({
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
           email: typedName,
           password: typedPin,
         });
+
         if (authError) throw authError;
-        router.push(mode === "staff" ? "/staff/dashboard" : "/parent/dashboard");
+
+        // CHECK FOR YOUR ADMIN ID: adfefd6c-954c-4e13-9423-5519aa89980a
+        if (authData.user?.id === 'adfefd6c-954c-4e13-9423-5519aa89980a') {
+          // Hard redirect to sync session with Middleware
+          window.location.href = "/admin/courses";
+        } else {
+          router.push(mode === "staff" ? "/admin/courses" : "/parent/dashboard");
+        }
         return;
       }
 
+      // --- STUDENT LOGIN LOGIC ---
       const { data: userFound, error: dbError } = await supabase
         .from('profiles')
         .select('*')
@@ -61,7 +70,6 @@ export default function LoginPage() {
         const isPinMatch = String(dbUser.pin_hash).trim() === String(typedPin).trim();
 
         if (isPinMatch) {
-          // --- STREAK LOGIC ---
           const todayUTC = new Date().toISOString().split('T')[0];
           const lastActive = dbUser.last_active_date;
           let newStreak = dbUser.current_streak || 0;
@@ -75,23 +83,19 @@ export default function LoginPage() {
             const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
             if (diffDays === 1) {
-              newStreak += 1; // Successive day
+              newStreak += 1;
             } else if (diffDays > 1) {
-              newStreak = 1; // Missed a day, reset
+              newStreak = 1;
             }
-            // if diffDays is 0, they already logged in today, keep current streak
           }
 
-          // Update DB if it's a new day
           if (todayUTC !== lastActive) {
             await supabase
               .from('profiles')
               .update({ current_streak: newStreak, last_active_date: todayUTC })
               .eq('id', dbUser.id);
-            dbUser.current_streak = newStreak;
           }
 
-          // Silent Auth for RLS
           const shadowEmail = `${typedName.toLowerCase()}@pioneer.bot`;
           await supabase.auth.signInWithPassword({
             email: shadowEmail,
@@ -132,8 +136,6 @@ export default function LoginPage() {
 
       if (profiles && profiles.length > 0) {
         const dbUser = profiles[0];
-        
-        // Streak Logic for Combo
         const todayUTC = new Date().toISOString().split('T')[0];
         let newStreak = dbUser.current_streak || 0;
         if (!dbUser.last_active_date) {
@@ -146,7 +148,6 @@ export default function LoginPage() {
 
         if (todayUTC !== dbUser.last_active_date) {
             await supabase.from('profiles').update({ current_streak: newStreak, last_active_date: todayUTC }).eq('id', dbUser.id);
-            dbUser.current_streak = newStreak;
         }
 
         const shadowEmail = `${dbUser.student_identifier.toLowerCase()}@pioneer.bot`;
