@@ -7,7 +7,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, Plus, Edit3, Trash2, 
   Gamepad2, GripVertical, Trophy, Code, FileText,
-  X, Loader2, Save, Video, Key, Settings, BookOpen, ChevronRight, Layers, Target, Palette, Zap, PlaySquare
+  X, Loader2, Save, Video, Key, Settings, BookOpen, ChevronRight, Layers, Target, Palette, Zap, PlaySquare, Download,
+  LayoutDashboard
 } from "lucide-react";
 
 type Mission = {
@@ -46,10 +47,9 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
 
   // --- EDIT STATE ---
   const [editingModule, setEditingModule] = useState<Module | null>(null);
-  const [editingMission, setEditingMission] = useState<Mission | null>(null);
+  const [editingMission, setEditingMission] = useState<any | null>(null);
   const [missionEditMode, setMissionEditMode] = useState<'quick' | 'deep' | null>(null);
   
-  // View states for the Deep Dive Config
   const [deepDiveView, setDeepDiveView] = useState<'main' | 'steps' | 'globals'>('main');
   const [activeStepIndex, setActiveStepIndex] = useState<number>(0);
   
@@ -82,20 +82,56 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
     }
   }
 
+  // --- EXPORT TO CSV ---
+  const handleExportCSV = () => {
+    const headers = ["Module", "Mission", "Step", "Type", "XP", "Lore/Narrative", "Technical_Config", "Vocabulary_Glossary"];
+    const rows = modules.flatMap(mod => 
+      mod.missions.flatMap(miss => {
+        const steps = miss.mission_config?.steps || [];
+        if (steps.length === 0) {
+          return [[mod.title, miss.title, "N/A", "N/A", miss.xp_reward, miss.lore_text || "", "No Config", ""]];
+        }
+        return steps.map((step: any, idx: number) => {
+          const vocabGlossary = (step.vocabulary || [])
+            .map((v: any) => `${v.term.toUpperCase()}: ${v.definition}`)
+            .join(" | ");
+
+          return [
+            mod.title,
+            miss.title,
+            idx + 1,
+            step.type,
+            idx === 0 ? miss.xp_reward : 0, 
+            `"${(step.lore_text || "").replace(/"/g, '""')}"`, 
+            `"${JSON.stringify(step.win_sequence || step.prompts || {}).replace(/"/g, '""')}"`,
+            `"${vocabGlossary.replace(/"/g, '""')}"`
+          ];
+        });
+      })
+    );
+
+    const csvString = [headers, ...rows].map(row => row.join(",")).join("\n");
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${course?.title?.replace(/\s+/g, '_')}_Curriculum.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- MISSION CONFIG HELPERS ---
   const handleOpenMissionEdit = (mission: Mission, mode: 'quick' | 'deep') => {
     let safeMission = { ...mission };
-
     if (typeof safeMission.mission_config === 'string') {
       try { safeMission.mission_config = JSON.parse(safeMission.mission_config); } catch (e) {}
     }
     if (typeof safeMission.sandbox_config === 'string') {
       try { safeMission.sandbox_config = JSON.parse(safeMission.sandbox_config); } catch (e) {}
     }
-
     safeMission.mission_config = safeMission.mission_config || {};
     safeMission.sandbox_config = safeMission.sandbox_config || {};
-
-    // Safely initialize all storyboard arrays and objects
     if (!safeMission.mission_config.steps) safeMission.mission_config.steps = [];
     if (!safeMission.mission_config.events) safeMission.mission_config.events = [];
     if (!safeMission.mission_config.actions) safeMission.mission_config.actions = [];
@@ -117,7 +153,6 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
     e.preventDefault();
     if (!editingModule) return;
     setIsSubmitting(true);
-
     try {
       const { error } = await supabase.from('modules').update({ title: editingModule.title, description: editingModule.description }).eq('id', editingModule.id);
       if (error) throw error;
@@ -130,7 +165,6 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
     if (e) e.preventDefault();
     if (!editingMission) return;
     setIsSubmitting(true);
-
     try {
       const { error } = await supabase.from('missions').update({
           title: editingMission.title,
@@ -143,16 +177,15 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
           mission_config: editingMission.mission_config,
           sandbox_config: editingMission.sandbox_config
         }).eq('id', editingMission.id);
-
       if (error) throw error;
       closeMissionEdit(); 
       fetchCourseData();
     } catch (error: any) { alert("Failed to update mission."); } finally { setIsSubmitting(false); }
   }
 
-  // --- STORYBOARD STEP UPDATERS ---
+  // --- STORYBOARD UPDATERS ---
   const updateActiveStep = (key: string, value: any) => {
-    setEditingMission(prev => {
+    setEditingMission((prev: any) => {
       if (!prev) return prev;
       const newSteps = [...(prev.mission_config.steps || [])];
       newSteps[activeStepIndex] = { ...newSteps[activeStepIndex], [key]: value };
@@ -161,7 +194,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
   };
 
   const addVocabularyToActiveStep = () => {
-    setEditingMission(prev => {
+    setEditingMission((prev: any) => {
       if (!prev) return prev;
       const newSteps = [...prev.mission_config.steps];
       const currentVocab = newSteps[activeStepIndex].vocabulary || [];
@@ -171,7 +204,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
   };
 
   const updateVocabularyInActiveStep = (vIndex: number, key: 'term'|'definition', value: string) => {
-    setEditingMission(prev => {
+    setEditingMission((prev: any) => {
       if (!prev) return prev;
       const newSteps = [...prev.mission_config.steps];
       newSteps[activeStepIndex].vocabulary[vIndex][key] = value;
@@ -180,7 +213,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
   };
 
   const removeVocabularyFromActiveStep = (vIndex: number) => {
-    setEditingMission(prev => {
+    setEditingMission((prev: any) => {
       if (!prev) return prev;
       const newSteps = [...prev.mission_config.steps];
       newSteps[activeStepIndex].vocabulary.splice(vIndex, 1);
@@ -188,19 +221,8 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
     });
   };
 
-  const addWinSequenceToActionStep = () => {
-    setEditingMission(prev => {
-      if (!prev) return prev;
-      const newSteps = [...prev.mission_config.steps];
-      const currentSeq = newSteps[activeStepIndex].win_sequence || [];
-      newSteps[activeStepIndex].win_sequence = [...currentSeq, "NEW_ACTION"];
-      return { ...prev, mission_config: { ...prev.mission_config, steps: newSteps } };
-    });
-  };
-
-  // --- GLOBAL THEME & EVENTS UPDATERS ---
   const updateTheme = (key: string, value: string) => {
-    setEditingMission(prev => {
+    setEditingMission((prev: any) => {
       if (!prev) return prev;
       const currentTheme = prev.mission_config.theme || {};
       return { ...prev, mission_config: { ...prev.mission_config, theme: { ...currentTheme, [key]: value } } };
@@ -208,7 +230,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
   };
 
   const addGlobalItem = (type: 'events' | 'actions') => {
-    setEditingMission(prev => {
+    setEditingMission((prev: any) => {
       if (!prev) return prev;
       const currentList = prev.mission_config[type] || [];
       return { ...prev, mission_config: { ...prev.mission_config, [type]: [...currentList, { label: "NEW LABEL", value: "NEW_VALUE" }] } };
@@ -216,7 +238,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
   };
 
   const updateGlobalItem = (type: 'events' | 'actions', index: number, key: 'label'|'value', val: string) => {
-    setEditingMission(prev => {
+    setEditingMission((prev: any) => {
       if (!prev) return prev;
       const newList = [...(prev.mission_config[type] || [])];
       newList[index] = { ...newList[index], [key]: val };
@@ -225,7 +247,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
   };
 
   const removeGlobalItem = (type: 'events' | 'actions', index: number) => {
-    setEditingMission(prev => {
+    setEditingMission((prev: any) => {
       if (!prev) return prev;
       const newList = [...(prev.mission_config[type] || [])];
       newList.splice(index, 1);
@@ -233,350 +255,328 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
     });
   };
 
-  if (isLoading) {
-    return <div className="flex justify-center py-20"><div className="animate-spin w-8 h-8 border-4 border-rad-blue border-t-transparent rounded-full"></div></div>;
-  }
+  if (isLoading) return <div className="flex justify-center py-20 bg-[#020617] h-screen items-center"><Loader2 className="animate-spin text-rad-blue" /></div>;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-20">
-      
-      {/* HEADER & MODULES LIST */}
-      <div className="space-y-4">
-        <Link href="/admin/courses" className="inline-flex items-center gap-2 text-slate-400 hover:text-rad-blue transition-colors text-sm font-bold uppercase tracking-widest"><ArrowLeft size={16} /> Back to Curriculum</Link>
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-black uppercase italic tracking-tighter text-white">{course?.title || "Loading Course..."}</h1>
-            <p className="text-rad-blue text-xs font-black uppercase tracking-widest mt-1 flex items-center gap-2"><Gamepad2 size={14} /> Gamified Path Modules</p>
-          </div>
-          <button className="flex items-center gap-2 bg-rad-blue text-[#020617] px-6 py-3 rounded-xl font-bold text-sm hover:bg-rad-blue/90 transition-colors shadow-lg shadow-rad-blue/20"><Plus size={18} /> Add New Module</button>
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        {modules.map((mod, index) => (
-          <div key={mod.id} className="bg-[#0f172a]/80 border border-white/10 rounded-3xl overflow-hidden shadow-xl">
-            <div className="p-6 border-b border-white/5 bg-white/[0.02] flex items-start gap-4">
-              <div className="mt-1 cursor-grab text-slate-600 hover:text-white transition-colors"><GripVertical size={20} /></div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-xl font-black text-white flex items-center gap-3"><span className="text-slate-500 font-bold text-sm">MOD {index + 1}</span>{mod.title}</h2>
-                  <div className="flex gap-2">
-                    <button onClick={() => setEditingModule(mod)} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"><Edit3 size={16} /></button>
-                    <button className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"><Trash2 size={16} /></button>
-                  </div>
-                </div>
-                <p className="text-slate-400 text-sm leading-relaxed">{mod.description || "No description provided."}</p>
-              </div>
-            </div>
+    <div className="min-h-screen bg-[#020617] p-6 lg:p-12 text-left">
+      <div className="max-w-5xl mx-auto space-y-8 pb-20">
+        {/* HEADER */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Link href="/admin/courses" className="inline-flex items-center gap-2 text-slate-400 hover:text-rad-blue transition-colors text-sm font-bold uppercase tracking-widest">
+              <ArrowLeft size={16} /> Back to Curriculum
+            </Link>
             
-            <div className="p-6 bg-[#020617]/50">
-              <div className="flex items-center justify-between mb-4">
-                <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Missions in this Module</h4>
-                <button className="text-xs font-bold text-rad-blue hover:text-white transition-colors flex items-center gap-1"><Plus size={14} /> Add Mission</button>
-              </div>
-              {mod.missions.length === 0 ? (
-                <div className="text-center py-8 border border-dashed border-white/10 rounded-2xl bg-white/[0.01]">
-                  <p className="text-slate-500 text-sm italic">No missions added yet. Create one to get started.</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {mod.missions.map((mission) => (
-                    <div key={mission.id} className="group flex items-center justify-between bg-white/[0.03] border border-white/5 hover:border-white/10 p-4 rounded-2xl transition-all">
-                      <div className="flex items-center gap-4">
-                        <div className="cursor-grab text-slate-600 hover:text-white transition-colors"><GripVertical size={16} /></div>
-                        <div className="w-8 h-8 rounded-full bg-rad-purple/20 text-rad-purple flex items-center justify-center border border-rad-purple/30 shrink-0">
-                          {mission.sandbox_type === 'code' ? <Code size={14} /> : <Gamepad2 size={14} />}
-                        </div>
-                        <div>
-                          <p className="text-white font-bold text-sm">{mission.title}</p>
-                          <p className="text-slate-500 text-[10px] uppercase tracking-widest mt-0.5 flex items-center gap-1">Type: {mission.sandbox_type || 'Standard'}</p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-6">
-                        <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full bg-rad-yellow/10 border border-rad-yellow/20 text-rad-yellow">
-                          <Trophy size={12} />
-                          <span className="text-xs font-black">{mission.xp_reward || 0} XP</span>
-                        </div>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button title="Quick Edit" onClick={() => handleOpenMissionEdit(mission, 'quick')} className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-md transition-all"><Edit3 size={14} /></button>
-                          <button title="Storyboard Editor" onClick={() => handleOpenMissionEdit(mission, 'deep')} className="p-1.5 text-slate-400 hover:text-rad-blue hover:bg-rad-blue/10 rounded-md transition-all"><Settings size={14} /></button>
-                          <button className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-all"><Trash2 size={14} /></button>
-                        </div>
-                      </div>
-                      
-                    </div>
-                  ))}
-                </div>
-              )}
+            <Link href="/admin/dashboard" className="inline-flex items-center gap-2 bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 px-4 py-2 rounded-xl transition-all text-[10px] font-black uppercase tracking-widest">
+              <LayoutDashboard size={14} className="text-blue-400" /> Mission Control Hub
+            </Link>
+          </div>
+
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-4xl font-black uppercase italic tracking-tighter text-white leading-none">{course?.title}</h1>
+              <p className="text-rad-blue text-[10px] font-black uppercase tracking-widest mt-2 flex items-center gap-2">
+                <Gamepad2 size={14} /> Workspace: Curriculum_Builder_v1.0
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={handleExportCSV} className="flex items-center gap-2 bg-white/5 border border-white/10 text-white px-5 py-3 rounded-xl font-bold text-sm hover:bg-white/10 transition-colors">
+                <Download size={18} className="text-rad-teal" /> Export CSV
+              </button>
+              <button className="flex items-center gap-2 bg-rad-blue text-[#020617] px-6 py-3 rounded-xl font-bold text-sm hover:bg-rad-blue/90 shadow-lg shadow-rad-blue/20">
+                <Plus size={18} /> New Module
+              </button>
             </div>
           </div>
-        ))}
-      </div>
+        </div>
 
-      {/* --- EDIT MODULE MODAL --- */}
-      <AnimatePresence>
-        {editingModule && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }} className="bg-[#020617] border border-white/10 rounded-[32px] w-full max-w-lg flex flex-col shadow-2xl overflow-hidden">
-              <div className="flex items-center justify-between p-6 border-b border-white/10 bg-white/[0.02]">
-                <h3 className="text-xl font-black uppercase italic tracking-tighter text-white">Edit Module</h3>
-                <button onClick={() => setEditingModule(null)} className="text-slate-400 hover:text-white transition-all"><X size={20} /></button>
+        {/* MODULE LIST */}
+        <div className="space-y-6">
+          {modules.map((mod, index) => (
+            <div key={mod.id} className="bg-[#0f172a]/80 border border-white/10 rounded-[40px] overflow-hidden shadow-2xl">
+              <div className="p-8 border-b border-white/5 bg-white/[0.02] flex items-start gap-6">
+                <div className="mt-1 text-slate-600 cursor-grab hover:text-white transition-colors"><GripVertical size={24} /></div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-2">
+                    <h2 className="text-2xl font-black text-white italic uppercase flex items-center gap-4">
+                      <span className="text-slate-500 font-bold text-[10px] tracking-widest bg-white/5 px-3 py-1 rounded-full uppercase not-italic">Module {index + 1}</span>
+                      {mod.title}
+                    </h2>
+                    <div className="flex gap-2">
+                      <button onClick={() => setEditingModule(mod)} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-xl"><Edit3 size={18} /></button>
+                      <button className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/5 rounded-xl"><Trash2 size={18} /></button>
+                    </div>
+                  </div>
+                  <p className="text-slate-400 text-sm leading-relaxed">{mod.description || "No description provided."}</p>
+                </div>
               </div>
-              <form onSubmit={handleUpdateModule} className="p-6 space-y-6 bg-black/20">
-                <div className="space-y-2"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Module Title</label><input required type="text" value={editingModule.title} onChange={e => setEditingModule({...editingModule, title: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white" /></div>
-                <div className="space-y-2"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Description</label><textarea rows={4} value={editingModule.description || ""} onChange={e => setEditingModule({...editingModule, description: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white resize-none" /></div>
-                <div className="pt-4 border-t border-white/10 flex justify-end gap-3"><button type="button" onClick={() => setEditingModule(null)} className="px-6 py-3 rounded-xl text-sm font-bold text-slate-400">Cancel</button><button type="submit" disabled={isSubmitting} className="px-6 py-3 rounded-xl bg-rad-blue text-[#020617] font-bold text-sm"><Loader2 size={16} className={isSubmitting ? "animate-spin" : "hidden"} /> Save</button></div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* --- QUICK EDIT MISSION MODAL --- */}
-      <AnimatePresence>
-        {editingMission && missionEditMode === 'quick' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }} className="bg-[#020617] border border-white/10 rounded-[32px] w-full max-w-sm flex flex-col shadow-2xl overflow-hidden">
-              <div className="flex items-center justify-between p-5 border-b border-white/10 bg-white/[0.02] shrink-0"><h3 className="text-lg font-black uppercase italic text-white">Quick Edit</h3><button onClick={closeMissionEdit} className="text-slate-400"><X size={20} /></button></div>
-              <form onSubmit={handleUpdateMission} className="p-5 space-y-5 bg-black/20">
-                <div className="space-y-2"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Mission Title</label><input required type="text" value={editingMission.title || ""} onChange={e => setEditingMission({...editingMission, title: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white" /></div>
-                <div className="space-y-2"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1"><Trophy size={12} className="text-rad-yellow" /> XP Reward</label><input required type="number" value={editingMission.xp_reward || 0} onChange={e => setEditingMission({...editingMission, xp_reward: parseInt(e.target.value) || 0})} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white" /></div>
-                <div className="pt-2 flex justify-end gap-3 shrink-0"><button type="button" onClick={closeMissionEdit} className="px-5 py-2.5 rounded-xl text-sm font-bold text-slate-400">Cancel</button><button type="submit" disabled={isSubmitting} className="px-5 py-2.5 rounded-xl bg-rad-blue text-[#020617] font-bold text-sm">Save</button></div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* --- DEEP DIVE STORYBOARD MODAL --- */}
-      <AnimatePresence>
-        {editingMission && missionEditMode === 'deep' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }} className="bg-[#020617] border border-white/10 rounded-[32px] w-full max-w-5xl h-[90vh] flex flex-col shadow-2xl overflow-hidden">
               
-              <div className="flex items-center justify-between p-6 border-b border-white/10 bg-white/[0.02] shrink-0">
-                <div className="flex items-center gap-4">
-                  {deepDiveView !== 'main' && <button onClick={() => setDeepDiveView('main')} className="p-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300"><ArrowLeft size={16} /></button>}
-                  <div>
-                    <h3 className="text-xl font-black uppercase italic tracking-tighter text-white">
-                      {deepDiveView === 'main' && "Storyboard Configuration"}
-                      {deepDiveView === 'steps' && "Mission Steps Editor"}
-                      {deepDiveView === 'globals' && "Global Theme & Events"}
-                    </h3>
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-rad-blue mt-1">{editingMission.title}</p>
-                  </div>
+              <div className="p-8 bg-[#020617]/50 space-y-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                    <Layers size={14} /> Mission Sequence
+                  </h4>
+                  <button className="text-[10px] font-bold text-rad-blue uppercase hover:text-white transition-colors">+ Add Mission</button>
                 </div>
-                <button onClick={closeMissionEdit} className="w-10 h-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white"><X size={20} /></button>
+                {mod.missions.map((miss) => (
+                  <div key={miss.id} className="group flex items-center justify-between bg-white/[0.02] border border-white/5 p-5 rounded-3xl hover:border-white/20 transition-all hover:bg-white/[0.04]">
+                    <div className="flex items-center gap-5">
+                      <div className="w-10 h-10 rounded-2xl bg-rad-purple/10 text-rad-purple flex items-center justify-center border border-rad-purple/20">
+                        {miss.sandbox_type === 'code' ? <Code size={18} /> : <Gamepad2 size={18} />}
+                      </div>
+                      <div>
+                        <p className="text-white font-black text-base italic uppercase">{miss.title}</p>
+                        <div className="flex items-center gap-4 mt-1">
+                          <span className="text-slate-500 text-[9px] uppercase font-black tracking-widest">{miss.sandbox_type}</span>
+                          <div className="flex items-center gap-1 text-rad-yellow text-[10px] font-black"><Trophy size={12}/>{miss.xp_reward} XP</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => handleOpenMissionEdit(miss, 'quick')} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-all"><Edit3 size={18} /></button>
+                      <button onClick={() => handleOpenMissionEdit(miss, 'deep')} className="p-2 text-slate-400 hover:text-rad-blue hover:bg-rad-blue/10 rounded-xl transition-all"><Settings size={18} /></button>
+                    </div>
+                  </div>
+                ))}
               </div>
+            </div>
+          ))}
+        </div>
 
-              {/* VIEW 1: MAIN DASHBOARD */}
-              {deepDiveView === 'main' && (
-                <div className="p-8 overflow-y-auto no-scrollbar space-y-8 bg-black/20 flex-1">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <button type="button" onClick={() => setDeepDiveView('steps')} className="text-left flex flex-col justify-center p-8 rounded-3xl bg-gradient-to-br from-rad-purple/20 to-[#0f172a] border border-rad-purple/30 hover:border-rad-purple/60 transition-all group">
-                      <Layers size={32} className="text-rad-purple mb-4" />
-                      <h3 className="text-2xl font-black text-white italic tracking-tight uppercase">Storyboard Steps</h3>
-                      <p className="text-slate-400 text-sm mt-2">Edit intros, code challenges, vocab, and blueprints.</p>
-                      <div className="mt-6 flex items-center gap-2 text-xs font-bold text-rad-purple uppercase tracking-widest group-hover:translate-x-2 transition-transform">Enter Editor <ArrowLeft size={14} className="rotate-180" /></div>
-                    </button>
-
-                    {/* NEW: WIRED UP GLOBALS BUTTON */}
-                    <button type="button" onClick={() => setDeepDiveView('globals')} className="text-left flex flex-col justify-center p-8 rounded-3xl bg-gradient-to-br from-rad-blue/10 to-[#0f172a] border border-rad-blue/30 hover:border-rad-blue/60 transition-all group">
-                      <Settings size={32} className="text-rad-blue mb-4" />
-                      <h3 className="text-2xl font-black text-white italic tracking-tight uppercase">Global Theme & Events</h3>
-                      <p className="text-slate-400 text-sm mt-2">Configure environment terms, triggers, and allowed actions.</p>
-                      <div className="mt-6 flex items-center gap-2 text-xs font-bold text-rad-blue uppercase tracking-widest group-hover:translate-x-2 transition-transform">Enter Editor <ArrowLeft size={14} className="rotate-180" /></div>
-                    </button>
-                  </div>
+        {/* --- MODAL LOGIC (EDIT MODULE) --- */}
+        <AnimatePresence>
+          {editingModule && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] bg-black/95 backdrop-blur-md flex items-center justify-center p-4">
+              <motion.div className="bg-[#020617] border border-white/10 rounded-[40px] w-full max-w-lg overflow-hidden shadow-2xl">
+                <div className="flex items-center justify-between p-8 border-b border-white/10 bg-white/[0.02]">
+                  <h3 className="text-2xl font-black uppercase italic text-white tracking-tighter">Edit Module</h3>
+                  <button onClick={() => setEditingModule(null)} className="text-slate-400 hover:text-white"><X size={24} /></button>
                 </div>
-              )}
+                <form onSubmit={handleUpdateModule} className="p-8 space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Module Title</label>
+                    <input required type="text" value={editingModule.title} onChange={e => setEditingModule({...editingModule, title: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-rad-blue outline-none transition-colors" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Description</label>
+                    <textarea rows={4} value={editingModule.description || ""} onChange={e => setEditingModule({...editingModule, description: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl px-6 py-4 text-white resize-none focus:border-rad-blue outline-none transition-colors" />
+                  </div>
+                  <div className="flex justify-end gap-4 pt-4">
+                    <button type="button" onClick={() => setEditingModule(null)} className="text-slate-500 font-bold uppercase text-xs tracking-widest px-6">Cancel</button>
+                    <button type="submit" disabled={isSubmitting} className="bg-rad-blue text-[#020617] font-black uppercase text-xs tracking-widest px-10 py-4 rounded-2xl flex items-center gap-2 hover:bg-rad-blue/90 shadow-xl shadow-rad-blue/10">
+                      {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save Module
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-              {/* VIEW 2: THE STORYBOARD STEPS EDITOR */}
-              {deepDiveView === 'steps' && (
-                <div className="flex flex-1 overflow-hidden bg-black/20">
-                  <div className="w-1/3 border-r border-white/10 flex flex-col bg-[#0f172a]/50">
-                    <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/[0.02]">
-                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Mission Sequence</h4>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
-                      {editingMission.mission_config.steps?.map((step: any, idx: number) => (
-                        <button key={idx} onClick={() => setActiveStepIndex(idx)} className={`w-full text-left p-4 rounded-xl border transition-all ${activeStepIndex === idx ? 'bg-rad-purple/10 border-rad-purple/50' : 'bg-[#020617] border-white/5 hover:border-white/20'}`}>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Step {idx + 1}</span>
-                            <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${step.type === 'code' ? 'bg-rad-blue/20 text-rad-blue' : step.type === 'blueprint' ? 'bg-rad-teal/20 text-rad-teal' : 'bg-slate-800 text-slate-300'}`}>{step.type}</span>
-                          </div>
-                          <p className="text-white text-sm font-medium line-clamp-1">{step.lore_text || "No lore text..."}</p>
-                        </button>
-                      ))}
+        {/* --- MODAL LOGIC (QUICK EDIT MISSION) --- */}
+        <AnimatePresence>
+          {editingMission && missionEditMode === 'quick' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] bg-black/95 backdrop-blur-md flex items-center justify-center p-4">
+              <motion.div className="bg-[#020617] border border-white/10 rounded-[40px] w-full max-w-sm overflow-hidden shadow-2xl">
+                <div className="p-8 border-b border-white/10 flex justify-between items-center bg-white/[0.02]">
+                  <h3 className="text-xl font-black uppercase italic text-white tracking-tighter">Quick Update</h3>
+                  <button onClick={closeMissionEdit} className="text-slate-400 hover:text-white"><X size={24}/></button>
+                </div>
+                <form onSubmit={handleUpdateMission} className="p-8 space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mission Title</label>
+                    <input required type="text" value={editingMission.title || ""} onChange={e => setEditingMission({...editingMission, title: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl px-6 py-4 text-white outline-none focus:border-rad-blue" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">XP Reward</label>
+                    <input required type="number" value={editingMission.xp_reward || 0} onChange={e => setEditingMission({...editingMission, xp_reward: parseInt(e.target.value) || 0})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl px-6 py-4 text-white outline-none focus:border-rad-blue" />
+                  </div>
+                  <button type="submit" disabled={isSubmitting} className="w-full bg-rad-blue text-[#020617] font-black uppercase text-xs tracking-widest py-5 rounded-2xl flex items-center justify-center gap-2 hover:bg-rad-blue/90 shadow-xl shadow-rad-blue/10 mt-4">
+                    {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Sync Changes
+                  </button>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* --- DEEP DIVE STORYBOARD (BIG MODAL) --- */}
+        <AnimatePresence>
+          {editingMission && missionEditMode === 'deep' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[70] bg-black/95 backdrop-blur-md flex items-center justify-center p-4">
+              <motion.div className="bg-[#020617] border border-white/10 rounded-[48px] w-full max-w-6xl h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+                <div className="flex items-center justify-between p-8 border-b border-white/10 bg-white/[0.02]">
+                  <div className="flex items-center gap-6">
+                    {deepDiveView !== 'main' && <button onClick={() => setDeepDiveView('main')} className="p-3 rounded-2xl bg-white/5 border border-white/10 text-slate-300 hover:text-white transition-all"><ArrowLeft size={20} /></button>}
+                    <div>
+                      <h3 className="text-3xl font-black uppercase italic tracking-tighter text-white">Storyboard_Config</h3>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-rad-blue mt-1 italic">{editingMission.title}</p>
                     </div>
                   </div>
+                  <button onClick={closeMissionEdit} className="text-slate-400 hover:text-white transition-colors"><X size={28} /></button>
+                </div>
 
-                  <div className="flex-1 overflow-y-auto p-8 no-scrollbar relative">
-                    {editingMission.mission_config.steps && editingMission.mission_config.steps[activeStepIndex] ? (
-                      <div className="space-y-8 max-w-2xl">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-2xl font-black uppercase italic tracking-tighter text-white">Editing Step {activeStepIndex + 1}</h3>
-                          <select value={editingMission.mission_config.steps[activeStepIndex].type} onChange={(e) => updateActiveStep('type', e.target.value)} className="bg-[#020617] border border-white/10 rounded-lg px-3 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-rad-purple">
-                            <option value="intro">Intro</option>
-                            <option value="code">Code Task</option>
-                            <option value="blueprint">Blueprint</option>
-                            <option value="capture">Capture</option>
-                          </select>
-                        </div>
+                {/* --- NAVIGATION HUB --- */}
+                {deepDiveView === 'main' && (
+                  <div className="p-12 grid grid-cols-1 md:grid-cols-2 gap-8 flex-1 bg-black/20 overflow-y-auto no-scrollbar">
+                    <button onClick={() => setDeepDiveView('steps')} className="text-left p-10 rounded-[40px] bg-rad-purple/5 border border-rad-purple/20 hover:border-rad-purple/50 transition-all group relative overflow-hidden">
+                      <div className="absolute -right-8 -bottom-8 opacity-5 group-hover:opacity-10 transition-opacity"><Layers size={160} /></div>
+                      <Layers size={40} className="text-rad-purple mb-6" />
+                      <h3 className="text-3xl font-black text-white italic uppercase tracking-tighter">Sequence Editor</h3>
+                      <p className="text-slate-400 text-sm mt-4 leading-relaxed max-w-xs">Design the narrative arc, logic gates, and instructional flow for this mission.</p>
+                    </button>
+                    <button onClick={() => setDeepDiveView('globals')} className="text-left p-10 rounded-[40px] bg-rad-blue/5 border border-rad-blue/20 hover:border-rad-blue/50 transition-all group relative overflow-hidden">
+                      <div className="absolute -right-8 -bottom-8 opacity-5 group-hover:opacity-10 transition-opacity"><Settings size={160} /></div>
+                      <Settings size={40} className="text-rad-blue mb-6" />
+                      <h3 className="text-3xl font-black text-white italic uppercase tracking-tighter">Global Context</h3>
+                      <p className="text-slate-400 text-sm mt-4 leading-relaxed max-w-xs">Calibrate interface labels, sandbox triggers, and system actions for the Terminal.</p>
+                    </button>
+                  </div>
+                )}
 
-                        <div className="space-y-4">
-                          <div className="space-y-2"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Lore Text (The Narrative)</label><textarea rows={4} value={editingMission.mission_config.steps[activeStepIndex].lore_text || ""} onChange={e => updateActiveStep('lore_text', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rad-purple" /></div>
-                          <div className="space-y-2"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Media URL (Image / Video)</label><input type="text" value={editingMission.mission_config.steps[activeStepIndex].media_url || ""} onChange={e => updateActiveStep('media_url', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rad-purple" /></div>
-                        </div>
-
-                        {['intro', 'code'].includes(editingMission.mission_config.steps[activeStepIndex].type) && (
-                          <div className="space-y-3 pt-6 border-t border-white/10">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2"><BookOpen size={12}/> Highlighted Vocabulary</label>
-                              <button onClick={addVocabularyToActiveStep} className="text-[10px] font-bold text-rad-purple flex items-center gap-1 hover:text-white"><Plus size={12}/> Add Term</button>
+                {/* --- SEQUENCE STEPS EDITOR --- */}
+                {deepDiveView === 'steps' && (
+                  <div className="flex flex-1 overflow-hidden bg-black/20">
+                    <div className="w-80 border-r border-white/10 flex flex-col bg-[#0f172a]/40">
+                      <div className="p-6 border-b border-white/10 bg-white/[0.02] flex justify-between items-center">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 italic">Step_Timeline</h4>
+                        <button onClick={() => {
+                            const newStep = { type: 'intro', lore_text: 'New mission narrative...', media_url: '', vocabulary: [] };
+                            setEditingMission((prev: any) => ({ ...prev, mission_config: { ...prev.mission_config, steps: [...(prev.mission_config.steps || []), newStep] } }));
+                        }} className="text-rad-purple text-[10px] font-black uppercase hover:underline">+ Add Step</button>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
+                        {editingMission.mission_config.steps?.map((step: any, idx: number) => (
+                          <button key={idx} onClick={() => setActiveStepIndex(idx)} className={`w-full text-left p-5 rounded-3xl border transition-all ${activeStepIndex === idx ? 'bg-rad-purple/10 border-rad-purple/40 shadow-xl' : 'bg-black/40 border-white/5 hover:border-white/20'}`}>
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="text-[10px] font-black text-slate-500 uppercase">Step_{idx + 1}</span>
+                              <span className="text-[8px] uppercase px-3 py-1 rounded-full bg-white/5 text-slate-300 font-black tracking-widest">{step.type}</span>
                             </div>
-                            {(editingMission.mission_config.steps[activeStepIndex].vocabulary || []).map((vItem: any, vIdx: number) => (
-                              <div key={vIdx} className="flex items-start gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                                <div className="flex-1 space-y-2">
-                                  <input type="text" value={vItem.term} onChange={e => updateVocabularyInActiveStep(vIdx, 'term', e.target.value)} className="w-full bg-transparent border-b border-white/10 px-2 py-1 text-sm text-rad-purple font-bold focus:outline-none focus:border-rad-purple" placeholder="Term..." />
-                                  <input type="text" value={vItem.definition} onChange={e => updateVocabularyInActiveStep(vIdx, 'definition', e.target.value)} className="w-full bg-transparent border-b border-white/10 px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-rad-purple" placeholder="Definition..." />
-                                </div>
-                                <button onClick={() => removeVocabularyFromActiveStep(vIdx)} className="p-2 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14}/></button>
-                              </div>
-                            ))}
+                            <p className="text-white text-xs font-bold italic line-clamp-1 uppercase tracking-tight">{step.lore_text || "Awaiting_Narrative"}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-12 no-scrollbar bg-[#020617]/40">
+                      {editingMission.mission_config.steps?.[activeStepIndex] ? (
+                        <div className="space-y-10 max-w-3xl">
+                          <div className="flex justify-between items-center border-b border-white/5 pb-6">
+                            <h3 className="text-4xl font-black text-white italic uppercase tracking-tighter">Step_Configuration</h3>
+                            <select value={editingMission.mission_config.steps[activeStepIndex].type} onChange={(e) => updateActiveStep('type', e.target.value)} className="bg-[#020617] border border-white/10 rounded-2xl px-6 py-3 text-[10px] font-black uppercase text-white tracking-widest focus:border-rad-purple outline-none">
+                              <option value="intro">Narrative Briefing</option>
+                              <option value="code">Sandbox Code Task</option>
+                              <option value="blueprint">Blueprint Selector</option>
+                            </select>
                           </div>
-                        )}
-
-                        {editingMission.mission_config.steps[activeStepIndex].type === 'code' && (
-                          <div className="space-y-3 pt-6 border-t border-white/10">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[10px] font-bold uppercase tracking-widest text-rad-blue flex items-center gap-2"><Target size={12}/> Win Sequence (Action Array)</label>
-                              <button onClick={addWinSequenceToActionStep} className="text-[10px] font-bold text-rad-blue flex items-center gap-1 hover:text-white"><Plus size={12}/> Add Block</button>
+                          
+                          <div className="space-y-8">
+                            <div className="space-y-3">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Briefing Narrative</label>
+                              <textarea rows={6} value={editingMission.mission_config.steps[activeStepIndex].lore_text || ""} onChange={e => updateActiveStep('lore_text', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-[32px] px-8 py-6 text-white text-sm leading-relaxed outline-none focus:border-rad-purple transition-all" placeholder="Enter the story instructions here..." />
                             </div>
-                            <div className="flex flex-col gap-2 p-4 rounded-xl bg-rad-blue/5 border border-rad-blue/20">
-                              {(editingMission.mission_config.steps[activeStepIndex].win_sequence || []).map((action: string, sIdx: number) => (
-                                <div key={sIdx} className="flex items-center gap-2">
-                                  <span className="text-[10px] font-black text-slate-500 w-4">{sIdx + 1}.</span>
-                                  <input type="text" value={action} onChange={e => { const newSeq = [...editingMission.mission_config.steps[activeStepIndex].win_sequence]; newSeq[sIdx] = e.target.value; updateActiveStep('win_sequence', newSeq); }} className="flex-1 bg-[#020617] border border-white/10 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-rad-blue" />
-                                  <button onClick={() => { const newSeq = [...editingMission.mission_config.steps[activeStepIndex].win_sequence]; newSeq.splice(sIdx, 1); updateActiveStep('win_sequence', newSeq); }} className="p-2 text-slate-500 hover:text-red-400"><Trash2 size={14}/></button>
+                            <div className="space-y-3">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Visual Media Link (Optional)</label>
+                              <div className="relative">
+                                <Video className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                                <input type="text" value={editingMission.mission_config.steps[activeStepIndex].media_url || ""} onChange={e => updateActiveStep('media_url', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl pl-16 pr-8 py-4 text-sm text-white outline-none focus:border-rad-purple" placeholder="Static Image or Loop Video URL" />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* GLOSSARY SECTION */}
+                          <div className="space-y-6 pt-10 border-t border-white/10">
+                            <div className="flex justify-between items-center">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2"><BookOpen size={16}/> Knowledge Uplinks</label>
+                              <button onClick={addVocabularyToActiveStep} className="text-[10px] font-black text-rad-purple uppercase border border-rad-purple/30 px-5 py-2 rounded-2xl hover:bg-rad-purple/10 transition-all">+ Add Vocabulary</button>
+                            </div>
+                            <div className="grid grid-cols-1 gap-4">
+                              {editingMission.mission_config.steps[activeStepIndex].vocabulary?.map((v: any, vi: number) => (
+                                <div key={vi} className="flex gap-4 p-6 bg-white/[0.02] border border-white/5 rounded-[32px] items-center group">
+                                  <div className="w-1/3 space-y-1">
+                                    <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Techno_Term</span>
+                                    <input type="text" value={v.term} onChange={e => updateVocabularyInActiveStep(vi, 'term', e.target.value)} className="w-full bg-transparent border-b border-white/10 text-rad-purple font-black uppercase italic text-sm py-2 outline-none focus:border-rad-purple" placeholder="CODE_TERM"/>
+                                  </div>
+                                  <div className="flex-1 space-y-1">
+                                    <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Definition_Log</span>
+                                    <input type="text" value={v.definition} onChange={e => updateVocabularyInActiveStep(vi, 'definition', e.target.value)} className="w-full bg-transparent border-b border-white/10 text-xs text-slate-300 py-2 outline-none focus:border-rad-purple" placeholder="What does this mean for the Pioneer?"/>
+                                  </div>
+                                  <button onClick={() => removeVocabularyFromActiveStep(vi)} className="text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={20}/></button>
                                 </div>
                               ))}
                             </div>
                           </div>
-                        )}
-
-                        {editingMission.mission_config.steps[activeStepIndex].type === 'blueprint' && (
-                          <div className="space-y-3 pt-6 border-t border-white/10">
-                            <label className="text-[10px] font-bold uppercase tracking-widest text-rad-teal flex items-center gap-2"><FileText size={12}/> Blueprint Prompts (Raw JSON)</label>
-                            <textarea rows={10} value={JSON.stringify(editingMission.mission_config.steps[activeStepIndex].prompts, null, 2) || "{}"} onChange={e => { try { updateActiveStep('prompts', JSON.parse(e.target.value)); } catch(err) {} }} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-xs font-mono text-slate-300 focus:outline-none focus:border-rad-teal" />
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-slate-500 text-sm">Select a step to edit.</div>
-                    )}
+                        </div>
+                      ) : <div className="h-full flex items-center justify-center text-slate-500 font-black uppercase tracking-[0.4em] italic opacity-20">Initialize_Step_Editor</div>}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* NEW VIEW 3: GLOBAL THEME & EVENTS EDITOR */}
-              {deepDiveView === 'globals' && (
-                <div className="flex-1 overflow-y-auto p-8 bg-black/20 no-scrollbar">
-                  <div className="max-w-4xl mx-auto space-y-12">
-                    
-                    {/* SECTION 1: THEME OVERLAY */}
-                    <div className="space-y-6">
-                      <div className="flex items-center gap-2 border-b border-white/10 pb-2">
-                        <Palette size={18} className="text-rad-teal" />
-                        <h4 className="text-sm font-black uppercase tracking-widest text-slate-300">Theme Overlay</h4>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Console Title</label>
-                          <input type="text" value={editingMission.mission_config.theme?.console || ""} onChange={e => updateTheme('console', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rad-teal" placeholder="e.g. Engine_Compile_Logs" />
+                {/* --- GLOBAL CONTEXT EDITOR --- */}
+                {deepDiveView === 'globals' && (
+                  <div className="flex-1 overflow-y-auto p-12 bg-[#020617]/40 space-y-16 no-scrollbar">
+                    <div className="space-y-8">
+                      <h4 className="text-xs font-black text-rad-teal uppercase border-b border-white/10 pb-4 tracking-[0.4em] italic">Interface_Calibration</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Console Title Label</label>
+                          <input type="text" value={editingMission.mission_config.theme?.console || ""} onChange={e => updateTheme('console', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl px-6 py-4 text-sm text-white focus:border-rad-teal outline-none font-bold uppercase italic" placeholder="e.g. MISSION_CONSOLE" />
                         </div>
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Briefing Title</label>
-                          <input type="text" value={editingMission.mission_config.theme?.briefing || ""} onChange={e => updateTheme('briefing', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rad-teal" placeholder="e.g. Director's_Brief" />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Verify Button Text</label>
-                          <input type="text" value={editingMission.mission_config.theme?.verifyBtn || ""} onChange={e => updateTheme('verifyBtn', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rad-teal" placeholder="e.g. Test Logic" />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Success Code Prefix</label>
-                          <input type="text" value={editingMission.mission_config.theme?.successCode || ""} onChange={e => updateTheme('successCode', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-rad-teal" placeholder="e.g. LOGIC_VERIFIED" />
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Objectives Label</label>
+                          <input type="text" value={editingMission.mission_config.theme?.briefing || ""} onChange={e => updateTheme('briefing', e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl px-6 py-4 text-sm text-white focus:border-rad-teal outline-none font-bold uppercase italic" placeholder="e.g. MISSION_BRIEFING" />
                         </div>
                       </div>
                     </div>
 
-                    {/* SECTION 2 & 3: TRIGGERS AND ACTIONS */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      
-                      {/* EVENTS (TRIGGERS) */}
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                          <div className="flex items-center gap-2">
-                            <Zap size={16} className="text-rad-yellow" />
-                            <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-300">Allowed Events (Triggers)</h4>
-                          </div>
-                          <button onClick={() => addGlobalItem('events')} className="text-[10px] font-bold text-rad-yellow flex items-center gap-1 hover:text-white"><Plus size={12}/> Add Trigger</button>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-16">
+                      <div className="space-y-6">
+                        <div className="flex justify-between border-b border-white/10 pb-4 items-center">
+                          <h4 className="text-[10px] font-black text-rad-yellow uppercase tracking-[0.2em] italic flex items-center gap-2"><Zap size={14}/> Event Triggers</h4>
+                          <button onClick={() => addGlobalItem('events')} className="text-[9px] text-rad-yellow font-black uppercase hover:underline">+ New Trigger</button>
                         </div>
                         <div className="space-y-3">
-                          {editingMission.mission_config.events?.map((ev: any, idx: number) => (
-                            <div key={idx} className="flex items-start gap-2 p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                              <div className="flex-1 space-y-2">
-                                <input type="text" value={ev.label} onChange={e => updateGlobalItem('events', idx, 'label', e.target.value)} className="w-full bg-transparent border-b border-white/10 px-2 py-1 text-sm text-white font-bold focus:outline-none focus:border-rad-yellow" placeholder="Label (e.g. UP ARROW)" />
-                                <input type="text" value={ev.value} onChange={e => updateGlobalItem('events', idx, 'value', e.target.value)} className="w-full bg-transparent border-b border-white/10 px-2 py-1 text-xs font-mono text-slate-400 focus:outline-none focus:border-rad-yellow" placeholder="Value (e.g. UP_ARROW)" />
-                              </div>
-                              <button onClick={() => removeGlobalItem('events', idx)} className="p-2 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14}/></button>
+                          {editingMission.mission_config.events?.map((ev: any, i: number) => (
+                            <div key={i} className="flex gap-4 p-4 bg-white/[0.02] border border-white/5 rounded-2xl items-center">
+                              <input value={ev.label} onChange={e => updateGlobalItem('events', i, 'label', e.target.value)} className="bg-transparent border-b border-white/10 text-white font-bold uppercase text-xs w-1/2 outline-none focus:border-rad-yellow" placeholder="Label"/>
+                              <input value={ev.value} onChange={e => updateGlobalItem('events', i, 'value', e.target.value)} className="bg-transparent border-b border-white/10 text-slate-500 font-mono text-[10px] w-1/2 outline-none focus:border-rad-yellow uppercase" placeholder="KEY_VALUE"/>
+                              <button onClick={() => removeGlobalItem('events', i)} className="text-slate-700 hover:text-red-400"><X size={16}/></button>
                             </div>
                           ))}
-                          {editingMission.mission_config.events?.length === 0 && <p className="text-xs text-slate-500 italic p-4 text-center border border-dashed border-white/5 rounded-xl">No events configured.</p>}
                         </div>
                       </div>
 
-                      {/* ACTIONS (OUTPUTS) */}
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                          <div className="flex items-center gap-2">
-                            <PlaySquare size={16} className="text-rad-blue" />
-                            <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-300">Allowed Actions (Outputs)</h4>
-                          </div>
-                          <button onClick={() => addGlobalItem('actions')} className="text-[10px] font-bold text-rad-blue flex items-center gap-1 hover:text-white"><Plus size={12}/> Add Action</button>
+                      <div className="space-y-6">
+                        <div className="flex justify-between border-b border-white/10 pb-4 items-center">
+                          <h4 className="text-[10px] font-black text-rad-blue uppercase tracking-[0.2em] italic flex items-center gap-2"><Settings size={14}/> Action Blocks</h4>
+                          <button onClick={() => addGlobalItem('actions')} className="text-[9px] text-rad-blue font-black uppercase hover:underline">+ New Action</button>
                         </div>
                         <div className="space-y-3">
-                          {editingMission.mission_config.actions?.map((act: any, idx: number) => (
-                            <div key={idx} className="flex items-start gap-2 p-3 rounded-xl bg-white/[0.02] border border-white/5">
-                              <div className="flex-1 space-y-2">
-                                <input type="text" value={act.label} onChange={e => updateGlobalItem('actions', idx, 'label', e.target.value)} className="w-full bg-transparent border-b border-white/10 px-2 py-1 text-sm text-white font-bold focus:outline-none focus:border-rad-blue" placeholder="Label (e.g. MOVE 10 STEPS)" />
-                                <input type="text" value={act.value} onChange={e => updateGlobalItem('actions', idx, 'value', e.target.value)} className="w-full bg-transparent border-b border-white/10 px-2 py-1 text-xs font-mono text-slate-400 focus:outline-none focus:border-rad-blue" placeholder="Value (e.g. MOVE_10)" />
-                              </div>
-                              <button onClick={() => removeGlobalItem('actions', idx)} className="p-2 text-slate-500 hover:text-red-400 transition-colors"><Trash2 size={14}/></button>
+                          {editingMission.mission_config.actions?.map((act: any, i: number) => (
+                            <div key={i} className="flex gap-4 p-4 bg-white/[0.02] border border-white/5 rounded-2xl items-center">
+                              <input value={act.label} onChange={e => updateGlobalItem('actions', i, 'label', e.target.value)} className="bg-transparent border-b border-white/10 text-white font-bold uppercase text-xs w-1/2 outline-none focus:border-rad-blue" placeholder="Label"/>
+                              <input value={act.value} onChange={e => updateGlobalItem('actions', i, 'value', e.target.value)} className="bg-transparent border-b border-white/10 text-slate-500 font-mono text-[10px] w-1/2 outline-none focus:border-rad-blue uppercase" placeholder="ACTION_CODE"/>
+                              <button onClick={() => removeGlobalItem('actions', i)} className="text-slate-700 hover:text-red-400"><X size={16}/></button>
                             </div>
                           ))}
-                          {editingMission.mission_config.actions?.length === 0 && <p className="text-xs text-slate-500 italic p-4 text-center border border-dashed border-white/5 rounded-xl">No actions configured.</p>}
                         </div>
                       </div>
-
                     </div>
                   </div>
+                )}
+
+                {/* MODAL FOOTER */}
+                <div className="p-8 border-t border-white/10 flex justify-end gap-6 shrink-0 bg-[#020617] items-center">
+                  <button type="button" onClick={closeMissionEdit} className="text-slate-500 font-black uppercase text-[10px] tracking-widest hover:text-white transition-colors">Discard_Session</button>
+                  <button type="button" onClick={handleUpdateMission} disabled={isSubmitting} className="bg-rad-blue text-[#020617] font-black uppercase italic text-xs px-16 py-5 rounded-[20px] flex items-center gap-3 hover:bg-rad-blue/90 transition-all shadow-2xl shadow-rad-blue/20">
+                    {isSubmitting ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />} Sync_to_Terminal
+                  </button>
                 </div>
-              )}
-
-              {/* FOOTER */}
-              <div className="p-6 border-t border-white/10 bg-[#020617] flex justify-end gap-3 shrink-0">
-                <button type="button" onClick={closeMissionEdit} className="px-6 py-3 rounded-xl text-sm font-bold text-slate-400 hover:text-white transition-colors">Cancel</button>
-                <button type="button" onClick={handleUpdateMission} disabled={isSubmitting} className="px-6 py-3 rounded-xl bg-rad-blue text-[#020617] font-bold text-sm hover:bg-rad-blue/90 transition-colors flex items-center gap-2">
-                  {isSubmitting ? <><Loader2 size={16} className="animate-spin" /> Saving...</> : <><Save size={16} /> Save Changes</>}
-                </button>
-              </div>
-
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

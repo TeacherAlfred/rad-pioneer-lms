@@ -12,11 +12,12 @@ export default function VerifyMFA() {
   const router = useRouter();
 
   useEffect(() => {
-    // Quick check: if they are already verified, kick them straight to the builder
+    // Quick check: if they are already verified, kick them straight to the DASHBOARD
     const checkStatus = async () => {
       const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       if (data?.currentLevel === 'aal2') {
-        router.push('/admin/courses');
+        // CHANGED: Redirect to dashboard instead of courses
+        router.push('/admin/dashboard');
       }
     };
     checkStatus();
@@ -52,8 +53,9 @@ export default function VerifyMFA() {
 
       if (verifyError) throw verifyError;
 
-      // 4. Success! Redirect to the curriculum builder
-      router.push("/admin/courses");
+      // 4. Success! Redirect to the Dashboard (Mission Control)
+      // CHANGED: Redirect to dashboard instead of courses
+      router.push("/admin/dashboard");
       
     } catch (err: any) {
       setError(err.message || "Invalid authentication code. Please try again.");
@@ -63,21 +65,21 @@ export default function VerifyMFA() {
   }
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center p-4">
+    <div className="min-h-[80vh] flex items-center justify-center p-4 bg-[#020617]">
       <div className="w-full max-w-md bg-[#0f172a]/80 border border-white/5 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
         
         {/* Background Glow Effect */}
-        <div className="absolute -top-20 -right-20 w-40 h-40 bg-rad-blue/10 blur-3xl rounded-full pointer-events-none"></div>
+        <div className="absolute -top-20 -right-20 w-40 h-40 bg-blue-500/10 blur-3xl rounded-full pointer-events-none"></div>
 
         <div className="flex flex-col items-center text-center mb-8 relative z-10">
-          <div className="w-16 h-16 bg-rad-blue/10 border border-rad-blue/20 rounded-2xl flex items-center justify-center mb-4 text-rad-blue">
+          <div className="w-16 h-16 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center justify-center mb-4 text-blue-400">
             <ShieldAlert size={32} />
           </div>
           <h1 className="text-2xl font-black uppercase italic tracking-tighter text-white">
             Security Checkpoint
           </h1>
-          <p className="text-slate-400 text-sm mt-2">
-            Open your authenticator app and enter the 6-digit code to access Mission Control.
+          <p className="text-slate-400 text-sm mt-2 font-medium">
+            Open your authenticator app and enter the 6-digit code to access <span className="text-blue-400">Mission Control</span>.
           </p>
         </div>
 
@@ -91,14 +93,14 @@ export default function VerifyMFA() {
               maxLength={6}
               placeholder="000000" 
               value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} // Only allow numbers
-              className="w-full bg-[#020617] border border-white/10 rounded-xl pl-12 pr-4 py-4 text-2xl font-mono tracking-[0.5em] text-center text-white focus:outline-none focus:border-rad-blue transition-colors placeholder:text-slate-700 placeholder:tracking-normal"
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+              className="w-full bg-[#020617] border border-white/10 rounded-xl pl-12 pr-4 py-4 text-2xl font-mono tracking-[0.5em] text-center text-white focus:outline-none focus:border-blue-500 transition-colors placeholder:text-slate-800 placeholder:tracking-normal"
               required
             />
           </div>
 
           {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center font-medium">
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center font-bold uppercase tracking-wider">
               {error}
             </div>
           )}
@@ -106,10 +108,10 @@ export default function VerifyMFA() {
           <button 
             type="submit" 
             disabled={code.length !== 6 || isLoading}
-            className="w-full flex items-center justify-center gap-2 bg-rad-blue text-[#020617] py-4 rounded-xl font-bold uppercase tracking-widest text-sm hover:bg-rad-blue/90 transition-colors shadow-lg shadow-rad-blue/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-4 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? (
-              <><Loader2 size={18} className="animate-spin" /> Verifying...</>
+              <><Loader2 size={18} className="animate-spin" /> Calibrating...</>
             ) : (
               "Verify Identity"
             )}

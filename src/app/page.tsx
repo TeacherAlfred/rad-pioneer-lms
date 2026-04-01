@@ -187,12 +187,11 @@ export default function LandingPage() {
     }));
   };
 
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
+const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
     
     // 1. SPAM HONEYPOT CHECK
-    // If a bot filled out this hidden field, fake a success and stop execution
     if (formData.botField) {
       setSubmitSuccess(true);
       setTimeout(() => setIsRegisterOpen(false), 3000); 
@@ -200,7 +199,6 @@ export default function LandingPage() {
     }
 
     // 2. PHONE NUMBER VALIDATION
-    // Allows optional +, spaces, dashes, and requires 9-15 digits
     const phoneRegex = /^\+?[0-9\s\-()]{9,15}$/;
     if (!phoneRegex.test(formData.phone.trim())) {
       setFormError("Please enter a valid phone number.");
@@ -234,7 +232,7 @@ export default function LandingPage() {
       return prog;
     });
 
-    try {
+try {
       const { error } = await supabase
         .from('registrations')
         .insert([{
@@ -244,11 +242,27 @@ export default function LandingPage() {
           student_name: formData.studentName,
           student_age: age,
           interested_programs: finalProgramsList, 
-          status: 'new' 
+          status: 'new',
+          metadata: {
+            funnel_stage: "Lead (New)",
+            funnel_stage_updated_at: new Date().toISOString()
+          }
         }]);
 
       if (error) throw error;
       
+      // --- TRIGGER AUTOMATED CONFIRMATION EMAIL IN BACKGROUND ---
+      fetch('/api/send-registration-conf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: formData.email,
+          parentName: formData.parentName,
+          studentName: formData.studentName
+        })
+      }).catch(err => console.error("Silent background email error:", err));
+      // -----------------------------------------------------------
+
       setSubmitSuccess(true);
       setTimeout(() => setIsRegisterOpen(false), 3000); 
       
@@ -259,7 +273,7 @@ export default function LandingPage() {
       setIsSubmitting(false);
     }
   };
-
+  
   return (
     <main className="min-h-screen bg-[#020617] text-white font-sans selection:bg-rad-teal/30 overflow-x-hidden relative">
       <style>{`

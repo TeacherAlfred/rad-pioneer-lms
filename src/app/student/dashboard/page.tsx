@@ -6,8 +6,9 @@ import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import PioneerXPBar from "@/components/ui/PioneerXPBar";
 import { 
   Play, Rocket, UserCheck, Loader2, 
-  Map, Zap, BarChart3, ShieldCheck, Sparkles, Trophy
+  Map, Zap, BarChart3, ShieldCheck, Sparkles, Trophy, X, MonitorPlay, AlertTriangle
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -28,6 +29,25 @@ export default function DashboardPage() {
   const [activeTask, setActiveTask] = useState<ActiveTaskData | null>(null);
   const [courseTitle, setCourseTitle] = useState("Game Creator Bootcamp");
   const [completionStats, setCompletionStats] = useState({ completed: 0, total: 0 });
+  
+  // Modal & Confirmation States
+  const [showGuideModal, setShowGuideModal] = useState(false);
+  const [isConfirmingDisable, setIsConfirmingDisable] = useState(false);
+
+  const handleDisableGuide = async () => {
+    if (!userProfile) return;
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ show_welcome_guide: false })
+      .eq('id', userProfile.id);
+      
+    if (!error) {
+      setShowGuideModal(false);
+      setIsConfirmingDisable(false);
+      setUserProfile({ ...userProfile, show_welcome_guide: false });
+    }
+  };
 
   useEffect(() => {
     async function initializeDashboard() {
@@ -38,7 +58,12 @@ export default function DashboardPage() {
 
       try {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', userId).single();
-        if (profile) setUserProfile(profile);
+        if (profile) {
+          setUserProfile(profile);
+          if (profile.show_welcome_guide) {
+            setShowGuideModal(true);
+          }
+        }
         
         const { data: enrollment } = await supabase
           .from('enrollments')
@@ -50,12 +75,10 @@ export default function DashboardPage() {
           const rawCourse = enrollment.courses as any;
           setCourseTitle(Array.isArray(rawCourse) ? rawCourse[0]?.title : rawCourse?.title || "Course");
 
-          // 1. Instant UI Load from Cache
           if (enrollment.active_task) {
             setActiveTask(enrollment.active_task as ActiveTaskData);
           }
 
-          // 2. Background Sync: Pass the current pointer so we can compare and auto-heal
           await autoSyncPointer(userId, enrollment.course_id, enrollment.active_task);
         }
       } catch (err) {
@@ -97,7 +120,6 @@ export default function DashboardPage() {
                 id: m.id,
                 title: m.title,
                 moduleTitle: mod.title,
-                // Fallback to module description/video if mission doesn't have one
                 moduleDesc: m.description || mod.description, 
                 moduleVideo: m.video_url || mod.video_url 
               };
@@ -119,15 +141,12 @@ export default function DashboardPage() {
 
       setCompletionStats({ completed: totalCompleted, total: totalMissions });
 
-      // 3. Auto-Heal the Cache: If the calculated task is different from the cached pointer (e.g. you added a video URL), update it!
       if (calculatedTask) {
-        setActiveTask(calculatedTask); // Force UI to use freshest data
-        
+        setActiveTask(calculatedTask);
         if (!currentPointer || JSON.stringify(currentPointer) !== JSON.stringify(calculatedTask)) {
           await supabase.from('enrollments').update({ active_task: calculatedTask }).eq('student_id', userId);
         }
       } else if (!calculatedTask && currentPointer) {
-         // If course is completed but pointer is still active, clear it
          setActiveTask(null);
          await supabase.from('enrollments').update({ active_task: null }).eq('student_id', userId);
       }
@@ -255,6 +274,97 @@ export default function DashboardPage() {
           </section>
         </div>
       </main>
+
+      {/* REVISIT BRIEFING BUTTON - Positioned for Sidebar area */}
+      <div className="fixed right-6 bottom-32 z-40 hidden lg:block w-64">
+          <button 
+            onClick={() => setShowGuideModal(true)}
+            className="w-full p-4 rounded-2xl bg-blue-500/5 border border-white/5 flex items-center gap-3 group hover:bg-blue-500/10 hover:border-blue-500/30 transition-all text-left"
+          >
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+              <MonitorPlay size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-white uppercase italic leading-none">System Tutorial</p>
+              <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mt-1">Revisit Briefing</p>
+            </div>
+          </button>
+      </div>
+
+      {/* --- MISSION BRIEFING POPUP --- */}
+      <AnimatePresence>
+        {showGuideModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              onClick={() => {setShowGuideModal(false); setIsConfirmingDisable(false);}}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md" 
+            />
+            
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-4xl bg-[#0f172a] border border-white/10 rounded-[40px] overflow-hidden shadow-2xl"
+            >
+              <div className="p-8 flex items-center justify-between border-b border-white/5 bg-white/[0.02]">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-500/20 rounded-xl border border-blue-500/30">
+                    <MonitorPlay className="text-blue-400" size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white uppercase italic tracking-tighter leading-none">Mission Briefing</h3>
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Interface Calibration Guide</p>
+                  </div>
+                </div>
+                <button onClick={() => {setShowGuideModal(false); setIsConfirmingDisable(false);}} className="text-slate-500 hover:text-white transition-colors">
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="aspect-video bg-black relative">
+                <iframe 
+                  className="w-full h-full"
+                  src="https://www.youtube.com/embed/YOUR_VIDEO_ID?autoplay=1" 
+                  title="Pioneer Dashboard Walkthrough"
+                  allowFullScreen
+                />
+              </div>
+
+              <div className="p-8 flex flex-col md:flex-row items-center justify-between gap-6 bg-white/[0.02]">
+                <p className="text-slate-400 text-sm font-medium italic">Calibration recommended for all Pioneers.</p>
+                
+                {!isConfirmingDisable ? (
+                  <button 
+                    onClick={() => setIsConfirmingDisable(true)}
+                    className="px-8 py-4 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-all"
+                  >
+                    Don't show this again
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => setIsConfirmingDisable(false)}
+                      className="px-6 py-4 text-[10px] font-black uppercase text-slate-500 hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={handleDisableGuide}
+                      className="px-8 py-4 bg-red-500/10 border border-red-500/40 rounded-2xl text-[10px] font-black uppercase tracking-widest text-red-400 hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
+                    >
+                      <AlertTriangle size={14} /> Are you sure?
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <ProfileSidebar />
     </DashboardClientWrapper>
   );

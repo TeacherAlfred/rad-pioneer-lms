@@ -1,17 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { 
-  Shield, 
-  Award, 
-  Box, 
-  Zap, 
-  Settings, 
-  Share2, 
-  LayoutDashboard, 
-  Trophy,
-  LogOut,
-  ChevronRight
+  Shield, Award, Box, Zap, Settings, Share2, 
+  LayoutDashboard, Trophy, LogOut, ChevronRight, 
+  MonitorPlay, ChevronDown, ChevronUp 
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -20,41 +13,89 @@ import { supabase } from "@/lib/supabase";
 
 export default function ProfileSidebar() {
   const router = useRouter();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
   const [user, setUser] = useState<any>(null);
   const [copied, setCopied] = useState(false);
   const [unlockedItems, setUnlockedItems] = useState<string[]>([]);
+  
+  const [canScrollUp, setCanScrollUp] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
 
-  // 1. Fetch real-time session and inventory from Database
+  // --- SCROLL MANAGEMENT ---
+  
+  const stopScrolling = useCallback(() => {
+    if (scrollIntervalRef.current) {
+      clearInterval(scrollIntervalRef.current);
+      scrollIntervalRef.current = null;
+    }
+  }, []);
+
+  const checkScroll = useCallback(() => {
+    if (scrollContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+      const up = scrollTop > 10;
+      const down = scrollTop + clientHeight < scrollHeight - 10;
+      
+      setCanScrollUp(up);
+      setCanScrollDown(down);
+
+      // CRITICAL FIX: If an arrow disappears because we reached the end, kill the scroll
+      if ((!up && scrollIntervalRef.current) || (!down && scrollIntervalRef.current)) {
+        stopScrolling();
+      }
+    }
+  }, [stopScrolling]);
+
+  const startScrolling = (direction: 'up' | 'down') => {
+    if (!scrollContainerRef.current) return;
+    stopScrolling(); // Clear any existing intervals first
+
+    // Initial Nudge
+    const nudge = direction === 'up' ? -60 : 60;
+    scrollContainerRef.current.scrollBy({ top: nudge, behavior: 'smooth' });
+
+    // Hold to Scroll
+    scrollIntervalRef.current = setInterval(() => {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollBy({ 
+          top: direction === 'up' ? -6 : 6, 
+          behavior: 'auto' 
+        });
+        checkScroll();
+      }
+    }, 16);
+  };
+
   useEffect(() => {
     async function syncSidebarData() {
-      if (typeof window !== "undefined") {
-        const sessionData = localStorage.getItem("pioneer_session");
-        if (!sessionData) return;
-        
-        const localUser = JSON.parse(sessionData);
-
-        const { data: profile, error } = await supabase
-          .from('profiles')
-          .select('*, inventory')
-          .eq('id', localUser.id)
-          .single();
-
-        if (!error && profile) {
-          setUser(profile);
-          setUnlockedItems(profile.inventory || []);
-        }
+      const sessionData = localStorage.getItem("pioneer_session");
+      if (!sessionData) return;
+      const localUser = JSON.parse(sessionData);
+      const { data: profile } = await supabase.from('profiles').select('*, inventory').eq('id', localUser.id).single();
+      if (profile) {
+        setUser(profile);
+        setUnlockedItems(profile.inventory || []);
       }
     }
     syncSidebarData();
-  }, []);
 
-  // Defined Toolset - These IDs must match what you store in the DB array
-  const toolDefinitions = [
-    { id: "redstone", name: "Redstone Wire" },
-    { id: "logic_gates", name: "Logic Kit" },
-    { id: "command_blocks", name: "Command Block" },
-    { id: "python", name: "Python Script" },
-  ];
+    // GLOBAL SAFETY: Stop scrolling if mouse is released anywhere on the screen
+    window.addEventListener('mouseup', stopScrolling);
+    window.addEventListener('touchend', stopScrolling);
+    window.addEventListener('resize', checkScroll);
+
+    return () => {
+      window.removeEventListener('mouseup', stopScrolling);
+      window.removeEventListener('touchend', stopScrolling);
+      window.removeEventListener('resize', checkScroll);
+      stopScrolling();
+    };
+  }, [stopScrolling, checkScroll]);
+
+  // Re-check scroll when user data loads
+  useEffect(() => { checkScroll(); }, [user, unlockedItems, checkScroll]);
 
   const handleShare = () => {
     const url = `${window.location.origin}/student/portfolio/${user?.id || ''}`;
@@ -63,131 +104,131 @@ export default function ProfileSidebar() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("pioneer_session");
-    router.push("/");
-  };
-
+  const handleOpenBriefing = () => window.dispatchEvent(new CustomEvent('open-mission-briefing'));
   if (!user) return null;
 
   return (
-    <aside className="fixed right-0 top-0 h-screen w-80 bg-[#020617] border-l border-white/5 p-8 hidden lg:flex flex-col gap-8 z-50">
+    <aside className="fixed right-0 top-0 h-screen w-80 bg-[#020617] border-l border-white/5 hidden lg:flex flex-col z-50 overflow-hidden">
       
-      {/* 1. Identity Card */}
-      <div className="relative pt-10 pb-6 px-6 rounded-[32px] bg-gradient-to-b from-[#5574a9]/10 to-transparent border border-white/5 text-center">
-        <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-20 h-20 rounded-full bg-slate-800 border-4 border-[#45a79a] p-1 overflow-hidden shadow-[0_0_20px_rgba(69,167,154,0.3)]">
-          <div className="w-full h-full rounded-full bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center text-white font-black text-xl italic uppercase">
-            {user.display_name?.substring(0, 2) || "PI"}
+      {/* Header */}
+      <div className="p-8 pb-4 shrink-0 relative z-20 bg-[#020617]">
+        <div className="relative pt-10 pb-6 px-6 rounded-[32px] bg-gradient-to-b from-[#5574a9]/10 to-transparent border border-white/5 text-center">
+          <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-20 h-20 rounded-full bg-slate-800 border-4 border-[#45a79a] p-1 overflow-hidden shadow-[0_0_20px_rgba(69,167,154,0.3)]">
+            <div className="w-full h-full rounded-full bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center text-white font-black text-xl italic uppercase">
+              {user.display_name?.substring(0, 2)}
+            </div>
           </div>
-        </div>
-        <h3 className="text-xl font-black text-white uppercase italic tracking-tighter mt-4 leading-none">
-          {user.display_name}
-        </h3>
-        <p className="text-[10px] font-bold text-[#45a79a] uppercase tracking-[0.2em] mb-4 mt-1">
-          Pioneer Grade 01 // XP: {user.xp || 0}
-        </p>
-        
-        <div className="flex justify-center gap-2">
-          <div className="p-2 rounded-xl bg-white/5 text-[#d7a94a] border border-white/5">
-            <Award size={16} />
-          </div>
-          <div className="p-2 rounded-xl bg-white/5 text-[#88be56] border border-white/5">
-            <Shield size={16} />
+          <h3 className="text-xl font-black text-white uppercase italic mt-4 leading-none">{user.display_name}</h3>
+          <p className="text-[10px] font-bold text-[#45a79a] uppercase tracking-[0.2em] mb-4 mt-1">Grade 01 // XP: {user.xp}</p>
+          <div className="flex justify-center gap-2">
+            <div className="p-2 rounded-xl bg-white/5 text-[#d7a94a] border border-white/5"><Award size={16} /></div>
+            <div className="p-2 rounded-xl bg-white/5 text-[#88be56] border border-white/5"><Shield size={16} /></div>
           </div>
         </div>
       </div>
 
-      {/* 2. Navigation Hub */}
-      <nav className="flex flex-col gap-3">
-        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-600 px-2 mb-1 text-left">Navigation</h4>
-        
-        <Link href="/student/dashboard" className="group flex items-center gap-4 p-4 rounded-2xl bg-[#45a79a]/5 border border-[#45a79a]/10 hover:border-[#45a79a]/50 transition-all text-left">
-          <LayoutDashboard size={18} className="text-[#45a79a]" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white transition-all">Mission Control</span>
-        </Link>
-
-        <Link href="/student/blueprints" className="group flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-[#5574a9]/50 transition-all text-left">
-          <Box size={18} className="text-[#5574a9]" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white transition-all">Tech Archive</span>
-        </Link>
-
-        <Link href="/student/leaderboard" className="group flex items-center gap-4 p-4 rounded-2xl bg-[#d7a94a]/5 border border-[#d7a94a]/10 hover:border-[#d7a94a]/40 transition-all text-left">
-          <Trophy size={18} className="text-[#d7a94a]" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white transition-all">Hall of Pioneers</span>
-        </Link>
-      </nav>
-
-      {/* 3. Tech Inventory (Leader Toolkit) - Now Dynamic & Readable */}
-      <div className="space-y-4">
-        <div className="px-2 text-left">
-          <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-600">Leader Toolkit</h4>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          {toolDefinitions.map((tool) => {
-            const isUnlocked = unlockedItems.includes(tool.id);
-            return (
-              <div 
-                key={tool.id} 
-                className={`aspect-square rounded-2xl border flex flex-col items-center justify-center p-3 text-center gap-2 transition-all duration-500 ${
-                  isUnlocked 
-                  ? "bg-white/10 border-white/20 text-white shadow-lg" 
-                  : "bg-black/40 border-white/5 text-white/5 opacity-40 grayscale"
-                }`}
-              >
-                <Zap 
-                  size={16} 
-                  className={isUnlocked ? "text-yellow-400 fill-yellow-400 animate-pulse" : "text-white/5"} 
-                />
-                <span className={`text-[9px] font-black uppercase leading-tight tracking-tighter ${
-                  isUnlocked ? "text-white" : "text-white/20"
-                }`}>
-                  {tool.name}
-                </span>
-                {!isUnlocked && (
-                  <span className="text-[7px] font-bold text-white/20 uppercase tracking-tighter">Locked</span>
-                )}
+      <div className="relative flex-1 overflow-hidden">
+        {/* TOP INDICATOR */}
+        <AnimatePresence>
+          {canScrollUp && (
+            <motion.button 
+              initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
+              onMouseDown={() => startScrolling('up')}
+              onTouchStart={() => startScrolling('up')}
+              className="absolute top-2 left-1/2 -translate-x-1/2 z-40 cursor-pointer pointer-events-auto group"
+            >
+              <div className="bg-blue-500/20 p-2 rounded-full border border-blue-500/30 backdrop-blur-md shadow-[0_0_10px_rgba(59,130,246,0.3)] group-hover:bg-blue-500/40 group-hover:border-blue-400 group-hover:shadow-[0_0_20px_rgba(59,130,246,0.6)] group-hover:scale-110 transition-all animate-bounce">
+                <ChevronUp size={18} className="text-blue-400 group-hover:text-white transition-colors" />
               </div>
-            );
-          })}
+            </motion.button>
+          )}
+        </AnimatePresence>
+
+        <div 
+          ref={scrollContainerRef} 
+          onScroll={checkScroll} 
+          className="h-full overflow-y-auto px-8 space-y-8 no-scrollbar scroll-smooth pt-2"
+        >
+          <nav className="flex flex-col gap-3">
+            <h4 className="text-[10px] font-black uppercase text-slate-600 px-2 text-left">Navigation</h4>
+            <Link href="/student/dashboard" className="group flex items-center gap-4 p-4 rounded-2xl bg-[#45a79a]/5 border border-[#45a79a]/10 hover:border-[#45a79a]/50 transition-all text-left">
+              <LayoutDashboard size={18} className="text-[#45a79a]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Mission Control</span>
+            </Link>
+            <Link href="/student/blueprints" className="group flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-[#5574a9]/50 transition-all text-left">
+              <Box size={18} className="text-[#5574a9]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Tech Archive</span>
+            </Link>
+            <Link href="/student/leaderboard" className="group flex items-center gap-4 p-4 rounded-2xl bg-[#d7a94a]/5 border border-[#d7a94a]/10 hover:border-[#d7a94a]/40 transition-all text-left">
+              <Trophy size={18} className="text-[#d7a94a]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Hall of Pioneers</span>
+            </Link>
+          </nav>
+
+          <div className="space-y-4">
+            <h4 className="text-[10px] font-black uppercase text-slate-600 px-2 text-left">Leader Toolkit</h4>
+            <div className="grid grid-cols-2 gap-3 pb-4">
+              {[
+                { id: "redstone", name: "Redstone Wire" }, { id: "logic_gates", name: "Logic Kit" },
+                { id: "command_blocks", name: "Command Block" }, { id: "python", name: "Python Script" },
+              ].map((tool) => {
+                const isUnlocked = unlockedItems.includes(tool.id);
+                return (
+                  <div key={tool.id} className={`h-20 rounded-2xl border flex flex-col items-center justify-center p-2 text-center gap-1 transition-all duration-500 ${isUnlocked ? "bg-white/10 border-white/20 text-white shadow-lg" : "bg-black/40 border-white/5 text-white/5 opacity-40 grayscale"}`}>
+                    <Zap size={14} className={isUnlocked ? "text-yellow-400 fill-yellow-400 animate-pulse" : "text-white/5"} />
+                    <span className={`text-[8px] font-black uppercase leading-tight ${isUnlocked ? "text-white" : "text-white/20"}`}>{tool.name}</span>
+                    {!isUnlocked && <span className="text-[6px] font-bold text-white/20 uppercase">Locked</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
+
+        {/* BOTTOM INDICATOR */}
+        <AnimatePresence>
+          {canScrollDown && (
+            <motion.button 
+              initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+              onMouseDown={() => startScrolling('down')}
+              onTouchStart={() => startScrolling('down')}
+              className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40 cursor-pointer pointer-events-auto group"
+            >
+              <div className="bg-blue-500/20 p-2 rounded-full border border-blue-500/30 backdrop-blur-md shadow-[0_0_10px_rgba(59,130,246,0.3)] group-hover:bg-blue-500/40 group-hover:border-blue-400 group-hover:shadow-[0_0_20px_rgba(59,130,246,0.6)] group-hover:scale-110 transition-all animate-bounce">
+                <ChevronDown size={18} className="text-blue-400 group-hover:text-white transition-colors" />
+              </div>
+            </motion.button>
+          )}
+        </AnimatePresence>
       </div>
 
-      {/* 4. Footer & End Session */}
-      <div className="mt-auto space-y-4">
-        <button onClick={handleShare} className="w-full h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center gap-3 hover:bg-white/10 transition-all group">
-          <AnimatePresence mode="wait">
-            {copied ? (
-              <motion.div key="copied" initial={{ y: 5, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -5, opacity: 0 }} className="flex items-center gap-2 text-[#88be56]">
-                <Zap size={14} fill="currentColor" />
-                <span className="text-[9px] font-black uppercase tracking-widest">Link Secured</span>
-              </motion.div>
-            ) : (
-              <motion.div key="share" initial={{ y: 5, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -5, opacity: 0 }} className="flex items-center gap-2 text-slate-500 group-hover:text-white">
-                <Share2 size={14} />
-                <span className="text-[9px] font-black uppercase tracking-widest">Share Portfolio</span>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </button>
-
-        <button onClick={handleLogout} className="w-full h-14 rounded-2xl bg-red-500/5 border border-red-500/10 hover:bg-red-500/10 hover:border-red-500/40 flex items-center justify-between px-6 transition-all group">
-          <div className="flex items-center gap-3">
-            <LogOut size={16} className="text-red-500" />
-            <span className="text-[9px] font-black uppercase tracking-widest text-red-500">End Session</span>
-          </div>
+      {/* Footer */}
+      <div className="p-8 pt-4 bg-[#020617] border-t border-white/5 mt-auto space-y-4 shrink-0 relative z-20">
+        <div className="flex gap-3">
+          <button onClick={handleOpenBriefing} className="flex-1 p-3 rounded-2xl bg-blue-500/5 border border-blue-500/10 flex flex-col items-center justify-center gap-1 group hover:bg-blue-500/10 hover:border-blue-500/30 transition-all text-center">
+            <MonitorPlay size={18} className="text-blue-400 group-hover:scale-110 transition-transform" /><span className="text-[8px] font-black text-white uppercase italic leading-none">Tutorial</span>
+          </button>
+          <button onClick={handleShare} className="flex-1 p-3 rounded-2xl bg-white/5 border border-white/10 flex flex-col items-center justify-center gap-1 hover:bg-white/10 transition-all group">
+            <AnimatePresence mode="wait">
+              {copied ? (
+                <motion.div key="copied" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-1 text-[#88be56]"><Zap size={18} fill="currentColor" /><span className="text-[8px] font-black uppercase">Secured</span></motion.div>
+              ) : (
+                <motion.div key="share" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center gap-1 text-slate-500 group-hover:text-white"><Share2 size={18} /><span className="text-[8px] font-black uppercase">Share</span></motion.div>
+              )}
+            </AnimatePresence>
+          </button>
+        </div>
+        <button onClick={() => { localStorage.removeItem("pioneer_session"); router.push("/"); }} className="w-full h-14 rounded-2xl bg-red-500/5 border border-red-500/10 hover:bg-red-500/10 hover:border-red-500/40 flex items-center justify-between px-6 transition-all group">
+          <div className="flex items-center gap-3"><LogOut size={16} className="text-red-500" /><span className="text-[9px] font-black uppercase text-red-500">End Session</span></div>
           <ChevronRight size={14} className="text-red-900 group-hover:text-red-500 transition-colors" />
         </button>
-
-        <div className="pt-4 border-t border-white/5 flex items-center justify-between">
-          <button className="text-slate-600 hover:text-white transition-colors">
-            <Settings size={18} />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-[#88be56] animate-pulse" />
-            <span className="text-[9px] font-bold text-slate-600 uppercase tracking-tighter">Connection: Active</span>
-          </div>
+        <div className="pt-2 flex items-center justify-between">
+          <button className="text-slate-600 hover:text-white transition-colors"><Settings size={18} /></button>
+          <div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#88be56] animate-pulse" /><span className="text-[9px] font-bold text-slate-600 uppercase">Connection: Active</span></div>
         </div>
       </div>
+
+      <style jsx global>{`
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
     </aside>
   );
 }
