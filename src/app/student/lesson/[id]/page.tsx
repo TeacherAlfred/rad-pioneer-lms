@@ -1,4 +1,5 @@
 "use client";
+"use no memo";
 
 import { useEffect, useState, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
