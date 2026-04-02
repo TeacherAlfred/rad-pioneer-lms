@@ -37,12 +37,10 @@ export default function CommunicationsHub() {
   const [replyText, setReplyText] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // ... inside your CommunicationsHub component ...
-
   useEffect(() => {
     fetchData();
 
-    // --- NEW: REAL-TIME SUBSCRIPTION FOR THE INBOX ---
+    // --- REAL-TIME SUBSCRIPTION FOR THE INBOX ---
     const messagesSubscription = supabase
       .channel('admin-inbox-updates')
       .on(
@@ -71,22 +69,50 @@ export default function CommunicationsHub() {
   async function fetchData() {
     setLoading(true);
     try {
-      // ... (Keep your existing Templates, Guardians, and History fetch logic here) ...
+      // 1. Fetch Email Templates
+      const { data: tplData, error: tplError } = await supabase
+        .from('email_templates')
+        .select('*')
+        .order('created_at', { ascending: false });
+        
+      if (tplError) console.error("🚨 Templates Fetch Error:", tplError);
+      else if (tplData) setTemplates(tplData);
 
-      // --- FIXED: INBOX FETCH LOGIC ---
+      // 2. Fetch Guardians for the Dispatch List
+      const { data: gData, error: gError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'guardian');
+        
+      if (gError) console.error("🚨 Guardians Fetch Error:", gError);
+      else if (gData) setGuardians(gData);
+
+      // 3. Fetch Communication Logs (The History Tab)
+      const { data: logsData, error: logsError } = await supabase
+        .from('communication_logs')
+        .select('*')
+        .order('sent_at', { ascending: false });
+        
+      if (logsError) console.error("🚨 Logs Fetch Error:", logsError);
+      else if (logsData) setCommsLogs(logsData);
+
+      // 4. INBOX FETCH LOGIC
       if (activeTab === 'inbox') {
-        // 1. Fetch all messages
         const { data: msgs, error: msgError } = await supabase
           .from('messages')
           .select('*')
           .order('created_at', { ascending: false });
 
-        if (msgError) throw msgError;
+        if (msgError) {
+           console.error("🚨 Messages Fetch Error:", msgError);
+           throw new Error(`Supabase Error: ${msgError.message || msgError.details || 'Check console'}`);
+        }
 
-        // 2. Fetch all profiles so we can manually map the names (safest approach)
-        const { data: allProfiles } = await supabase
+        const { data: allProfiles, error: profileError } = await supabase
           .from('profiles')
           .select('id, display_name');
+          
+        if (profileError) console.error("🚨 Profiles Fetch Error:", profileError);
 
         const profileMap = (allProfiles || []).reduce((acc: any, profile) => {
           acc[profile.id] = profile.display_name;
@@ -94,42 +120,36 @@ export default function CommunicationsHub() {
         }, {});
 
         if (msgs) {
-          // Group by conversation (the parent's ID)
           const grouped = msgs.reduce((acc: Record<string, any>, msg: any) => {
-  // Determine the parent ID involved in this message
-  const parentId = msg.sender_role === 'parent' ? msg.sender_id : msg.recipient_id;
-  
-  if (!parentId) return acc; // Skip orphaned messages
-  
-  if (!acc[parentId]) {
-    acc[parentId] = {
-      parentId: parentId,
-      parentName: profileMap[parentId] || "Unknown Guardian",
-      messages: [],
-      lastMessageTime: msg.created_at,
-      preview: msg.content,
-      unreadCount: 0
-    };
-  }
-  
-  // Count unread messages from parents
-  if (msg.sender_role === 'parent' && !msg.is_read) {
-     acc[parentId].unreadCount += 1;
-  }
+            const parentId = msg.sender_role === 'parent' ? msg.sender_id : msg.recipient_id;
+            
+            if (!parentId) return acc; 
+            
+            if (!acc[parentId]) {
+              acc[parentId] = {
+                parentId: parentId,
+                parentName: profileMap[parentId] || "Unknown Guardian",
+                messages: [],
+                lastMessageTime: msg.created_at,
+                preview: msg.content,
+                unreadCount: 0
+              };
+            }
+            
+            if (msg.sender_role === 'parent' && !msg.is_read) {
+               acc[parentId].unreadCount += 1;
+            }
 
-  // Prepend to keep chronological order for the chat view
-  acc[parentId].messages.unshift(msg); 
-  return acc;
-}, {} as Record<string, any>); // <--- Add the type assertion here
+            acc[parentId].messages.unshift(msg); 
+            return acc;
+          }, {} as Record<string, any>);
 
-          // Convert the grouped object back to an array and sort by most recent message
           const sortedInbox = Object.values(grouped).sort((a: any, b: any) => {
              return new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime();
           });
 
           setInboxConversations(sortedInbox);
 
-          // If an admin currently has a conversation open, update their active view too
           if (activeConversation) {
             const updatedActiveConv = sortedInbox.find((c: any) => c.parentId === activeConversation);
             if (updatedActiveConv) {
@@ -139,8 +159,8 @@ export default function CommunicationsHub() {
         }
       }
 
-    } catch (err) {
-      console.error("Error loading communications:", err);
+    } catch (err: any) {
+      console.error("Critical Failure in fetchData:", err.message || err);
     } finally {
       setLoading(false);
     }
@@ -151,15 +171,13 @@ export default function CommunicationsHub() {
     setActiveMessages(conversation.messages);
   };
 
-const handleSendReply = async () => {
+  const handleSendReply = async () => {
     if (!replyText.trim() || !activeConversation) return;
 
     try {
-      // 1. Get the current session to identify the admin
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("No active session.");
 
-      // 2. Fetch the actual Profile UUID for this admin
       const { data: adminProfile, error: profileError } = await supabase
         .from('profiles')
         .select('id')
@@ -171,30 +189,26 @@ const handleSendReply = async () => {
         throw new Error("Could not find admin profile linked to this account.");
       }
 
-      // 3. Insert the message using the PROFILE UUID
       const { data, error } = await supabase
         .from('messages')
         .insert({
-          sender_id: adminProfile.id, // MUST be the UUID from public.profiles
-          recipient_id: activeConversation, // This is already the Parent's Profile UUID
+          sender_id: adminProfile.id,
+          recipient_id: activeConversation,
           sender_role: 'admin',
           content: replyText,
-          is_read: true // Admin messages are read by default in this view
+          is_read: true 
         })
         .select()
         .single();
 
       if (error) {
-        // Log the specific database error to see if it's RLS or Constraints
         console.error("Supabase Insertion Error:", error);
         throw error;
       }
 
-      // 4. Update UI
       setActiveMessages(prev => [...prev, data]);
       setReplyText("");
       
-      // Update inbox preview
       setInboxConversations(prev => prev.map(conv => {
         if (conv.parentId === activeConversation) {
           return { ...conv, preview: data.content, lastMessageTime: data.created_at };
@@ -278,7 +292,7 @@ const handleSendReply = async () => {
         .filter(g => selectedGuardians.includes(g.id))
         .map(g => {
           const meta = typeof g.metadata === 'string' ? JSON.parse(g.metadata) : g.metadata;
-          return { email: meta.email, name: g.display_name };
+          return { email: meta?.email || "", name: g.display_name };
         });
 
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -289,12 +303,19 @@ const handleSendReply = async () => {
          subject: dispatchDraft.subject,
          status: 'Sent'
       }));
-      await supabase.from('communication_logs').insert(logPayload);
+      
+      const { error } = await supabase.from('communication_logs').insert(logPayload);
+      if (error) throw error;
 
       alert(`Successfully transmitted to ${recipients.length} sectors.`);
       setSelectedGuardians([]);
       setDispatchDraft({ subject: "", body: "" });
+      
+      // Instantly refresh the logs so the history tab is up to date!
+      await fetchData();
+
     } catch (err) {
+      console.error(err);
       alert("Transmission failure.");
     } finally {
       setIsSending(false);
