@@ -11,22 +11,24 @@ const supabase = createClient(
 
 export async function POST(request: Request) {
   try {
-    const { email, guardianName, guardianId, customContent } = await request.json();
+    // 1. Extract the dynamically generated onboardingLink sent from the frontend
+    const { email, guardianName, guardianId, customContent, onboardingLink } = await request.json();
 
     if (!email || !guardianId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const onboardingLink = `${baseUrl}/onboarding/guardian?id=${guardianId}`;
     const whatsappLink = `https://wa.me/27769065959`;
     
     // Fallback Subject (You can also pass the subject from the frontend if you want it to be dynamic)
     const emailSubject = 'Welcome to the New RAD Academy Portal! 🚀';
 
     // Parse the single custom content string from the DB (replace the link placeholder)
+    // If onboardingLink wasn't passed for some reason, fallback to localhost to prevent a crash
+    const safeLink = onboardingLink || `http://localhost:3000/onboarding/guardian?id=${guardianId}`;
+    
     const parsedContent = typeof customContent === 'string' 
-        ? customContent.replace(/{{onboardingLink}}/g, onboardingLink) 
+        ? customContent.replace(/{{onboardingLink}}/g, safeLink) 
         : "";
 
     const data = await resend.emails.send({
@@ -44,6 +46,13 @@ export async function POST(request: Request) {
 
           <div style="font-size: 15px; line-height: 1.6; color: #e2e8f0;">
              ${parsedContent}
+          </div>
+
+          <div style="text-align: center; margin: 40px 0;">
+            <p style="font-size: 16px; font-weight: bold; color: #ffffff; margin-bottom: 15px;">Please click below to complete your setup and activate your household:</p>
+            <a href="${safeLink}" style="background-color: #9333ea; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; display: inline-block;">
+              Complete Onboarding
+            </a>
           </div>
 
           <div style="margin-top: 40px; padding-top: 30px; border-top: 1px solid #1e293b; text-align: center;">

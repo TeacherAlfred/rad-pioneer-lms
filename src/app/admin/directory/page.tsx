@@ -240,8 +240,10 @@ export default function DirectoryPage() {
   }
 
   const generateLivePreviewHTML = () => {
-    const onboardingLink = `#`;
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    const onboardingLink = `${baseUrl}/onboarding/guardian?id=${selectedProfile?.id || ''}`;
     const whatsappLink = `https://wa.me/27769065959`;
+    
     let parsedContent = emailContent ? emailContent.replace(/{{onboardingLink}}/g, onboardingLink) : "";
     
     return `
@@ -254,6 +256,12 @@ export default function DirectoryPage() {
         </p>
         <div style="font-size: 15px; line-height: 1.6; color: #e2e8f0;">
            ${parsedContent}
+        </div>
+        <div style="text-align: center; margin: 40px 0;">
+          <p style="font-size: 16px; font-weight: bold; color: #ffffff; margin-bottom: 15px;">Please click below to complete your setup and activate your household:</p>
+          <a href="${onboardingLink}" style="background-color: #9333ea; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; display: inline-block;">
+            Complete Onboarding
+          </a>
         </div>
         <div style="margin-top: 40px; padding-top: 30px; border-top: 1px solid #1e293b; text-align: center;">
           <p style="color: #94a3b8; font-size: 14px; margin-bottom: 15px;">Need help or have questions? Our support team is just a tap away.</p>
@@ -272,6 +280,11 @@ export default function DirectoryPage() {
   const handleSendInvite = async () => {
     if (!selectedProfile || !workspaceEditData?.metadata?.email) return;
     setIsSendingInvite(true);
+    
+    // Construct dynamic onboarding link for API payload
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    const onboardingLink = `${baseUrl}/onboarding/guardian?id=${selectedProfile.id}`;
+
     try {
       const res = await fetch('/api/send-invite', {
         method: 'POST',
@@ -280,7 +293,8 @@ export default function DirectoryPage() {
           email: workspaceEditData.metadata.email,
           guardianName: workspaceEditData.display_name,
           guardianId: selectedProfile.id,
-          customContent: emailContent 
+          customContent: emailContent,
+          onboardingLink: onboardingLink 
         })
       });
       const data = await res.json();
@@ -315,13 +329,10 @@ export default function DirectoryPage() {
       if (!isLeadGuardian) {
           // If not lead, construct payload to *only* update individual details (and parent link for student)
           const metaPayload = { ...workspaceEditData.metadata };
-          // Remove household wide info (already handled in top-level update as it applies to all linked profiles usually)
-          // payment plan is also individual, but here we keep it to the lead to prevent inconsistent household data if edited on individual.
-          // Support crew editing should only change their *individual* info. Student too.
           if (selectedProfile.role === 'student') {
-             // keep student metadata as is but the payment plan and status should be careful.
+             // keep student metadata as is
           } else {
-             // For support crew individual details. Payment plan management on lead.
+             // For support crew individual details
           }
       }
 
