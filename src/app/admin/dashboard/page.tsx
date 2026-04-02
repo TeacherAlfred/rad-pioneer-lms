@@ -44,6 +44,11 @@ export default function AdminDashboard() {
   // Transition State for newly approved profiles
   const [postApprovalProfile, setPostApprovalProfile] = useState<any>(null);
 
+  // --- NEW: Admin Profile State ---
+  const [adminProfile, setAdminProfile] = useState<any>(null);
+  const [showAdminProfile, setShowAdminProfile] = useState(false);
+  const [adminEditForm, setAdminEditForm] = useState({ name: "", email: "", phone: "" });
+
   // Email Preview State
   const [showEmailPreview, setShowEmailPreview] = useState(false);
   const [emailViewMode, setEmailViewMode] = useState<"edit" | "visual">("edit");
@@ -111,13 +116,42 @@ export default function AdminDashboard() {
   async function fetchAdminData() {
     setLoading(true);
     try {
+      // --- FETCH LOGGED-IN ADMIN PROFILE ---
+      const { data: authData } = await supabase.auth.getUser();
+      
+      if (authData?.user) {
+        let { data: adminProf } = await supabase.from('profiles').select('*').eq('auth_user_id', authData.user.id).maybeSingle();
+        
+        if (!adminProf) {
+           const { data: fallbackProf } = await supabase.from('profiles').select('*').eq('id', authData.user.id).maybeSingle();
+           adminProf = fallbackProf;
+        }
+        
+        // FIX: If no profile exists in the DB yet, create a placeholder so the UI still opens!
+        if (!adminProf) {
+          adminProf = {
+            id: authData.user.id, // Use auth ID as profile ID for admins
+            auth_user_id: authData.user.id,
+            display_name: "System Admin",
+            role: "admin",
+            metadata: { email: authData.user.email || "" }
+          };
+        }
+        
+        setAdminProfile(adminProf);
+        setAdminEditForm({
+          name: adminProf.display_name || "",
+          email: adminProf.metadata?.email || authData.user.email || "",
+          phone: adminProf.metadata?.phone || ""
+        });
+      }
+
       const { count: studentCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student');
       const { count: requestCount } = await supabase.from('registrations').select('*', { count: 'exact', head: true }).eq('status', 'new');
       const { data: courses } = await supabase.from('courses').select('is_published');
       const { data: payments } = await supabase.from('payments').select('amount').eq('status', 'paid');
       const totalRevenue = payments?.reduce((acc, curr) => acc + Number(curr.amount), 0) || 0;
 
-      // Fetch prospects to calculate active and won totals
       const { data: prospectsData } = await supabase.from('prospects').select('status');
       const activeProspects = prospectsData?.filter(p => !['Lost', 'Converted (Won)'].includes(p.status)).length || 0;
       const wonProspects = prospectsData?.filter(p => p.status === 'Converted (Won)').length || 0;
@@ -154,6 +188,41 @@ export default function AdminDashboard() {
       setLoading(false);
     }
   }
+
+  // --- HANDLE ADMIN PROFILE UPDATE ---
+  const handleUpdateAdminProfile = async () => {
+    if (!adminProfile) return;
+    setIsProcessing(true);
+    try {
+      // FIX: Use UPSERT instead of UPDATE. If the row doesn't exist yet, it creates it.
+      const { error } = await supabase.from('profiles').upsert({
+        id: adminProfile.id,
+        auth_user_id: adminProfile.auth_user_id,
+        role: adminProfile.role || 'admin',
+        display_name: adminEditForm.name,
+        status: 'active',
+        metadata: {
+          ...adminProfile.metadata,
+          email: adminEditForm.email,
+          phone: adminEditForm.phone
+        }
+      });
+
+      if (error) throw error;
+      
+      alert("Admin profile successfully updated!");
+      setAdminProfile({
+        ...adminProfile, 
+        display_name: adminEditForm.name, 
+        metadata: { ...adminProfile.metadata, email: adminEditForm.email, phone: adminEditForm.phone }
+      });
+      setShowAdminProfile(false);
+    } catch (err: any) {
+      alert("Failed to update profile: " + err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   // --- HTML GENERATOR FOR LIVE PREVIEW ---
   const generateLivePreviewHTML = () => {
@@ -486,8 +555,14 @@ export default function AdminDashboard() {
             </h1>
           </div>
           
-          {/* HIGH PRIORITY QUICK ACTIONS */}
+          {/* HIGH PRIORITY QUICK ACTIONS - ADDED "MY PROFILE" BUTTON */}
           <div className="flex flex-col sm:flex-row w-full md:w-auto gap-4 shrink-0">
+            <button 
+              onClick={() => setShowAdminProfile(true)} 
+              className="w-full sm:w-auto px-6 py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 shadow-xl border border-white/10 transition-all"
+            >
+              <User size={16}/> My Profile
+            </button>
             <Link 
               href="/admin/directory" 
               className="w-full sm:w-auto px-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 shadow-xl shadow-blue-900/20 transition-all"
@@ -724,7 +799,7 @@ export default function AdminDashboard() {
         {selectedLead && (
           <div className="fixed inset-0 z-[100] flex justify-end">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedLead(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-            <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25 }} className="relative w-full max-w-xl bg-[#0f172a] border-l border-white/10 h-full shadow-2xl flex flex-col p-8 space-y-8">
+            <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25 }} className="relative w-full max-w-xl bg-[#0f172a] border-l border-white/10 h-full shadow-2xl flex flex-col p-8 space-y-8 overflow-y-auto">
               
               <div className="flex items-center justify-between">
                 <div className="space-y-1">
@@ -904,6 +979,46 @@ export default function AdminDashboard() {
                   )}
                 </div>
               )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- ADDED: ADMIN PROFILE SLIDE-OVER --- */}
+      <AnimatePresence>
+        {showAdminProfile && adminProfile && (
+          <div className="fixed inset-0 z-[150] flex justify-end">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowAdminProfile(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+            <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 25 }} className="relative w-full max-w-md bg-[#0f172a] border-l border-white/10 h-full shadow-2xl flex flex-col p-8 space-y-8 overflow-y-auto">
+              
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <h2 className="text-3xl font-black uppercase italic text-blue-400">Admin Settings</h2>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Update your profile data</p>
+                </div>
+                <button onClick={() => setShowAdminProfile(false)} className="p-3 rounded-full bg-white/5 hover:bg-white/10 transition-all"><X size={24}/></button>
+              </div>
+              
+              <div className="space-y-6">
+                 <div className="space-y-2">
+                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Display Name</label>
+                   <input value={adminEditForm.name} onChange={e => setAdminEditForm({...adminEditForm, name: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold focus:border-blue-500 outline-none transition-colors" />
+                 </div>
+                 <div className="space-y-2">
+                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Email Address</label>
+                   <input type="email" value={adminEditForm.email} onChange={e => setAdminEditForm({...adminEditForm, email: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold focus:border-blue-500 outline-none transition-colors" />
+                 </div>
+                 <div className="space-y-2">
+                   <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Phone Number</label>
+                   <input type="tel" value={adminEditForm.phone} onChange={e => setAdminEditForm({...adminEditForm, phone: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold focus:border-blue-500 outline-none transition-colors" />
+                 </div>
+                 
+                 <div className="pt-6 border-t border-white/5">
+                   <button onClick={handleUpdateAdminProfile} disabled={isProcessing} className="w-full p-5 bg-blue-600 rounded-2xl font-black uppercase italic flex items-center justify-center gap-2 hover:bg-blue-500 transition-all shadow-xl disabled:opacity-50 shadow-blue-900/20">
+                      {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <><Save size={18}/> Save Profile</>}
+                   </button>
+                 </div>
+              </div>
             </motion.div>
           </div>
         )}
