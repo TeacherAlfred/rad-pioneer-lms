@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Mail, Save, Users, Send, Loader2, ArrowLeft, 
-  Settings, CheckCircle2, FileText, Search, Filter, Eye, PenTool, Clock, History, Activity, MessageSquare
+  Settings, CheckCircle2, FileText, Search, Filter, Eye, PenTool, Clock, History, Activity, MessageSquare, ChevronDown
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -29,6 +29,9 @@ export default function CommunicationsHub() {
   const [dispatchDraft, setDispatchDraft] = useState({ subject: "", body: "" });
   const [isSending, setIsSending] = useState(false);
   const [commsLogs, setCommsLogs] = useState<any[]>([]);
+  
+  // --- NEW: HISTORY ACCORDION STATE ---
+  const [expandedHistory, setExpandedHistory] = useState<string[]>([]);
 
   // Inbox State
   const [inboxConversations, setInboxConversations] = useState<any[]>([]);
@@ -47,7 +50,6 @@ export default function CommunicationsHub() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
         (payload) => {
-          // If a new message comes in, refresh the data to rebuild the inbox groups
           console.log("New transmission received:", payload);
           fetchData(); 
         }
@@ -70,31 +72,25 @@ export default function CommunicationsHub() {
     setLoading(true);
     try {
       // 1. Fetch Email Templates
-      const { data: tplData, error: tplError } = await supabase
+      const { data: tplData } = await supabase
         .from('email_templates')
         .select('*')
         .order('created_at', { ascending: false });
-        
-      if (tplError) console.error("🚨 Templates Fetch Error:", tplError);
-      else if (tplData) setTemplates(tplData);
+      if (tplData) setTemplates(tplData);
 
       // 2. Fetch Guardians for the Dispatch List
-      const { data: gData, error: gError } = await supabase
+      const { data: gData } = await supabase
         .from('profiles')
         .select('*')
         .eq('role', 'guardian');
-        
-      if (gError) console.error("🚨 Guardians Fetch Error:", gError);
-      else if (gData) setGuardians(gData);
+      if (gData) setGuardians(gData);
 
       // 3. Fetch Communication Logs (The History Tab)
-      const { data: logsData, error: logsError } = await supabase
+      const { data: logsData } = await supabase
         .from('communication_logs')
         .select('*')
         .order('sent_at', { ascending: false });
-        
-      if (logsError) console.error("🚨 Logs Fetch Error:", logsError);
-      else if (logsData) setCommsLogs(logsData);
+      if (logsData) setCommsLogs(logsData);
 
       // 4. INBOX FETCH LOGIC
       if (activeTab === 'inbox') {
@@ -103,16 +99,11 @@ export default function CommunicationsHub() {
           .select('*')
           .order('created_at', { ascending: false });
 
-        if (msgError) {
-           console.error("🚨 Messages Fetch Error:", msgError);
-           throw new Error(`Supabase Error: ${msgError.message || msgError.details || 'Check console'}`);
-        }
+        if (msgError) throw msgError;
 
-        const { data: allProfiles, error: profileError } = await supabase
+        const { data: allProfiles } = await supabase
           .from('profiles')
           .select('id, display_name');
-          
-        if (profileError) console.error("🚨 Profiles Fetch Error:", profileError);
 
         const profileMap = (allProfiles || []).reduce((acc: any, profile) => {
           acc[profile.id] = profile.display_name;
@@ -159,8 +150,8 @@ export default function CommunicationsHub() {
         }
       }
 
-    } catch (err: any) {
-      console.error("Critical Failure in fetchData:", err.message || err);
+    } catch (err) {
+      console.error("Error loading communications:", err);
     } finally {
       setLoading(false);
     }
@@ -311,7 +302,6 @@ export default function CommunicationsHub() {
       setSelectedGuardians([]);
       setDispatchDraft({ subject: "", body: "" });
       
-      // Instantly refresh the logs so the history tab is up to date!
       await fetchData();
 
     } catch (err) {
@@ -322,11 +312,33 @@ export default function CommunicationsHub() {
     }
   };
 
+  // --- NEW: TOGGLE HISTORY ACCORDION ---
+  const toggleHistoryGroup = (email: string) => {
+    setExpandedHistory(prev => 
+      prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]
+    );
+  };
+
   const filteredGuardians = guardians.filter(g => {
     const meta = typeof g.metadata === 'string' ? JSON.parse(g.metadata) : g.metadata;
     return g.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
            meta?.email?.toLowerCase().includes(searchQuery.toLowerCase());
   });
+
+  // --- NEW: PROCESS AND GROUP LOGS FOR HISTORY TAB ---
+  const groupedLogsArray = Object.values(commsLogs.reduce((acc: any, log: any) => {
+    const key = log.recipient_email || 'Unknown';
+    if (!acc[key]) {
+      acc[key] = { email: key, name: log.recipient_name, logs: [], latest: log.sent_at };
+    }
+    acc[key].logs.push(log);
+    // Ensure the latest timestamp is always correct for sorting the main list
+    if (new Date(log.sent_at) > new Date(acc[key].latest)) {
+      acc[key].latest = log.sent_at;
+    }
+    return acc;
+  }, {})).sort((a: any, b: any) => new Date(b.latest).getTime() - new Date(a.latest).getTime());
+
 
   if (loading && activeTab !== 'history') return (
     <div className="h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
@@ -628,50 +640,93 @@ export default function CommunicationsHub() {
           {/* TAB 3: TRANSMISSION HISTORY    */}
           {/* ============================== */}
           {activeTab === 'history' && (
-            <motion.div key="history" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="bg-white/[0.02] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl">
-               <table className="w-full text-left">
-                  <thead className="bg-white/5 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                    <tr>
-                      <th className="px-8 py-5">Sent Date</th>
-                      <th className="px-8 py-5">Recipient</th>
-                      <th className="px-8 py-5">Subject Line</th>
-                      <th className="px-8 py-5">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                     {commsLogs.length === 0 ? (
-                        <tr><td colSpan={4} className="px-8 py-24 text-center text-slate-500 font-bold italic">No activity recorded yet.</td></tr>
-                     ) : (
-                        commsLogs.map(log => {
-                           const isAction = log.status === 'Action Taken';
-                           return (
-                             <tr key={log.id} className={`transition-colors ${isAction ? 'bg-purple-500-[0.02] hover:bg-purple-500/[0.04]' : 'hover:bg-white/[0.02]'}`}>
-                                <td className="px-8 py-6 align-top">
-                                   <span className="text-sm font-bold text-slate-300">{new Date(log.sent_at).toLocaleDateString()}</span>
-                                   <p className="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-widest flex items-center gap-1"><Clock size={10}/> {new Date(log.sent_at).toLocaleTimeString()}</p>
-                                </td>
-                                <td className="px-8 py-6 align-top">
-                                   <span className="text-sm font-bold text-white block">{log.recipient_name}</span>
-                                   <span className="text-xs text-slate-400 mt-1 block">{log.recipient_email}</span>
-                                </td>
-                                <td className={`px-8 py-6 align-top text-sm font-medium ${isAction ? 'text-purple-300 italic' : 'text-slate-300'}`}>
-                                   {log.subject}
-                                </td>
-                                <td className="px-8 py-6 align-top">
-                                   <span className={`px-3 py-1 border rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 w-fit ${
-                                      isAction 
-                                      ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' 
-                                      : 'bg-green-500/10 text-green-400 border-green-500/20'
-                                   }`}>
-                                      {isAction ? <Activity size={10}/> : <CheckCircle2 size={10}/>} {log.status}
-                                   </span>
-                                </td>
-                             </tr>
-                           )
-                        })
-                     )}
-                  </tbody>
-               </table>
+            <motion.div key="history" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4">
+               {groupedLogsArray.length === 0 ? (
+                 <div className="bg-white/[0.02] border border-white/10 rounded-[32px] p-24 text-center text-slate-500 font-bold italic shadow-2xl">
+                   No activity recorded yet.
+                 </div>
+               ) : (
+                 groupedLogsArray.map((group: any) => {
+                   const isExpanded = expandedHistory.includes(group.email);
+                   return (
+                     <div key={group.email} className="bg-white/[0.02] border border-white/10 rounded-[24px] overflow-hidden shadow-lg transition-all">
+                       <button
+                         onClick={() => toggleHistoryGroup(group.email)}
+                         className="w-full flex items-center justify-between p-6 hover:bg-white/[0.02] transition-colors text-left"
+                       >
+                         <div className="flex items-center gap-4">
+                           <div className="w-12 h-12 rounded-full bg-teal-500/10 flex items-center justify-center border border-teal-500/20 text-teal-400">
+                             <Users size={20} />
+                           </div>
+                           <div>
+                             <h3 className="text-lg font-black uppercase italic text-white leading-none mb-1">{group.name}</h3>
+                             <p className="text-xs text-slate-400">{group.email}</p>
+                           </div>
+                         </div>
+                         <div className="flex items-center gap-6">
+                           <div className="text-right hidden sm:block">
+                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Total Transmissions</p>
+                             <p className="text-sm font-bold text-teal-400">{group.logs.length}</p>
+                           </div>
+                           <div className="text-right hidden sm:block">
+                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Last Sent</p>
+                             <p className="text-sm font-bold text-slate-300">{new Date(group.latest).toLocaleDateString()}</p>
+                           </div>
+                           <div className={`p-2 rounded-full bg-white/5 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
+                             <ChevronDown size={16} />
+                           </div>
+                         </div>
+                       </button>
+
+                       <AnimatePresence>
+                         {isExpanded && (
+                           <motion.div
+                             initial={{ height: 0, opacity: 0 }}
+                             animate={{ height: 'auto', opacity: 1 }}
+                             exit={{ height: 0, opacity: 0 }}
+                             className="border-t border-white/5"
+                           >
+                             <table className="w-full text-left">
+                               <thead className="bg-black/20 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                                 <tr>
+                                   <th className="px-8 py-4">Sent Date/Time</th>
+                                   <th className="px-8 py-4">Subject Line</th>
+                                   <th className="px-8 py-4">Status</th>
+                                 </tr>
+                               </thead>
+                               <tbody className="divide-y divide-white/5 bg-[#020617]/30">
+                                 {group.logs.map((log: any) => {
+                                   const isAction = log.status === 'Action Taken';
+                                   return (
+                                     <tr key={log.id} className={`transition-colors ${isAction ? 'bg-purple-500/[0.02] hover:bg-purple-500/[0.05]' : 'hover:bg-white/[0.02]'}`}>
+                                       <td className="px-8 py-4 align-middle">
+                                         <span className="text-xs font-bold text-slate-300 block">{new Date(log.sent_at).toLocaleDateString()}</span>
+                                         <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-1 mt-0.5"><Clock size={10}/> {new Date(log.sent_at).toLocaleTimeString()}</span>
+                                       </td>
+                                       <td className={`px-8 py-4 align-middle text-xs font-medium ${isAction ? 'text-purple-300 italic' : 'text-slate-300'}`}>
+                                         {log.subject}
+                                       </td>
+                                       <td className="px-8 py-4 align-middle">
+                                         <span className={`px-2.5 py-1 border rounded-lg text-[8px] font-black uppercase tracking-widest flex items-center gap-1.5 w-fit ${
+                                           isAction 
+                                           ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' 
+                                           : 'bg-green-500/10 text-green-400 border-green-500/20'
+                                         }`}>
+                                           {isAction ? <Activity size={10}/> : <CheckCircle2 size={10}/>} {log.status}
+                                         </span>
+                                       </td>
+                                     </tr>
+                                   )
+                                 })}
+                               </tbody>
+                             </table>
+                           </motion.div>
+                         )}
+                       </AnimatePresence>
+                     </div>
+                   );
+                 })
+               )}
             </motion.div>
           )}
 
