@@ -407,6 +407,42 @@ export default function DirectoryPage() {
     }
   };
 
+  const handleDeleteProfile = async () => {
+    if (!selectedProfile) return;
+    
+    // Custom warning based on the type of profile being deleted
+    const isLeadGuardian = selectedProfile.role === 'guardian' && !selectedProfile.metadata?.household_lead_id;
+    const confirmMessage = isLeadGuardian 
+      ? `🚨 WARNING: You are about to delete a LEAD GUARDIAN (${selectedProfile.display_name}).\n\nIf they have linked Pioneers, this will fail unless your database is set to CASCADE deletes. Are you absolutely sure?`
+      : `Are you sure you want to permanently delete ${selectedProfile.display_name}? This action cannot be undone.`;
+
+    if (!window.confirm(confirmMessage)) return;
+
+    setIsProcessing(true);
+    try {
+      const { error } = await supabase.from('profiles').delete().eq('id', selectedProfile.id);
+      
+      if (error) {
+        // If it's a foreign key error, give a helpful human-readable message
+        if (error.code === '23503') {
+           throw new Error("Cannot delete this profile because other records (like Pioneers or Enrollments) are still linked to it. Please delete the linked accounts first, or enable 'CASCADE' deletes in Supabase.");
+        }
+        throw error;
+      }
+
+      await fetchDirectory();
+      setSelectedProfile(null);
+      setIsReviewMode(false);
+      setReviewQueue([]);
+      alert("Profile permanently deleted.");
+      
+    } catch (err: any) {
+      alert("Deletion failed: " + err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const filteredProfiles = profiles.filter(p => {
     const matchesSearch = p.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.metadata?.email?.toLowerCase().includes(searchQuery.toLowerCase());
     let matchesRole = false;
@@ -936,6 +972,24 @@ export default function DirectoryPage() {
                 <div className="bg-white/[0.02] border border-white/5 p-8 md:p-10 rounded-[40px] shadow-2xl space-y-3">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2 flex items-center gap-2"><BookOpen size={14}/> Operational Notes</label>
                   <textarea value={workspaceEditData?.metadata?.admin_notes || ''} onChange={e => setWorkspaceEditData({...workspaceEditData, metadata: {...workspaceEditData.metadata, admin_notes: e.target.value}})} className="w-full bg-[#020617] border border-white/10 rounded-2xl p-5 text-sm font-bold text-slate-300 min-h-[160px] outline-none focus:border-purple-500 shadow-inner" placeholder="Internal private notes..." />
+                </div>
+
+                {/* --- NEW: DANGER ZONE CARD --- */}
+                <div className="bg-red-500/5 border border-red-500/20 p-8 md:p-10 rounded-[40px] shadow-2xl space-y-4 mt-8">
+                  <h3 className="text-sm font-black uppercase tracking-widest text-red-500 flex items-center gap-2 border-b border-red-500/20 pb-5">
+                    <ShieldAlert size={18}/> Danger Zone
+                  </h3>
+                  <p className="text-xs text-slate-400 italic">
+                    Permanently remove this entity from the RAD database. This action is irreversible.
+                  </p>
+                  <button 
+                    onClick={handleDeleteProfile} 
+                    disabled={isProcessing}
+                    className="w-full p-4 bg-red-600/10 border border-red-500/30 rounded-2xl font-black uppercase tracking-widest text-red-500 hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
+                  >
+                    {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                    Terminate Profile
+                  </button>
                 </div>
 
               </div>
