@@ -7,7 +7,7 @@ import {
   ShieldCheck, Zap, Star, MapPin, 
   ChevronLeft, ChevronRight, Clock, X,
   Mail, Phone, Linkedin, Instagram, Facebook, Award, Image as ImageIcon,
-  CheckSquare, Square, Loader2
+  CheckSquare, Square, Loader2, Sparkles, UserCircle, Rocket
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -75,6 +75,9 @@ export default function LandingPage() {
   const [index, setIndex] = useState(0);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
   
+  // --- WELCOME POPUP STATE ---
+  const [showWelcomePopup, setShowWelcomePopup] = useState(false);
+
   const [pastEvents, setPastEvents] = useState<any[]>(
     EVENT_FOLDERS.map(e => ({ ...e, thumbnail: '/logo/rad-logo_white_2.png', gallery: [] }))
   );
@@ -97,6 +100,18 @@ export default function LandingPage() {
     smartHomeMode: "",
     botField: "" // Honeypot field for spam bots
   });
+
+  useEffect(() => {
+    const hasSeenPopup = sessionStorage.getItem("rad_welcome_seen");
+    if (!hasSeenPopup) {
+      // 2 seconds delay for suspenseful dramatic entry
+      const timer = setTimeout(() => {
+        setShowWelcomePopup(true);
+        sessionStorage.setItem("rad_welcome_seen", "true");
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => { setIndex((prev) => (prev + 1) % featuredPrograms.length); }, 8000);
@@ -164,14 +179,10 @@ export default function LandingPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      
       if (params.get('register') === 'plk-bootcamp') {
-        // Wait a fraction of a second so the background page animations can load smoothly
         setTimeout(() => {
           handleOpenRegister("Home Automation Bootcamp (PLK)");
         }, 300);
-        
-        // Clean the URL afterward so if they hit "refresh", the modal doesn't force-open again
         window.history.replaceState({}, '', window.location.pathname);
       }
     }
@@ -191,28 +202,24 @@ const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
     
-    // 1. SPAM HONEYPOT CHECK
     if (formData.botField) {
       setSubmitSuccess(true);
       setTimeout(() => setIsRegisterOpen(false), 3000); 
       return;
     }
 
-    // 2. PHONE NUMBER VALIDATION
     const phoneRegex = /^\+?[0-9\s\-()]{9,15}$/;
     if (!phoneRegex.test(formData.phone.trim())) {
       setFormError("Please enter a valid phone number.");
       return;
     }
 
-    // 3. STUDENT AGE VALIDATION
     const age = parseInt(formData.studentAge);
     if (isNaN(age) || age < 5 || age > 18) {
       setFormError("Student age must be a number between 5 and 18.");
       return;
     }
 
-    // 4. PROGRAM SELECTION VALIDATION
     if (formData.selectedPrograms.length === 0) {
       setFormError("Please select at least one program of interest.");
       return;
@@ -251,7 +258,6 @@ try {
 
       if (error) throw error;
       
-      // --- TRIGGER AUTOMATED CONFIRMATION EMAIL IN BACKGROUND ---
       fetch('/api/send-registration-conf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -261,7 +267,6 @@ try {
           studentName: formData.studentName
         })
       }).catch(err => console.error("Silent background email error:", err));
-      // -----------------------------------------------------------
 
       setSubmitSuccess(true);
       setTimeout(() => setIsRegisterOpen(false), 3000); 
@@ -281,6 +286,132 @@ try {
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
+      {/* --- NEW: PREMIUM WELCOME POPUP WITH ANIMATED EFFECTS --- */}
+      <AnimatePresence>
+        {showWelcomePopup && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-6">
+            {/* Dark blur backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+              onClick={() => setShowWelcomePopup(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+            
+            <motion.div 
+              initial={{ scale: 0.8, y: 50, opacity: 0 }} 
+              animate={{ scale: 1, y: 0, opacity: 1 }} 
+              exit={{ scale: 0.9, y: 30, opacity: 0 }}
+              transition={{ type: "spring", damping: 20, stiffness: 100, mass: 1 }}
+              className="relative w-full max-w-2xl bg-gradient-to-b from-[#0f172a] to-[#020617] rounded-[48px] overflow-hidden shadow-[0_0_100px_rgba(59,130,246,0.15)] border border-white/10"
+            >
+              {/* Sweeping Glass Glare Effect */}
+              <motion.div 
+                initial={{ x: "-100%" }}
+                animate={{ x: "200%" }}
+                transition={{ duration: 1.8, ease: "easeInOut", delay: 0.2 }}
+                className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/5 to-transparent skew-x-12 z-0 pointer-events-none"
+              />
+
+              {/* Ambient Orbs */}
+              <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/20 rounded-full blur-[80px] pointer-events-none" />
+              <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-600/10 rounded-full blur-[80px] pointer-events-none" />
+              
+              <div className="p-10 md:p-14 flex flex-col items-center text-center relative z-10">
+                <button onClick={() => setShowWelcomePopup(false)} className="absolute top-6 right-6 p-3 rounded-full bg-white/5 hover:bg-white/10 transition-colors text-slate-400 hover:text-white z-50">
+                  <X size={20} />
+                </button>
+
+                {/* Animated Icon with Particle Burst */}
+                <div className="relative mb-10 mt-4">
+                  {/* Central Core */}
+                  <motion.div 
+                    initial={{ rotate: -90, scale: 0 }}
+                    animate={{ rotate: 0, scale: 1 }}
+                    transition={{ type: "spring", duration: 1, delay: 0.3 }}
+                    className="w-24 h-24 bg-gradient-to-br from-blue-500 to-purple-600 rounded-[28px] flex items-center justify-center border border-white/20 shadow-2xl relative z-10"
+                  >
+                    <Rocket size={40} className="text-white" />
+                  </motion.div>
+                  
+                  {/* Expanding Ring */}
+                  <motion.div 
+                    initial={{ scale: 0.8, opacity: 1 }}
+                    animate={{ scale: 2.5, opacity: 0 }}
+                    transition={{ duration: 1.5, delay: 0.3, ease: "easeOut" }}
+                    className="absolute inset-0 border-2 border-blue-400 rounded-[28px] z-0 pointer-events-none"
+                  />
+
+                  {/* Explosive Starburst Particles */}
+                  {[...Array(12)].map((_, i) => {
+                    const angle = (i * 360) / 12;
+                    return (
+                      <motion.div
+                        key={i}
+                        initial={{ x: 0, y: 0, scale: 0, opacity: 1 }}
+                        animate={{
+                          x: Math.cos((angle * Math.PI) / 180) * 120,
+                          y: Math.sin((angle * Math.PI) / 180) * 120,
+                          scale: [0, 1.5, 0],
+                          opacity: [1, 1, 0]
+                        }}
+                        transition={{ duration: 1.2, ease: "easeOut", delay: 0.3 }}
+                        className="absolute top-1/2 left-1/2 w-1.5 h-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_rgba(34,211,238,1)] z-0 pointer-events-none"
+                      />
+                    );
+                  })}
+                </div>
+
+                <div className="space-y-4 mb-10 overflow-hidden">
+                  <motion.p 
+                    initial={{ y: 20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.5 }}
+                    className="text-[10px] font-black uppercase tracking-[0.4em] text-blue-400"
+                  >
+                    System Online
+                  </motion.p>
+                  <motion.h2 
+                    initial={{ y: 20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.6 }}
+                    className="text-4xl md:text-5xl font-black uppercase italic tracking-tighter leading-[0.9]"
+                  >
+                    Welcome to the <br />
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-fuchsia-400">
+                      Revamped LMS
+                    </span>
+                  </motion.h2>
+                  <motion.p 
+                    initial={{ y: 20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    transition={{ delay: 0.7 }}
+                    className="text-slate-400 text-sm md:text-base leading-relaxed max-w-sm mx-auto pt-2"
+                  >
+                    We've entirely rebuilt the RAD Academy platform from the ground up to give our Pioneers the ultimate digital learning experience. 
+                  </motion.p>
+                </div>
+
+                <motion.div 
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.8 }}
+                  className="flex flex-col sm:flex-row items-center gap-4 w-full"
+                >
+                  <button onClick={() => { setShowWelcomePopup(false); handleOpenRegister("Demo LMS Access"); }} className="w-full py-5 bg-white text-[#020617] rounded-2xl font-black uppercase italic tracking-widest text-xs hover:bg-slate-200 transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] hover:scale-[1.02]">
+                    Request Access
+                  </button>
+                  <Link href="/login" onClick={() => setShowWelcomePopup(false)} className="w-full py-5 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic tracking-widest text-xs hover:bg-white/10 transition-all shadow-inner flex items-center justify-center gap-2 group hover:scale-[1.02]">
+                     <UserCircle size={18} className="text-slate-400 group-hover:text-blue-400 transition-colors" /> Pioneer Login
+                  </Link>
+                </motion.div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+
       {/* 1. NAVIGATION */}
       <nav className="fixed top-0 left-0 right-0 z-50 flex flex-col md:flex-row items-center justify-center md:justify-between p-4 md:p-8 gap-4 md:gap-0 max-w-7xl mx-auto backdrop-blur-xl bg-[#020617]/80 md:bg-[#020617]/40 border-b border-white/5">
         <div className="flex items-center gap-6">
@@ -289,12 +420,22 @@ try {
           </div>
         </div>
 
-        <div className="hidden md:flex items-center gap-8">
+        <div className="hidden md:flex items-center gap-6">
+          {/* LOGIN BUTTON */}
+          <Link href="/login" className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
+            <UserCircle size={16} /> Login
+          </Link>
           <button onClick={() => handleOpenRegister("Demo LMS Access")} className="px-6 py-3 rounded-full bg-white text-[#020617] text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg">Request Access</button>
         </div>
 
         <div className="flex md:hidden flex-col items-center gap-3 mt-2 w-full max-w-[250px]">
-          <button onClick={() => handleOpenRegister("Demo LMS Access")} className="w-full text-center py-3.5 rounded-full bg-white text-[#020617] text-[11px] font-black uppercase tracking-widest shadow-lg">Request Access</button>
+          {/* LOGIN BUTTON MOBILE */}
+          <div className="w-full flex gap-3">
+             <Link href="/login" className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-full border border-white/10 bg-white/5 text-white text-[11px] font-black uppercase tracking-widest">
+               <UserCircle size={14} /> Login
+             </Link>
+             <button onClick={() => handleOpenRegister("Demo LMS Access")} className="flex-1 text-center py-3.5 rounded-full bg-white text-[#020617] text-[11px] font-black uppercase tracking-widest shadow-lg">Register</button>
+          </div>
         </div>
       </nav>
 
@@ -722,8 +863,10 @@ try {
         <div className="max-w-7xl mx-auto mt-16 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-6 pb-6">
            <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.5em]">RAD Academy // © 2026</p>
            <div className="flex gap-8 text-[10px] font-bold text-slate-600 uppercase tracking-widest">
+             {/* PENDING CREATION
              <Link href="#" className="hover:text-slate-400 transition-colors">Privacy Policy</Link>
              <Link href="#" className="hover:text-slate-400 transition-colors">Terms of Service</Link>
+             */}
            </div>
         </div>
       </footer>
