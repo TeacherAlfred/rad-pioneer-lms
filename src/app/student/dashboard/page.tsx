@@ -5,8 +5,8 @@ import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrappe
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import PioneerXPBar from "@/components/ui/PioneerXPBar";
 import { 
-  Play, Rocket, UserCheck, Loader2, 
-  Map, Zap, BarChart3, ShieldCheck, Sparkles, Trophy, X, MonitorPlay, AlertTriangle
+  Play, Rocket, UserCheck, Loader2, Clock,
+  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -60,9 +60,10 @@ export default function DashboardPage() {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', userId).single();
         if (profile) {
           setUserProfile(profile);
-          if (profile.show_welcome_guide) {
-            setShowGuideModal(true);
-          }
+          // DISABLED FOR LAUNCH: Do not auto-show the welcome guide
+          // if (profile.show_welcome_guide) {
+          //   setShowGuideModal(true);
+          // }
         }
         
         const { data: enrollment } = await supabase
@@ -265,17 +266,51 @@ export default function DashboardPage() {
                 </div>
               </div>
             ) : (
-              <div className="bg-white/[0.02] border border-white/5 p-12 rounded-[56px] text-center space-y-4">
-                 <Trophy size={48} className="text-yellow-500 mx-auto" />
-                 <h2 className="text-3xl font-black uppercase italic">Course Completed!</h2>
-                 <p className="text-slate-400">You've cleared every sector. Return to the Roadmap to review your archive.</p>
+              <div className="relative bg-[#020617] border border-white/5 rounded-[56px] text-center shadow-2xl overflow-hidden group min-h-[400px] flex flex-col items-center justify-center">
+                
+                {/* 1. Massive Background Watermark */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden opacity-[0.02] group-hover:opacity-[0.05] transition-opacity duration-1000">
+                  <span className="text-[8rem] md:text-[12rem] font-black text-white whitespace-nowrap -rotate-12 italic tracking-tighter">
+                    COMING SOON
+                  </span>
+                </div>
+
+                {/* 2. Cyberpunk Diagonal Warning Ribbon */}
+                <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-14 bg-blue-500/10 border-y border-blue-500/20 -rotate-12 backdrop-blur-sm flex items-center justify-center gap-8 shadow-[0_0_50px_rgba(59,130,246,0.15)]">
+                      {/* Repeating ribbon text */}
+                      {[...Array(8)].map((_, i) => (
+                        <span key={i} className="text-blue-400 font-black text-[10px] uppercase tracking-[0.4em] flex items-center gap-8 drop-shadow-[0_0_10px_rgba(59,130,246,0.8)]">
+                          DEPLOYING SOON <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                        </span>
+                      ))}
+                  </div>
+                </div>
+
+                {/* 3. Foreground Content (Frosted Glass Panel) */}
+                <div className="relative z-10 space-y-6 flex flex-col items-center backdrop-blur-md bg-[#020617]/60 p-8 md:p-12 rounded-[40px] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] max-w-lg mx-4">
+                  <div className="w-20 h-20 bg-[#0f172a] border border-white/10 rounded-2xl flex items-center justify-center shadow-inner relative group-hover:scale-105 transition-transform duration-500">
+                     <div className="absolute inset-0 border border-blue-500/30 rounded-2xl animate-ping opacity-20" />
+                     <Clock size={32} className="text-blue-400" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tight text-white drop-shadow-lg">Courses Locked</h2>
+                    <p className="text-slate-400 text-sm leading-relaxed">
+                      Your portal is currently empty. Courses and missions will appear here once they are initialized by Command.
+                    </p>
+                  </div>
+                </div>
+                
+                {/* 4. Ambient Background Glow behind the ribbon */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-32 bg-blue-500/10 blur-[80px] -rotate-12 pointer-events-none z-0" />
+
               </div>
             )}
           </section>
         </div>
       </main>
 
-      {/* REVISIT BRIEFING BUTTON - Positioned for Sidebar area */}
+      {/* DISABLED FOR LAUNCH: REVISIT BRIEFING BUTTON
       <div className="fixed right-6 bottom-32 z-40 hidden lg:block w-64">
           <button 
             onClick={() => setShowGuideModal(true)}
@@ -289,7 +324,8 @@ export default function DashboardPage() {
               <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mt-1">Revisit Briefing</p>
             </div>
           </button>
-      </div>
+      </div> 
+      */}
 
       {/* --- MISSION BRIEFING POPUP --- */}
       <AnimatePresence>

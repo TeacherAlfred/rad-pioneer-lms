@@ -169,56 +169,100 @@ export default function CourseRoadmapPage() {
           </header>
 
           <section className="space-y-6">
-            {modules.map((mod) => {
-              const isOpen = openModuleId === mod.id;
-              return (
-                <div key={mod.id} className="bg-white/[0.02] border border-white/5 rounded-[40px] overflow-hidden transition-all shadow-2xl">
-                  <button onClick={() => setOpenModuleId(isOpen ? null : mod.id)} className="w-full flex items-center justify-between p-8 hover:bg-white/5 transition-all text-left">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black border ${mod.quiz?.passed ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'}`}>M{mod.order_index}</div>
-                      <div>
-                        <h2 className="text-xl font-black uppercase italic tracking-tight text-white">{mod.title}</h2>
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">{mod.description}</p>
-                      </div>
-                    </div>
-                    {isOpen ? <ChevronUp className="text-slate-500" /> : <ChevronDown className="text-slate-500" />}
-                  </button>
+            {modules.length === 0 ? (
+              <div className="relative bg-[#020617] border border-white/5 rounded-[56px] text-center shadow-2xl overflow-hidden group min-h-[500px] flex flex-col items-center justify-center mt-12">
+                
+                {/* Background Watermark */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden opacity-[0.02] group-hover:opacity-[0.04] transition-opacity duration-1000">
+                  <span className="text-[6rem] md:text-[10rem] font-black text-white whitespace-nowrap -rotate-12 italic tracking-tighter">
+                    CLASSIFIED
+                  </span>
+                </div>
 
-                  {isOpen && (
-                    <div className="p-8 pt-0 grid gap-4 pl-12 md:pl-20 border-l-2 border-blue-500/20 ml-14 mb-8">
-                      {mod.missions.map((m: any) => (
-                        <div key={m.id} className={`relative p-6 rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${m.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : m.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_rgba(59,130,246,0.1)]'}`}>
-                          <div className={`absolute -left-[39px] md:-left-[71px] w-6 h-6 rounded-full flex items-center justify-center border-4 border-[#020617] ${m.status === 'completed' ? 'bg-green-400' : m.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
-                            {m.status === 'completed' ? <CheckCircle2 size={12} className="text-[#020617]" /> : m.status === 'locked' ? <Lock size={10} className="text-[#020617]" /> : <div className="w-2 h-2 bg-[#020617] rounded-full" />}
+                {/* Cyberpunk Diagonal Warning Ribbon */}
+                <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-14 bg-fuchsia-500/10 border-y border-fuchsia-500/20 -rotate-12 backdrop-blur-sm flex items-center justify-center gap-8 shadow-[0_0_50px_rgba(217,70,239,0.15)]">
+                      {[...Array(8)].map((_, i) => (
+                        <span key={i} className="text-fuchsia-400 font-black text-[10px] uppercase tracking-[0.4em] flex items-center gap-8 drop-shadow-[0_0_10px_rgba(217,70,239,0.8)]">
+                          ROADMAP SECURED <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse" />
+                        </span>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Foreground Content */}
+                <div className="relative z-10 space-y-6 flex flex-col items-center backdrop-blur-md bg-[#020617]/70 p-8 md:p-14 rounded-[40px] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] max-w-lg mx-4">
+                  <div className="w-24 h-24 bg-[#0f172a] border border-white/10 rounded-3xl flex items-center justify-center shadow-inner relative group-hover:scale-105 transition-transform duration-500">
+                     <div className="absolute inset-0 border border-fuchsia-500/30 rounded-3xl animate-ping opacity-20" />
+                     <ShieldAlert size={40} className="text-fuchsia-400" />
+                  </div>
+                  <div className="space-y-3">
+                    <h2 className="text-3xl md:text-4xl font-black uppercase tracking-tighter italic text-white drop-shadow-lg leading-none">Awaiting Clearance</h2>
+                    <p className="text-slate-400 text-sm leading-relaxed max-w-sm mx-auto">
+                      Your training roadmap is currently classified. Sectors and missions will populate here once Command authorizes your curriculum.
+                    </p>
+                  </div>
+                  <Link href="/student/dashboard" className="px-8 py-4 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-300 hover:text-white hover:bg-white/10 transition-all mt-4 inline-block">
+                    Return to Dashboard
+                  </Link>
+                </div>
+                
+                {/* Ambient Glow */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-40 bg-fuchsia-500/10 blur-[100px] -rotate-12 pointer-events-none z-0" />
+
+              </div>
+            ) : (
+              modules.map((mod) => {
+                const isOpen = openModuleId === mod.id;
+                return (
+                  <div key={mod.id} className="bg-white/[0.02] border border-white/5 rounded-[40px] overflow-hidden transition-all shadow-2xl">
+                    <button onClick={() => setOpenModuleId(isOpen ? null : mod.id)} className="w-full flex items-center justify-between p-8 hover:bg-white/5 transition-all text-left">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black border ${mod.quiz?.passed ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'}`}>M{mod.order_index}</div>
+                        <div>
+                          <h2 className="text-xl font-black uppercase italic tracking-tight text-white">{mod.title}</h2>
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">{mod.description}</p>
+                        </div>
+                      </div>
+                      {isOpen ? <ChevronUp className="text-slate-500" /> : <ChevronDown className="text-slate-500" />}
+                    </button>
+
+                    {isOpen && (
+                      <div className="p-8 pt-0 grid gap-4 pl-12 md:pl-20 border-l-2 border-blue-500/20 ml-14 mb-8">
+                        {mod.missions.map((m: any) => (
+                          <div key={m.id} className={`relative p-6 rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${m.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : m.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_rgba(59,130,246,0.1)]'}`}>
+                            <div className={`absolute -left-[39px] md:-left-[71px] w-6 h-6 rounded-full flex items-center justify-center border-4 border-[#020617] ${m.status === 'completed' ? 'bg-green-400' : m.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
+                              {m.status === 'completed' ? <CheckCircle2 size={12} className="text-[#020617]" /> : m.status === 'locked' ? <Lock size={10} className="text-[#020617]" /> : <div className="w-2 h-2 bg-[#020617] rounded-full" />}
+                            </div>
+                            <div className="space-y-1">
+                              <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${m.status === 'completed' ? 'text-green-400' : 'text-blue-400'}`}>Milestone_{m.order_index}</span>
+                              <h3 className="text-2xl font-black italic uppercase text-white tracking-tight">{m.title}</h3>
+                            </div>
+                            {m.status !== 'locked' && (
+                              <button onClick={() => window.location.href = `/student/lesson/${m.id}`} className={`px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${m.status === 'completed' ? 'bg-white/10 text-white' : 'bg-white text-black hover:scale-105 shadow-xl'}`}>{m.status === 'completed' ? 'Review Archive' : 'Enter Mission'}</button>
+                            )}
+                          </div>
+                        ))}
+
+                        <div className={`relative p-8 mt-6 rounded-[32px] border-2 transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${mod.quiz?.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : mod.quiz?.status === 'completed' ? 'bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_40px_rgba(234,179,8,0.1)]' : 'bg-blue-500/10 border-blue-500/50 shadow-[0_0_40px_rgba(59,130,246,0.2)]'}`}>
+                          <div className={`absolute -left-[39px] md:-left-[71px] w-8 h-8 rounded-full flex items-center justify-center border-4 border-[#020617] ${mod.quiz?.status === 'completed' ? 'bg-yellow-400' : mod.quiz?.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
+                            {mod.quiz?.status === 'completed' ? <ShieldCheck size={16} className="text-[#020617]" /> : mod.quiz?.status === 'locked' ? <Lock size={12} className="text-[#020617]" /> : <ShieldAlert size={16} className="text-[#020617]" />}
                           </div>
                           <div className="space-y-1">
-                            <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${m.status === 'completed' ? 'text-green-400' : 'text-blue-400'}`}>Milestone_{m.order_index}</span>
-                            <h3 className="text-2xl font-black italic uppercase text-white tracking-tight">{m.title}</h3>
+                            <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${mod.quiz?.status === 'completed' ? 'text-yellow-400' : 'text-blue-400'}`}>Knowledge_Uplink</span>
+                            <h3 className="text-3xl font-black italic uppercase text-white tracking-tight">Level-Up Checkpoint</h3>
+                            {mod.quiz?.status === 'completed' && <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400 mt-2">Best Score: {mod.quiz?.bestScore}%</p>}
                           </div>
-                          {m.status !== 'locked' && (
-                            <button onClick={() => window.location.href = `/student/lesson/${m.id}`} className={`px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${m.status === 'completed' ? 'bg-white/10 text-white' : 'bg-white text-black hover:scale-105 shadow-xl'}`}>{m.status === 'completed' ? 'Review Archive' : 'Enter Mission'}</button>
+                          {mod.quiz?.status !== 'locked' && (
+                            <button onClick={() => window.location.href = `/student/quiz/${mod.id}`} className={`px-8 py-5 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${mod.quiz?.status === 'completed' ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-500/30' : 'bg-blue-500 text-black hover:scale-105 shadow-[0_0_20px_rgba(59,130,246,0.4)]'}`}>{mod.quiz?.status === 'completed' ? 'Review Checkpoint' : 'Start Checkpoint'}</button>
                           )}
                         </div>
-                      ))}
-
-                      <div className={`relative p-8 mt-6 rounded-[32px] border-2 transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${mod.quiz?.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : mod.quiz?.status === 'completed' ? 'bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_40px_rgba(234,179,8,0.1)]' : 'bg-blue-500/10 border-blue-500/50 shadow-[0_0_40px_rgba(59,130,246,0.2)]'}`}>
-                        <div className={`absolute -left-[39px] md:-left-[71px] w-8 h-8 rounded-full flex items-center justify-center border-4 border-[#020617] ${mod.quiz?.status === 'completed' ? 'bg-yellow-400' : mod.quiz?.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
-                          {mod.quiz?.status === 'completed' ? <ShieldCheck size={16} className="text-[#020617]" /> : mod.quiz?.status === 'locked' ? <Lock size={12} className="text-[#020617]" /> : <ShieldAlert size={16} className="text-[#020617]" />}
-                        </div>
-                        <div className="space-y-1">
-                          <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${mod.quiz?.status === 'completed' ? 'text-yellow-400' : 'text-blue-400'}`}>Knowledge_Uplink</span>
-                          <h3 className="text-3xl font-black italic uppercase text-white tracking-tight">Level-Up Checkpoint</h3>
-                          {mod.quiz?.status === 'completed' && <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400 mt-2">Best Score: {mod.quiz?.bestScore}%</p>}
-                        </div>
-                        {mod.quiz?.status !== 'locked' && (
-                          <button onClick={() => window.location.href = `/student/quiz/${mod.id}`} className={`px-8 py-5 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${mod.quiz?.status === 'completed' ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-500/30' : 'bg-blue-500 text-black hover:scale-105 shadow-[0_0_20px_rgba(59,130,246,0.4)]'}`}>{mod.quiz?.status === 'completed' ? 'Review Checkpoint' : 'Start Checkpoint'}</button>
-                        )}
                       </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                    )}
+                  </div>
+                );
+              })
+            )}
           </section>
         </div>
       </main>

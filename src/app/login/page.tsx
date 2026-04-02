@@ -47,9 +47,8 @@ export default function LoginPage() {
 
         if (authError) throw authError;
 
-        // CHECK FOR YOUR ADMIN ID: adfefd6c-954c-4e13-9423-5519aa89980a
+        // CHECK FOR YOUR ADMIN ID
         if (authData.user?.id === 'adfefd6c-954c-4e13-9423-5519aa89980a') {
-          // Hard redirect to sync session with Middleware
           window.location.href = "/admin/courses";
         } else {
           router.push(mode === "staff" ? "/admin/courses" : "/parent/dashboard");
@@ -67,7 +66,11 @@ export default function LoginPage() {
 
       if (userFound && userFound.length > 0) {
         const dbUser = userFound[0];
-        const isPinMatch = String(dbUser.pin_hash).trim() === String(typedPin).trim();
+        
+        // BUG FIX: Check temp_entry_pin (where Onboarding saves it) OR pin_hash
+        const isPinMatch = 
+          String(dbUser.temp_entry_pin).trim() === String(typedPin).trim() || 
+          String(dbUser.pin_hash).trim() === String(typedPin).trim();
 
         if (isPinMatch) {
           const todayUTC = new Date().toISOString().split('T')[0];
@@ -96,19 +99,22 @@ export default function LoginPage() {
               .eq('id', dbUser.id);
           }
 
+          // Attempt to log them into Supabase Auth with shadow email
+          // We don't check for an error here in case the shadow auth account hasn't been generated yet
           const shadowEmail = `${typedName.toLowerCase()}@pioneer.bot`;
           await supabase.auth.signInWithPassword({
             email: shadowEmail,
             password: typedPin,
           });
 
+          // Set the critical local session variable
           localStorage.setItem("pioneer_session", JSON.stringify(dbUser));
           router.push("/student/dashboard");
         } else {
           setError("Oops! That Secret Code didn't work.");
         }
       } else {
-        setError("Oops! We don't know that name.");
+        setError("Oops! We don't know that username.");
       }
     } catch (err: any) {
       setError(err.message || "Something went wrong.");
@@ -151,7 +157,8 @@ export default function LoginPage() {
         }
 
         const shadowEmail = `${dbUser.student_identifier.toLowerCase()}@pioneer.bot`;
-        await supabase.auth.signInWithPassword({ email: shadowEmail, password: dbUser.pin_hash });
+        const authPassword = dbUser.temp_entry_pin || dbUser.pin_hash; // Safety check
+        await supabase.auth.signInWithPassword({ email: shadowEmail, password: String(authPassword) });
 
         localStorage.setItem("pioneer_session", JSON.stringify(dbUser));
         router.push("/student/dashboard");
@@ -189,8 +196,25 @@ export default function LoginPage() {
           {mode === "initial" && (
             <motion.div key="initial" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-4">
               <h1 className="text-4xl font-black uppercase italic tracking-tighter text-center mb-8">Welcome!</h1>
-              <LoginOption title="Use my Picture Combo" desc="Emoji + Color + Number" icon={<Zap size={24} className="text-rad-yellow" />} onClick={() => setMode("student-combo")} />
-              <LoginOption title="Use my Name & Code" desc="Type your name" icon={<User size={24} className="text-rad-blue" />} onClick={() => setMode("student-standard")} />
+              
+              {/* STUDENT NAME LOGIN - HIGH EMPHASIS */}
+              <LoginOption 
+                title="Pioneer Login" 
+                desc="Type your username & code" 
+                icon={<User size={24} />} 
+                onClick={() => setMode("student-standard")} 
+                accent="blue"
+              />
+              
+              {/* COMBO LOGIN - DISABLED */}
+              <LoginOption 
+                title="Use my Picture Combo" 
+                desc="Emoji + Color + Number" 
+                icon={<Zap size={24} />} 
+                onClick={() => setMode("student-combo")} 
+                disabled={true} 
+                accent="yellow"
+              />
               
               <div className="py-8 flex items-center gap-4">
                 <div className="h-px flex-1 bg-white/10" />
@@ -199,8 +223,23 @@ export default function LoginPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <LoginOption title="Teacher" small icon={<ShieldCheck size={18} className="text-rad-purple" />} onClick={() => setMode("staff")} />
-                <LoginOption title="Parent" small icon={<Users size={18} className="text-rad-green" />} onClick={() => setMode("parent")} />
+                {/* TEACHER PORTAL - HIGH EMPHASIS */}
+                <LoginOption 
+                  title="Teacher Portal" 
+                  small 
+                  icon={<ShieldCheck size={18} />} 
+                  onClick={() => setMode("staff")} 
+                  accent="purple"
+                />
+                
+                {/* PARENT PORTAL - NOW ENABLED */}
+                <LoginOption 
+                  title="Parent Portal" 
+                  small 
+                  icon={<Users size={18} />} 
+                  onClick={() => setMode("parent")} 
+                  accent="green"
+                />
               </div>
             </motion.div>
           )}
@@ -237,8 +276,8 @@ export default function LoginPage() {
               <button type="button" onClick={() => setMode("initial")} className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-white transition-colors"><ArrowLeft size={16} /> Back</button>
               <h2 className="text-3xl font-black uppercase italic tracking-tighter text-center">{mode === "staff" ? "Teacher Login" : mode === "parent" ? "Parent Login" : "Student Login"}</h2>
               <div className="space-y-4">
-                <input required type="text" value={identifier} onChange={(e) => setIdentifier(e.target.value)} className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 px-6 font-bold text-lg focus:border-rad-blue outline-none transition-all" placeholder={mode === "student-standard" ? "Your Name" : "Email"} />
-                <input required type={mode === "student-standard" ? "number" : "password"} value={secret} onChange={(e) => setSecret(e.target.value)} className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 px-6 font-bold text-lg focus:border-rad-blue outline-none transition-all" placeholder={mode === "student-standard" ? "Secret Code" : "Password"} />
+                <input required type="text" value={identifier} onChange={(e) => setIdentifier(e.target.value)} className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 px-6 font-bold text-lg focus:border-rad-blue outline-none transition-all" placeholder={mode === "student-standard" ? "Profile Username" : "Email"} />
+                <input required type={mode === "student-standard" ? "number" : "password"} value={secret} onChange={(e) => setSecret(e.target.value)} className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 px-6 font-bold text-lg focus:border-rad-blue outline-none transition-all" placeholder={mode === "student-standard" ? "4-Digit PIN" : "Password"} />
               </div>
               {error && (
                 <div className="p-4 rounded-xl bg-rad-red/10 border border-rad-red/20">
@@ -256,17 +295,60 @@ export default function LoginPage() {
   );
 }
 
-function LoginOption({ title, desc, icon, onClick, small = false }: any) {
+function LoginOption({ title, desc, icon, onClick, small = false, disabled = false, accent = "default" }: any) {
+  
+  // High Emphasis Container Styles for Active Buttons
+  const containerStyles: Record<string, string> = {
+    disabled: "bg-white/5 border border-white/5 opacity-40 cursor-not-allowed grayscale",
+    blue: "bg-blue-500/10 border border-blue-500/30 hover:bg-blue-500/20 hover:border-blue-500/50 hover:shadow-2xl hover:shadow-blue-500/20 group hover:-translate-y-1",
+    purple: "bg-purple-500/10 border border-purple-500/30 hover:bg-purple-500/20 hover:border-purple-500/50 hover:shadow-2xl hover:shadow-purple-500/20 group hover:-translate-y-1",
+    green: "bg-green-500/10 border border-green-500/30 hover:bg-green-500/20 hover:border-green-500/50 hover:shadow-2xl hover:shadow-green-500/20 group hover:-translate-y-1",
+    yellow: "bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20 hover:border-yellow-500/50 hover:shadow-2xl hover:shadow-yellow-500/20 group hover:-translate-y-1",
+    default: "bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 group hover:-translate-y-1"
+  };
+
+  // Colored Icon Backgrounds
+  const iconBgStyles: Record<string, string> = {
+    disabled: "bg-white/5",
+    blue: "bg-blue-500/20 text-blue-400 shadow-inner shadow-blue-500/50",
+    purple: "bg-purple-500/20 text-purple-400 shadow-inner shadow-purple-500/50",
+    green: "bg-green-500/20 text-green-400 shadow-inner shadow-green-500/50",
+    yellow: "bg-yellow-500/20 text-yellow-400 shadow-inner shadow-yellow-500/50",
+    default: "bg-white/10"
+  };
+
+  const activeContainerClass = disabled ? containerStyles.disabled : (containerStyles[accent] || containerStyles.default);
+  const activeIconBgClass = disabled ? iconBgStyles.disabled : (iconBgStyles[accent] || iconBgStyles.default);
+
   return (
-    <button onClick={onClick} className={`w-full ${small ? 'p-4' : 'p-6'} rounded-[32px] bg-white/5 border border-white/10 flex items-center justify-between group hover:bg-white/10 transition-all text-left`}>
+    <button 
+      onClick={disabled ? undefined : onClick} 
+      disabled={disabled}
+      type="button"
+      className={`w-full ${small ? 'p-4' : 'p-6'} rounded-[32px] flex items-center justify-between text-left transition-all duration-300 ${activeContainerClass}`}
+    >
       <div className="flex items-center gap-4">
-        <div className={`${small ? 'w-10 h-10' : 'w-14 h-14'} rounded-2xl bg-white/5 flex items-center justify-center transition-transform group-hover:scale-110`}>{icon}</div>
+        <div className={`${small ? 'w-10 h-10' : 'w-14 h-14'} rounded-2xl flex items-center justify-center transition-transform duration-300 ${!disabled && 'group-hover:scale-110 group-hover:rotate-3'} ${activeIconBgClass}`}>
+          {icon}
+        </div>
         <div>
-          <h3 className={`font-black uppercase italic ${small ? 'text-sm' : 'text-xl'} text-white leading-none mb-1`}>{title}</h3>
-          {!small && <p className="text-xs font-bold text-slate-500">{desc}</p>}
+          <h3 className={`font-black uppercase italic ${small ? 'text-sm' : 'text-xl'} ${disabled ? 'text-slate-400' : 'text-white'} leading-none mb-1`}>{title}</h3>
+          {!small && <p className={`text-xs font-bold ${disabled ? 'text-slate-600' : 'text-slate-400'}`}>{desc}</p>}
         </div>
       </div>
-      {!small && <ChevronRight size={20} className="text-slate-700 group-hover:text-white transition-transform group-hover:translate-x-1" />}
+      {!small && !disabled && <ChevronRight size={20} className="text-slate-400 group-hover:text-white transition-all duration-300 group-hover:translate-x-1" />}
+      
+      {/* COMING SOON BADGES */}
+      {!small && disabled && (
+        <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-white/5 px-2 py-1 rounded-md border border-white/5">
+          Coming Soon
+        </span>
+      )}
+      {small && disabled && (
+        <span className="text-[8px] font-black uppercase tracking-widest text-slate-500 bg-white/5 px-2 py-1 rounded-md border border-white/5 ml-2">
+          Soon
+        </span>
+      )}
     </button>
   );
 }

@@ -1,17 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Mail, Save, Users, Send, Loader2, ArrowLeft, 
-  Settings, CheckCircle2, FileText, Search, Filter, Eye, PenTool, Clock, History
+  Settings, CheckCircle2, FileText, Search, Filter, Eye, PenTool, Clock, History, Activity, MessageSquare
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function CommunicationsHub() {
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'templates' | 'dispatch' | 'history'>('templates');
+  const [activeTab, setActiveTab] = useState<'inbox' | 'templates' | 'dispatch' | 'history'>('inbox');
   
   // View Toggle States
   const [templateViewMode, setTemplateViewMode] = useState<"edit" | "visual">("edit");
@@ -30,40 +30,113 @@ export default function CommunicationsHub() {
   const [isSending, setIsSending] = useState(false);
   const [commsLogs, setCommsLogs] = useState<any[]>([]);
 
+  // Inbox State
+  const [inboxConversations, setInboxConversations] = useState<any[]>([]);
+  const [activeConversation, setActiveConversation] = useState<string | null>(null); // This is the parent's ID
+  const [activeMessages, setActiveMessages] = useState<any[]>([]);
+  const [replyText, setReplyText] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // ... inside your CommunicationsHub component ...
+
   useEffect(() => {
     fetchData();
+
+    // --- NEW: REAL-TIME SUBSCRIPTION FOR THE INBOX ---
+    const messagesSubscription = supabase
+      .channel('admin-inbox-updates')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        (payload) => {
+          // If a new message comes in, refresh the data to rebuild the inbox groups
+          console.log("New transmission received:", payload);
+          fetchData(); 
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(messagesSubscription);
+    };
   }, [activeTab]);
+
+  useEffect(() => {
+    // Scroll to bottom when opening a conversation or sending a reply
+    if (activeMessages.length > 0) {
+       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [activeMessages]);
 
   async function fetchData() {
     setLoading(true);
     try {
-      // Fetch Templates
-      const { data: tplData } = await supabase.from('email_templates').select('*').order('name');
-      if (tplData) setTemplates(tplData);
+      // ... (Keep your existing Templates, Guardians, and History fetch logic here) ...
 
-      // Fetch Guardians
-      const { data: guardData } = await supabase
-        .from('profiles')
-        .select('id, display_name, metadata, status')
-        .eq('role', 'guardian')
-        .eq('status', 'active');
-        
-      if (guardData) {
-        const validGuardians = guardData.filter(g => {
-          const meta = typeof g.metadata === 'string' ? JSON.parse(g.metadata) : g.metadata;
-          return !!meta?.email;
-        });
-        setGuardians(validGuardians);
-      }
+      // --- FIXED: INBOX FETCH LOGIC ---
+      if (activeTab === 'inbox') {
+        // 1. Fetch all messages
+        const { data: msgs, error: msgError } = await supabase
+          .from('messages')
+          .select('*')
+          .order('created_at', { ascending: false });
 
-      // Fetch Communication History
-      if (activeTab === 'history') {
-         const { data: logsData } = await supabase
-            .from('communication_logs')
-            .select('*')
-            .order('sent_at', { ascending: false })
-            .limit(100);
-         if (logsData) setCommsLogs(logsData);
+        if (msgError) throw msgError;
+
+        // 2. Fetch all profiles so we can manually map the names (safest approach)
+        const { data: allProfiles } = await supabase
+          .from('profiles')
+          .select('id, display_name');
+
+        const profileMap = (allProfiles || []).reduce((acc: any, profile) => {
+          acc[profile.id] = profile.display_name;
+          return acc;
+        }, {});
+
+        if (msgs) {
+          // Group by conversation (the parent's ID)
+          const grouped = msgs.reduce((acc: Record<string, any>, msg: any) => {
+  // Determine the parent ID involved in this message
+  const parentId = msg.sender_role === 'parent' ? msg.sender_id : msg.recipient_id;
+  
+  if (!parentId) return acc; // Skip orphaned messages
+  
+  if (!acc[parentId]) {
+    acc[parentId] = {
+      parentId: parentId,
+      parentName: profileMap[parentId] || "Unknown Guardian",
+      messages: [],
+      lastMessageTime: msg.created_at,
+      preview: msg.content,
+      unreadCount: 0
+    };
+  }
+  
+  // Count unread messages from parents
+  if (msg.sender_role === 'parent' && !msg.is_read) {
+     acc[parentId].unreadCount += 1;
+  }
+
+  // Prepend to keep chronological order for the chat view
+  acc[parentId].messages.unshift(msg); 
+  return acc;
+}, {} as Record<string, any>); // <--- Add the type assertion here
+
+          // Convert the grouped object back to an array and sort by most recent message
+          const sortedInbox = Object.values(grouped).sort((a: any, b: any) => {
+             return new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime();
+          });
+
+          setInboxConversations(sortedInbox);
+
+          // If an admin currently has a conversation open, update their active view too
+          if (activeConversation) {
+            const updatedActiveConv = sortedInbox.find((c: any) => c.parentId === activeConversation);
+            if (updatedActiveConv) {
+               setActiveMessages(updatedActiveConv.messages);
+            }
+          }
+        }
       }
 
     } catch (err) {
@@ -73,25 +146,82 @@ export default function CommunicationsHub() {
     }
   }
 
-  // --- HTML GENERATOR FOR LIVE PREVIEW ---
+  const handleSelectConversation = (conversation: any) => {
+    setActiveConversation(conversation.parentId);
+    setActiveMessages(conversation.messages);
+  };
+
+const handleSendReply = async () => {
+    if (!replyText.trim() || !activeConversation) return;
+
+    try {
+      // 1. Get the current session to identify the admin
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("No active session.");
+
+      // 2. Fetch the actual Profile UUID for this admin
+      const { data: adminProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('auth_user_id', session.user.id)
+        .single();
+
+      if (profileError || !adminProfile) {
+        console.error("Profile lookup failed:", profileError);
+        throw new Error("Could not find admin profile linked to this account.");
+      }
+
+      // 3. Insert the message using the PROFILE UUID
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          sender_id: adminProfile.id, // MUST be the UUID from public.profiles
+          recipient_id: activeConversation, // This is already the Parent's Profile UUID
+          sender_role: 'admin',
+          content: replyText,
+          is_read: true // Admin messages are read by default in this view
+        })
+        .select()
+        .single();
+
+      if (error) {
+        // Log the specific database error to see if it's RLS or Constraints
+        console.error("Supabase Insertion Error:", error);
+        throw error;
+      }
+
+      // 4. Update UI
+      setActiveMessages(prev => [...prev, data]);
+      setReplyText("");
+      
+      // Update inbox preview
+      setInboxConversations(prev => prev.map(conv => {
+        if (conv.parentId === activeConversation) {
+          return { ...conv, preview: data.content, lastMessageTime: data.created_at };
+        }
+        return conv;
+      }));
+
+    } catch (err: any) {
+      console.error("Failed to send reply:", err);
+      alert(`Send failed: ${err.message || 'Database error'}`);
+    }
+  };
+
   const generateEmailPreviewHTML = (content: string, subject: string) => {
     const whatsappLink = `#`;
-    
     return `
       <div style="font-family: Arial, sans-serif; max-w: 600px; margin: 0 auto; background-color: #0f172a; color: #f8fafc; padding: 40px; border-radius: 16px; border: 1px solid #1e293b; text-align: left;">
         <h2 style="color: #a855f7; text-transform: uppercase; font-style: italic; letter-spacing: 1px; margin-bottom: 24px; font-size: 24px;">
           ${subject || 'RAD Academy Transmission'}
         </h2>
-        
         <div style="font-size: 15px; line-height: 1.6; color: #e2e8f0; white-space: pre-wrap;">${content}</div>
-        
         <div style="margin-top: 40px; padding-top: 30px; border-top: 1px solid #1e293b; text-align: center;">
           <p style="color: #94a3b8; font-size: 14px; margin-bottom: 15px;">Need help or have questions? Our support team is just a tap away.</p>
           <a href="${whatsappLink}" style="background-color: #25D366; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
             💬 Chat with us on WhatsApp
           </a>
         </div>
-        
         <p style="color: #475569; font-size: 12px; margin-top: 40px; text-align: center;">
           RAD Academy HQ | Empowering the next generation of innovators.<br/>
           <span style="font-style: italic;">Please do not reply directly to this automated transmission.</span>
@@ -100,7 +230,6 @@ export default function CommunicationsHub() {
     `;
   };
 
-  // --- TEMPLATE MANAGEMENT ---
   const handleSaveTemplate = async () => {
     if (!selectedTemplate) return;
     setIsSaving(true);
@@ -120,15 +249,12 @@ export default function CommunicationsHub() {
     }
   };
 
-  // --- DISPATCH LOGIC ---
   const handleSelectTemplateForDispatch = (tpl: any) => {
     setDispatchDraft({ subject: tpl.subject, body: tpl.body_content });
   };
 
   const handleToggleGuardian = (id: string) => {
-    setSelectedGuardians(prev => 
-      prev.includes(id) ? prev.filter(gId => gId !== id) : [...prev, id]
-    );
+    setSelectedGuardians(prev => prev.includes(id) ? prev.filter(gId => gId !== id) : [...prev, id]);
   };
 
   const handleSelectAll = () => {
@@ -155,7 +281,6 @@ export default function CommunicationsHub() {
           return { email: meta.email, name: g.display_name };
         });
 
-      // Simulated Bulk Dispatch & Logging
       await new Promise(resolve => setTimeout(resolve, 2000));
       
       const logPayload = recipients.map(r => ({
@@ -212,26 +337,115 @@ export default function CommunicationsHub() {
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10">
-            <button onClick={() => setActiveTab('templates')} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${activeTab === 'templates' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+          <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10 overflow-x-auto max-w-full">
+            <button onClick={() => setActiveTab('inbox')} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase whitespace-nowrap transition-all ${activeTab === 'inbox' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+              <MessageSquare size={14}/> Inbox
+            </button>
+            <button onClick={() => setActiveTab('templates')} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase whitespace-nowrap transition-all ${activeTab === 'templates' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
               <FileText size={14}/> Templates
             </button>
-            <button onClick={() => setActiveTab('dispatch')} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${activeTab === 'dispatch' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+            <button onClick={() => setActiveTab('dispatch')} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase whitespace-nowrap transition-all ${activeTab === 'dispatch' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
               <Send size={14}/> Dispatch
             </button>
-            <button onClick={() => setActiveTab('history')} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${activeTab === 'history' ? 'bg-teal-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+            <button onClick={() => setActiveTab('history')} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-[10px] font-black uppercase whitespace-nowrap transition-all ${activeTab === 'history' ? 'bg-teal-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
               <History size={14}/> History
             </button>
           </div>
         </header>
 
         <AnimatePresence mode="wait">
-          
+
           {/* ============================== */}
-          {/* TAB 1: TEMPLATE MATRIX         */}
+          {/* TAB 0: INBOX (Parent Messages) */}
+          {/* ============================== */}
+          {activeTab === 'inbox' && (
+            <motion.div key="inbox" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-[600px]">
+              
+              {/* Message List */}
+              <div className="lg:col-span-1 bg-white/[0.02] border border-white/10 rounded-[32px] overflow-hidden flex flex-col">
+                <div className="p-6 border-b border-white/5">
+                  <h3 className="text-sm font-black uppercase italic text-white flex items-center gap-2">Parent Messages</h3>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
+                  {inboxConversations.length === 0 ? (
+                     <p className="text-center text-slate-500 text-xs py-10">No messages found.</p>
+                  ) : (
+                    inboxConversations.map((conv) => (
+                      <button 
+                        key={conv.parentId}
+                        onClick={() => handleSelectConversation(conv)}
+                        className={`w-full text-left p-4 rounded-2xl transition-all border ${activeConversation === conv.parentId ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="font-bold text-sm text-white flex items-center gap-2">
+                            {conv.parentName || "Unknown"}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-bold">
+                            {new Date(conv.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 line-clamp-2">{conv.preview}</p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Active Message & Reply */}
+              <div className="lg:col-span-2 bg-white/[0.02] border border-white/10 rounded-[32px] overflow-hidden flex flex-col shadow-2xl">
+                {!activeConversation ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-slate-500">
+                    <MessageSquare size={48} className="opacity-20 mb-4" />
+                    <p className="font-bold uppercase text-sm">Select a message to view</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="p-6 border-b border-white/5 bg-[#020617]/50">
+                      <div className="flex items-center gap-2 font-bold text-slate-300">
+                        <Users size={16}/> Chatting with: {inboxConversations.find(c => c.parentId === activeConversation)?.parentName}
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
+                      {activeMessages.map((msg) => {
+                         const isAdmin = msg.sender_role === 'admin';
+                         return (
+                           <div key={msg.id} className={`flex flex-col max-w-[80%] ${isAdmin ? 'ml-auto items-end' : 'mr-auto items-start'}`}>
+                             <div className={`p-4 rounded-2xl text-sm ${isAdmin ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-white/10 text-slate-200 rounded-bl-sm'}`}>
+                               {msg.content}
+                             </div>
+                             <span className="text-[10px] text-slate-500 mt-1 px-1 font-medium">
+                               {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                             </span>
+                           </div>
+                         );
+                      })}
+                      <div ref={messagesEndRef} />
+                    </div>
+                    <div className="p-6 bg-[#020617] border-t border-white/5">
+                      <div className="bg-[#0b101e] border border-white/10 rounded-2xl p-2 focus-within:border-indigo-500/50 transition-colors">
+                        <textarea 
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
+                          placeholder="Draft response to parent..."
+                          className="w-full h-20 bg-transparent p-3 text-sm text-white placeholder-slate-500 focus:outline-none resize-none custom-scrollbar"
+                        />
+                        <div className="flex justify-end px-3 pb-2 pt-2 border-t border-white/5">
+                          <button onClick={handleSendReply} disabled={!replyText.trim()} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-colors">
+                            <Send size={14} /> Send Reply
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {/* ============================== */}
+          {/* TAB 1: TEMPLATES               */}
           {/* ============================== */}
           {activeTab === 'templates' && (
-             // ... [YOUR EXISTING TAB 1 CODE REMAINS EXACTLY THE SAME HERE] ...
             <motion.div key="templates" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-1 space-y-4">
                 <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Available Protocols</h3>
@@ -270,7 +484,7 @@ export default function CommunicationsHub() {
                             <label className="text-[10px] font-black text-purple-400 uppercase tracking-widest ml-2">Body Content (Text/HTML)</label>
                             <span className="text-[9px] text-slate-500 bg-white/5 px-2 py-1 rounded-md">Use {'{{variable}}'} for dynamic data</span>
                           </div>
-                          <textarea value={selectedTemplate.body_content} onChange={e => setSelectedTemplate({...selectedTemplate, body_content: e.target.value})} className="w-full bg-[#0a0f1d] border border-white/10 rounded-2xl p-5 text-sm font-medium text-slate-300 min-h-[300px] outline-none focus:border-purple-500 transition-colors leading-relaxed" />
+                          <textarea value={selectedTemplate.body_content} onChange={e => setSelectedTemplate({...selectedTemplate, body_content: e.target.value})} className="w-full bg-[#0a0f1d] border border-white/10 rounded-2xl p-5 text-sm font-medium text-slate-300 min-h-[300px] outline-none focus:border-purple-500 transition-colors leading-relaxed custom-scrollbar" />
                         </div>
                       </>
                     ) : (
@@ -298,7 +512,6 @@ export default function CommunicationsHub() {
           {/* TAB 2: BULK DISPATCH CENTER    */}
           {/* ============================== */}
           {activeTab === 'dispatch' && (
-             // ... [YOUR EXISTING TAB 2 CODE REMAINS EXACTLY THE SAME HERE] ...
             <motion.div key="dispatch" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="space-y-6">
                 <div className="bg-white/[0.02] border border-white/10 rounded-[32px] p-8 shadow-2xl space-y-6">
@@ -325,7 +538,7 @@ export default function CommunicationsHub() {
                       </div>
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Message Body</label>
-                        <textarea value={dispatchDraft.body} onChange={e => setDispatchDraft({...dispatchDraft, body: e.target.value})} placeholder="Type your message here..." className="w-full bg-[#0a0f1d] border border-white/10 rounded-2xl p-5 text-sm font-medium text-slate-300 min-h-[300px] outline-none focus:border-blue-500 transition-colors leading-relaxed" />
+                        <textarea value={dispatchDraft.body} onChange={e => setDispatchDraft({...dispatchDraft, body: e.target.value})} placeholder="Type your message here..." className="w-full bg-[#0a0f1d] border border-white/10 rounded-2xl p-5 text-sm font-medium text-slate-300 min-h-[300px] outline-none focus:border-blue-500 transition-colors leading-relaxed custom-scrollbar" />
                       </div>
                     </>
                   ) : (
@@ -382,7 +595,7 @@ export default function CommunicationsHub() {
                       <span className="text-blue-400 text-lg">{selectedGuardians.length}</span>
                     </div>
                     <button onClick={handleBulkDispatch} disabled={isSending || selectedGuardians.length === 0 || !dispatchDraft.subject || !dispatchDraft.body} className="w-full py-5 bg-blue-600 rounded-2xl font-black uppercase tracking-widest italic flex items-center justify-center gap-2 hover:bg-blue-500 transition-all shadow-xl shadow-blue-900/20 disabled:opacity-30 disabled:cursor-not-allowed">
-                      {isSending ? <Loader2 size={20} className="animate-spin"/> : <><Send size={20}/> Transmit to Fleet</>}
+                      {isSending ? <Loader2 size={20} className="animate-spin"/> : <><Send size={20}/> Transmit Emails</>}
                     </button>
                   </div>
                 </div>
@@ -406,28 +619,35 @@ export default function CommunicationsHub() {
                   </thead>
                   <tbody className="divide-y divide-white/5">
                      {commsLogs.length === 0 ? (
-                        <tr><td colSpan={4} className="px-8 py-24 text-center text-slate-500 font-bold italic">No transmissions recorded yet.</td></tr>
+                        <tr><td colSpan={4} className="px-8 py-24 text-center text-slate-500 font-bold italic">No activity recorded yet.</td></tr>
                      ) : (
-                        commsLogs.map(log => (
-                           <tr key={log.id} className="hover:bg-white/[0.02] transition-colors">
-                              <td className="px-8 py-6 align-top">
-                                 <span className="text-sm font-bold text-slate-300">{new Date(log.sent_at).toLocaleDateString()}</span>
-                                 <p className="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-widest flex items-center gap-1"><Clock size={10}/> {new Date(log.sent_at).toLocaleTimeString()}</p>
-                              </td>
-                              <td className="px-8 py-6 align-top">
-                                 <span className="text-sm font-bold text-white block">{log.recipient_name}</span>
-                                 <span className="text-xs text-slate-400 mt-1 block">{log.recipient_email}</span>
-                              </td>
-                              <td className="px-8 py-6 align-top text-sm font-medium text-slate-300">
-                                 {log.subject}
-                              </td>
-                              <td className="px-8 py-6 align-top">
-                                 <span className="px-3 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 w-fit">
-                                    <CheckCircle2 size={10}/> {log.status}
-                                 </span>
-                              </td>
-                           </tr>
-                        ))
+                        commsLogs.map(log => {
+                           const isAction = log.status === 'Action Taken';
+                           return (
+                             <tr key={log.id} className={`transition-colors ${isAction ? 'bg-purple-500-[0.02] hover:bg-purple-500/[0.04]' : 'hover:bg-white/[0.02]'}`}>
+                                <td className="px-8 py-6 align-top">
+                                   <span className="text-sm font-bold text-slate-300">{new Date(log.sent_at).toLocaleDateString()}</span>
+                                   <p className="text-[10px] text-slate-500 font-bold uppercase mt-1 tracking-widest flex items-center gap-1"><Clock size={10}/> {new Date(log.sent_at).toLocaleTimeString()}</p>
+                                </td>
+                                <td className="px-8 py-6 align-top">
+                                   <span className="text-sm font-bold text-white block">{log.recipient_name}</span>
+                                   <span className="text-xs text-slate-400 mt-1 block">{log.recipient_email}</span>
+                                </td>
+                                <td className={`px-8 py-6 align-top text-sm font-medium ${isAction ? 'text-purple-300 italic' : 'text-slate-300'}`}>
+                                   {log.subject}
+                                </td>
+                                <td className="px-8 py-6 align-top">
+                                   <span className={`px-3 py-1 border rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 w-fit ${
+                                      isAction 
+                                      ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' 
+                                      : 'bg-green-500/10 text-green-400 border-green-500/20'
+                                   }`}>
+                                      {isAction ? <Activity size={10}/> : <CheckCircle2 size={10}/>} {log.status}
+                                   </span>
+                                </td>
+                             </tr>
+                           )
+                        })
                      )}
                   </tbody>
                </table>

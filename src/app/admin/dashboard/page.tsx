@@ -5,7 +5,7 @@ import {
   Users, UserPlus, BookOpen, Activity, AlertCircle, 
   CheckCircle2, CreditCard, ChevronRight, Loader2, 
   Search, Filter, MoreHorizontal, ExternalLink, ShieldAlert,
-  ArrowRight, X, Mail, Phone, Calendar, Info, MessageSquare, Save, User, LayoutGrid, ListTree, Link as LinkIcon, Key, Copy, RotateCcw, Send, Clock, ChevronDown, PenTool, Eye
+  ArrowRight, X, Mail, Phone, Calendar, Info, MessageSquare, Save, User, LayoutGrid, ListTree, Link as LinkIcon, Key, Copy, RotateCcw, Send, Clock, ChevronDown, PenTool, Eye, Target
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -69,7 +69,9 @@ export default function AdminDashboard() {
     orphans: 0,
     pendingRequests: 0,
     liveCourses: 0,
-    monthlyRevenue: 0
+    monthlyRevenue: 0,
+    activeProspects: 0,
+    wonProspects: 0
   });
 
   const [requests, setRequests] = useState<any[]>([]);
@@ -79,14 +81,31 @@ export default function AdminDashboard() {
   const quickLinks = [
     { title: "Manage Courses", path: "/admin/courses", icon: BookOpen, active: true },
     { title: "Leads Database", path: "/admin/leads", icon: Users, active: true },
+    { title: "Prospects CRM", path: "/admin/prospects", icon: Target, active: true },
     { title: "Manual Intake", path: "/admin/intake", icon: UserPlus, active: true },
-    { title: "Master Directory", path: "/admin/directory", icon: User, active: true },
+    { title: "RAD Community CRM", path: "/admin/directory", icon: Users, active: true },
     { title: "Comms Hub", path: "/admin/communications", icon: Mail, active: true },
     { title: "Finance Portal", path: "#", icon: CreditCard, active: false }
   ];
 
   useEffect(() => {
     fetchAdminData();
+
+    // Listen to changes across all relevant tables for the dashboard
+    const dashboardSubscription = supabase
+      .channel('dashboard-live-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public' }, // Leaving 'table' blank listens to the whole schema!
+        (payload) => {
+          fetchAdminData(); 
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(dashboardSubscription);
+    };
   }, []);
 
   async function fetchAdminData() {
@@ -97,6 +116,11 @@ export default function AdminDashboard() {
       const { data: courses } = await supabase.from('courses').select('is_published');
       const { data: payments } = await supabase.from('payments').select('amount').eq('status', 'paid');
       const totalRevenue = payments?.reduce((acc, curr) => acc + Number(curr.amount), 0) || 0;
+
+      // Fetch prospects to calculate active and won totals
+      const { data: prospectsData } = await supabase.from('prospects').select('status');
+      const activeProspects = prospectsData?.filter(p => !['Lost', 'Converted (Won)'].includes(p.status)).length || 0;
+      const wonProspects = prospectsData?.filter(p => p.status === 'Converted (Won)').length || 0;
 
       const { data: regData } = await supabase.from('registrations')
         .select('*')
@@ -117,7 +141,9 @@ export default function AdminDashboard() {
         orphans: orphans?.length || 0,
         pendingRequests: requestCount || 0,
         liveCourses: courses?.filter(c => c.is_published).length || 0,
-        monthlyRevenue: totalRevenue
+        monthlyRevenue: totalRevenue,
+        activeProspects,
+        wonProspects
       });
 
       setRequests(regData || []);
@@ -245,7 +271,10 @@ export default function AdminDashboard() {
         .select()
         .single();
         
-      if (guardErr) throw guardErr;
+      if (guardErr) {
+        console.error("GUARDIAN_INSERT_ERROR:", guardErr);
+        throw new Error(`Guardian creation failed: ${guardErr.message}`);
+      }
       newLeadGuardian = guardianData;
 
       if (target.isHousehold) {
@@ -456,23 +485,62 @@ export default function AdminDashboard() {
               Control_<span className="text-blue-500">Center</span>
             </h1>
           </div>
+          
+          {/* HIGH PRIORITY QUICK ACTIONS */}
+          <div className="flex flex-col sm:flex-row w-full md:w-auto gap-4 shrink-0">
+            <Link 
+              href="/admin/directory" 
+              className="w-full sm:w-auto px-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 shadow-xl shadow-blue-900/20 transition-all"
+            >
+              <Users size={16}/> RAD Community CRM
+            </Link>
+            <Link 
+              href="/admin/prospects" 
+              className="w-full sm:w-auto px-6 py-4 bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 shadow-xl shadow-fuchsia-900/20 transition-all"
+            >
+              <Target size={16}/> Open Prospects CRM
+            </Link>
+          </div>
         </header>
 
-        {/* --- STATS --- */}
-        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { label: "Active Pioneers", value: stats.totalStudents, icon: Users, color: "text-blue-400" },
-            { label: "New Transmissions", value: stats.pendingRequests, icon: UserPlus, color: "text-yellow-500" },
-            { label: "Total Revenue", value: `R${stats.monthlyRevenue}`, icon: CreditCard, color: "text-green-400" },
-            { label: "Live Courses", value: stats.liveCourses, icon: BookOpen, color: "text-purple-400" },
-          ].map((card, i) => (
-            <div key={i} className="bg-white/5 border border-white/10 p-6 rounded-[32px] relative overflow-hidden group">
-              <card.icon className={`absolute -right-4 -bottom-4 size-24 opacity-5 ${card.color}`} />
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{card.label}</p>
-              <h4 className={`text-4xl font-black italic mt-2 ${card.color}`}>{card.value}</h4>
-            </div>
-          ))}
-        </section>
+        {/* --- STATS DASHBOARDS --- */}
+        <div className="space-y-8">
+          {/* PIPELINE & INTAKE */}
+          <div>
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2"><Target size={14}/> Pipeline & Intake</h3>
+            <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                { label: "Registration Requests", value: stats.pendingRequests, icon: UserPlus, color: "text-yellow-500" },
+                { label: "Active Prospects", value: stats.activeProspects, icon: Target, color: "text-fuchsia-400" },
+                { label: "Won Prospects", value: stats.wonProspects, icon: CheckCircle2, color: "text-green-400" },
+              ].map((card, i) => (
+                <div key={i} className="bg-white/5 border border-white/10 p-6 rounded-[32px] relative overflow-hidden group">
+                  <card.icon className={`absolute -right-4 -bottom-4 size-24 opacity-5 ${card.color}`} />
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{card.label}</p>
+                  <h4 className={`text-4xl font-black italic mt-2 ${card.color}`}>{card.value}</h4>
+                </div>
+              ))}
+            </section>
+          </div>
+
+          {/* ACADEMY OVERVIEW */}
+          <div>
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2"><Activity size={14}/> Academy Overview</h3>
+            <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                { label: "Active Pioneers", value: stats.totalStudents, icon: Users, color: "text-blue-400" },
+                { label: "Total Revenue", value: `R${stats.monthlyRevenue}`, icon: CreditCard, color: "text-emerald-400" },
+                { label: "Live Courses", value: stats.liveCourses, icon: BookOpen, color: "text-purple-400" },
+              ].map((card, i) => (
+                <div key={i} className="bg-white/5 border border-white/10 p-6 rounded-[32px] relative overflow-hidden group">
+                  <card.icon className={`absolute -right-4 -bottom-4 size-24 opacity-5 ${card.color}`} />
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{card.label}</p>
+                  <h4 className={`text-4xl font-black italic mt-2 ${card.color}`}>{card.value}</h4>
+                </div>
+              ))}
+            </section>
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <section className="lg:col-span-2 space-y-6">

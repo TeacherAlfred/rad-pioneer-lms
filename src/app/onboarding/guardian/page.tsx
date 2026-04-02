@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { 
   Loader2, CheckCircle2, ShieldCheck, 
   ChevronRight, AlertCircle, Plus, Trash2, 
-  BellRing, Shield, ChevronDown, GraduationCap, RotateCcw, UserCircle, Key
+  BellRing, Shield, ChevronDown, GraduationCap, RotateCcw, UserCircle, Key, Info, Lock
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -50,6 +50,7 @@ function GuardianWizardCore() {
   
   const [originalData, setOriginalData] = useState<any>(null);
   const [initialFormData, setInitialFormData] = useState<any>(null); 
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
   
   const [formData, setFormData] = useState({
     name: "",
@@ -57,9 +58,10 @@ function GuardianWizardCore() {
     phone: "",
     relationship: "",
     isPrimaryContact: true,
+    password: "", // Added password state
     additionalGuardians: [] as AdditionalGuardian[],
     students: [] as StudentData[],
-    paymentPlan: "" // Kept in state to prevent DB errors if expected, but not used in UI
+    paymentPlan: ""
   });
   
   useEffect(() => {
@@ -71,14 +73,10 @@ function GuardianWizardCore() {
       }
 
       try {
-        // 1. Fetch Lead Guardian
         const { data: profile, error: fetchErr } = await supabase.from('profiles').select('*').eq('id', guardianId).single();
         if (fetchErr || !profile) throw new Error("Not found");
 
-        // 2. Fetch Students linked to this Guardian
         const { data: kids } = await supabase.from('profiles').select('*').eq('linked_parent_id', guardianId);
-        
-        // 3. Fetch Additional Guardians linked to this Guardian
         const { data: crew } = await supabase.from('profiles').select('*').eq('metadata->>household_lead_id', guardianId);
 
         const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
@@ -100,7 +98,6 @@ function GuardianWizardCore() {
           return {
             id: k.id,
             name: k.display_name || "",
-            // Pull from top-level DB column first, fallback to metadata
             dob: k.date_of_birth || kMeta?.date_of_birth || "",
             username: k.student_identifier || kMeta?.username || "",
             pin: k.temp_entry_pin || "",
@@ -115,6 +112,7 @@ function GuardianWizardCore() {
           relationship: meta?.relationship || "",
           isPrimaryContact: meta?.is_primary_contact ?? true,
           paymentPlan: profile.payment_plan_preference || "",
+          password: "",
           additionalGuardians: formattedCrew,
           students: formattedStudents,
         };
@@ -199,12 +197,33 @@ function GuardianWizardCore() {
     const now = new Date().toISOString();
 
     try {
+      // 1. CREATE AUTHENTICATED USER IF THEY DON'T HAVE ONE YET
+      if (!originalData.auth_user_id && formData.password) {
+        const authRes = await fetch('/api/auth/register-guardian', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: formData.email,
+            password: formData.password,
+            profileId: guardianId,
+            name: formData.name
+          })
+        });
+        
+        const authData = await authRes.json();
+        if (!authRes.ok) {
+           throw new Error(authData.error || "Failed to create authentication credentials.");
+        }
+      }
+
       const targetFunnelStage = formData.paymentPlan === 'demo' ? "Onboarding (Trial LMS)" : "Active (Paid Client)";
       
-      // 1. Update Lead Guardian
+      // 2. Update Lead Guardian 
       const { error: guardErr } = await supabase.from('profiles').update({
         display_name: formData.name,
         payment_plan_preference: formData.paymentPlan,
+        requires_review: true, 
+        previous_state: originalData, 
         updated_at: now,
         metadata: {
           ...originalData.metadata,
@@ -224,42 +243,55 @@ function GuardianWizardCore() {
          metadata: { funnel_stage: targetFunnelStage, funnel_stage_updated_at: now }
       }).eq('email', formData.email);
 
-      // 2. Process Additional Guardians
+      // 3. Process Additional Guardians
       for (const member of formData.additionalGuardians) {
+         // Skip empty rows if they accidentally clicked "Add" but didn't fill it out
+         if (!member.name) continue; 
+
          const memberPayload = {
             role: 'guardian',
             display_name: member.name,
             status: 'active',
             updated_at: now,
             metadata: {
-               email: member.email,
-               phone: member.phone,
-               relationship: member.relationship,
-               is_primary_contact: member.isPrimaryContact,
+               email: member.email || '',
+               phone: member.phone || '',
+               relationship: member.relationship || 'Support Crew',
+               is_primary_contact: member.isPrimaryContact || false,
                household_lead_id: guardianId 
             }
          };
 
          if (member.id) {
-            await supabase.from('profiles').update(memberPayload).eq('id', member.id);
-         } else if (member.name && member.email) {
-            // Anti-Duplication Check
-            const { data: existingGuardian } = await supabase
-              .from('profiles')
-              .select('id')
-              .eq('role', 'guardian')
-              .eq('metadata->>email', member.email)
-              .maybeSingle();
+            // Update existing secondary guardian
+            const { error: updErr } = await supabase.from('profiles').update(memberPayload).eq('id', member.id);
+            if (updErr) throw new Error(`Could not update ${member.name}: ${updErr.message}`);
+         } else {
+            let existingGuardian = null;
+            
+            // Only try to find an existing profile by email if they actually provided one
+            if (member.email) {
+               const { data } = await supabase
+                 .from('profiles')
+                 .select('id')
+                 .eq('role', 'guardian')
+                 .eq('metadata->>email', member.email)
+                 .maybeSingle();
+               existingGuardian = data;
+            }
 
             if (existingGuardian) {
-               await supabase.from('profiles').update(memberPayload).eq('id', existingGuardian.id);
+               const { error: updErr } = await supabase.from('profiles').update(memberPayload).eq('id', existingGuardian.id);
+               if (updErr) throw new Error(`Could not link existing guardian ${member.name}: ${updErr.message}`);
             } else {
-               await supabase.from('profiles').insert({ ...memberPayload, created_at: now });
+               // Create the brand new profile for the Support Crew
+               const { error: insErr } = await supabase.from('profiles').insert({ ...memberPayload, created_at: now });
+               if (insErr) throw new Error(`Could not create profile for ${member.name}: ${insErr.message}`);
             }
          }
       }
 
-      // 3. Process Students
+      // 4. Process Students 
       for (const kid of formData.students) {
          const kidPayload = {
             role: 'student',
@@ -267,8 +299,10 @@ function GuardianWizardCore() {
             linked_parent_id: guardianId,
             status: 'active',
             temp_entry_pin: kid.pin, 
-            date_of_birth: kid.dob || null, // Map directly to top-level DB column
-            student_identifier: kid.username || null, // Map directly to top-level DB column
+            date_of_birth: kid.dob || null,
+            student_identifier: kid.username || null,
+            requires_review: true, 
+            previous_state: kid._originalMetadata ? { metadata: kid._originalMetadata } : {}, 
             updated_at: now,
             metadata: {
                ...(kid._originalMetadata || {}),
@@ -280,12 +314,11 @@ function GuardianWizardCore() {
          if (kid.id) {
             await supabase.from('profiles').update(kidPayload).eq('id', kid.id);
          } else if (kid.name) {
-            // Anti-Duplication Check
             const { data: existingStudent } = await supabase
               .from('profiles')
               .select('id')
               .eq('linked_parent_id', guardianId)
-              .ilike('display_name', kid.name) // Check by name within this household
+              .ilike('display_name', kid.name) 
               .maybeSingle();
 
             if (existingStudent) {
@@ -296,9 +329,17 @@ function GuardianWizardCore() {
          }
       }
 
+      // 5. LOG THE ACTION TO THE COMMS HUB
+      await supabase.from('communication_logs').insert([{
+         recipient_email: formData.email,
+         recipient_name: formData.name,
+         subject: 'Guardian Completed Onboarding & Set Pioneer PINs',
+         status: 'Action Taken'
+      }]);
+
       setStep(4);
-    } catch (err) {
-      alert("An error occurred submitting your details. Please try again.");
+    } catch (err: any) {
+      alert(err.message || "An error occurred submitting your details. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -307,6 +348,9 @@ function GuardianWizardCore() {
   const allGuardiansHaveRole = formData.additionalGuardians.every(g => g.relationship !== "");
   const allStudentsValid = formData.students.every(p => p.name.trim() !== "" && p.username.trim() !== "" && p.pin.trim() !== "");
   const isDemoAccount = originalData?.metadata?.account_tier === 'demo';
+  
+  // Validation for Step 1
+  const isStep1Valid = formData.name && formData.email && allGuardiansHaveRole && formData.relationship && (originalData?.auth_user_id || formData.password.length >= 6);
 
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
   if (error) return <div className="h-screen bg-[#020617] flex flex-col items-center justify-center text-center p-6"><AlertCircle size={48} className="text-red-500 mb-4"/><h2 className="text-2xl font-bold mb-2">Access Denied</h2><p className="text-slate-400 text-sm">{error}</p></div>;
@@ -367,6 +411,23 @@ function GuardianWizardCore() {
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">Phone Number</label>
                         <input className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-blue-500 transition-all outline-none" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
                     </div>
+
+                    {/* ONLY SHOW PASSWORD IF THEY DON'T HAVE AN AUTH ACCOUNT */}
+                    {!originalData?.auth_user_id && (
+                      <div className="col-span-1 md:col-span-2 space-y-2 border-t border-white/5 pt-4 mt-2">
+                          <label className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
+                              <Lock size={14}/> Create Dashboard Password
+                          </label>
+                          <input 
+                              type="password" 
+                              placeholder="Minimum 6 characters" 
+                              className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-blue-500 transition-all outline-none" 
+                              value={formData.password} 
+                              onChange={e => setFormData({...formData, password: e.target.value})} 
+                          />
+                          <p className="text-[10px] text-slate-500 italic">You will use your email and this password to log into the Parent Dashboard.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -431,7 +492,7 @@ function GuardianWizardCore() {
                   ))}
                 </div>
 
-                <button onClick={() => setStep(2)} disabled={!formData.name || !formData.email || !allGuardiansHaveRole || !formData.relationship} className="w-full py-4 bg-blue-600 rounded-xl font-bold text-white flex items-center justify-center gap-2 hover:bg-blue-500 transition-all disabled:opacity-50">
+                <button onClick={() => setStep(2)} disabled={!isStep1Valid} className="w-full py-4 bg-blue-600 rounded-xl font-bold text-white flex items-center justify-center gap-2 hover:bg-blue-500 transition-all disabled:opacity-50">
                   Next: Student Details <ChevronRight size={18}/>
                 </button>
               </motion.div>
@@ -473,9 +534,40 @@ function GuardianWizardCore() {
                         </div>
                         
                         <div className="space-y-2 pt-2 md:pt-0">
-                          <label className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
-                            <UserCircle size={14}/> Profile Username
-                          </label>
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
+                              <UserCircle size={14}/> Profile Username
+                            </label>
+                            <div className="relative">
+                              <button 
+                                type="button"
+                                onClick={() => setActiveTooltip(activeTooltip === `username-${i}` ? null : `username-${i}`)}
+                                className="text-slate-500 hover:text-blue-400 transition-colors p-1"
+                              >
+                                <Info size={14} />
+                              </button>
+                              
+                              <AnimatePresence>
+                                {activeTooltip === `username-${i}` && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-40" 
+                                      onClick={() => setActiveTooltip(null)} 
+                                    />
+                                    <motion.div 
+                                      initial={{ opacity: 0, y: 5 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      exit={{ opacity: 0, y: 5 }}
+                                      className="absolute right-0 md:-right-4 bottom-full mb-2 w-56 bg-[#1e293b] border border-white/10 rounded-xl p-4 text-[11px] text-slate-300 shadow-2xl z-50 pointer-events-auto leading-relaxed"
+                                    >
+                                      This will be your child's public display name on leaderboards and project showcases.
+                                      <div className="absolute -bottom-2 right-4 border-8 border-transparent border-t-[#1e293b]" />
+                                    </motion.div>
+                                  </>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          </div>
                           <input 
                             placeholder="e.g. CodeNinja99"
                             className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-blue-500 transition-all outline-none" 
@@ -486,11 +578,44 @@ function GuardianWizardCore() {
                               setFormData({...formData, students: next});
                             }} 
                           />
+                          <p className="text-[10px] text-slate-500 italic">Used for leaderboards and logging in.</p>
                         </div>
+
                         <div className="space-y-2 pt-2 md:pt-0">
-                          <label className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
-                            <Key size={14}/> Secure Access PIN
-                          </label>
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1">
+                              <Key size={14}/> Secure Access PIN
+                            </label>
+                            <div className="relative">
+                              <button 
+                                type="button"
+                                onClick={() => setActiveTooltip(activeTooltip === `pin-${i}` ? null : `pin-${i}`)}
+                                className="text-slate-500 hover:text-blue-400 transition-colors p-1"
+                              >
+                                <Info size={14} />
+                              </button>
+                              
+                              <AnimatePresence>
+                                {activeTooltip === `pin-${i}` && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-40" 
+                                      onClick={() => setActiveTooltip(null)} 
+                                    />
+                                    <motion.div 
+                                      initial={{ opacity: 0, y: 5 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      exit={{ opacity: 0, y: 5 }}
+                                      className="absolute right-0 md:-right-4 bottom-full mb-2 w-64 bg-[#1e293b] border border-white/10 rounded-xl p-4 text-[11px] text-slate-300 shadow-2xl z-50 pointer-events-auto leading-relaxed"
+                                    >
+                                      Instead of a complex password, students use their Username and this 4-digit PIN to securely access their Command Center.
+                                      <div className="absolute -bottom-2 right-4 border-8 border-transparent border-t-[#1e293b]" />
+                                    </motion.div>
+                                  </>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          </div>
                           <input 
                             type="text" 
                             maxLength={4}
@@ -503,8 +628,8 @@ function GuardianWizardCore() {
                               setFormData({...formData, students: next});
                             }} 
                           />
+                          <p className="text-[10px] text-slate-500 italic">A 4-digit code (e.g. 1234) used as their password.</p>
                         </div>
-
                       </div>
                     </div>
                   ))}
