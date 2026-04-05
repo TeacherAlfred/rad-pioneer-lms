@@ -30,12 +30,12 @@ export default function CommunicationsHub() {
   const [isSending, setIsSending] = useState(false);
   const [commsLogs, setCommsLogs] = useState<any[]>([]);
   
-  // --- NEW: HISTORY ACCORDION STATE ---
+  // --- HISTORY ACCORDION STATE ---
   const [expandedHistory, setExpandedHistory] = useState<string[]>([]);
 
   // Inbox State
   const [inboxConversations, setInboxConversations] = useState<any[]>([]);
-  const [activeConversation, setActiveConversation] = useState<string | null>(null); // This is the parent's ID
+  const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [activeMessages, setActiveMessages] = useState<any[]>([]);
   const [replyText, setReplyText] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -43,7 +43,7 @@ export default function CommunicationsHub() {
   useEffect(() => {
     fetchData();
 
-    // --- REAL-TIME SUBSCRIPTION FOR THE INBOX ---
+    // REAL-TIME SUBSCRIPTION FOR THE INBOX
     const messagesSubscription = supabase
       .channel('admin-inbox-updates')
       .on(
@@ -258,15 +258,29 @@ export default function CommunicationsHub() {
     setDispatchDraft({ subject: tpl.subject, body: tpl.body_content });
   };
 
-  const handleToggleGuardian = (id: string) => {
+  // --- UPDATED: PREVENT SELECTING USERS WITHOUT EMAILS ---
+  const handleToggleGuardian = (id: string, hasEmail: boolean) => {
+    if (!hasEmail) return; // Block selection if no email exists
     setSelectedGuardians(prev => prev.includes(id) ? prev.filter(gId => gId !== id) : [...prev, id]);
   };
 
+  const filteredGuardians = guardians.filter(g => {
+    const meta = typeof g.metadata === 'string' ? JSON.parse(g.metadata) : g.metadata;
+    return g.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+           meta?.email?.toLowerCase().includes(searchQuery.toLowerCase());
+  });
+
+  // --- UPDATED: SELECT ALL ONLY TARGETS VALID EMAILS ---
   const handleSelectAll = () => {
-    if (selectedGuardians.length === filteredGuardians.length) {
-      setSelectedGuardians([]);
+    const validGuardians = filteredGuardians.filter(g => {
+      const meta = typeof g.metadata === 'string' ? JSON.parse(g.metadata) : g.metadata;
+      return !!meta?.email?.trim();
+    });
+
+    if (selectedGuardians.length === validGuardians.length && validGuardians.length > 0) {
+      setSelectedGuardians([]); // Deselect all if they are already fully selected
     } else {
-      setSelectedGuardians(filteredGuardians.map(g => g.id));
+      setSelectedGuardians(validGuardians.map(g => g.id)); // Select only those with valid emails
     }
   };
 
@@ -286,8 +300,21 @@ export default function CommunicationsHub() {
           return { email: meta?.email || "", name: g.display_name };
         });
 
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
+      // --- NEW: ACTUALLY TRIGGER RESEND VIA API ---
+      const res = await fetch('/api/send-bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipients: recipients.map(r => r.email), // Send just the email addresses
+          subject: dispatchDraft.subject,
+          // Generate the final HTML right here before sending it to the server
+          htmlBody: generateEmailPreviewHTML(dispatchDraft.body, dispatchDraft.subject) 
+        })
+      });
+
+      if (!res.ok) throw new Error("API failed to transmit to Resend.");
+
+      // --- EXISTING: LOG TO SUPABASE ---
       const logPayload = recipients.map(r => ({
          recipient_email: r.email,
          recipient_name: r.name,
@@ -304,35 +331,37 @@ export default function CommunicationsHub() {
       
       await fetchData();
 
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Transmission failure.");
+      alert(`Transmission failure: ${err.message}`);
     } finally {
       setIsSending(false);
     }
   };
 
-  // --- NEW: TOGGLE HISTORY ACCORDION ---
-  const toggleHistoryGroup = (email: string) => {
+  const toggleHistoryGroup = (id: string) => {
     setExpandedHistory(prev => 
-      prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]
+      prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id]
     );
   };
 
-  const filteredGuardians = guardians.filter(g => {
-    const meta = typeof g.metadata === 'string' ? JSON.parse(g.metadata) : g.metadata;
-    return g.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-           meta?.email?.toLowerCase().includes(searchQuery.toLowerCase());
-  });
-
-  // --- NEW: PROCESS AND GROUP LOGS FOR HISTORY TAB ---
   const groupedLogsArray = Object.values(commsLogs.reduce((acc: any, log: any) => {
-    const key = log.recipient_email || 'Unknown';
+    const rawEmail = log.recipient_email?.trim();
+    const rawName = log.recipient_name?.trim();
+    
+    const key = rawEmail || rawName || `unknown-${log.id}`;
+
     if (!acc[key]) {
-      acc[key] = { email: key, name: log.recipient_name, logs: [], latest: log.sent_at };
+      acc[key] = { 
+        id: key, 
+        email: rawEmail || 'No Email Provided', 
+        name: rawName || 'Unknown Guardian', 
+        logs: [], 
+        latest: log.sent_at 
+      };
     }
     acc[key].logs.push(log);
-    // Ensure the latest timestamp is always correct for sorting the main list
+    
     if (new Date(log.sent_at) > new Date(acc[key].latest)) {
       acc[key].latest = log.sent_at;
     }
@@ -594,7 +623,7 @@ export default function CommunicationsHub() {
                       <input type="text" placeholder="Filter recipients..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl py-3 pl-12 pr-4 text-sm outline-none focus:border-blue-500" />
                     </div>
                     <button onClick={handleSelectAll} className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black uppercase text-slate-400 hover:text-white hover:bg-white/10 transition-all shrink-0">
-                      {selectedGuardians.length === filteredGuardians.length ? "Deselect All" : "Select All"}
+                      {selectedGuardians.length > 0 ? "Deselect All" : "Select All"}
                     </button>
                   </div>
 
@@ -605,15 +634,23 @@ export default function CommunicationsHub() {
                       <div className="space-y-1">
                         {filteredGuardians.map(g => {
                           const meta = typeof g.metadata === 'string' ? JSON.parse(g.metadata) : g.metadata;
+                          const hasEmail = !!meta?.email?.trim();
                           const isSelected = selectedGuardians.includes(g.id);
                           return (
-                            <div key={g.id} onClick={() => handleToggleGuardian(g.id)} className={`flex items-center gap-4 p-3 rounded-xl cursor-pointer transition-all border ${isSelected ? 'bg-blue-600/10 border-blue-500/30' : 'border-transparent hover:bg-white/5'}`}>
+                            <div 
+                              key={g.id} 
+                              onClick={() => handleToggleGuardian(g.id, hasEmail)} 
+                              className={`flex items-center gap-4 p-3 rounded-xl transition-all border ${hasEmail ? 'cursor-pointer hover:bg-white/5' : 'cursor-not-allowed opacity-40 bg-white/[0.01]'} ${isSelected ? 'bg-blue-600/10 border-blue-500/30' : 'border-transparent'}`}
+                            >
                               <div className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-white/20'}`}>
                                 {isSelected && <CheckCircle2 size={12} className="text-white"/>}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="font-bold text-sm text-white truncate">{g.display_name}</p>
-                                <p className="text-[10px] text-slate-500 truncate">{meta.email}</p>
+                                <div className="flex items-center gap-2">
+                                  <p className="font-bold text-sm text-white truncate">{g.display_name}</p>
+                                  {!hasEmail && <span className="text-[8px] font-black uppercase tracking-widest text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20">Missing Email</span>}
+                                </div>
+                                <p className="text-[10px] text-slate-500 truncate">{hasEmail ? meta.email : "Cannot select recipient"}</p>
                               </div>
                             </div>
                           )
@@ -647,11 +684,11 @@ export default function CommunicationsHub() {
                  </div>
                ) : (
                  groupedLogsArray.map((group: any) => {
-                   const isExpanded = expandedHistory.includes(group.email);
+                   const isExpanded = expandedHistory.includes(group.id);
                    return (
-                     <div key={group.email} className="bg-white/[0.02] border border-white/10 rounded-[24px] overflow-hidden shadow-lg transition-all">
+                     <div key={group.id} className="bg-white/[0.02] border border-white/10 rounded-[24px] overflow-hidden shadow-lg transition-all">
                        <button
-                         onClick={() => toggleHistoryGroup(group.email)}
+                         onClick={() => toggleHistoryGroup(group.id)}
                          className="w-full flex items-center justify-between p-6 hover:bg-white/[0.02] transition-colors text-left"
                        >
                          <div className="flex items-center gap-4">

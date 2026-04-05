@@ -5,7 +5,7 @@ import {
   Users, UserPlus, BookOpen, Activity, AlertCircle, 
   CheckCircle2, CreditCard, ChevronRight, Loader2, 
   Search, Filter, MoreHorizontal, ExternalLink, ShieldAlert,
-  ArrowRight, X, Mail, Phone, Calendar, Info, MessageSquare, Save, User, LayoutGrid, ListTree, Link as LinkIcon, Key, Copy, RotateCcw, Send, Clock, ChevronDown, PenTool, Eye, Target
+  ArrowRight, X, Mail, Phone, Calendar, Info, MessageSquare, Save, User, LayoutGrid, ListTree, Link as LinkIcon, Key, Copy, RotateCcw, Send, Clock, ChevronDown, PenTool, Eye, Target, Database
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -76,21 +76,26 @@ export default function AdminDashboard() {
     liveCourses: 0,
     monthlyRevenue: 0,
     activeProspects: 0,
-    wonProspects: 0
+    wonProspects: 0,
+    // Add these two lines to satisfy TypeScript
+    plannedFeatures: 0,
+    plannedCourses: 0
   });
 
   const [requests, setRequests] = useState<any[]>([]);
   const [orphansList, setOrphansList] = useState<any[]>([]);
 
-  // ADDED COMMUNICATIONS HUB TO QUICK LINKS
+  // ADDED COMMUNICATIONS HUB & MASTER CONTACTS TO QUICK LINKS
   const quickLinks = [
     { title: "Manage Courses", path: "/admin/courses", icon: BookOpen, active: true },
+    { title: "Growth Blueprint", path: "/admin/blueprint", icon: ListTree, active: true }, 
     { title: "Leads Database", path: "/admin/leads", icon: Users, active: true },
     { title: "Prospects CRM", path: "/admin/prospects", icon: Target, active: true },
     { title: "Manual Intake", path: "/admin/intake", icon: UserPlus, active: true },
     { title: "RAD Community CRM", path: "/admin/directory", icon: Users, active: true },
+    { title: "Master Contacts", path: "/admin/contacts", icon: Database, active: true }, // <-- ADDED
     { title: "Comms Hub", path: "/admin/communications", icon: Mail, active: true },
-    { title: "Finance Portal", path: "#", icon: CreditCard, active: false }
+    { title: "Finance Portal", path: "/admin/finance", icon: CreditCard, active: true }
   ];
 
   useEffect(() => {
@@ -156,6 +161,9 @@ export default function AdminDashboard() {
       const activeProspects = prospectsData?.filter(p => !['Lost', 'Converted (Won)'].includes(p.status)).length || 0;
       const wonProspects = prospectsData?.filter(p => p.status === 'Converted (Won)').length || 0;
 
+      const { count: featureCount } = await supabase.from('roadmap_features').select('*', { count: 'exact', head: true }).eq('status', 'planned');
+      const { count: plannedCourseCount } = await supabase.from('roadmap_courses').select('*', { count: 'exact', head: true }).eq('status', 'ideation');
+      
       const { data: regData } = await supabase.from('registrations')
         .select('*')
         .in('status', ['new', 'in_progress', 'waitlist'])
@@ -176,8 +184,11 @@ export default function AdminDashboard() {
         pendingRequests: requestCount || 0,
         liveCourses: courses?.filter(c => c.is_published).length || 0,
         monthlyRevenue: totalRevenue,
-        activeProspects,
-        wonProspects
+        activeProspects: activeProspects || 0,
+        wonProspects: wonProspects || 0,
+        // Assign the new counts here
+        plannedFeatures: featureCount || 0,
+        plannedCourses: plannedCourseCount || 0
       });
 
       setRequests(regData || []);
@@ -613,6 +624,21 @@ export default function AdminDashboard() {
                   <h4 className={`text-4xl font-black italic mt-2 ${card.color}`}>{card.value}</h4>
                 </div>
               ))}
+            </section>
+          </div>
+
+          {/* GROWTH & BACKLOG */}
+          <div>
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2"><ListTree size={14}/> Strategy Backlog</h3>
+            <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white/5 border border-white/10 p-6 rounded-[32px] group">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Planned Features</p>
+                <h4 className="text-4xl font-black italic mt-2 text-fuchsia-400">{stats.plannedFeatures}</h4>
+              </div>
+              <div className="bg-white/5 border border-white/10 p-6 rounded-[32px] group">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Course Pipeline</p>
+                <h4 className="text-4xl font-black italic mt-2 text-emerald-400">{stats.plannedCourses}</h4>
+              </div>
             </section>
           </div>
         </div>

@@ -69,6 +69,11 @@ export default function DirectoryPage() {
   const [reviewIndex, setReviewIndex] = useState(-1);
   const [isReviewMode, setIsReviewMode] = useState(false);
 
+  // Browse Filtered State
+  const [browseQueue, setBrowseQueue] = useState<any[]>([]);
+  const [browseIndex, setBrowseIndex] = useState(-1);
+  const [isBrowseMode, setIsBrowseMode] = useState(false);
+
   // Email Preview State
   const [showEmailPreview, setShowEmailPreview] = useState(false);
   const [emailViewMode, setEmailViewMode] = useState<"edit" | "visual">("edit");
@@ -118,7 +123,7 @@ export default function DirectoryPage() {
          const isSupportCrew = isGuardian && !!selectedProfile.metadata?.household_lead_id;
 
          let leadGuardianData = null;
-         let existingCrew: any[] = []; // <--- Added type declaration
+         let existingCrew: any[] = [];
 
          if (isSupportCrew) {
             leadGuardianData = profiles.find(p => p.id === selectedProfile.metadata.household_lead_id);
@@ -192,10 +197,16 @@ export default function DirectoryPage() {
     populateWorkspaceEditData();
   }, [selectedProfile, profiles, emailTemplateData]);
 
-  async function fetchDirectory() {
+async function fetchDirectory() {
     setLoading(true);
     try {
-      const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+      // ONLY FETCH ACTIVE OR INACTIVE (Paying / Past) Clients. No Leads.
+      const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .in('status', ['active', 'inactive'])
+          .order('created_at', { ascending: false });
+          
       if (error) throw error;
 
       // Ensure JSON data is properly parsed!
@@ -239,6 +250,90 @@ export default function DirectoryPage() {
     }
   }
 
+  const filteredProfiles = profiles.filter(p => {
+    const matchesSearch = p.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.metadata?.email?.toLowerCase().includes(searchQuery.toLowerCase());
+    let matchesRole = false;
+    if (roleFilter === "all") matchesRole = true;
+    else if (roleFilter === "guardian") matchesRole = p.role === "guardian";
+    else if (roleFilter === "student") matchesRole = p.role === "student";
+    else if (roleFilter === "review") matchesRole = p.requires_review === true;
+    const matchesStatus = p.status === statusFilter;
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+
+  // --- BROWSE & REVIEW CONTROLS ---
+
+  const handleCloseWorkspace = () => {
+    setSelectedProfile(null);
+    setIsReviewMode(false);
+    setReviewQueue([]);
+    setReviewIndex(-1);
+    setIsBrowseMode(false);
+    setBrowseQueue([]);
+    setBrowseIndex(-1);
+  };
+
+  const handleInspectProfile = (profile: any) => {
+    const idx = filteredProfiles.findIndex(p => p.id === profile.id);
+    setBrowseQueue(filteredProfiles);
+    setBrowseIndex(idx !== -1 ? idx : 0);
+    setSelectedProfile(profile);
+    setIsBrowseMode(true);
+    setIsReviewMode(false);
+  };
+
+  const startBrowseMode = () => {
+    if (filteredProfiles.length === 0) return alert("No profiles in current filter.");
+    setBrowseQueue(filteredProfiles);
+    setBrowseIndex(0);
+    setSelectedProfile(filteredProfiles[0]);
+    setIsBrowseMode(true);
+    setIsReviewMode(false);
+  };
+
+  const nextBrowseProfile = () => {
+    if (browseIndex < browseQueue.length - 1) {
+      setBrowseIndex(browseIndex + 1);
+      setSelectedProfile(browseQueue[browseIndex + 1]);
+    }
+  };
+
+  const prevBrowseProfile = () => {
+    if (browseIndex > 0) {
+      setBrowseIndex(browseIndex - 1);
+      setSelectedProfile(browseQueue[browseIndex - 1]);
+    }
+  };
+
+  const startRapidReview = () => {
+    if (filteredProfiles.length === 0) return alert("No profiles to review in current filter.");
+    const queue = profiles.filter(p => p.requires_review === true);
+    if (queue.length === 0) return alert("No profiles require review.");
+    setReviewQueue(queue);
+    setReviewIndex(0);
+    setSelectedProfile(queue[0]);
+    setIsReviewMode(true);
+    setIsBrowseMode(false);
+  };
+
+  const nextReviewProfile = () => {
+    if (reviewIndex < reviewQueue.length - 1) {
+      setReviewIndex(reviewIndex + 1);
+      setSelectedProfile(reviewQueue[reviewIndex + 1]);
+    } else {
+      handleCloseWorkspace();
+    }
+  };
+
+  const prevReviewProfile = () => {
+    if (reviewIndex > 0) {
+      setReviewIndex(reviewIndex - 1);
+      setSelectedProfile(reviewQueue[reviewIndex - 1]);
+    }
+  };
+
+  // --- ACTIONS ---
+
   const generateLivePreviewHTML = () => {
     const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
     const onboardingLink = `${baseUrl}/onboarding/guardian?id=${selectedProfile?.id || ''}`;
@@ -281,7 +376,6 @@ export default function DirectoryPage() {
     if (!selectedProfile || !workspaceEditData?.metadata?.email) return;
     setIsSendingInvite(true);
     
-    // Construct dynamic onboarding link for API payload
     const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
     const onboardingLink = `${baseUrl}/onboarding/guardian?id=${selectedProfile.id}`;
 
@@ -324,17 +418,7 @@ export default function DirectoryPage() {
          metadata: workspaceEditData.metadata
       };
 
-      // Construct individual-specific metadata based on role
       const isLeadGuardian = selectedProfile.role === 'guardian' && !selectedProfile.metadata?.household_lead_id;
-      if (!isLeadGuardian) {
-          // If not lead, construct payload to *only* update individual details (and parent link for student)
-          const metaPayload = { ...workspaceEditData.metadata };
-          if (selectedProfile.role === 'student') {
-             // keep student metadata as is
-          } else {
-             // For support crew individual details
-          }
-      }
 
       const { error } = await supabase.from('profiles').update(payload).eq('id', selectedProfile.id);
       if (error) throw error;
@@ -376,7 +460,6 @@ export default function DirectoryPage() {
     if (!selectedProfile || !workspaceEditData) return;
     setIsProcessing(true);
     try {
-      // Constructed payload as in update, but additionally clear the review flags
       const updatedInactiveSince = workspaceEditData.status === 'inactive' ? workspaceEditData.inactive_since : null;
       const payload: any = {
          display_name: workspaceEditData.display_name,
@@ -384,8 +467,8 @@ export default function DirectoryPage() {
          inactive_since: updatedInactiveSince,
          payment_plan_preference: workspaceEditData.payment_plan_preference,
          metadata: workspaceEditData.metadata,
-         requires_review: false, // CLEAR FLAG
-         previous_state: {}, // CLEAR OLD STATE
+         requires_review: false, 
+         previous_state: {}, 
       };
 
       const { error } = await supabase.from('profiles').update(payload).eq('id', selectedProfile.id);
@@ -396,9 +479,8 @@ export default function DirectoryPage() {
       if (isReviewMode) {
         nextReviewProfile();
       } else {
-        // Automatically close the modal when not in Rapid Review mode
         alert("Review updates accepted and cleared.");
-        setSelectedProfile(null); 
+        handleCloseWorkspace(); 
       }
     } catch (err) {
       alert("Database error accepting review changes.");
@@ -410,7 +492,6 @@ export default function DirectoryPage() {
   const handleDeleteProfile = async () => {
     if (!selectedProfile) return;
     
-    // Custom warning based on the type of profile being deleted
     const isLeadGuardian = selectedProfile.role === 'guardian' && !selectedProfile.metadata?.household_lead_id;
     const confirmMessage = isLeadGuardian 
       ? `🚨 WARNING: You are about to delete a LEAD GUARDIAN (${selectedProfile.display_name}).\n\nIf they have linked Pioneers, this will fail unless your database is set to CASCADE deletes. Are you absolutely sure?`
@@ -423,7 +504,6 @@ export default function DirectoryPage() {
       const { error } = await supabase.from('profiles').delete().eq('id', selectedProfile.id);
       
       if (error) {
-        // If it's a foreign key error, give a helpful human-readable message
         if (error.code === '23503') {
            throw new Error("Cannot delete this profile because other records (like Pioneers or Enrollments) are still linked to it. Please delete the linked accounts first, or enable 'CASCADE' deletes in Supabase.");
         }
@@ -431,9 +511,7 @@ export default function DirectoryPage() {
       }
 
       await fetchDirectory();
-      setSelectedProfile(null);
-      setIsReviewMode(false);
-      setReviewQueue([]);
+      handleCloseWorkspace();
       alert("Profile permanently deleted.");
       
     } catch (err: any) {
@@ -441,50 +519,6 @@ export default function DirectoryPage() {
     } finally {
       setIsProcessing(false);
     }
-  };
-
-  const filteredProfiles = profiles.filter(p => {
-    const matchesSearch = p.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.metadata?.email?.toLowerCase().includes(searchQuery.toLowerCase());
-    let matchesRole = false;
-    if (roleFilter === "all") matchesRole = true;
-    else if (roleFilter === "guardian") matchesRole = p.role === "guardian";
-    else if (roleFilter === "student") matchesRole = p.role === "student";
-    else if (roleFilter === "review") matchesRole = p.requires_review === true;
-    const matchesStatus = p.status === statusFilter;
-    return matchesSearch && matchesRole && matchesStatus;
-  });
-
-  const startRapidReview = () => {
-    if (filteredProfiles.length === 0) return alert("No profiles to review in current filter.");
-    const queue = profiles.filter(p => p.requires_review === true);
-    if (queue.length === 0) return alert("No profiles require review.");
-    setReviewQueue(queue);
-    setReviewIndex(0);
-    setSelectedProfile(queue[0]);
-    setIsReviewMode(true);
-  };
-
-  const nextReviewProfile = () => {
-    if (reviewIndex < reviewQueue.length - 1) {
-      setReviewIndex(reviewIndex + 1);
-      setSelectedProfile(reviewQueue[reviewIndex + 1]);
-    } else {
-      exitReviewMode();
-    }
-  };
-
-  const prevReviewProfile = () => {
-    if (reviewIndex > 0) {
-      setReviewIndex(reviewIndex - 1);
-      setSelectedProfile(reviewQueue[reviewIndex - 1]);
-    }
-  };
-
-  const exitReviewMode = () => {
-    setIsReviewMode(false);
-    setReviewQueue([]);
-    setReviewIndex(-1);
-    setSelectedProfile(null);
   };
 
   const handleGenerateDraftPin = () => {
@@ -552,14 +586,14 @@ export default function DirectoryPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans text-leftSelectionSelection:bg-purple-500/30 selection:text-white">
+    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans text-left selection:bg-purple-500/30 selection:text-white">
       <div className="max-w-7xl mx-auto space-y-10">
         
         {/* ======================================================== */}
-        {/* VIEW 1: THE DIRECTORY TABLE & WORKSPACE                 */}
+        {/* VIEW 1: THE DIRECTORY TABLE                             */}
         {/* ======================================================== */}
         <AnimatePresence mode="wait">
-        {!selectedProfile && !isReviewMode ? (
+        {!selectedProfile && !isReviewMode && !isBrowseMode ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} key="directory-table" className="space-y-10">
             <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
               <div className="space-y-4">
@@ -615,14 +649,19 @@ export default function DirectoryPage() {
                 </div>
               </div>
               
-              <div className="flex items-center gap-4 w-full lg:w-auto">
-                <div className="relative group flex-1 lg:w-80">
+              <div className="flex items-center gap-3 w-full lg:w-auto overflow-x-auto">
+                <div className="relative group flex-1 lg:w-72">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
                   <input type="text" placeholder="Search names..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-[#1e293b]/50 border border-white/10 rounded-2xl py-3 pl-12 pr-4 text-sm outline-none focus:border-purple-500 transition-all font-bold text-white placeholder:text-slate-600" />
                 </div>
-                <button onClick={startRapidReview} disabled={totalReviews === 0} className="px-6 py-3 bg-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all disabled:opacity-20 flex items-center gap-2 shrink-0 shadow-lg">
-                   Rapid Review <ChevronRight size={16}/>
-                </button>
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={startBrowseMode} disabled={filteredProfiles.length === 0} className="px-5 py-3 bg-purple-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-purple-500 transition-all disabled:opacity-20 flex items-center gap-2 shadow-lg">
+                     <ListTree size={16}/> Browse
+                  </button>
+                  <button onClick={startRapidReview} disabled={totalReviews === 0} className="px-5 py-3 bg-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all disabled:opacity-20 flex items-center gap-2 shadow-lg">
+                     Rapid Review <ChevronRight size={16}/>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -693,7 +732,7 @@ export default function DirectoryPage() {
                             </div>
                           </td>
                           <td className="px-8 py-6 text-right align-top">
-                            <button onClick={() => setSelectedProfile(profile)} className={`inline-flex items-center gap-2 px-6 py-2 rounded-xl transition-all text-[9px] font-black uppercase italic tracking-widest border ${profile.requires_review ? 'bg-yellow-500 hover:bg-yellow-400 text-black border-yellow-400 shadow-lg shadow-yellow-500/20' : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'}`}>
+                            <button onClick={() => handleInspectProfile(profile)} className={`inline-flex items-center gap-2 px-6 py-2 rounded-xl transition-all text-[9px] font-black uppercase italic tracking-widest border ${profile.requires_review ? 'bg-yellow-500 hover:bg-yellow-400 text-black border-yellow-400 shadow-lg shadow-yellow-500/20' : 'bg-white/5 hover:bg-white/10 border-white/10 text-white'}`}>
                               {profile.requires_review ? 'Review Changes' : 'Inspect'} <ArrowRight size={14} />
                             </button>
                           </td>
@@ -714,7 +753,7 @@ export default function DirectoryPage() {
             {/* WORKSPACE HEADER */}
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 border-b border-white/5 pb-8">
               <div className="space-y-4 w-full md:w-auto relative">
-                <button onClick={() => { setSelectedProfile(null); setIsReviewMode(false); setReviewQueue([]); }} className="group flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-purple-400 transition-colors">
+                <button onClick={handleCloseWorkspace} className="group flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-purple-400 transition-colors">
                   <ArrowLeft size={16} /> Back to Directory
                 </button>
                 <div className="flex items-center gap-4">
@@ -733,7 +772,7 @@ export default function DirectoryPage() {
                     </span>
                   </div>
                 </div>
-                <button onClick={() => { setSelectedProfile(null); setIsReviewMode(false); setReviewQueue([]); }} className="absolute -top-3 -right-3 md:top-2 md:-right-8 p-3 rounded-full bg-white/5 hover:bg-white/10 shrink-0 border border-white/10"><X size={20}/></button>
+                <button onClick={handleCloseWorkspace} className="absolute -top-3 -right-3 md:top-2 md:-right-8 p-3 rounded-full bg-white/5 hover:bg-white/10 shrink-0 border border-white/10"><X size={20}/></button>
               </div>
 
               <div className="flex gap-4 w-full md:w-auto">
@@ -744,6 +783,14 @@ export default function DirectoryPage() {
                      <button onClick={nextReviewProfile} disabled={reviewIndex === reviewQueue.length - 1} className="p-2 hover:text-blue-400 disabled:opacity-20"><ChevronRight size={18}/></button>
                   </div>
                 )}
+                {isBrowseMode && !isReviewMode && (
+                  <div className="flex items-center gap-2 bg-purple-900/30 border border-purple-500/30 px-2 py-1 rounded-xl mr-4">
+                     <button onClick={prevBrowseProfile} disabled={browseIndex === 0} className="p-2 hover:text-purple-400 disabled:opacity-20"><ChevronLeft size={18}/></button>
+                     <span className="text-[10px] font-black uppercase text-purple-400 w-24 text-center">Record {browseIndex + 1} of {browseQueue.length}</span>
+                     <button onClick={nextBrowseProfile} disabled={browseIndex === browseQueue.length - 1} className="p-2 hover:text-purple-400 disabled:opacity-20"><ChevronRight size={18}/></button>
+                  </div>
+                )}
+
                 {selectedProfile.requires_review ? (
                   <button onClick={handleAcceptReview} disabled={isProcessing} className="flex-1 md:flex-none px-8 py-4 bg-yellow-500 text-black rounded-2xl font-black uppercase italic flex items-center justify-center gap-2 hover:bg-yellow-400 transition-all shadow-xl shadow-yellow-900/20 disabled:opacity-50">
                     {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <><CheckCircle2 size={18}/> Accept & Clear Flag</>}

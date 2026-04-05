@@ -4,534 +4,455 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Search, Mail, Phone, ArrowLeft, ArrowRight,
-  Loader2, X, Save, CheckCircle2, ShieldCheck, 
-  MessageSquare, Edit3, UserPlus, FileText, ChevronDown, ChevronUp,
-  User, ListTree, Target
+  Loader2, X, Save, CheckCircle2, Edit3, 
+  MessageSquare, UserPlus, ChevronDown, ChevronUp,
+  User, Target, CreditCard, Plus, Globe, Trash2
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 
-// --- GLOBAL FORMATTER FOR PROGRAM NAMES ---
+// --- GLOBAL FORMATTER ---
 const formatProgramName = (rawName: string) => {
   if (!rawName) return "";
   const lower = rawName.toLowerCase();
-  
   const cleanName = rawName.replace(/\s*\([^)]*\)/g, '').trim();
-
   if (lower.includes('(online)')) return `OL: ${cleanName}`;
   if (lower.includes('in-person') || lower.includes('(plk)')) return `IP: ${cleanName}`;
-  
   return rawName;
-};
-
-const isNewInStage = (dateString: string) => {
-  if (!dateString) return false;
-  const diffInHours = (new Date().getTime() - new Date(dateString).getTime()) / (1000 * 60 * 60);
-  return diffInHours < 24; // Less than 24 hours = "New"
 };
 
 export default function LeadsPage() {
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // DATA STATES
   const [requests, setRequests] = useState<any[]>([]);
+  const [manualLeads, setManualLeads] = useState<any[]>([]);
   
-  // Filtering States
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [filterFunnel, setFilterFunnel] = useState("all"); // Added Funnel Filter
-  const [activeProgramTab, setActiveProgramTab] = useState<string>("all");
-  
-  // Dynamic Tabs State
-  const [dynamicTabs, setDynamicTabs] = useState<{id: string, label: string}[]>([{ id: "all", label: "All Programs" }]);
-  
-  // Controls the full-page editing modal
+  // MODAL STATES
+  const [showAddLeadModal, setShowAddLeadModal] = useState(false);
   const [editingHousehold, setEditingHousehold] = useState<any>(null);
+  
+  // FORM STATES
+  const [newLeadForm, setNewLeadForm] = useState({ 
+    name: '', email: '', phone: '', notes: '', 
+    source: 'Personal Network', interest: 'Bootcamp' 
+  });
   const [householdFunnelStage, setHouseholdFunnelStage] = useState<string>("Lead (New)");
 
-  const FUNNEL_STAGES = [
-     "Lead (New)",
-     "Contacted / In Review",
-     "Onboarding (Trial LMS)",
-     "Active (Paid Client)",
-     "Inactive / Dropped"
-  ];
+  // FILTER & BULK STATES
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterFunnel, setFilterFunnel] = useState("all");
+  const [selectedLeads, setSelectedLeads] = useState<{id: string, source: string}[]>([]);
+  const [bulkStage, setBulkStage] = useState("");
 
-  useEffect(() => {
-    fetchLeads();
+  const LEADS_STAGES = ["Lead (New)", "Contacted / In Review", "Onboarding (Trial LMS)", "Dropped"];
+  const LEAD_SOURCES = ["Social Media", "Google Ad", "Event / Workshop", "Personal Network", "Referral", "Other"];
+  const SERVICES = ["LMS Access", "Bootcamp", "Term Lessons", "Robotics Kits", "Private Tutoring"];
+
+  useEffect(() => { 
+    fetchData(); 
   }, []);
 
-  async function fetchLeads() {
+  async function fetchData() {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('registrations')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      
-      const leadsData = data || [];
-      setRequests(leadsData);
-
-      if (leadsData.length > 0) {
-        const allPrograms = leadsData.flatMap(lead => lead.interested_programs || []);
-        const formattedPrograms = allPrograms.map(prog => formatProgramName(prog as string));
-        const uniquePrograms = Array.from(new Set(formattedPrograms)).filter(Boolean);
-        
-        const tabs = [
-          { id: "all", label: "All Programs" },
-          ...uniquePrograms.map(prog => ({ id: prog, label: prog }))
-        ];
-        setDynamicTabs(tabs);
-      }
-
-    } catch (err) {
-      console.error("Fetch Leads Error:", err);
-    } finally {
-      setLoading(false);
+      const [regRes, profRes] = await Promise.all([
+        supabase.from('registrations').select('*').order('created_at', { ascending: false }),
+        supabase.from('profiles').select('*').in('status', ['lead', 'dropped']).order('created_at', { ascending: false })
+      ]);
+      setRequests(regRes.data || []);
+      setManualLeads(profRes.data || []);
+    } catch (err) { 
+      console.error("Fetch Error:", err); 
+    } finally { 
+      setLoading(false); 
     }
   }
 
-  const filteredRequests = requests.filter(req => {
-    const matchesSearch = 
-      req.student_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      req.parent_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      req.email?.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesStatus = filterStatus === "all" || req.status === filterStatus;
-    const matchesProgram = activeProgramTab === "all" || req.interested_programs?.some((p: string) => formatProgramName(p) === activeProgramTab);
-    
-    return matchesSearch && matchesStatus && matchesProgram;
-  });
-
-  const groupedByGuardian = filteredRequests.reduce((acc: any, req) => {
-    const key = req.email;
-    if (!acc[key]) {
-      acc[key] = {
-        parent_name: req.parent_name,
-        email: req.email,
-        phone: req.phone,
-        funnel_stage: req.metadata?.funnel_stage || "Lead (New)", 
-        funnel_stage_updated_at: req.metadata?.funnel_stage_updated_at || req.created_at, // Pull timestamp
-        children: []
-      };
+  const handleManualLeadSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newLeadForm.email && !newLeadForm.phone) {
+      alert("Validation Error: Provide at least one contact method (Email or Phone).");
+      return;
     }
-    acc[key].children.push(req);
-    return acc;
-  }, {});
-  
-  const guardianList = Object.values(groupedByGuardian).filter((h: any) => {
-     if (filterFunnel === "all") return true;
-     return h.funnel_stage === filterFunnel;
-  });
-
-  // --- FULL PAGE EDITOR LOGIC ---
-  const openEditor = (household: any) => {
-     setEditingHousehold(JSON.parse(JSON.stringify(household)));
-     setHouseholdFunnelStage(household.funnel_stage);
+    setIsProcessing(true);
+    try {
+      const { error } = await supabase.from('profiles').insert({
+        display_name: newLeadForm.name,
+        role: 'guardian',
+        status: 'lead',
+        lead_source: newLeadForm.source,
+        interested_service: newLeadForm.interest,
+        metadata: { email: newLeadForm.email, phone: newLeadForm.phone, admin_notes: newLeadForm.notes, lead_origin: 'manual' },
+        funnel_stage: 'Lead (New)'
+      });
+      if (error) throw error;
+      setShowAddLeadModal(false);
+      setNewLeadForm({ name: '', email: '', phone: '', notes: '', source: 'Personal Network', interest: 'Bootcamp' });
+      fetchData();
+    } catch (err: any) { alert(err.message); } finally { setIsProcessing(false); }
   };
 
-  const handleChildChange = (childId: string, field: string, value: any) => {
-    setEditingHousehold((prev: any) => {
-      const updatedChildren = prev.children.map((c: any) => 
-        c.id === childId ? { ...c, [field]: value } : c
-      );
-      return { ...prev, children: updatedChildren };
-    });
-  };
+  const handleDropLead = async (id: string, source: string) => {
+    if (!confirm("Move this lead to 'Dropped'?")) return;
+    setIsProcessing(true);
+    const table = source === "website" ? 'registrations' : 'profiles';
+    await supabase.from(table).update({ funnel_stage: 'Dropped', status: 'dropped' }).eq('id', id);
+    fetchData();
+    setIsProcessing(false);
+  }
 
   const handleSaveHousehold = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
-
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const isStageChanged = householdFunnelStage !== editingHousehold.funnel_stage;
-      const stageTimestamp = isStageChanged ? new Date().toISOString() : (editingHousehold.funnel_stage_updated_at || new Date().toISOString());
-
-      const updatePromises = editingHousehold.children.map((child: any) => 
-        supabase
-          .from('registrations')
-          .update({
-            student_name: child.student_name,
-            student_age: child.student_age,
-            status: child.status,
-            admin_notes: child.admin_notes,
-            metadata: {
-              ...child.metadata,
-              pioneer_username: child.metadata?.pioneer_username || "",
-              assigned_teacher: child.metadata?.assigned_teacher || "",
-              access_code: child.metadata?.access_code || "",
-              funnel_stage: householdFunnelStage, 
-              funnel_stage_updated_at: stageTimestamp // Save the new timestamp if manually changed
-            },
-            updated_at: new Date().toISOString(),
-            updated_by: user?.id
-          })
-          .eq('id', child.id)
-      );
-
-      await Promise.all(updatePromises);
+      const isRegistration = editingHousehold.source === "website";
+      const table = isRegistration ? 'registrations' : 'profiles';
       
+      const payload = isRegistration ? {
+        admin_notes: editingHousehold.admin_notes,
+        metadata: { ...editingHousehold.metadata, funnel_stage: householdFunnelStage }
+      } : {
+        display_name: editingHousehold.parent_name,
+        funnel_stage: householdFunnelStage,
+        metadata: { ...editingHousehold.metadata, admin_notes: editingHousehold.admin_notes }
+      };
+
+      const { error } = await supabase.from(table).update(payload).eq('id', editingHousehold.id);
+      if (error) throw error;
       setEditingHousehold(null);
-      await fetchLeads();
-      alert("Success: Household data and funnel updated.");
+      fetchData();
+    } catch (err: any) { alert(err.message); } finally { setIsProcessing(false); }
+  };
+
+  const toggleLeadSelection = (id: string, source: string) => {
+    setSelectedLeads(prev => {
+      const exists = prev.find(l => l.id === id);
+      if (exists) return prev.filter(l => l.id !== id);
+      return [...prev, { id, source }];
+    });
+  };
+
+  const handleBulkUpdate = async () => {
+    if (!bulkStage) return;
+    setIsProcessing(true);
+    try {
+      const regIds = selectedLeads.filter(l => l.source === 'website').map(l => l.id);
+      const profIds = selectedLeads.filter(l => l.source === 'manual').map(l => l.id);
+
+      if (regIds.length > 0) {
+        await supabase.from('registrations').update({ funnel_stage: bulkStage, status: bulkStage === 'Dropped' ? 'dropped' : 'lead' }).in('id', regIds);
+      }
+      if (profIds.length > 0) {
+        await supabase.from('profiles').update({ funnel_stage: bulkStage, status: bulkStage === 'Dropped' ? 'dropped' : 'lead' }).in('id', profIds);
+      }
+      
+      setSelectedLeads([]);
+      setBulkStage("");
+      fetchData();
     } catch (err) {
-      console.error("Save Error:", err);
-      alert("System Error: Failed to save household data.");
+      alert("Failed to perform bulk update.");
     } finally {
       setIsProcessing(false);
     }
   };
 
-  if (loading) return (
-    <div className="h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
-      <Loader2 className="animate-spin text-blue-500" size={40} />
-      <p className="text-blue-400 font-black uppercase tracking-widest text-[10px]">Accessing_Lead_Database...</p>
-    </div>
-  );
+  // UNIFIED GROUPING LOGIC (STRICTLY LEADS)
+  const getDisplayData = () => {
+    const combined: any[] = [];
+
+    // 1. Process Website Registrations
+    const groupedRegs = requests.reduce((acc: any, req) => {
+      const key = req.email || `reg_${req.id}`;
+      if (!acc[key]) {
+        acc[key] = {
+          id: req.id,
+          parent_name: req.parent_name,
+          email: req.email,
+          phone: req.phone,
+          funnel_stage: req.metadata?.funnel_stage || "Lead (New)", 
+          admin_notes: req.admin_notes,
+          metadata: req.metadata,
+          source: 'website',
+          children: []
+        };
+      }
+      acc[key].children.push({ ...req, role: 'Pioneer' });
+      return acc;
+    }, {});
+    combined.push(...Object.values(groupedRegs));
+
+    // 2. Process Manual Leads (Only top-level guardians, nest the rest)
+    const topLevelManual = manualLeads.filter(l => l.role === 'guardian' && !l.metadata?.household_lead_id);
+    const manualList = topLevelManual.map(lead => {
+      const pioneers = manualLeads.filter(p => p.role === 'student' && p.linked_parent_id === lead.id).map(p => ({
+        id: p.id, student_name: p.display_name, role: 'Pioneer', interested_programs: p.interested_programs
+      }));
+      const crew = manualLeads.filter(p => p.role === 'guardian' && p.metadata?.household_lead_id === lead.id).map(p => ({
+        id: p.id, student_name: p.display_name, role: 'Support Crew'
+      }));
+
+      return {
+        id: lead.id,
+        parent_name: lead.display_name,
+        email: lead.metadata?.email || lead.email,
+        phone: lead.metadata?.phone || lead.phone,
+        funnel_stage: lead.funnel_stage || lead.metadata?.funnel_stage || "Lead (New)",
+        admin_notes: lead.metadata?.admin_notes,
+        metadata: lead.metadata,
+        interested_service: lead.interested_service,
+        source: 'manual',
+        children: [...pioneers, ...crew]
+      };
+    });
+    combined.push(...manualList);
+
+    // 3. Filter by Funnel and Search (Exclude active clients entirely)
+    return combined.filter(item => {
+      const stage = item.funnel_stage || "Lead (New)";
+      
+      // Strict Isolation: If they somehow got marked Active here, they belong in Directory
+      if (stage.includes("Active") || stage.includes("Past")) return false;
+
+      const name = (item.parent_name || "").toLowerCase();
+      const searchMatch = name.includes(searchQuery.toLowerCase()) || (item.email && item.email.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      let funnelMatch = false;
+      if (filterFunnel === "all") funnelMatch = stage !== "Dropped";
+      else funnelMatch = stage === filterFunnel;
+
+      return searchMatch && funnelMatch;
+    });
+  };
+
+  const openEditor = (item: any) => {
+    setEditingHousehold({
+      id: item.id,
+      parent_name: item.parent_name,
+      email: item.email,
+      phone: item.phone,
+      admin_notes: item.admin_notes,
+      metadata: item.metadata || {},
+      funnel_stage: item.funnel_stage,
+      source: item.source
+    });
+    setHouseholdFunnelStage(item.funnel_stage);
+  };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 text-left relative overflow-hidden">
+    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 text-left relative overflow-hidden pb-32">
       <div className="max-w-7xl mx-auto space-y-10 relative z-10">
         
         {/* --- HEADER --- */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
           <div className="space-y-4">
-             <Link href="/admin/dashboard" className="group flex items-center gap-2 bg-white/5 border border-white/10 hover:border-blue-500/50 px-4 py-2 rounded-xl transition-all w-fit">
-              <ArrowLeft size={16} className="text-slate-500 group-hover:text-blue-400" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white">Mission Control</span>
+             <Link href="/admin/dashboard" className="group flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-all">
+              <ArrowLeft size={14} /> Mission Control
             </Link>
-            <div className="space-y-1">
-              <h1 className="text-5xl font-black uppercase italic tracking-tighter text-white">Lead_<span className="text-blue-500">Intake</span></h1>
-              <p className="text-slate-500 text-xs font-medium uppercase tracking-widest">Tracking {filteredRequests.length} Registered Profiles</p>
-            </div>
+            <h1 className="text-5xl font-black uppercase italic tracking-tighter">Lead_<span className="text-blue-500">Pipeline</span></h1>
           </div>
           
-          <div className="flex flex-col gap-3">
-             <div className="flex flex-wrap gap-2 bg-white/5 p-1 rounded-2xl border border-white/5">
-               {["all", "new", "needs_info", "approved", "promoted", "archived"].map((s) => (
-                 <button key={s} onClick={() => setFilterStatus(s)} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === s ? "bg-blue-600 text-white shadow-lg" : "text-slate-500 hover:text-white"}`}>
-                   {s.replace('_', ' ')}
-                 </button>
-               ))}
-             </div>
-             
-             <div className="relative w-full">
-               <select 
-                 value={filterFunnel} 
-                 onChange={e => setFilterFunnel(e.target.value)}
-                 className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-blue-500 transition-colors appearance-none cursor-pointer shadow-lg"
-               >
-                 <option value="all">Filter by Funnel Stage: ALL</option>
-                 {FUNNEL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-               </select>
-               <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-             </div>
+          <div className="flex gap-4">
+            <button onClick={() => setShowAddLeadModal(true)} className="flex items-center gap-2 px-6 py-4 bg-purple-600 hover:bg-purple-500 rounded-2xl text-[10px] font-black uppercase italic transition-all shadow-xl shadow-purple-900/20">
+              <Plus size={14}/> Create New Lead
+            </button>
+            <Link href="/admin/directory" className="flex items-center gap-2 px-6 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-[10px] font-black uppercase italic transition-all text-slate-400 hover:text-white">
+               Go to Directory <ArrowRight size={14}/>
+            </Link>
           </div>
         </header>
 
-        {/* --- SEARCH BAR & DYNAMIC TABS --- */}
+        {/* --- FILTERS --- */}
         <div className="space-y-4">
           <div className="relative group">
-            <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-700 group-focus-within:text-blue-400 transition-colors" size={20} />
+            <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-700" size={20} />
             <input 
-              type="text"
-              placeholder="SCANNING PIONEER LEADS..."
-              value={searchQuery}
+              placeholder="SCANNING LEADS..." 
+              value={searchQuery} 
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[#1e293b]/50 border border-white/5 rounded-[32px] py-6 pl-16 pr-8 text-white focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-slate-800 font-black italic uppercase tracking-tighter"
+              className="w-full bg-[#1e293b]/50 border border-white/5 rounded-[32px] py-6 pl-16 pr-8 text-white focus:outline-none focus:border-blue-500/50 transition-all font-black italic uppercase tracking-tighter"
             />
           </div>
-
-          <div className="flex flex-wrap gap-2 bg-white/5 p-2 rounded-2xl border border-white/5 shadow-inner w-full">
-            {dynamicTabs.map((tab) => {
-              let colorClass = "text-slate-500 hover:text-slate-300 bg-transparent";
-              if (activeProgramTab === tab.id) {
-                if (tab.id.startsWith("OL:")) {
-                  colorClass = "text-blue-400 border border-blue-500/50 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.15)]";
-                } else if (tab.id.startsWith("IP:")) {
-                  colorClass = "text-purple-400 border border-purple-500/50 bg-purple-500/10 shadow-[0_0_15px_rgba(168,85,247,0.15)]";
-                } else {
-                  colorClass = "text-white border border-white/20 bg-white/10 shadow-lg";
-                }
-              }
-              return (
-                <button 
-                  key={tab.id} 
-                  onClick={() => setActiveProgramTab(tab.id)} 
-                  className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex-grow sm:flex-grow-0 text-center ${colorClass}`}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap gap-2 bg-white/5 p-2 rounded-2xl border border-white/5 shadow-inner">
+            <button onClick={() => setFilterFunnel("all")} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${filterFunnel === "all" ? "bg-white/10 text-white" : "text-slate-500"}`}>All Stages</button>
+            {LEADS_STAGES.map(stage => (
+              <button key={stage} onClick={() => setFilterFunnel(stage)} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${filterFunnel === stage ? "bg-blue-600 text-white shadow-lg" : "text-slate-500 hover:text-white"}`}>
+                {stage}
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* --- GUARDIAN HOUSEHOLD LIST --- */}
+        {/* --- MAIN LIST --- */}
         <div className="bg-white/[0.02] border border-white/5 rounded-[48px] overflow-hidden shadow-2xl divide-y divide-white/5">
-          {guardianList.map((household: any, idx) => (
+          {getDisplayData().map((household: any, idx: number) => (
             <div key={idx} className="p-8 md:p-10 hover:bg-white/[0.01] transition-colors">
-              
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 border-b border-white/5 pb-6">
-                <div>
-                  <h4 className="text-3xl font-black uppercase italic text-purple-400 leading-none">{household.parent_name}</h4>
-                  <div className="flex items-center gap-6 mt-3 text-slate-500">
-                    <span className="flex items-center gap-2 text-xs font-medium"><Mail size={14}/> {household.email}</span>
-                    <span className="flex items-center gap-2 text-xs font-medium"><Phone size={14}/> {household.phone}</span>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-3">
+                    {/* BULK EDIT CHECKBOX */}
+                    <input 
+                       type="checkbox" 
+                       checked={selectedLeads.some(l => l.id === household.id)}
+                       onChange={() => toggleLeadSelection(household.id, household.source)}
+                       className="w-5 h-5 rounded border-white/10 bg-[#020617] text-purple-500 focus:ring-purple-500 cursor-pointer"
+                    />
+                    <h4 className={`text-3xl font-black uppercase italic leading-none ${household.source === 'manual' ? 'text-purple-400' : 'text-blue-400'}`}>{household.parent_name || household.display_name}</h4>
+                    {household.source === 'website' ? (
+                       <span className="flex items-center gap-1.5 text-[10px] font-black uppercase bg-blue-500/10 text-blue-400 px-2 py-1 rounded border border-blue-500/20"><Globe size={10}/> Web</span>
+                    ) : (
+                       <span className="flex items-center gap-1.5 text-[10px] font-black uppercase bg-purple-500/10 text-purple-400 px-2 py-1 rounded border border-purple-500/20"><User size={10}/> Manual</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-6 mt-3 pl-8 text-slate-500">
+                    <span className="flex items-center gap-2 text-xs font-medium"><Mail size={14}/> {household.email || 'N/A'}</span>
+                    <span className="flex items-center gap-2 text-xs font-medium"><Phone size={14}/> {household.phone || 'N/A'}</span>
                   </div>
                 </div>
+                
                 <div className="flex items-center gap-4">
-                  <div className="flex flex-col items-end relative">
-                     <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1 flex items-center gap-1"><Target size={10}/> Funnel Stage</span>
-                     <span className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border relative flex items-center gap-2 ${
-                        isNewInStage(household.funnel_stage_updated_at) ? 'shadow-[0_0_15px_rgba(34,197,94,0.15)] ring-1 ring-green-500/30 ' : ''
-                     } ${
-                        household.funnel_stage.includes('Paid') ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                        household.funnel_stage.includes('Trial') ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                        household.funnel_stage.includes('Inactive') ? 'bg-white/5 text-slate-500 border-white/10' :
-                        'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
-                     }`}>
-                        {isNewInStage(household.funnel_stage_updated_at) && (
-                          <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                          </span>
-                        )}
-                        {household.funnel_stage}
-                     </span>
+                  <div className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border ${household.funnel_stage === 'Dropped' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-white/5 text-slate-400 border-white/10'}`}>
+                    {household.funnel_stage || "Lead (New)"}
                   </div>
-                  <button 
-                    onClick={() => openEditor(household)} 
-                    className="inline-flex items-center gap-2 px-6 py-3 ml-4 rounded-xl bg-blue-600 text-white hover:bg-blue-500 transition-all text-[10px] font-black uppercase italic tracking-widest shadow-lg shadow-blue-600/20"
-                  >
-                    Open CRM <ArrowRight size={14} />
+                  <Link href={`/admin/finance/composer?leadId=${household.id}&type=quote`} className="p-3 bg-white/5 text-emerald-400 border border-emerald-500/20 rounded-xl hover:bg-emerald-600 hover:text-white transition-all">
+                    <CreditCard size={18}/>
+                  </Link>
+                  <button onClick={() => openEditor(household)} className="p-3 rounded-xl bg-white/5 text-white hover:bg-white/10 transition-all border border-white/5">
+                    <Edit3 size={18} />
+                  </button>
+                  <button onClick={() => handleDropLead(household.id, household.source)} className="p-3 rounded-xl bg-white/5 text-slate-500 hover:text-rose-500 transition-all border border-white/5">
+                    <Trash2 size={18} />
                   </button>
                 </div>
               </div>
               
-              <div className="pl-6 border-l-2 border-white/10 space-y-4">
-                {household.children.map((child: any) => (
-                  <div key={child.id} className="flex flex-col lg:flex-row lg:items-center justify-between bg-white/[0.03] p-5 rounded-[24px] border border-white/5 gap-6">
-                    <div className="flex items-center gap-5 shrink-0 min-w-[200px]">
-                       <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20 shrink-0">
-                          <User size={20} />
-                       </div>
-                       <div>
-                         <p className="text-xl font-black text-white uppercase italic leading-none">{child.student_name}</p>
-                         <p className="text-[10px] font-bold text-slate-500 mt-1.5 uppercase tracking-widest">Age: {child.student_age}</p>
-                       </div>
+              {/* NESTED CHILDREN VIEW */}
+              {household.children && household.children.length > 0 && (
+                <div className="mt-8 pl-10 border-l-2 border-white/10 space-y-3 ml-2">
+                  {household.children.map((child: any, i: number) => (
+                    <div key={child.id || i} className="flex items-center justify-between bg-white/5 p-4 rounded-2xl border border-white/5">
+                      <div className="flex items-center gap-3">
+                         <span className={`px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-widest ${child.role === 'Support Crew' ? 'bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>
+                           {child.role}
+                         </span>
+                         <p className="text-sm font-black text-white uppercase italic">{child.student_name} {child.student_age && <span className="text-[10px] text-slate-500 normal-case italic ml-2">Age {child.student_age}</span>}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        {child.interested_programs?.map((p: string, i: number) => (
+                          <span key={i} className="text-[8px] font-black uppercase tracking-widest bg-white/5 text-slate-400 px-2 py-1 rounded border border-white/10">{formatProgramName(p)}</span>
+                        ))}
+                      </div>
                     </div>
-                    
-                    <div className="flex flex-wrap gap-2 flex-1">
-                      {child.interested_programs?.map((prog: string, i: number) => {
-                        const formatted = formatProgramName(prog);
-                        const isOnline = formatted.startsWith('OL:');
-                        const isInPerson = formatted.startsWith('IP:');
-                        return (
-                          <span key={i} className={`text-[9px] uppercase font-bold tracking-widest px-4 py-2 rounded-xl border leading-snug whitespace-normal text-left ${
-                            isOnline ? 'bg-blue-500/5 text-blue-400 border-blue-500/20' : 
-                            isInPerson ? 'bg-purple-500/5 text-purple-400 border-purple-500/20' : 
-                            'bg-black/40 text-slate-400 border-white/5'
-                          }`}>
-                            {formatted}
-                          </span>
-                        );
-                      })}
-                    </div>
-
-                    <div className="shrink-0 lg:text-right">
-                       <span className={`text-[10px] font-black uppercase tracking-[0.2em] px-5 py-2.5 rounded-xl border inline-block ${
-                         child.status === 'new' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
-                         child.status === 'approved' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                         child.status === 'promoted' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' :
-                         child.status === 'archived' ? 'bg-white/5 text-slate-500 border-white/10' :
-                         'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
-                       }`}>
-                         {child.status.replace('_', ' ')}
-                       </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
+                  ))}
+                </div>
+              )}
             </div>
           ))}
-          
-          {guardianList.length === 0 && (
-            <div className="py-24 text-center space-y-4">
-              <ShieldCheck className="mx-auto text-slate-700" size={48} />
-              <p className="text-slate-500 italic uppercase font-black text-xs tracking-[0.3em]">No_Households_Found</p>
+          {getDisplayData().length === 0 && (
+            <div className="p-16 text-center text-slate-500 font-black uppercase tracking-widest text-xs">
+              Pipeline Empty. No leads found.
             </div>
           )}
         </div>
       </div>
 
+      {/* --- BULK EDIT FLOATING ACTION BAR --- */}
       <AnimatePresence>
-        {editingHousehold && (
+        {selectedLeads.length > 0 && (
           <motion.div 
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-[#020617] overflow-y-auto"
+            initial={{ y: 100 }} animate={{ y: 0 }} exit={{ y: 100 }} 
+            className="fixed bottom-0 left-0 w-full bg-[#0f172a]/95 backdrop-blur-xl border-t border-white/10 p-6 z-[100] shadow-[0_-10px_40px_rgba(0,0,0,0.5)]"
           >
-            <form onSubmit={handleSaveHousehold} className="max-w-5xl mx-auto min-h-screen p-6 md:p-12 flex flex-col">
-              
-              <div className="flex items-center justify-between pb-8 border-b border-white/10 shrink-0">
-                <div className="flex items-center gap-4">
-                  <button type="button" onClick={() => setEditingHousehold(null)} className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all">
-                    <ArrowLeft size={20} />
-                  </button>
-                  <div>
-                    <h2 className="text-4xl font-black uppercase italic tracking-tighter text-white leading-none">Household_Editor</h2>
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-purple-400 mt-2">Editing Guardian: {editingHousehold.parent_name}</p>
-                  </div>
+            <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-full bg-purple-600/20 text-purple-400 flex items-center justify-center font-black">
+                  {selectedLeads.length}
                 </div>
-                
-                <button 
-                  type="submit" disabled={isProcessing}
-                  className="flex items-center gap-2 px-8 py-4 bg-blue-600 rounded-2xl text-xs font-black uppercase italic hover:bg-blue-500 transition-all shadow-xl shadow-blue-600/20 disabled:opacity-50"
+                <div>
+                  <h4 className="font-black uppercase italic text-white leading-none">Leads Selected</h4>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Ready for Bulk Update</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 w-full md:w-auto">
+                <select 
+                   value={bulkStage} 
+                   onChange={(e) => setBulkStage(e.target.value)} 
+                   className="w-full md:w-auto bg-[#020617] border border-white/10 rounded-xl px-4 py-4 text-xs font-bold text-white outline-none focus:border-purple-500 appearance-none"
                 >
-                  {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Save size={16}/>} Save All Changes
+                  <option value="" disabled>--- Move to Stage ---</option>
+                  {LEADS_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <button 
+                   onClick={handleBulkUpdate} 
+                   disabled={!bulkStage || isProcessing} 
+                   className="w-full md:w-auto bg-purple-600 hover:bg-purple-500 text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest text-[10px] transition-all shadow-xl disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isProcessing ? <Loader2 className="animate-spin" size={16}/> : <><CheckCircle2 size={16}/> Apply Update</>}
                 </button>
               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-              <div className="flex-1 py-10 space-y-12">
-                <div className="bg-purple-500/5 border border-purple-500/20 p-8 rounded-[32px]">
-                   <h3 className="text-xs font-black uppercase tracking-widest text-purple-400 mb-4 flex items-center justify-between">
-                     <div className="flex items-center gap-2"><ListTree size={16}/> Guardian Contact Info</div>
-                     
-                     {/* ADDED FUNNEL TRACKER HERE */}
-                     <div className="flex items-center gap-3">
-                        <Target size={16}/>
-                        <select 
-                           value={householdFunnelStage} 
-                           onChange={(e) => setHouseholdFunnelStage(e.target.value)}
-                           className="bg-[#0f172a] border border-purple-500/30 text-white rounded-xl px-4 py-2 font-bold text-xs outline-none focus:border-purple-500 transition-colors"
-                        >
-                           {FUNNEL_STAGES.map(stage => <option key={stage} value={stage}>{stage}</option>)}
-                        </select>
-                     </div>
-                   </h3>
-
-                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Full Name</label>
-                        <p className="text-white font-bold">{editingHousehold.parent_name}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Email Address</label>
-                        <p className="text-slate-300 font-medium">{editingHousehold.email}</p>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Phone Number</label>
-                        <p className="text-slate-300 font-medium">{editingHousehold.phone}</p>
-                      </div>
-                   </div>
+      {/* --- ADD MANUAL LEAD MODAL --- */}
+      <AnimatePresence>
+        {showAddLeadModal && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-6 bg-black/95 backdrop-blur-md">
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-[#0f172a] border border-white/10 p-10 rounded-[40px] w-full max-w-2xl shadow-2xl space-y-6 text-left">
+              <div className="flex justify-between items-center">
+                <h3 className="text-3xl font-black uppercase italic text-purple-400 leading-none">Initialize_Lead</h3>
+                <button onClick={() => setShowAddLeadModal(false)}><X /></button>
+              </div>
+              <form onSubmit={handleManualLeadSubmit} className="space-y-4">
+                <input required placeholder="Guardian Full Name" value={newLeadForm.name} onChange={e => setNewLeadForm({...newLeadForm, name: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 outline-none focus:border-purple-500 font-bold" />
+                <div className="grid grid-cols-2 gap-4">
+                  <input type="email" placeholder="Email (Optional if phone provided)" value={newLeadForm.email} onChange={e => setNewLeadForm({...newLeadForm, email: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 outline-none focus:border-purple-500" />
+                  <input placeholder="Phone (Optional if email provided)" value={newLeadForm.phone} onChange={e => setNewLeadForm({...newLeadForm, phone: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 outline-none focus:border-purple-500" />
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <select value={newLeadForm.source} onChange={e => setNewLeadForm({...newLeadForm, source: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 outline-none focus:border-purple-500 font-bold text-slate-400">
+                    {LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <select value={newLeadForm.interest} onChange={e => setNewLeadForm({...newLeadForm, interest: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 outline-none focus:border-purple-500 font-bold text-slate-400">
+                    {SERVICES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <textarea placeholder="Initial Inquiry Notes..." value={newLeadForm.notes} onChange={e => setNewLeadForm({...newLeadForm, notes: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 outline-none focus:border-purple-500 min-h-[100px] text-sm" />
+                <button type="submit" disabled={isProcessing} className="w-full bg-purple-600 p-5 rounded-2xl font-black uppercase italic tracking-widest hover:bg-purple-500 flex justify-center shadow-xl shadow-purple-900/20 disabled:opacity-50">
+                  {isProcessing ? <Loader2 className="animate-spin" /> : 'Commit Lead to Record'}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
 
-                <div className="space-y-8">
-                  <h3 className="text-xl font-black uppercase italic text-white flex items-center gap-3">
-                    <User size={24} className="text-blue-500"/> Pioneer Profiles ({editingHousehold.children.length})
-                  </h3>
-                  
-                  {editingHousehold.children.map((child: any, index: number) => (
-                    <div key={child.id} className="bg-white/[0.02] border border-white/10 rounded-[40px] p-8 space-y-8">
-                      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                         <div className="md:col-span-5 space-y-2">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Pioneer Name</label>
-                            <input 
-                              type="text" value={child.student_name}
-                              onChange={(e) => handleChildChange(child.id, 'student_name', e.target.value)}
-                              className="w-full bg-[#020617] border border-white/10 rounded-2xl px-6 py-4 text-white font-black italic text-lg outline-none focus:border-blue-500"
-                            />
-                         </div>
-                         <div className="md:col-span-3 space-y-2">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Age</label>
-                            <input 
-                              type="number" value={child.student_age}
-                              onChange={(e) => handleChildChange(child.id, 'student_age', parseInt(e.target.value))}
-                              className="w-full bg-[#020617] border border-white/10 rounded-2xl px-6 py-4 text-white font-black italic text-lg outline-none focus:border-blue-500"
-                            />
-                         </div>
-                         <div className="md:col-span-4 space-y-2">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Workflow Status</label>
-                            <select 
-                              value={child.status}
-                              onChange={(e) => handleChildChange(child.id, 'status', e.target.value)}
-                              className="w-full bg-[#020617] border border-white/10 rounded-2xl px-6 py-4 text-white font-black uppercase tracking-widest text-xs outline-none focus:border-blue-500 appearance-none cursor-pointer"
-                            >
-                              <option value="new">NEW INTAKE</option>
-                              <option value="needs_info">NEEDS INFO</option>
-                              <option value="approved">APPROVED / LINKED</option>
-                              <option value="promoted">PROMOTED TO LMS</option>
-                              <option value="archived">ARCHIVED</option>
-                            </select>
-                         </div>
-                      </div>
-
-                      <div className="p-6 rounded-2xl bg-white/5 border border-white/5 space-y-2">
-                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Requested Programs</label>
-                         <div className="flex flex-wrap gap-2">
-                            {child.interested_programs?.map((prog: string, i: number) => {
-                               const formatted = formatProgramName(prog);
-                               const isOnline = formatted.startsWith('OL:');
-                               const isInPerson = formatted.startsWith('IP:');
-                               return (
-                                 <span key={i} className={`text-[10px] font-black text-white uppercase tracking-widest px-3 py-1.5 rounded-lg border ${
-                                   isOnline ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 
-                                   isInPerson ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 
-                                   'bg-black/40 text-white border-white/10'
-                                 }`}>
-                                   {formatted}
-                                 </span>
-                               );
-                            })}
-                         </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-white/10">
-                         <div className="space-y-2">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Assigned Teacher</label>
-                            <input 
-                              type="text" placeholder="e.g. Mr. Smith" 
-                              value={child.metadata?.assigned_teacher || ""}
-                              onChange={(e) => handleChildChange(child.id, 'metadata', { ...child.metadata, assigned_teacher: e.target.value })}
-                              className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm outline-none focus:border-blue-500"
-                            />
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Pioneer Username</label>
-                            <input 
-                              type="text" placeholder="e.g. pioneer_john" 
-                              value={child.metadata?.pioneer_username || ""}
-                              onChange={(e) => handleChildChange(child.id, 'metadata', { ...child.metadata, pioneer_username: e.target.value })}
-                              className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm outline-none focus:border-blue-500"
-                            />
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Portal Access Code</label>
-                            <input 
-                              type="text" placeholder="e.g. RAD-2026-X" 
-                              value={child.metadata?.access_code || ""}
-                              onChange={(e) => handleChildChange(child.id, 'metadata', { ...child.metadata, access_code: e.target.value })}
-                              className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm outline-none focus:border-blue-500 font-mono tracking-widest"
-                            />
-                         </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2 flex items-center gap-2">
-                          <MessageSquare size={12}/> Internal Admin Notes
-                        </label>
-                        <textarea 
-                          placeholder="Enter internal notes, special requirements, or audit logs here..."
-                          value={child.admin_notes || ""}
-                          onChange={(e) => handleChildChange(child.id, 'admin_notes', e.target.value)}
-                          className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 text-sm text-slate-300 focus:outline-none focus:border-blue-500 min-h-[100px] resize-none"
-                        />
-                      </div>
-                    </div>
-                  ))}
+        {/* --- CRM HOUSEHOLD EDITOR MODAL --- */}
+        {editingHousehold && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-[#020617] overflow-y-auto text-left">
+            <form onSubmit={handleSaveHousehold} className="max-w-5xl mx-auto min-h-screen p-6 md:p-12 flex flex-col space-y-10">
+              <div className="flex items-center justify-between pb-8 border-b border-white/10">
+                <div className="flex items-center gap-4">
+                  <button type="button" onClick={() => setEditingHousehold(null)} className="p-3 rounded-full bg-white/5 border border-white/10 text-slate-400 hover:text-white transition-all"><X size={20} /></button>
+                  <h2 className="text-4xl font-black uppercase italic leading-none">Lead_CRM_Node</h2>
+                </div>
+                <button type="submit" disabled={isProcessing} className="px-8 py-4 bg-blue-600 rounded-2xl text-xs font-black uppercase italic hover:bg-blue-500 transition-all shadow-xl">
+                  {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Save size={16}/>} Synchronize CRM
+                </button>
+              </div>
+              <div className="bg-white/5 border border-white/10 p-8 rounded-[32px] space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black uppercase text-slate-500 flex items-center gap-2"><Target size={14}/> Funnel Progression</label>
+                    <select value={householdFunnelStage} onChange={(e) => setHouseholdFunnelStage(e.target.value)} className="w-full bg-[#0f172a] border border-white/10 text-white rounded-xl p-4 font-bold text-sm outline-none focus:border-blue-500">
+                      {LEADS_STAGES.map(stage => <option key={stage} value={stage}>{stage}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black uppercase text-slate-500 flex items-center gap-2"><MessageSquare size={14}/> Internal Admin Dossier</label>
+                  <textarea value={editingHousehold.admin_notes || ""} onChange={(e) => setEditingHousehold({...editingHousehold, admin_notes: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl p-6 text-sm text-slate-300 min-h-[200px] outline-none focus:border-blue-500" placeholder="Log interactions..." />
                 </div>
               </div>
             </form>
