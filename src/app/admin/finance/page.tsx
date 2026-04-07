@@ -22,6 +22,7 @@ export default function FinancePortal() {
   // WORKSPACE STATE
   const [records, setRecords] = useState<any[]>([]);
   const [activeDoc, setActiveDoc] = useState<{ type: 'invoice' | 'statement' | 'quote', data: any } | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false); // NEW: PDF Generation State
 
   const metrics = {
     mrr: "R 32,500",
@@ -51,17 +52,85 @@ export default function FinancePortal() {
   }
 
   const handleViewDocument = (rec: any) => {
+    const recipientName = rec.profiles?.display_name || rec.metadata?.prospect_name || "Unknown Guardian";
+    const recipientEmail = rec.metadata?.prospect_email || "";
+
     setActiveDoc({
       type: rec.doc_type || 'invoice',
       data: {
+        docId: rec.id,
         docNumber: `${rec.doc_type === 'quote' ? 'QT' : 'INV'}-${rec.invoice_number}`,
-        recipient: { name: rec.profiles?.display_name || "Unknown Guardian" },
+        recipient: { 
+          name: recipientName,
+          email: recipientEmail
+        },
         items: rec.line_items,
         date: new Date(rec.created_at).toLocaleDateString('en-ZA'),
         dueDate: rec.expires_at ? new Date(rec.expires_at).toLocaleDateString('en-ZA') : new Date(new Date(rec.created_at).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-ZA'),
         globalNote: rec.metadata?.global_note
       }
     });
+  };
+
+// --- NEW: PDF GENERATION ENGINE (NATIVE SVG RENDERER) ---
+  const handleDownloadPDF = async () => {
+    if (!activeDoc) return;
+    setIsGeneratingPdf(true);
+    
+    try {
+      const htmlToImage = await import("html-to-image");
+      
+      // @ts-ignore
+      const jsPDFModule = await import("jspdf/dist/jspdf.umd.min.js");
+      const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default;
+
+      const element = document.getElementById("document-capture-area");
+      if (!element) throw new Error("Document element not found");
+
+      const dataUrl = await htmlToImage.toPng(element, { 
+        pixelRatio: 2, 
+        backgroundColor: "#020617", 
+        style: { margin: '0' } 
+      });
+      
+      const pdf = new jsPDF("p", "mm", "a4");
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfPageHeight = pdf.internal.pageSize.getHeight();
+      
+      pdf.setFillColor("#020617");
+      pdf.rect(0, 0, pdfWidth, pdfPageHeight, "F");
+      
+      const pdfHeight = (element.offsetHeight * pdfWidth) / element.offsetWidth;
+      
+      pdf.addImage(dataUrl, "PNG", 0, 0, pdfWidth, pdfHeight);
+
+      // --- NEW: NATIVE CLICKABLE PDF BUTTON ---
+      if (activeDoc.type === 'quote') {
+        const acceptUrl = `${window.location.origin}/quote/${activeDoc.data.docId}`;
+        const buttonY = pdfPageHeight - 25; // 25mm from the bottom of the page
+        
+        // Draw Purple Button Background
+        pdf.setFillColor(147, 51, 234); // Tailwind purple-600
+        pdf.rect(pdfWidth / 4, buttonY, pdfWidth / 2, 12, "F"); 
+        
+        // Add White Clickable Text
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(11);
+        pdf.setFont("helvetica", "bold");
+        pdf.textWithLink("CLICK HERE TO REVIEW & ACCEPT QUOTE", pdfWidth / 2, buttonY + 7.5, {
+          url: acceptUrl,
+          align: "center"
+        });
+      }
+      
+      pdf.save(`${activeDoc.data.docNumber}_RAD_Academy.pdf`);
+      
+    } catch (err) {
+      console.error("PDF Generation failed:", err);
+      alert("Failed to generate PDF. Please try again.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
   };
 
   if (loading) return (
@@ -127,7 +196,7 @@ export default function FinancePortal() {
                   {records.map((rec) => (
                     <LedgerRow 
                       key={rec.id}
-                      name={rec.profiles?.display_name || 'Unknown Entity'} 
+                      name={rec.profiles?.display_name || rec.metadata?.prospect_name || 'Unknown Entity'} 
                       type={rec.doc_type === 'quote' ? 'Quotation' : 'Invoice'} 
                       amount={`R ${rec.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} 
                       status={rec.status.charAt(0).toUpperCase() + rec.status.slice(1)} 
@@ -177,12 +246,14 @@ export default function FinancePortal() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                   <button className="p-4 bg-white/5 rounded-2xl text-slate-400 hover:text-white border border-white/10 transition-all"><Printer size={20}/></button>
+                   {/* Wired up the Print button */}
+                   <button onClick={() => window.print()} className="p-4 bg-white/5 rounded-2xl text-slate-400 hover:text-white border border-white/10 transition-all"><Printer size={20}/></button>
                    <button onClick={() => setActiveDoc(null)} className="p-4 bg-white/5 rounded-2xl text-slate-400 hover:text-white border border-white/10 transition-all"><X size={24}/></button>
                 </div>
               </div>
 
-              <div className="flex-1">
+              {/* Added the target ID to this wrapper so html2canvas knows what to capture */}
+              <div className="flex-1 py-4" id="document-capture-area">
                 {activeDoc.type === 'statement' ? (
                   <RADStatement {...activeDoc.data} />
                 ) : (
@@ -192,7 +263,19 @@ export default function FinancePortal() {
 
               <div className="pt-6 border-t border-white/5 flex gap-4">
                  <button className="flex-1 py-4 bg-emerald-600 rounded-2xl font-black uppercase italic tracking-widest hover:bg-emerald-500 transition-all">Transmit to Parent Email</button>
-                 <button className="px-10 py-4 bg-white/5 rounded-2xl font-black uppercase italic tracking-widest border border-white/10 hover:bg-white/10">Download PDF</button>
+                 
+                 {/* Wired up the Download button with loading state */}
+                 <button 
+                   onClick={handleDownloadPDF}
+                   disabled={isGeneratingPdf}
+                   className="px-10 py-4 bg-white/5 rounded-2xl font-black uppercase italic tracking-widest border border-white/10 hover:bg-white/10 flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                 >
+                   {isGeneratingPdf ? (
+                     <><Loader2 size={16} className="animate-spin" /> Processing...</>
+                   ) : (
+                     <><Download size={16} /> Download PDF</>
+                   )}
+                 </button>
               </div>
             </motion.div>
           </div>
