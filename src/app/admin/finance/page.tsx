@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, CreditCard, TrendingUp, AlertTriangle, 
-  CheckCircle2, Clock, Filter, Search, Download, 
+  CheckCircle2, Clock, Filter, Search, Download, UserPlus,
   Plus, ChevronRight, Wallet, Receipt, Loader2, Activity, X, Shield, FileText, Printer, BarChart3, Package, FilterX
 } from "lucide-react";
 import Link from "next/link";
@@ -220,7 +220,7 @@ export default function FinancePortal() {
     });
   };
 
-  const handleManualAcceptQuote = async () => {
+  const handleApproveQuoteProfile = async (isAlreadyAccepted = false) => {
     if (!activeDoc || activeDoc.type !== 'quote') return;
     setIsUpdatingStatus(true);
     
@@ -255,7 +255,7 @@ export default function FinancePortal() {
 
        if (updateErr) throw updateErr;
 
-       alert("Quote accepted! Client profile verified and active.");
+       alert(isAlreadyAccepted ? "Client profile generated and verified successfully!" : "Quote accepted! Client profile verified and active.");
        setActiveDoc(null);
        fetchFinanceData(); 
     } catch (err: any) {
@@ -619,10 +619,10 @@ export default function FinancePortal() {
 
               <div className="pt-6 border-t border-white/5 flex flex-wrap gap-4">
                  
-                 {/* 1. MANUAL ACCEPT QUOTE BUTTON */}
+                 {/* 1. MANUAL ACCEPT QUOTE BUTTON (For Pending Quotes) */}
                  {activeDoc.type === 'quote' && activeDoc.data.status === 'pending' && (
                     <button 
-                      onClick={handleManualAcceptQuote}
+                      onClick={() => handleApproveQuoteProfile(false)}
                       disabled={isUpdatingStatus}
                       className="px-8 py-4 bg-purple-600 rounded-2xl font-black uppercase italic tracking-widest hover:bg-purple-500 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                     >
@@ -630,8 +630,19 @@ export default function FinancePortal() {
                     </button>
                  )}
 
-                 {/* 2. CONVERT TO INVOICE BUTTON (Routes to Composer to allow editing first) */}
-                 {activeDoc.type === 'quote' && activeDoc.data.status === 'accepted' && !activeDoc.data.rawRecord?.metadata?.converted_to_invoice && (
+                 {/* 1.5. VERIFY PROFILE BUTTON (For Publicly Accepted Quotes that lack a profile) */}
+                 {activeDoc.type === 'quote' && activeDoc.data.status === 'accepted' && !activeDoc.data.recipient.id && (
+                    <button 
+                      onClick={() => handleApproveQuoteProfile(true)}
+                      disabled={isUpdatingStatus}
+                      className="px-8 py-4 bg-amber-600 rounded-2xl font-black uppercase italic tracking-widest hover:bg-amber-500 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-xl shadow-amber-900/20"
+                    >
+                      {isUpdatingStatus ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={18} />} Verify & Create Profile
+                    </button>
+                 )}
+
+                 {/* 2. CONVERT TO INVOICE BUTTON (Requires Accepted status AND a linked profile) */}
+                 {activeDoc.type === 'quote' && activeDoc.data.status === 'accepted' && activeDoc.data.recipient.id && !activeDoc.data.rawRecord?.metadata?.converted_to_invoice && (
                     <button 
                       onClick={() => router.push(`/admin/finance/composer?convertFromQuote=${activeDoc.data.docId}`)}
                       className="px-8 py-4 bg-blue-600 rounded-2xl font-black uppercase italic tracking-widest hover:bg-blue-500 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-xl shadow-blue-900/20"
