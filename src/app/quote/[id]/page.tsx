@@ -17,7 +17,6 @@ export default function PublicQuoteView() {
   const [guardian, setGuardian] = useState<any>(null);
   const [actionState, setActionState] = useState<'pending' | 'accepted' | 'declined' | 'expired'>('pending');
   
-  // NEW: State to control our custom modal
   const [pendingAction, setPendingAction] = useState<'accepted' | 'declined' | null>(null);
 
   useEffect(() => {
@@ -42,13 +41,27 @@ export default function PublicQuoteView() {
 
       setQuote(quoteData);
 
-      const { data: guardianData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', quoteData.guardian_id)
-        .single();
+      // --- THE FIX: Prospect-Aware Routing ---
+      if (quoteData.guardian_id) {
+        // Path A: This is a fully registered user
+        const { data: guardianData } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', quoteData.guardian_id)
+          .single();
 
-      if (guardianData) setGuardian(guardianData);
+        if (guardianData) setGuardian(guardianData);
+      } else if (quoteData.metadata?.prospect_name) {
+        // Path B: This is a CRM Prospect. Create a virtual guardian object for the UI!
+        setGuardian({
+          id: null, // No official ID yet
+          display_name: quoteData.metadata.prospect_name,
+          email: quoteData.metadata.prospect_email,
+          metadata: { email: quoteData.metadata.prospect_email, phone: "Pending Account Setup" }
+        });
+      } else {
+        throw new Error("No recipient data found on this document.");
+      }
 
     } catch (err) {
       console.error(err);
@@ -57,25 +70,26 @@ export default function PublicQuoteView() {
     }
   }
 
-  // NEW: Actually execute the database update after they confirm in the modal
   const executeAction = async () => {
     if (!pendingAction) return;
     setIsProcessing(true);
 
     try {
+      // 1. Update the document status to Accepted/Declined
       await supabase
         .from('billing_records')
         .update({ status: pendingAction })
         .eq('id', quoteId);
 
-      if (pendingAction === 'accepted' && guardian) {
+      // 2. ONLY attempt to update the profile if they actually have a database ID
+      if (pendingAction === 'accepted' && guardian?.id) {
         await supabase
           .from('profiles')
           .update({ status: 'active', funnel_stage: 'Active (Paid Client)' })
           .eq('id', guardian.id);
       }
 
-      if (pendingAction === 'declined' && guardian) {
+      if (pendingAction === 'declined' && guardian?.id) {
         await supabase
           .from('profiles')
           .update({ status: 'dropped', funnel_stage: 'Dropped' })
@@ -83,7 +97,7 @@ export default function PublicQuoteView() {
       }
 
       setActionState(pendingAction);
-      setPendingAction(null); // Close the modal
+      setPendingAction(null); 
     } catch (err: any) {
       alert("System Error: " + err.message);
     } finally {
