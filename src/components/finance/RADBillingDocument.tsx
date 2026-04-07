@@ -46,7 +46,8 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
         
         <div className="text-right space-y-1">
           <p className="font-black uppercase text-lg italic">RAD Academy (Pty) Ltd</p>
-          <p className="text-xs text-slate-400">100 Jasper Avenue, Centurion</p>
+          <p className="text-xs text-slate-400">Jasper Avenue, Centurion, Pretoria, GP</p>
+          <p className="text-xs text-slate-400">076-906 5959 (WhatsApp)</p>
           <p className="text-xs text-slate-400">info@radacademy.co.za</p>
           {/* Removed VAT line */}
         </div>
@@ -167,8 +168,10 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
           </h4>
           <div className="space-y-1 text-sm">
             <p><span className="text-slate-500 font-mono text-[11px] uppercase">Bank:</span> FNB</p>
+            <p><span className="text-slate-500 font-mono text-[11px] uppercase">Name:</span> RAD Academy</p>
+            <p><span className="text-slate-500 font-mono text-[11px] uppercase">Type:</span> Cheque Account</p>
             <p><span className="text-slate-500 font-mono text-[11px] uppercase">Acc:</span> 6289 636 1632</p>
-            <p><span className="text-slate-500 font-mono text-[11px] uppercase">Ref:</span> {docNumber} / {recipient.name.split(' ')[0]}</p>
+            <p><span className="text-slate-500 font-mono text-[11px] uppercase">Ref:</span> {docNumber}-{recipient.name.split(' ')[0]}</p>
           </div>
         </div>
         <div className="flex flex-col justify-center items-end opacity-40">

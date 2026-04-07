@@ -4,12 +4,11 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Search, Plus, X, Save, PhoneCall, Mail, MessageSquare, 
-  Calendar, Clock, Target, ClipboardList, Loader2, ArrowRight, ArrowLeft, Trash2, CheckCircle2, User, Users, FilterX, FileText
+  Calendar, Clock, Target, ClipboardList, Loader2, ArrowRight, ArrowLeft, Trash2, CheckCircle2, User, Users, FilterX, FileText, FileSignature
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 
-// Removed "Quote Sent" from the main pipeline stages
 const STATUS_OPTIONS = ["New Lead", "Attempted Contact", "Engaged", "Warm (Pending Close)", "Converted (Won)", "Lost"];
 const SOURCE_OPTIONS = ["Meta Ad - Polokwane Bootcamp", "Meta Ad - General", "Google Search", "Referral", "Website Contact Form", "Other"];
 
@@ -25,15 +24,16 @@ export default function ProspectsCRM() {
   const [filterDate, setFilterDate] = useState("");
   const [filterQuote, setFilterQuote] = useState<"All" | "Sent" | "Not Sent">("All");
   
-  // Stats State (Removed quote count)
+  // Stats State
   const [stats, setStats] = useState({ 
     total: 0, active: 0, newLead: 0, attempted: 0, 
     engaged: 0, warm: 0, converted: 0, lost: 0 
   });
 
-  // Full Page Editor State
+  // Full Page Editor & Modal States
   const [selectedProspect, setSelectedProspect] = useState<any>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false); // NEW: Quote Engine Modal State
   const [newLogText, setNewLogText] = useState("");
   const [newLogType, setNewLogType] = useState("Note");
 
@@ -54,7 +54,6 @@ export default function ProspectsCRM() {
       const fetchedData = data || [];
       setProspects(fetchedData);
       
-      // Calculate Stats
       setStats({
         total: fetchedData.length,
         active: fetchedData.filter(p => !['Lost', 'Converted (Won)'].includes(p.status)).length,
@@ -169,7 +168,6 @@ export default function ProspectsCRM() {
     setFilterQuote("All");
   };
 
-  // --- ADVANCED FILTERING LOGIC ---
   const filteredProspects = prospects.filter(p => {
     const matchesSearch = p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.email?.toLowerCase().includes(searchQuery.toLowerCase()) || p.phone?.includes(searchQuery);
     
@@ -213,7 +211,7 @@ export default function ProspectsCRM() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans relative overflow-hidden">
-      <div className="max-w-7xl mx-auto space-y-10">
+      <div className="max-w-7xl mx-auto space-y-10 relative z-10">
         
         {!selectedProspect && !isCreating ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-10">
@@ -238,7 +236,7 @@ export default function ProspectsCRM() {
               </button>
             </header>
 
-            {/* CLICKABLE STATS DASHBOARD (7 Cards) */}
+            {/* CLICKABLE STATS DASHBOARD */}
             <section className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3 mb-8">
               {[
                 { label: "All Active", value: stats.active, icon: Target, color: "text-white", filter: "Active" },
@@ -434,9 +432,21 @@ export default function ProspectsCRM() {
               {/* RIGHT COLUMN: Pipeline & Log */}
               <div className="lg:col-span-1 space-y-8">
                 
-                <div className="bg-fuchsia-500/10 border border-fuchsia-500/30 p-8 rounded-[40px] shadow-2xl shadow-fuchsia-900/10 space-y-6">
+                <div className="bg-fuchsia-500/10 border border-fuchsia-500/30 p-8 rounded-[40px] shadow-2xl shadow-fuchsia-900/10 space-y-6 relative overflow-hidden">
                   <h3 className="text-sm font-black uppercase tracking-widest text-fuchsia-400 flex items-center gap-2 border-b border-fuchsia-500/20 pb-4"><Target size={18}/> Pipeline Control</h3>
-                  <div className="space-y-5">
+                  
+                  <div className="space-y-5 relative z-10">
+                    
+                    {/* NEW: Generate Quote Button */}
+                    {!isCreating && (
+                      <button 
+                        onClick={() => setIsQuoteModalOpen(true)}
+                        className="w-full py-4 bg-white text-black font-black uppercase italic text-xs rounded-xl shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2"
+                      >
+                        <FileSignature size={16}/> Launch Quote Engine
+                      </button>
+                    )}
+
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-300 uppercase tracking-widest ml-2">Current Status</label>
                       <select value={selectedProspect.status} onChange={e => setSelectedProspect({...selectedProspect, status: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-white font-bold text-sm outline-none focus:border-fuchsia-500 shadow-inner">
@@ -525,7 +535,52 @@ export default function ProspectsCRM() {
         )}
 
       </div>
+
+      {/* --- QUOTE ENGINE MODAL --- */}
+      <AnimatePresence>
+        {isQuoteModalOpen && selectedProspect && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }} 
+            animate={{ opacity: 1, scale: 1 }} 
+            exit={{ opacity: 0, scale: 0.95 }} 
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 md:p-8"
+          >
+            <div className="w-full max-w-6xl h-full max-h-[90vh] bg-[#020617] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl shadow-fuchsia-900/20 flex flex-col relative">
+              
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-6 border-b border-white/5 bg-white/[0.02]">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-fuchsia-500/20 flex items-center justify-center border border-fuchsia-500/30">
+                    <FileSignature size={18} className="text-fuchsia-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-widest text-white">Quote Composer Active</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Routing for: {selectedProspect.name}</p>
+                  </div>
+                </div>
+                
+                <button 
+                  onClick={() => setIsQuoteModalOpen(false)} 
+                  className="flex items-center gap-2 px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-[10px] font-black uppercase tracking-widest transition-all text-slate-300 hover:text-white"
+                >
+                  <X size={14} /> Close Composer
+                </button>
+              </div>
+
+              {/* Iframe Loading the Composer (Passing Lead Data via URL parameters so the composer can pre-fill) */}
+              <div className="flex-1 w-full bg-[#0f172a] relative">
+                <iframe 
+                  src={`/admin/finance/composer?mode=quote&prospectName=${encodeURIComponent(selectedProspect.name)}&prospectEmail=${encodeURIComponent(selectedProspect.email || '')}`} 
+                  className="w-full h-full absolute inset-0 border-none"
+                  title="Finance Composer"
+                />
+              </div>
+
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
-

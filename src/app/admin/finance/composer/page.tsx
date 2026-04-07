@@ -26,12 +26,17 @@ function BillingComposer() {
   
   // Phase 2: URL Intelligence
   const initialLeadId = searchParams.get('leadId');
-  const initialType = (searchParams.get('type') as 'invoice' | 'quote') || 'invoice';
+  const prospectName = searchParams.get('prospectName');
+  const prospectEmail = searchParams.get('prospectEmail');
+  const initialType = (searchParams.get('mode') as 'invoice' | 'quote') || (searchParams.get('type') as 'invoice' | 'quote') || 'invoice';
 
   const [docType, setDocType] = useState<'invoice' | 'quote'>(initialType);
   const [expiryDate, setExpiryDate] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  
+  // --- THE FIX: Safe Iframe State ---
+  const [isIframe, setIsIframe] = useState(false);
 
   // Data sourcing
   const [dbItems, setDbItems] = useState<any[]>([]);
@@ -50,33 +55,41 @@ function BillingComposer() {
   // --- CALCULATIONS ---
   const subTotal = lineItems.reduce((acc, item) => acc + (Number(item.qty) * Number(item.price)), 0);
   const lineItemTotalDisc = lineItems.reduce((acc, item) => {
-    // Ensure discount isn't negative
     const validDisc = Math.max(0, Number(item.disc));
     return acc + (Number(item.qty) * Number(item.price) * (validDisc / 100));
   }, 0);
   const subAfterLineDisc = subTotal - lineItemTotalDisc;
-  // Ensure global discount isn't negative
   const validGlobalDisc = Math.max(0, Number(globalDisc));
   const globalDiscAmount = subAfterLineDisc * (validGlobalDisc / 100);
   const grandTotal = subAfterLineDisc - globalDiscAmount;
 
   const currentYear = new Date().getFullYear();
   const paymentReference = `${currentYear}${nextInvNum}`;
-  
-  // Prefix Logic
   const docReference = `${docType === 'quote' ? 'QT' : 'INV'}-${nextInvNum}`;
 
   useEffect(() => {
+    // --- THE FIX: Safely check for iframe after component mounts on client ---
+    setIsIframe(window.self !== window.top);
+
     fetchInitialData();
-    if (initialLeadId) fetchSpecificLead(initialLeadId);
     
-    // Default Expiry for Quotes
+    if (initialLeadId) {
+      fetchSpecificLead(initialLeadId);
+    } else if (prospectName) {
+      setSelectedGuardian({
+        id: `prospect-${Date.now()}`,
+        display_name: prospectName,
+        email: prospectEmail || "",
+        metadata: { email: prospectEmail }
+      });
+    }
+    
     if (initialType === 'quote') {
         const nextWeek = new Date();
         nextWeek.setDate(nextWeek.getDate() + 7);
         setExpiryDate(nextWeek.toISOString().split('T')[0]);
     }
-  }, []);
+  }, [initialLeadId, prospectName, prospectEmail, initialType]);
 
   // Real-time Guardian Search
   useEffect(() => {
@@ -115,41 +128,43 @@ function BillingComposer() {
     if (data) setSelectedGuardian(data);
   }
 
-const handleFinalize = async () => {
+  const handleFinalize = async () => {
     if (!selectedGuardian) return alert("Select a recipient first.");
     
     setIsProcessing(true);
     try {
-      // 1. Secure the record in the database
+      const isTempProspect = selectedGuardian.id?.toString().startsWith('prospect-');
+      const dbGuardianId = isTempProspect ? null : selectedGuardian.id;
+
       const { data: newRecord, error: dbError } = await supabase
         .from('billing_records')
         .insert({
           invoice_number: nextInvNum,
           payment_reference: paymentReference,
-          guardian_id: selectedGuardian.id,
+          guardian_id: dbGuardianId, 
           total_amount: grandTotal,
           line_items: lineItems,
           status: 'pending',
           doc_type: docType,
           expires_at: docType === 'quote' ? expiryDate : null,
-          metadata: { global_note: globalNote }
+          metadata: { 
+            global_note: globalNote,
+            prospect_name: isTempProspect ? selectedGuardian.display_name : null,
+            prospect_email: isTempProspect ? selectedGuardian.email : null
+          }
         })
         .select('id') 
         .single();
 
       if (dbError) throw dbError;
 
-      // 2. Fetch the correct template
       const templateSlug = docType === 'invoice' ? 'billing_invoice' : 'billing_quote';
       const { data: templateData } = await supabase.from('email_templates').select('body_content').eq('slug', templateSlug).single();
 
-      // --- THE FIX: Swap the placeholders with real data before sending ---
       let finalHtml = templateData?.body_content || document.getElementById('preview-content')?.innerHTML || "";
       finalHtml = finalHtml.replace(/\{\{baseUrl\}\}/g, window.location.origin);
       finalHtml = finalHtml.replace(/\{\{docId\}\}/g, newRecord.id);
-      // -------------------------------------------------------------------
 
-      // 3. Dispatch Email
       const res = await fetch('/api/send-bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -162,7 +177,7 @@ const handleFinalize = async () => {
             docType: docType     
           }],
           subject: `${docType === 'invoice' ? 'Invoice' : 'Quote'}: ${docReference}`,
-          htmlTemplate: finalHtml, // Pass the injected HTML here
+          htmlTemplate: finalHtml,
           baseUrl: window.location.origin
         })
       });
@@ -170,7 +185,12 @@ const handleFinalize = async () => {
       if (!res.ok) throw new Error("Database updated, but email transmission failed.");
 
       alert(`Success! ${docType.toUpperCase()} recorded and transmitted.`);
-      router.push('/admin/finance');
+      
+      if (isIframe) {
+        window.location.reload(); 
+      } else {
+        router.push('/admin/finance');
+      }
       
     } catch (err: any) {
       alert("Operational Failure: " + err.message);
@@ -191,7 +211,6 @@ const handleFinalize = async () => {
   const removeLine = (idx: number) => setLineItems(lineItems.filter((_, i) => i !== idx));
   const updateLine = (idx: number, field: string, val: any) => {
     const next = [...lineItems];
-    // Prevent negative discounts directly in the input
     if (field === 'disc' && Number(val) < 0) val = 0;
     next[idx][field] = val;
     setLineItems(next);
@@ -204,9 +223,12 @@ const handleFinalize = async () => {
         {/* HEADER */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
           <div className="space-y-4">
-            <Link href="/admin/finance" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2">
-              <ArrowLeft size={14}/> Back to Ledger
-            </Link>
+            {/* --- THE FIX: Uses the safe isIframe state --- */}
+            {!isIframe && (
+              <Link href="/admin/finance" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2">
+                <ArrowLeft size={14}/> Back to Ledger
+              </Link>
+            )}
             <h1 className="text-5xl font-black tracking-tighter italic uppercase leading-none">
               Gen_<span className={docType === 'quote' ? 'text-purple-500' : 'text-emerald-500'}>{docType}</span>
             </h1>
@@ -321,12 +343,15 @@ const handleFinalize = async () => {
                     placeholder="Enter overall notes for this document (e.g. valid for Term 2 only, special conditions)..."
                 />
             </div>
-
-            <div className="px-8 flex justify-end">
-               <Link href="/admin/finance/items" className="text-[10px] font-black uppercase text-slate-500 hover:text-white flex items-center gap-2">
-                 Manage Database Items <ArrowRight size={12}/>
-               </Link>
-            </div>
+            
+            {/* --- THE FIX: Uses the safe isIframe state --- */}
+            {!isIframe && (
+              <div className="px-8 flex justify-end">
+                 <Link href="/admin/finance/items" className="text-[10px] font-black uppercase text-slate-500 hover:text-white flex items-center gap-2">
+                   Manage Database Items <ArrowRight size={12}/>
+                 </Link>
+              </div>
+            )}
           </div>
 
           {/* RIGHT: RECIPIENT & SUMMARY */}
@@ -352,7 +377,9 @@ const handleFinalize = async () => {
               ) : (
                 <div className="p-5 bg-blue-500/10 border border-blue-500/30 rounded-3xl relative group">
                     <button onClick={() => setSelectedGuardian(null)} className="absolute -top-2 -right-2 p-1.5 bg-rose-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
-                    <p className="text-[9px] font-black text-blue-500 uppercase mb-1 tracking-widest">Selected_Recipient</p>
+                    <p className="text-[9px] font-black text-blue-500 uppercase mb-1 tracking-widest">
+                      {selectedGuardian.id?.toString().startsWith('prospect') ? 'Temporary_Prospect' : 'Selected_Recipient'}
+                    </p>
                     <p className="text-xl font-black uppercase italic leading-none">{selectedGuardian.display_name}</p>
                     <p className="text-[10px] text-slate-400 mt-2">{selectedGuardian.metadata?.email || selectedGuardian.email || 'No Email'}</p>
                 </div>
@@ -387,7 +414,7 @@ const handleFinalize = async () => {
               <button 
                 onClick={handleFinalize} 
                 disabled={!selectedGuardian || grandTotal <= 0 || isProcessing} 
-                className="w-full py-5 bg-white text-[#020617] rounded-[24px] font-black uppercase italic tracking-widest hover:bg-slate-100 transition-all flex items-center justify-center gap-2 shadow-xl disabled:opacity-30"
+                className="w-full py-5 bg-white text-[#020617] rounded-[24px] font-black uppercase italic tracking-widest hover:bg-slate-100 transition-all flex items-center justify-center gap-2 shadow-xl disabled:opacity-30 cursor-pointer"
               >
                 {isProcessing ? <Loader2 className="animate-spin" /> : <><Send size={20}/> Finalize & Transmit</>}
               </button>
@@ -422,7 +449,7 @@ const handleFinalize = async () => {
                     items={lineItems}
                     date={new Date().toLocaleDateString()}
                     dueDate={docType === 'quote' ? expiryDate : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString()}
-                    globalNote={globalNote} // Passing global note to the document
+                    globalNote={globalNote}
                  />
                  {globalDisc > 0 && (
                      <div className="mt-6 p-6 bg-emerald-500/5 border border-dashed border-emerald-500/20 rounded-3xl flex justify-between items-center">

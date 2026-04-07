@@ -1,12 +1,12 @@
 "use client";
 "use no memo";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  ArrowLeft, CheckCircle2, Play, Camera, Pencil, X,
-  Trophy, ArrowRight, Loader2, Zap, ShieldAlert, Terminal as TerminalIcon, 
-  Search, Check, Cpu, Power, ShieldCheck, Code2, BookOpen, ChevronDown, ChevronRight, RotateCcw
+  ArrowLeft, CheckCircle2, Play, Camera, X,
+  Trophy, ArrowRight, Loader2, Zap, ShieldAlert, 
+  Search, Cpu, Power, Code2, BookOpen, ChevronDown, ChevronRight, RotateCcw
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import confetti from "canvas-confetti";
 import * as Blockly from "blockly";
 import { javascriptGenerator } from "blockly/javascript";
+import SequenceViewer from "@/components/lms/SequenceViewer";
 
 export default function LessonPlayerPage() {
   const { id } = useParams();
@@ -31,6 +32,7 @@ export default function LessonPlayerPage() {
   const [isReadOnly, setIsReadOnly] = useState(false);
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [highestReachedStep, setHighestReachedStep] = useState(0);
   const [stepVerified, setStepVerified] = useState(false);
 
   const [isRunning, setIsRunning] = useState(false);
@@ -44,6 +46,7 @@ export default function LessonPlayerPage() {
   const [imageHistory, setImageHistory] = useState<string[]>([]);
 
   const [displayedLore, setDisplayedLore] = useState("");
+  const [scannedVocabText, setScannedVocabText] = useState(""); 
   const [isTyping, setIsTyping] = useState(true);
   const [revealedVocab, setRevealedVocab] = useState<any[]>([]);
   const [expandedVocab, setExpandedVocab] = useState<Record<string, boolean>>({});
@@ -52,6 +55,13 @@ export default function LessonPlayerPage() {
     mvp: [] as string[],
     beyond: ""
   });
+
+  const handleCardChange = useCallback((content: string) => {
+    setScannedVocabText(prev => {
+      if (prev.includes(content)) return prev; 
+      return prev + " " + content;
+    });
+  }, []);
 
   const theme = mission?.mission_config?.theme || {
       briefing: "Mission_Briefing", console: "System_Console", verifyBtn: "Test Logic", successCode: "LOGIC_VERIFIED",
@@ -67,7 +77,8 @@ export default function LessonPlayerPage() {
       lore_text: mission.lore_text || "Execute the sequence.",
       vocabulary: mission.mission_config?.vocabulary || [],
       win_sequence: mission.mission_config?.win_sequence || [],
-      prompts: { mvp: { question: "MVP Options", options: [] }, beyond: { question: "Beyond MVP" } }
+      prompts: { mvp: { question: "MVP Options", options: [] }, beyond: { question: "Beyond MVP" } },
+      cards: []
     }];
   }, [mission]);
 
@@ -85,40 +96,54 @@ export default function LessonPlayerPage() {
     setBlueprint(prev => {
       const current = prev.mvp;
       if (current.includes(option)) return { ...prev, mvp: current.filter(o => o !== option) };
-      // Increased internal limit to 4 to accommodate the workaround
       if (current.length >= 4) return prev; 
       return { ...prev, mvp: [...current, option] };
     });
   };
 
+  // --- UPDATED BLOCKLY ENGINE: DISTINCT BLOCKS & SCRATCH CATEGORIES ---
   const defineCustomBlocks = (config: any) => {
-    delete (Blockly.Blocks as any)['gamedev_event'];
-    delete (Blockly.Blocks as any)['gamedev_action'];
-
     const events = config?.events || [{ label: "RIGHT ARROW", value: "RIGHT_ARROW" }];
     const actions = config?.actions || [{ label: "MOVE 10 STEPS", value: "MOVE_10" }];
 
-    (Blockly.Blocks as any)['gamedev_event'] = {
-      init: function(this: any) {
-        this.appendDummyInput().appendField("WHEN").appendField(new Blockly.FieldDropdown(events.map((e:any)=>[e.label, e.value])), "EVENT_TYPE").appendField("PRESSED");
-        this.setNextStatement(true, null); this.setColour("#f59e0b");
-      }
-    };
+    // 1. Generate a distinct block for EVERY event
+    events.forEach((e: any) => {
+      const blockName = `event_${e.value}`;
+      delete (Blockly.Blocks as any)[blockName]; // Clear cache on reload
+      (Blockly.Blocks as any)[blockName] = {
+        init: function(this: any) {
+          this.appendDummyInput().appendField(`WHEN ${e.label} PRESSED`);
+          this.setNextStatement(true, null); 
+          this.setColour("#FFBF00"); // Scratch Events Yellow
+        }
+      };
+      (javascriptGenerator as any).forBlock[blockName] = function(block: any) {
+        return `highlightBlock("${block.id}");\nonEvent("${e.value}");\n`;
+      };
+    });
 
-    (Blockly.Blocks as any)['gamedev_action'] = {
-      init: function(this: any) {
-        this.appendDummyInput().appendField("ACTION:").appendField(new Blockly.FieldDropdown(actions.map((a:any)=>[a.label, a.value])), "ACTION_TYPE");
-        this.setPreviousStatement(true, null); this.setNextStatement(true, null); this.setColour("#3b82f6");
-      }
-    };
+    // 2. Generate a distinct block for EVERY action
+    actions.forEach((a: any) => {
+      const blockName = `action_${a.value}`;
+      delete (Blockly.Blocks as any)[blockName]; // Clear cache on reload
+      
+      // Determine the Scratch color based on keywords
+      let blockColor = "#4C97FF"; // Default Motion Blue
+      if (a.value.includes('SOUND') || a.label.includes('SOUND')) blockColor = "#CF63CF"; // Scratch Sound Pink
+      if (a.value.includes('COLOR') || a.value.includes('LOOKS') || a.label.includes('COLOR')) blockColor = "#9966FF"; // Scratch Looks Purple
 
-    (javascriptGenerator as any).forBlock['gamedev_event'] = function(block: any) {
-      const type = block.getFieldValue('EVENT_TYPE'); return `highlightBlock("${block.id}");\nonEvent("${type}");\n`;
-    };
-    
-    (javascriptGenerator as any).forBlock['gamedev_action'] = function(block: any) {
-      const action = block.getFieldValue('ACTION_TYPE'); return `highlightBlock("${block.id}");\nexecuteAction("${action}");\n`;
-    };
+      (Blockly.Blocks as any)[blockName] = {
+        init: function(this: any) {
+          this.appendDummyInput().appendField(a.label);
+          this.setPreviousStatement(true, null); 
+          this.setNextStatement(true, null); 
+          this.setColour(blockColor);
+        }
+      };
+      (javascriptGenerator as any).forBlock[blockName] = function(block: any) {
+        return `highlightBlock("${block.id}");\nexecuteAction("${a.value}");\n`;
+      };
+    });
   };
 
   const formatPseudocode = (rawCode: string) => {
@@ -140,9 +165,16 @@ export default function LessonPlayerPage() {
           setIsTyping(false);
         }
       }, 20);
+    } else {
+      setDisplayedLore("");
+      setIsTyping(false);
     }
     return () => { if (typingIntervalRef.current) clearInterval(typingIntervalRef.current); }
   }, [currentStepData?.lore_text, currentStepIndex]);
+
+  useEffect(() => {
+    setScannedVocabText(prev => prev + " " + displayedLore);
+  }, [displayedLore]);
 
   useEffect(() => {
     if (!currentStepData?.vocabulary) return;
@@ -151,7 +183,7 @@ export default function LessonPlayerPage() {
     const newlyRevealed = stepVocab.filter((v: any) => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b${escapedTerm}\\b`, 'i');
-        return regex.test(displayedLore);
+        return regex.test(scannedVocabText); 
     });
 
     if (newlyRevealed.length > 0) {
@@ -174,7 +206,7 @@ export default function LessonPlayerPage() {
             return hasChanges ? newExpanded : prev;
         });
     }
-  }, [displayedLore, currentStepData?.vocabulary]);
+  }, [scannedVocabText, currentStepData?.vocabulary]);
 
   const getFormattedLore = () => {
     if (!revealedVocab || revealedVocab.length === 0) return displayedLore;
@@ -184,7 +216,20 @@ export default function LessonPlayerPage() {
     sortedVocab.forEach(v => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b(${escapedTerm})\\b`, 'gi');
-        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)]">$1</span>`);
+        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)] cursor-help" title="${v.definition}">$1</span>`);
+    });
+    return formattedText;
+  };
+
+  const formatGlossaryText = (text: string) => {
+    if (!currentStepData?.vocabulary || currentStepData.vocabulary.length === 0) return text;
+    let formattedText = text;
+    const sortedVocab = [...currentStepData.vocabulary].sort((a, b) => b.term.length - a.term.length);
+    
+    sortedVocab.forEach((v: any) => {
+        const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b(${escapedTerm})\\b`, 'gi');
+        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)] cursor-help" title="${v.definition}">$1</span>`);
     });
     return formattedText;
   };
@@ -220,17 +265,20 @@ export default function LessonPlayerPage() {
 
           const totalSteps = missionData.mission_config?.steps?.length || 1;
           setCurrentStepIndex(totalSteps - 1);
+          setHighestReachedStep(totalSteps - 1);
         }
       } catch (err) { setErrorMsg("A critical system error occurred."); } finally { setLoading(false); }
     }
     initMission();
   }, [id, router]);
 
+  // --- UPDATED BLOCKLY TOOLBOX: SCRATCH CATEGORIES ---
   useEffect(() => {
     if (!mission || mission.sandbox_type === 'none' || mission.sandbox_type === 'p5js' || !blocklyDiv.current) return;
     if (workspace.current) return;
 
     defineCustomBlocks(mission.mission_config);
+    
     const pioneerTheme = Blockly.Theme.defineTheme('pioneer_dark', {
       name: 'pioneer_dark', base: Blockly.Themes.Classic,
       componentStyles: {
@@ -239,10 +287,20 @@ export default function LessonPlayerPage() {
       }
     });
 
-    const toolboxContents = [
-      { kind: 'category', name: 'Triggers (Events)', colour: '#f59e0b', contents: [{ kind: 'block', type: 'gamedev_event' }] },
-      { kind: 'category', name: 'Game Actions', colour: '#3b82f6', contents: [{ kind: 'block', type: 'gamedev_action' }] },
-    ];
+    // Dynamically categorize the blocks like Scratch!
+    const events = mission.mission_config?.events || [];
+    const actions = mission.mission_config?.actions || [];
+
+    const eventBlocks = events.map((e: any) => ({ kind: 'block', type: `event_${e.value}` }));
+    const motionBlocks = actions.filter((a: any) => a.value.includes('MOVE')).map((a: any) => ({ kind: 'block', type: `action_${a.value}` }));
+    const soundBlocks = actions.filter((a: any) => a.value.includes('SOUND') || a.label.includes('SOUND')).map((a: any) => ({ kind: 'block', type: `action_${a.value}` }));
+    const looksBlocks = actions.filter((a: any) => a.value.includes('COLOR') || a.value.includes('LOOKS') || a.label.includes('COLOR')).map((a: any) => ({ kind: 'block', type: `action_${a.value}` }));
+
+    const toolboxContents = [];
+    if (eventBlocks.length > 0) toolboxContents.push({ kind: 'category', name: 'Events', colour: '#FFBF00', contents: eventBlocks });
+    if (motionBlocks.length > 0) toolboxContents.push({ kind: 'category', name: 'Motion', colour: '#4C97FF', contents: motionBlocks });
+    if (looksBlocks.length > 0) toolboxContents.push({ kind: 'category', name: 'Looks', colour: '#9966FF', contents: looksBlocks });
+    if (soundBlocks.length > 0) toolboxContents.push({ kind: 'category', name: 'Sound', colour: '#CF63CF', contents: soundBlocks });
 
     workspace.current = Blockly.inject(blocklyDiv.current, {
       toolbox: { kind: 'categoryToolbox', contents: toolboxContents },
@@ -266,12 +324,19 @@ export default function LessonPlayerPage() {
   }, [isCodeStep]);
 
   const handleReplayMission = () => {
-    setIsReadOnly(false); setCurrentStepIndex(0); setStepVerified(false);
-    setImagePreview(null); setTempCaptureBlob(null); setSimLogs([]);
-    setRevealedVocab([]); setExpandedVocab({});
+    setIsReadOnly(false); 
+    setCurrentStepIndex(0); 
+    setHighestReachedStep(0); 
+    setStepVerified(false);
+    setImagePreview(null); 
+    setTempCaptureBlob(null); 
+    setSimLogs([]);
+    setRevealedVocab([]); 
+    setExpandedVocab({});
     if (workspace.current) workspace.current.clear();
   };
 
+  // --- UPDATED RUN SIMULATION: READING DISTINCT BLOCK TYPES ---
   const runSimulation = async () => {
     if (!workspace.current) return;
     setIsRunning(true); setIsExecuting(true); setStepVerified(false);
@@ -289,12 +354,13 @@ export default function LessonPlayerPage() {
             if (!isRunning && isExecuting) break;
             workspace.current.highlightBlock(currentBlock.id);
             
-            if (currentBlock.type === 'gamedev_event') {
-                const ev = currentBlock.getFieldValue('EVENT_TYPE'); 
+            // Read the custom distinct block types
+            if (currentBlock.type.startsWith('event_')) {
+                const ev = currentBlock.type.replace('event_', ''); 
                 currentStack.push(ev);
                 setSimLogs(prev => [...prev, `[EVENT INITIALIZED]: ${ev} Key Listener.`]);
-            } else if (currentBlock.type === 'gamedev_action') {
-                const act = currentBlock.getFieldValue('ACTION_TYPE'); 
+            } else if (currentBlock.type.startsWith('action_')) {
+                const act = currentBlock.type.replace('action_', ''); 
                 currentStack.push(act);
                 setSimLogs(prev => [...prev, `[ACTION BINDING]: ${act}`]);
             }
@@ -334,7 +400,16 @@ export default function LessonPlayerPage() {
   };
 
   const endSimulation = () => { setIsRunning(false); setIsExecuting(false); setSimLogs([]); workspace.current?.highlightBlock(null); };
-  const advanceToNextStep = () => { setStepVerified(false); endSimulation(); setCurrentStepIndex(prev => prev + 1); };
+  
+  const advanceToNextStep = () => { 
+    setStepVerified(false); 
+    endSimulation(); 
+    setCurrentStepIndex(prev => {
+      const nextIdx = prev + 1;
+      setHighestReachedStep(h => Math.max(h, nextIdx));
+      return nextIdx;
+    }); 
+  };
 
   const startCapture = async () => {
     try {
@@ -427,7 +502,7 @@ export default function LessonPlayerPage() {
             </button>
           )}
 
-          {isIntroStep && (
+          {isIntroStep && (!currentStepData.cards || currentStepData.cards.length === 0) && (
             <button onClick={advanceToNextStep} className="flex items-center gap-2 px-8 py-3 rounded-xl bg-blue-500 text-black text-[10px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-lg shadow-blue-500/20">
               Commence Setup <ArrowRight size={14} />
             </button>
@@ -465,12 +540,14 @@ export default function LessonPlayerPage() {
               <Zap size={14} className={`text-blue-500`} fill="currentColor" />
               <span className={`text-[10px] font-black uppercase tracking-widest leading-none text-blue-500`}>{theme.briefing}</span>
             </div>
-            <div key={currentStepIndex} className={`bg-blue-500/5 border border-blue-500/10 rounded-[32px] p-6`}>
-                <p className={`text-sm leading-loose text-blue-400`}>
-                  <span dangerouslySetInnerHTML={{ __html: getFormattedLore() }} />
-                  {isTyping && <span className={`inline-block w-2 h-4 ml-1 align-middle animate-pulse bg-blue-500`} />}
-                </p>
-            </div>
+            {currentStepData.lore_text && (
+              <div key={currentStepIndex} className={`bg-blue-500/5 border border-blue-500/10 rounded-[32px] p-6`}>
+                  <p className={`text-sm leading-loose text-blue-400`}>
+                    <span dangerouslySetInnerHTML={{ __html: getFormattedLore() }} />
+                    {isTyping && <span className={`inline-block w-2 h-4 ml-1 align-middle animate-pulse bg-blue-500`} />}
+                  </p>
+              </div>
+            )}
           </div>
 
           <AnimatePresence>
@@ -505,15 +582,74 @@ export default function LessonPlayerPage() {
         </aside>
 
         <section className="flex-1 p-8 overflow-y-auto no-scrollbar space-y-10 relative bg-[#020617]">
+          
+          {/* --- MISSION PROGRESS TRACKER --- */}
+          <div className="flex items-center justify-center gap-2 mb-8 overflow-x-auto pb-2 no-scrollbar">
+            {steps.map((step: any, idx: number) => {
+              const isActive = idx === currentStepIndex;
+              const isUnlocked = idx <= highestReachedStep; 
+              const isCompleted = isUnlocked && !isActive; 
+              
+              let label = "Activity";
+              if (step.type === 'intro') label = "Briefing";
+              if (step.type === 'code') label = "Coding Logic";
+              if (step.type === 'blueprint') label = "MVP Blueprint";
+              if (step.type === 'capture') label = "Verification";
+
+              return (
+                <div key={idx} className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => {
+                        if (isUnlocked && !isActive) {
+                            setCurrentStepIndex(idx);
+                            setStepVerified(false); 
+                        }
+                    }}
+                    disabled={!isUnlocked || isActive}
+                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${
+                      isActive ? "bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)] border border-purple-500 scale-105" :
+                      isUnlocked ? "bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 cursor-pointer" :
+                      "bg-white/5 text-slate-500 border border-white/5 opacity-50 cursor-not-allowed"
+                    }`}
+                  >
+                    {isCompleted && <CheckCircle2 size={14} />}
+                    {isActive && <div className="w-2 h-2 rounded-full bg-white animate-pulse" />}
+                    {label}
+                  </button>
+                  {idx < steps.length - 1 && (
+                    <div className={`w-6 h-px ${isUnlocked ? "bg-green-500/30" : "bg-white/10"}`} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
           <div className="max-w-5xl mx-auto space-y-10">
             
-            {!isCaptureStep && (
-              <div className="relative aspect-video rounded-[48px] overflow-hidden border border-white/10 bg-black shadow-2xl">
-                  {renderMediaContent(currentStepData.media_url)}
-              </div>
+            {currentStepData.cards && currentStepData.cards.length > 0 ? (
+              <SequenceViewer 
+                key={`seq-${currentStepIndex}`}
+                cards={currentStepData.cards} 
+                formatText={formatGlossaryText}
+                onCardChange={handleCardChange}
+                onComplete={() => {
+                  if (isIntroStep) {
+                    advanceToNextStep();
+                  } else if (isCodeStep) {
+                    document.getElementById('blockly-workspace-container')?.scrollIntoView({ behavior: 'smooth' });
+                  }
+                }} 
+              />
+            ) : (
+              !isCaptureStep && (
+                <div className="relative aspect-video rounded-[48px] overflow-hidden border border-white/10 bg-black shadow-2xl">
+                    {renderMediaContent(currentStepData.media_url)}
+                </div>
+              )
             )}
 
-            <div className={`space-y-4 ${isCodeStep ? 'block' : 'hidden'}`}>
+            {/* BLOCKLY WORKSPACE */}
+            <div id="blockly-workspace-container" className={`space-y-4 ${isCodeStep ? 'block' : 'hidden'}`}>
                <div className="flex items-center justify-between px-4">
                   <div className="flex flex-col gap-2">
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Workspace // Logic_Check</h3>
@@ -545,6 +681,7 @@ export default function LessonPlayerPage() {
                </div>
             </div>
             
+            {/* BLUEPRINT / MVP SECTION */}
             {(() => {
               if (!(isBlueprintStep || (isCaptureStep && isReadOnly)) || !currentStepData.prompts) return null;
               
@@ -552,13 +689,10 @@ export default function LessonPlayerPage() {
               const mvpData = prompts.mvp || prompts.goal || { question: "Select your MVP Features:", options: [] };
               const beyondData = prompts.beyond || prompts.verification || { question: "Beyond MVP: What next?" };
 
-              // Display math to show a max of 3, subtracting 1 from the internal count (safeguarded at 0)
               const displayCount = Math.max(0, Math.min(3, blueprint.mvp.length - 1));
 
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-10">
-                  
-                  {/* MVP Selection Area */}
                   <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[32px] p-8 shadow-xl">
                      <div className="flex justify-between items-end">
                        <label className="text-xs font-black uppercase text-slate-400 tracking-widest">{mvpData.question}</label>
@@ -570,7 +704,6 @@ export default function LessonPlayerPage() {
                         <div className="flex flex-wrap gap-3">
                            {(mvpData.options || []).map((opt: string) => {
                                const isSelected = blueprint.mvp.includes(opt);
-                               // Disabled if they haven't selected this one AND they've hit the internal limit of 4
                                const isDisabled = !isSelected && blueprint.mvp.length >= 4;
                                return (
                                  <button key={opt} onClick={() => toggleMvpOption(opt)} disabled={isDisabled && !isReadOnly}
@@ -584,7 +717,6 @@ export default function LessonPlayerPage() {
                      </div>
                   </div>
 
-                  {/* Beyond MVP Text Area */}
                   <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[32px] p-8 shadow-xl flex flex-col">
                      <label className="text-xs font-black uppercase text-slate-400 tracking-widest">
                        {beyondData.question} <span className="opacity-50 lowercase tracking-normal">(Optional)</span>
@@ -603,6 +735,7 @@ export default function LessonPlayerPage() {
               );
             })()}
 
+            {/* SCREENSHOT CAPTURE SECTION */}
             {isCaptureStep && (
                <div className="flex flex-col items-center justify-center p-12 bg-white/5 border border-white/10 rounded-[48px] space-y-8 shadow-2xl relative overflow-hidden">
                  {isReadOnly && (
@@ -610,9 +743,9 @@ export default function LessonPlayerPage() {
                         <CheckCircle2 size={14} className="text-green-400" />
                         <span className="text-[10px] font-black uppercase tracking-widest text-green-400">Archive_Saved</span>
                     </div>
-                  )}
-                  
-                  {isReadOnly && imageHistory.length > 0 ? (
+                 )}
+                 
+                 {isReadOnly && imageHistory.length > 0 ? (
                      <div className="space-y-6 w-full max-w-3xl mx-auto relative z-10 pt-8">
                         <div className="rounded-[32px] overflow-hidden border-2 border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.2)] relative bg-black">
                            <div className="absolute top-4 left-4 bg-green-500 text-black px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest z-10">Latest Archive</div>
@@ -636,11 +769,11 @@ export default function LessonPlayerPage() {
                            </div>
                         )}
                      </div>
-                  ) : imagePreview ? (
+                 ) : imagePreview ? (
                      <div className="w-full max-w-3xl rounded-[32px] overflow-hidden border border-white/10 shadow-2xl relative z-10">
                         <img src={imagePreview} alt="Saved Blueprint" className="w-full h-auto object-cover" />
                      </div>
-                  ) : (
+                 ) : (
                      <>
                         <div className="w-24 h-24 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20">
                            <Camera size={40} className="text-blue-400" />
@@ -655,7 +788,7 @@ export default function LessonPlayerPage() {
                            Launch System Capture
                         </button>
                      </>
-                  )}
+                 )}
                </div>
             )}
           </div>
