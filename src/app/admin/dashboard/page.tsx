@@ -132,10 +132,9 @@ export default function AdminDashboard() {
            adminProf = fallbackProf;
         }
         
-        // FIX: If no profile exists in the DB yet, create a placeholder so the UI still opens!
         if (!adminProf) {
           adminProf = {
-            id: authData.user.id, // Use auth ID as profile ID for admins
+            id: authData.user.id,
             auth_user_id: authData.user.id,
             display_name: "System Admin",
             role: "admin",
@@ -154,12 +153,19 @@ export default function AdminDashboard() {
       const { count: studentCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student');
       const { count: requestCount } = await supabase.from('registrations').select('*', { count: 'exact', head: true }).eq('status', 'new');
       const { data: courses } = await supabase.from('courses').select('is_published');
-      const { data: payments } = await supabase.from('payments').select('amount').eq('status', 'paid');
-      const totalRevenue = payments?.reduce((acc, curr) => acc + Number(curr.amount), 0) || 0;
+      
+      // --- THE FIX: Point Revenue to the new Economics Engine (billing_records) ---
+      const { data: paidRecords } = await supabase.from('billing_records').select('total_amount').in('status', ['paid', 'settled']);
+      const totalRevenue = paidRecords?.reduce((acc, curr) => acc + Number(curr.total_amount), 0) || 0;
 
+      // --- THE FIX: Calculate Won Prospects by looking at actual converted Profiles ---
       const { data: prospectsData } = await supabase.from('prospects').select('status');
       const activeProspects = prospectsData?.filter(p => !['Lost', 'Converted (Won)'].includes(p.status)).length || 0;
-      const wonProspects = prospectsData?.filter(p => p.status === 'Converted (Won)').length || 0;
+      
+      // A "Won Prospect" is anyone in the CRM marked 'Won' OR anyone in profiles marked as an active paid client
+      const crmWon = prospectsData?.filter(p => p.status === 'Converted (Won)').length || 0;
+      const { count: convertedProfiles } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('funnel_stage', 'Active (Paid Client)');
+      const wonProspects = crmWon + (convertedProfiles || 0);
 
       const { count: featureCount } = await supabase.from('roadmap_features').select('*', { count: 'exact', head: true }).eq('status', 'planned');
       const { count: plannedCourseCount } = await supabase.from('roadmap_courses').select('*', { count: 'exact', head: true }).eq('status', 'ideation');
@@ -186,7 +192,6 @@ export default function AdminDashboard() {
         monthlyRevenue: totalRevenue,
         activeProspects: activeProspects || 0,
         wonProspects: wonProspects || 0,
-        // Assign the new counts here
         plannedFeatures: featureCount || 0,
         plannedCourses: plannedCourseCount || 0
       });

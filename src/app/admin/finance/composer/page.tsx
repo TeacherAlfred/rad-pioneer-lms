@@ -4,14 +4,14 @@ import { useState, useEffect, Suspense } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Plus, Trash2, Save, Send, User, ArrowRight,
-  Search, Package, Calculator, ArrowLeft, ChevronDown, Eye, X, Shield, Printer, CreditCard, Loader2, Calendar, FileText
+  Search, Package, Calculator, ArrowLeft, ChevronDown, Eye, X, Shield, Printer, CreditCard, Loader2, Calendar, FileText, Download 
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import RADBillingDocument from "@/components/finance/RADBillingDocument";
 
-// Wrapper for useSearchParams to avoid hydration errors in Next.js
+
 export default function BillingComposerPage() {
   return (
     <Suspense fallback={<div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-emerald-500" /></div>}>
@@ -24,10 +24,10 @@ function BillingComposer() {
   const router = useRouter();
   const searchParams = useSearchParams();
   
-  // Phase 2: URL Intelligence
   const initialLeadId = searchParams.get('leadId');
   const prospectName = searchParams.get('prospectName');
   const prospectEmail = searchParams.get('prospectEmail');
+  const convertFromQuoteId = searchParams.get('convertFromQuote'); // NEW: Catch Quote to Invoice conversions
   const initialType = (searchParams.get('mode') as 'invoice' | 'quote') || (searchParams.get('type') as 'invoice' | 'quote') || 'invoice';
 
   const [docType, setDocType] = useState<'invoice' | 'quote'>(initialType);
@@ -35,24 +35,19 @@ function BillingComposer() {
   const [showPreview, setShowPreview] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   
-  // --- THE FIX: Safe Iframe State ---
   const [isIframe, setIsIframe] = useState(false);
 
-  // Data sourcing
   const [dbItems, setDbItems] = useState<any[]>([]);
   const [nextInvNum, setNextInvNum] = useState(1100);
 
-  // Recipient State
   const [guardianSearch, setGuardianSearch] = useState("");
   const [selectedGuardian, setSelectedGuardian] = useState<any>(null);
   const [suggestedGuardians, setSuggestedGuardians] = useState<any[]>([]);
 
-  // Document State
   const [lineItems, setLineItems] = useState<any[]>([{ desc: '', note: '', qty: 1, price: 0, disc: 0 }]);
   const [globalDisc, setGlobalDisc] = useState(0);
   const [globalNote, setGlobalNote] = useState("");
 
-  // --- CALCULATIONS ---
   const subTotal = lineItems.reduce((acc, item) => acc + (Number(item.qty) * Number(item.price)), 0);
   const lineItemTotalDisc = lineItems.reduce((acc, item) => {
     const validDisc = Math.max(0, Number(item.disc));
@@ -68,12 +63,13 @@ function BillingComposer() {
   const docReference = `${docType === 'quote' ? 'QT' : 'INV'}-${nextInvNum}`;
 
   useEffect(() => {
-    // --- THE FIX: Safely check for iframe after component mounts on client ---
     setIsIframe(window.self !== window.top);
-
     fetchInitialData();
     
-    if (initialLeadId) {
+    // --- NEW: Handle Quote to Invoice Conversion Logic ---
+    if (convertFromQuoteId) {
+        fetchQuoteToConvert(convertFromQuoteId);
+    } else if (initialLeadId) {
       fetchSpecificLead(initialLeadId);
     } else if (prospectName) {
       setSelectedGuardian({
@@ -84,14 +80,13 @@ function BillingComposer() {
       });
     }
     
-    if (initialType === 'quote') {
+    if (initialType === 'quote' && !convertFromQuoteId) {
         const nextWeek = new Date();
         nextWeek.setDate(nextWeek.getDate() + 7);
         setExpiryDate(nextWeek.toISOString().split('T')[0]);
     }
-  }, [initialLeadId, prospectName, prospectEmail, initialType]);
+  }, [initialLeadId, prospectName, prospectEmail, initialType, convertFromQuoteId]);
 
-  // Real-time Guardian Search
   useEffect(() => {
     if (guardianSearch.length > 2) {
       const searchGuardians = async () => {
@@ -128,7 +123,26 @@ function BillingComposer() {
     if (data) setSelectedGuardian(data);
   }
 
-  const handleFinalize = async () => {
+  // --- NEW: Fetch Quote to Pre-fill Composer ---
+  async function fetchQuoteToConvert(quoteId: string) {
+     const { data: quote } = await supabase.from('billing_records').select('*, profiles(*)').eq('id', quoteId).single();
+     if (quote) {
+        setDocType('invoice'); // Force it to invoice
+        setLineItems(quote.line_items || []);
+        setGlobalNote(quote.metadata?.global_note || '');
+        if (quote.profiles) {
+            setSelectedGuardian(quote.profiles);
+        }
+        
+        // Give the new invoice a default 7-day payment term
+        const nextWeek = new Date();
+        nextWeek.setDate(nextWeek.getDate() + 7);
+        setExpiryDate(nextWeek.toISOString().split('T')[0]);
+     }
+  }
+
+  // --- UPDATED: Multi-Action Finalize (Email or PDF) ---
+  const handleFinalize = async (action: 'email' | 'pdf') => {
     if (!selectedGuardian) return alert("Select a recipient first.");
     
     setIsProcessing(true);
@@ -136,6 +150,18 @@ function BillingComposer() {
       const isTempProspect = selectedGuardian.id?.toString().startsWith('prospect-');
       const dbGuardianId = isTempProspect ? null : selectedGuardian.id;
 
+      const metadataToSave: any = { 
+        global_note: globalNote,
+        prospect_name: isTempProspect ? selectedGuardian.display_name : null,
+        prospect_email: isTempProspect ? selectedGuardian.email : null
+      };
+
+      // --- NEW: Leave breadcrumb if converting from quote ---
+      if (convertFromQuoteId) {
+          metadataToSave.converted_from_quote = convertFromQuoteId;
+      }
+
+      // 1. Save the Document to the Database
       const { data: newRecord, error: dbError } = await supabase
         .from('billing_records')
         .insert({
@@ -146,45 +172,98 @@ function BillingComposer() {
           line_items: lineItems,
           status: 'pending',
           doc_type: docType,
-          expires_at: docType === 'quote' ? expiryDate : null,
-          metadata: { 
-            global_note: globalNote,
-            prospect_name: isTempProspect ? selectedGuardian.display_name : null,
-            prospect_email: isTempProspect ? selectedGuardian.email : null
-          }
+          expires_at: docType === 'quote' || docType === 'invoice' ? expiryDate : null,
+          metadata: metadataToSave
         })
         .select('id') 
         .single();
 
       if (dbError) throw dbError;
 
-      const templateSlug = docType === 'invoice' ? 'billing_invoice' : 'billing_quote';
-      const { data: templateData } = await supabase.from('email_templates').select('body_content').eq('slug', templateSlug).single();
+      // Update old quote status if converting
+      if (convertFromQuoteId) {
+          const { data: oldQuote } = await supabase.from('billing_records').select('metadata').eq('id', convertFromQuoteId).single();
+          if (oldQuote) {
+              await supabase.from('billing_records').update({
+                  metadata: { ...oldQuote.metadata, converted_to_invoice: true }
+              }).eq('id', convertFromQuoteId);
+          }
+      }
 
-      let finalHtml = templateData?.body_content || document.getElementById('preview-content')?.innerHTML || "";
-      finalHtml = finalHtml.replace(/\{\{baseUrl\}\}/g, window.location.origin);
-      finalHtml = finalHtml.replace(/\{\{docId\}\}/g, newRecord.id);
+      // 2. Execute the requested action (Email or PDF Download)
+      if (action === 'email') {
+          const templateSlug = docType === 'invoice' ? 'billing_invoice' : 'billing_quote';
+          const { data: templateData } = await supabase.from('email_templates').select('body_content').eq('slug', templateSlug).single();
 
-      const res = await fetch('/api/send-bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recipients: [{
-            email: selectedGuardian.metadata?.email || selectedGuardian.email,
-            invNum: nextInvNum.toString(),
-            total: grandTotal.toFixed(2),
-            docId: newRecord.id, 
-            docType: docType     
-          }],
-          subject: `${docType === 'invoice' ? 'Invoice' : 'Quote'}: ${docReference}`,
-          htmlTemplate: finalHtml,
-          baseUrl: window.location.origin
-        })
-      });
+          let finalHtml = templateData?.body_content || document.getElementById('preview-content')?.innerHTML || "";
+          finalHtml = finalHtml.replace(/\{\{baseUrl\}\}/g, window.location.origin);
+          finalHtml = finalHtml.replace(/\{\{docId\}\}/g, newRecord.id);
 
-      if (!res.ok) throw new Error("Database updated, but email transmission failed.");
+          const res = await fetch('/api/send-bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              recipients: [{
+                email: selectedGuardian.metadata?.email || selectedGuardian.email,
+                invNum: nextInvNum.toString(),
+                total: grandTotal.toFixed(2),
+                docId: newRecord.id, 
+                docType: docType     
+              }],
+              subject: `${docType === 'invoice' ? 'Invoice' : 'Quote'}: ${docReference}`,
+              htmlTemplate: finalHtml,
+              baseUrl: window.location.origin
+            })
+          });
 
-      alert(`Success! ${docType.toUpperCase()} recorded and transmitted.`);
+          if (!res.ok) throw new Error("Database updated, but email transmission failed.");
+          alert(`Success! ${docType.toUpperCase()} recorded and transmitted via email.`);
+
+      } else if (action === 'pdf') {
+          // Dynamically import PDF libraries
+          const htmlToImage = await import("html-to-image");
+          // @ts-ignore
+          const jsPDFModule = await import("jspdf/dist/jspdf.umd.min.js");
+          const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default;
+
+          const element = document.getElementById("hidden-document-capture");
+          if (!element) throw new Error("Document element not found for PDF capture.");
+
+          const dataUrl = await htmlToImage.toPng(element, { 
+            pixelRatio: 2, 
+            backgroundColor: "#020617", 
+            style: { margin: '0' } 
+          });
+          
+          const pdf = new jsPDF("p", "mm", "a4");
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfPageHeight = pdf.internal.pageSize.getHeight();
+          
+          pdf.setFillColor("#020617");
+          pdf.rect(0, 0, pdfWidth, pdfPageHeight, "F");
+          
+          const pdfHeight = (element.offsetHeight * pdfWidth) / element.offsetWidth;
+          pdf.addImage(dataUrl, "PNG", 0, 0, pdfWidth, pdfHeight);
+
+          if (docType === 'quote') {
+            const acceptUrl = `${window.location.origin}/quote/${newRecord.id}`;
+            const buttonY = pdfPageHeight - 25; 
+            
+            pdf.setFillColor(147, 51, 234); 
+            pdf.rect(pdfWidth / 4, buttonY, pdfWidth / 2, 12, "F"); 
+            
+            pdf.setTextColor(255, 255, 255);
+            pdf.setFontSize(11);
+            pdf.setFont("helvetica", "bold");
+            pdf.textWithLink("CLICK HERE TO REVIEW & ACCEPT QUOTE", pdfWidth / 2, buttonY + 7.5, {
+              url: acceptUrl,
+              align: "center"
+            });
+          }
+          
+          pdf.save(`${docReference}_RAD_Academy.pdf`);
+          alert(`Success! ${docType.toUpperCase()} recorded to ledger and downloaded as PDF.`);
+      }
       
       if (isIframe) {
         window.location.reload(); 
@@ -223,7 +302,6 @@ function BillingComposer() {
         {/* HEADER */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
           <div className="space-y-4">
-            {/* --- THE FIX: Uses the safe isIframe state --- */}
             {!isIframe && (
               <Link href="/admin/finance" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2">
                 <ArrowLeft size={14}/> Back to Ledger
@@ -236,18 +314,16 @@ function BillingComposer() {
                 <span>Ref: {docReference}</span>
                 <span className="text-white/20">|</span>
                 <span>Pay_Ref: {paymentReference}</span>
-                {docType === 'quote' && (
-                  <div className="flex items-center gap-2 text-purple-400 bg-purple-500/10 px-3 py-1 rounded-lg border border-purple-500/20">
-                    <Calendar size={12}/> Valid Until: 
-                    <input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className="bg-transparent outline-none cursor-pointer font-bold ml-1" />
-                  </div>
-                )}
+                <div className={`flex items-center gap-2 px-3 py-1 rounded-lg border ${docType === 'quote' ? 'text-purple-400 bg-purple-500/10 border-purple-500/20' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'}`}>
+                  <Calendar size={12}/> Due Date: 
+                  <input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className="bg-transparent outline-none cursor-pointer font-bold ml-1" />
+                </div>
             </div>
           </div>
           <div className="flex gap-4">
             <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10">
-                <button onClick={() => setDocType('quote')} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${docType === 'quote' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500'}`}>Quote</button>
-                <button onClick={() => setDocType('invoice')} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${docType === 'invoice' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500'}`}>Invoice</button>
+                <button onClick={() => setDocType('quote')} disabled={!!convertFromQuoteId} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${docType === 'quote' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-500'} ${convertFromQuoteId && 'opacity-30 cursor-not-allowed'}`}>Quote</button>
+                <button onClick={() => setDocType('invoice')} disabled={!!convertFromQuoteId} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase transition-all ${docType === 'invoice' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-500'} ${convertFromQuoteId && 'opacity-30 cursor-not-allowed'}`}>Invoice</button>
             </div>
             <button onClick={() => setShowPreview(true)} disabled={!selectedGuardian} className="flex items-center gap-2 px-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase hover:bg-white/10 transition-all disabled:opacity-20 shadow-xl">
                 <Eye size={16}/> Preview Document
@@ -344,7 +420,6 @@ function BillingComposer() {
                 />
             </div>
             
-            {/* --- THE FIX: Uses the safe isIframe state --- */}
             {!isIframe && (
               <div className="px-8 flex justify-end">
                  <Link href="/admin/finance/items" className="text-[10px] font-black uppercase text-slate-500 hover:text-white flex items-center gap-2">
@@ -376,7 +451,9 @@ function BillingComposer() {
                 </div>
               ) : (
                 <div className="p-5 bg-blue-500/10 border border-blue-500/30 rounded-3xl relative group">
-                    <button onClick={() => setSelectedGuardian(null)} className="absolute -top-2 -right-2 p-1.5 bg-rose-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
+                    {!convertFromQuoteId && (
+                      <button onClick={() => setSelectedGuardian(null)} className="absolute -top-2 -right-2 p-1.5 bg-rose-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
+                    )}
                     <p className="text-[9px] font-black text-blue-500 uppercase mb-1 tracking-widest">
                       {selectedGuardian.id?.toString().startsWith('prospect') ? 'Temporary_Prospect' : 'Selected_Recipient'}
                     </p>
@@ -411,13 +488,24 @@ function BillingComposer() {
                   <span className="text-4xl font-black tracking-tighter italic">R {grandTotal.toLocaleString()}</span>
                 </div>
               </div>
-              <button 
-                onClick={handleFinalize} 
-                disabled={!selectedGuardian || grandTotal <= 0 || isProcessing} 
-                className="w-full py-5 bg-white text-[#020617] rounded-[24px] font-black uppercase italic tracking-widest hover:bg-slate-100 transition-all flex items-center justify-center gap-2 shadow-xl disabled:opacity-30 cursor-pointer"
-              >
-                {isProcessing ? <Loader2 className="animate-spin" /> : <><Send size={20}/> Finalize & Transmit</>}
-              </button>
+              {/* --- MULTI-ACTION BUTTONS --- */}
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={() => handleFinalize('email')} 
+                  disabled={!selectedGuardian || grandTotal <= 0 || isProcessing} 
+                  className="w-full py-4 bg-white text-[#020617] rounded-[24px] font-black uppercase italic tracking-widest hover:bg-slate-200 transition-all flex items-center justify-center gap-2 shadow-xl disabled:opacity-30 cursor-pointer"
+                >
+                  {isProcessing ? <Loader2 className="animate-spin" /> : <><Send size={18}/> Save & Email</>}
+                </button>
+
+                <button 
+                  onClick={() => handleFinalize('pdf')} 
+                  disabled={!selectedGuardian || grandTotal <= 0 || isProcessing} 
+                  className="w-full py-4 bg-white/5 border border-white/10 text-white rounded-[24px] font-black uppercase italic tracking-widest hover:bg-white/10 transition-all flex items-center justify-center gap-2 disabled:opacity-30 cursor-pointer"
+                >
+                  {isProcessing ? <Loader2 className="animate-spin" /> : <><Download size={18}/> Save & Download PDF</>}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -447,8 +535,8 @@ function BillingComposer() {
                         phone: selectedGuardian.metadata?.phone || selectedGuardian.phone || "No Phone"
                     }}
                     items={lineItems}
-                    date={new Date().toLocaleDateString()}
-                    dueDate={docType === 'quote' ? expiryDate : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString()}
+                    date={new Date().toLocaleDateString('en-ZA')}
+                    dueDate={docType === 'quote' || docType === 'invoice' ? expiryDate : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-ZA')}
                     globalNote={globalNote}
                  />
                  {globalDisc > 0 && (
@@ -462,6 +550,28 @@ function BillingComposer() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* --- HIDDEN RENDER FOR INSTANT PDF EXPORT --- */}
+      {/* This renders the doc invisibly in the background so html-to-image can capture it without needing to open the Preview Modal */}
+      <div className="absolute top-[-9999px] left-[-9999px] opacity-0 pointer-events-none">
+        <div id="hidden-document-capture" className="w-[800px] p-8 bg-[#020617]">
+          {selectedGuardian && (
+             <RADBillingDocument 
+                type={docType}
+                docNumber={docReference}
+                recipient={{
+                    name: selectedGuardian.display_name,
+                    email: selectedGuardian.metadata?.email || selectedGuardian.email || "",
+                    phone: selectedGuardian.metadata?.phone || selectedGuardian.phone || ""
+                }}
+                items={lineItems}
+                date={new Date().toLocaleDateString('en-ZA')}
+                dueDate={docType === 'quote' || docType === 'invoice' ? expiryDate : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-ZA')}
+                globalNote={globalNote}
+             />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

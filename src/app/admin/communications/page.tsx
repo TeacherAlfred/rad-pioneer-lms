@@ -9,6 +9,15 @@ import {
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 
+// Helper to safely parse JSON metadata whether it arrives as an object or string
+const parseMeta = (meta: any) => {
+  if (!meta) return {};
+  if (typeof meta === 'string') {
+    try { return JSON.parse(meta); } catch { return {}; }
+  }
+  return meta;
+};
+
 export default function CommunicationsHub() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'inbox' | 'templates' | 'dispatch' | 'history'>('inbox');
@@ -88,9 +97,39 @@ export default function CommunicationsHub() {
       // 3. Fetch Communication Logs (The History Tab)
       const { data: logsData } = await supabase
         .from('communication_logs')
-        .select('*')
-        .order('sent_at', { ascending: false });
-      if (logsData) setCommsLogs(logsData);
+        .select('*');
+
+      // --- THE FIX: INJECT BILLING RECORDS INTO COMMUNICATIONS HISTORY ---
+      // This ensures Quotes & Invoices sent to Prospects/Leads are mapped into the timeline
+      const { data: billingData } = await supabase
+        .from('billing_records')
+        .select('*, profiles(display_name, metadata)');
+
+      let combinedLogs = logsData || [];
+
+      if (billingData) {
+        const billingLogs = billingData.map(rec => {
+          const recMeta = parseMeta(rec.metadata);
+          const profMeta = parseMeta(rec.profiles?.metadata);
+
+          const name = rec.profiles?.display_name || recMeta.prospect_name || "Unknown Entity";
+          const email = profMeta.email || recMeta.prospect_email || "";
+
+          return {
+            id: `billing-${rec.id}`,
+            recipient_email: email,
+            recipient_name: name,
+            subject: `${rec.doc_type === 'quote' ? 'Quotation' : 'Invoice'} Transmitted: ${rec.doc_type === 'quote' ? 'QT' : 'INV'}-${rec.invoice_number}`,
+            status: 'Action Taken', // Use the purple action badge for financial docs
+            sent_at: rec.created_at
+          };
+        });
+        combinedLogs = [...combinedLogs, ...billingLogs];
+      }
+
+      // Sort the fully combined timeline by newest first
+      combinedLogs.sort((a: any, b: any) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime());
+      setCommsLogs(combinedLogs);
 
       // 4. INBOX FETCH LOGIC
       if (activeTab === 'inbox') {
@@ -258,9 +297,8 @@ export default function CommunicationsHub() {
     setDispatchDraft({ subject: tpl.subject, body: tpl.body_content });
   };
 
-  // --- UPDATED: PREVENT SELECTING USERS WITHOUT EMAILS ---
   const handleToggleGuardian = (id: string, hasEmail: boolean) => {
-    if (!hasEmail) return; // Block selection if no email exists
+    if (!hasEmail) return; 
     setSelectedGuardians(prev => prev.includes(id) ? prev.filter(gId => gId !== id) : [...prev, id]);
   };
 
@@ -270,7 +308,6 @@ export default function CommunicationsHub() {
            meta?.email?.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  // --- UPDATED: SELECT ALL ONLY TARGETS VALID EMAILS ---
   const handleSelectAll = () => {
     const validGuardians = filteredGuardians.filter(g => {
       const meta = typeof g.metadata === 'string' ? JSON.parse(g.metadata) : g.metadata;
@@ -278,9 +315,9 @@ export default function CommunicationsHub() {
     });
 
     if (selectedGuardians.length === validGuardians.length && validGuardians.length > 0) {
-      setSelectedGuardians([]); // Deselect all if they are already fully selected
+      setSelectedGuardians([]); 
     } else {
-      setSelectedGuardians(validGuardians.map(g => g.id)); // Select only those with valid emails
+      setSelectedGuardians(validGuardians.map(g => g.id)); 
     }
   };
 
@@ -300,21 +337,18 @@ export default function CommunicationsHub() {
           return { email: meta?.email || "", name: g.display_name };
         });
 
-      // --- NEW: ACTUALLY TRIGGER RESEND VIA API ---
       const res = await fetch('/api/send-bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          recipients: recipients.map(r => r.email), // Send just the email addresses
+          recipients: recipients.map(r => r.email),
           subject: dispatchDraft.subject,
-          // Generate the final HTML right here before sending it to the server
           htmlBody: generateEmailPreviewHTML(dispatchDraft.body, dispatchDraft.subject) 
         })
       });
 
       if (!res.ok) throw new Error("API failed to transmit to Resend.");
 
-      // --- EXISTING: LOG TO SUPABASE ---
       const logPayload = recipients.map(r => ({
          recipient_email: r.email,
          recipient_name: r.name,

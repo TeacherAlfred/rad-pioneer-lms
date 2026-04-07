@@ -4,13 +4,24 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Search, Plus, X, Save, PhoneCall, Mail, MessageSquare, 
-  Calendar, Clock, Target, ClipboardList, Loader2, ArrowRight, ArrowLeft, Trash2, CheckCircle2, User, Users, FilterX, FileText, FileSignature
+  Calendar, Clock, Target, ClipboardList, Loader2, ArrowRight, ArrowLeft, Trash2, CheckCircle2, User, Users, FilterX, FileText, FileSignature, MessageCircle
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 
 const STATUS_OPTIONS = ["New Lead", "Attempted Contact", "Engaged", "Warm (Pending Close)", "Converted (Won)", "Lost"];
 const SOURCE_OPTIONS = ["Meta Ad - Polokwane Bootcamp", "Meta Ad - General", "Google Search", "Referral", "Website Contact Form", "Other"];
+
+// --- NEW: WhatsApp Number Formatter ---
+// Automatically cleans the number and formats SA numbers (0 -> 27) for the API
+const formatWhatsAppNumber = (phone: string) => {
+  if (!phone) return "";
+  let cleaned = phone.replace(/\D/g, ''); // Strip non-numeric characters
+  if (cleaned.startsWith('0')) {
+    cleaned = '27' + cleaned.substring(1); 
+  }
+  return cleaned;
+};
 
 export default function ProspectsCRM() {
   const [loading, setLoading] = useState(true);
@@ -33,7 +44,7 @@ export default function ProspectsCRM() {
   // Full Page Editor & Modal States
   const [selectedProspect, setSelectedProspect] = useState<any>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false); // NEW: Quote Engine Modal State
+  const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false); 
   const [newLogText, setNewLogText] = useState("");
   const [newLogType, setNewLogType] = useState("Note");
 
@@ -329,7 +340,21 @@ export default function ProspectsCRM() {
                           </div>
                           <div className="flex flex-col gap-1 mt-2 text-[10px] text-slate-400 font-bold">
                             {p.email && <span className="flex items-center gap-2"><Mail size={12}/> {p.email}</span>}
-                            {p.phone && <span className="flex items-center gap-2"><PhoneCall size={12}/> {p.phone}</span>}
+                            {p.phone && (
+                              <div className="flex items-center gap-2">
+                                <span className="flex items-center gap-2"><PhoneCall size={12}/> {p.phone}</span>
+                                {/* --- NEW: DIRECT WHATSAPP APP LINK --- */}
+                                <a 
+                                  href={`whatsapp://send?phone=${formatWhatsAppNumber(p.phone)}`} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="text-[#25D366] hover:text-white bg-[#25D366]/10 hover:bg-[#25D366] p-1 rounded transition-colors" 
+                                  title="Open in WhatsApp Desktop"
+                                >
+                                  <MessageCircle size={12} />
+                                </a>
+                              </div>
+                            )}
                           </div>
                         </td>
                         <td className="px-8 py-6 align-top space-y-2">
@@ -436,8 +461,21 @@ export default function ProspectsCRM() {
                   <h3 className="text-sm font-black uppercase tracking-widest text-fuchsia-400 flex items-center gap-2 border-b border-fuchsia-500/20 pb-4"><Target size={18}/> Pipeline Control</h3>
                   
                   <div className="space-y-5 relative z-10">
+
+                    {/* --- NEW: DIRECT WHATSAPP APP LINK IN SIDEBAR --- */}
+                    {selectedProspect.phone && !isCreating && (
+                      <a 
+                        href={`whatsapp://send?phone=${formatWhatsAppNumber(selectedProspect.phone)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-4 bg-[#25D366] text-white font-black uppercase italic text-xs rounded-xl shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2 mb-3"
+                        title="Open in WhatsApp Desktop"
+                      >
+                        <MessageCircle size={16}/> WhatsApp Contact
+                      </a>
+                    )}
                     
-                    {/* NEW: Generate Quote Button */}
+                    {/* Generate Quote Button */}
                     {!isCreating && (
                       <button 
                         onClick={() => setIsQuoteModalOpen(true)}
