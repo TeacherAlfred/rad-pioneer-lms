@@ -6,13 +6,16 @@ import {
   Zap, BarChart3, ChevronDown, ChevronUp, ShieldCheck, ShieldAlert
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrapper";
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 
 export default function CourseRoadmapPage() {
   const router = useRouter();
+  const searchParams = useSearchParams(); // NEW: To grab the specific course from the URL
+  const targetCourseId = searchParams.get('courseId');
+
   const [loading, setLoading] = useState(true);
   const [courseData, setCourseData] = useState<any>(null);
   const [modules, setModules] = useState<any[]>([]);
@@ -30,11 +33,23 @@ export default function CourseRoadmapPage() {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
         if (profile) setUserProfile(profile);
 
-        const { data: enrollment } = await supabase
+        // --- UPDATED: Securely fetch the targeted course, or fallback to the most recent one ---
+        let query = supabase
           .from('enrollments')
           .select('course_id, courses(*)')
           .eq('student_id', localUser.id)
-          .maybeSingle();
+          .eq('status', 'active')
+          .order('enrolled_at', { ascending: false });
+
+        if (targetCourseId) {
+          query = query.eq('course_id', targetCourseId);
+        }
+
+        const { data: enrollmentData, error: enrollError } = await query.limit(1);
+
+        if (enrollError) throw enrollError;
+
+        const enrollment = enrollmentData?.[0]; // Safely grab the first result
 
         if (enrollment) {
           const rawCourse = enrollment.courses as any;
@@ -89,7 +104,7 @@ export default function CourseRoadmapPage() {
                 return { ...m, status };
               });
 
-              const allMissionsDone = processedMissions.every((m: any) => m.status === 'completed');
+              const allMissionsDone = processedMissions.length > 0 && processedMissions.every((m: any) => m.status === 'completed');
               const quizStatus = isQuizPassed ? 'completed' : (allMissionsDone ? 'unlocked' : 'locked');
               
               if (quizStatus === 'unlocked' && !activeModId) activeModId = mod.id;
@@ -108,10 +123,14 @@ export default function CourseRoadmapPage() {
             setOpenModuleId(activeModId || (processed.length > 0 ? processed[0].id : null));
           }
         }
-      } catch (err) { console.error(err); } finally { setLoading(false); }
+      } catch (err) { 
+        console.error(err); 
+      } finally { 
+        setLoading(false); 
+      }
     }
     fetchRoadmap();
-  }, [router]);
+  }, [router, targetCourseId]);
 
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
 
@@ -141,7 +160,7 @@ export default function CourseRoadmapPage() {
               </Link>
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 mb-1">Course_Roadmap</p>
-                <h1 className="text-4xl font-black tracking-tighter text-white uppercase italic leading-none">{courseData?.title}</h1>
+                <h1 className="text-4xl font-black tracking-tighter text-white uppercase italic leading-none">{courseData?.title || 'Unknown Sector'}</h1>
               </div>
             </div>
 

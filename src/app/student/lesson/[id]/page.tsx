@@ -5,7 +5,7 @@ import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, CheckCircle2, Play, Camera, X,
-  Trophy, ArrowRight, Loader2, Zap, ShieldAlert, 
+  Trophy, ArrowRight, Loader2, Zap, ShieldAlert, ArrowUpRight,
   Search, Cpu, Power, Code2, BookOpen, ChevronDown, ChevronRight, RotateCcw
 } from "lucide-react";
 import Link from "next/link";
@@ -13,8 +13,98 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import confetti from "canvas-confetti";
 import * as Blockly from "blockly";
+import MakeCodeRenderer from "@/components/lms/MakeCodeRenderer";
 import { javascriptGenerator } from "blockly/javascript";
 import SequenceViewer from "@/components/lms/SequenceViewer";
+
+// --- FULL SCREEN BRIEFING OVERLAY COMPONENT ---
+function MissionBriefingOverlay({ text, onComplete }: { text: string, onComplete: () => void }) {
+  const [displayedText, setDisplayedText] = useState("");
+  const [phase, setPhase] = useState<'cursor' | 'typing' | 'waiting' | 'done'>('cursor');
+  const [cursorVisible, setCursorVisible] = useState(true);
+
+  useEffect(() => {
+    // Phase 1: Flashing Cursor
+    let blinkCount = 0;
+    const blinkInterval = setInterval(() => {
+      setCursorVisible(v => !v);
+      blinkCount++;
+      if (blinkCount > 5) {
+        clearInterval(blinkInterval);
+        setCursorVisible(true);
+        setPhase('typing');
+      }
+    }, 300);
+
+    return () => clearInterval(blinkInterval);
+  }, []);
+
+  useEffect(() => {
+    // Phase 2: Typewriter Effect
+    if (phase === 'typing') {
+      let i = 0;
+      const typeInterval = setInterval(() => {
+        setDisplayedText(text.slice(0, i + 1));
+        i++;
+        if (i >= text.length) {
+          clearInterval(typeInterval);
+          setPhase('waiting'); // Wait for user interaction instead of a timeout
+        }
+      }, 30); 
+      return () => clearInterval(typeInterval);
+    }
+  }, [phase, text]);
+
+  useEffect(() => {
+    if (phase === 'done') {
+       onComplete();
+    }
+  }, [phase, onComplete]);
+
+  // Click handler: Fast-forward typing or close overlay
+  const handleInteraction = () => {
+    if (phase === 'typing') {
+      setDisplayedText(text); // Fast forward to full text
+      setPhase('waiting');
+    } else if (phase === 'waiting') {
+      setPhase('done');
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.8, ease: "easeInOut" } }}
+      onClick={handleInteraction}
+      className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-[#020617]/95 backdrop-blur-xl p-8 cursor-pointer"
+    >
+      <div className="max-w-4xl w-full space-y-6">
+        <div className="flex items-center gap-3 text-green-500 mb-8 opacity-80">
+           <Zap size={20} fill="currentColor" />
+           <span className="text-xs font-black uppercase tracking-[0.4em]">Incoming Transmission</span>
+        </div>
+        <p className="text-2xl md:text-4xl font-mono text-green-400 leading-relaxed min-h-[120px] whitespace-pre-wrap">
+          {displayedText}
+          {phase !== 'done' && <span className={`inline-block w-4 h-8 ml-2 bg-green-400 align-middle ${!cursorVisible ? 'opacity-0' : 'opacity-100'}`} />}
+        </p>
+        
+        {/* Call to action appears when typing is done */}
+        <AnimatePresence>
+          {phase === 'waiting' && (
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              className="mt-12 text-center text-green-500/70 font-bold uppercase tracking-widest text-sm animate-pulse"
+            >
+              [ Click anywhere to initialize ]
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  );
+}
+
 
 export default function LessonPlayerPage() {
   const { id } = useParams();
@@ -30,6 +120,8 @@ export default function LessonPlayerPage() {
   const [isCompleted, setIsCompleted] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [isReadOnly, setIsReadOnly] = useState(false);
+
+  const [showInitialBriefing, setShowInitialBriefing] = useState(true);
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [highestReachedStep, setHighestReachedStep] = useState(0);
@@ -69,17 +161,28 @@ export default function LessonPlayerPage() {
 
   const steps = useMemo(() => {
     if (!mission) return [];
-    if (mission.mission_config?.steps) return mission.mission_config.steps;
+    let dbSteps = mission.mission_config?.steps || [];
     
-    return [{
-      type: 'capture',
-      media_url: mission.video_url,
-      lore_text: mission.lore_text || "Execute the sequence.",
-      vocabulary: mission.mission_config?.vocabulary || [],
-      win_sequence: mission.mission_config?.win_sequence || [],
-      prompts: { mvp: { question: "MVP Options", options: [] }, beyond: { question: "Beyond MVP" } },
-      cards: []
-    }];
+    if (dbSteps.length === 0) {
+      dbSteps = [{
+        type: 'capture',
+        media_url: mission.video_url,
+        lore_text: mission.lore_text || "Execute the sequence.",
+        vocabulary: mission.mission_config?.vocabulary || [],
+        win_sequence: mission.mission_config?.win_sequence || [],
+        prompts: { mvp: { question: "MVP Options", options: [] }, beyond: { question: "Beyond MVP" } },
+        cards: []
+      }];
+    } else {
+      if (dbSteps[dbSteps.length - 1].type !== 'capture') {
+        dbSteps = [...dbSteps, {
+          type: 'capture',
+          lore_text: "Logic verified! Now, let's back up your work to the RAD Cloud. Capture a system snapshot to archive this milestone.",
+          cards: []
+        }];
+      }
+    }
+    return dbSteps;
   }, [mission]);
 
   const currentStepData = useMemo(() => steps[currentStepIndex] || {}, [steps, currentStepIndex]);
@@ -101,59 +204,75 @@ export default function LessonPlayerPage() {
     });
   };
 
-  // --- UPDATED BLOCKLY ENGINE: DISTINCT BLOCKS & SCRATCH CATEGORIES ---
+  const getMakeCodeRenderString = (rawCode: string) => {
+    if (!rawCode) return "";
+    let code = rawCode.replace(/highlightBlock\(".*?"\);\n/g, '');
+    code = code.replace(/onEvent\("ON_START"\);\n/g, 'basic.forever(() => {\n');
+    code = code.replace(/executeAction\("SHOW_ICON"\);\n/g, '  basic.showIcon(IconNames.Heart)\n})\n');
+    return code;
+  };
+
+  const getBlockOriginalColor = useCallback((blockType: string) => {
+    const typeVal = blockType.replace('event_', '').replace('action_', '');
+    const categories = mission?.mission_config?.toolbox || [];
+    for (const cat of categories) {
+      for (const b of cat.blocks || []) {
+        if (b.value === typeVal) return cat.color || '#4C97FF';
+      }
+    }
+    return '#4C97FF';
+  }, [mission]);
+
   const defineCustomBlocks = (config: any) => {
-    const events = config?.events || [{ label: "RIGHT ARROW", value: "RIGHT_ARROW" }];
-    const actions = config?.actions || [{ label: "MOVE 10 STEPS", value: "MOVE_10" }];
+    const toolboxCategories = config?.toolbox || [];
 
-    // 1. Generate a distinct block for EVERY event
-    events.forEach((e: any) => {
-      const blockName = `event_${e.value}`;
-      delete (Blockly.Blocks as any)[blockName]; // Clear cache on reload
-      (Blockly.Blocks as any)[blockName] = {
-        init: function(this: any) {
-          this.appendDummyInput().appendField(`WHEN ${e.label} PRESSED`);
-          this.setNextStatement(true, null); 
-          this.setColour("#FFBF00"); // Scratch Events Yellow
-        }
-      };
-      (javascriptGenerator as any).forBlock[blockName] = function(block: any) {
-        return `highlightBlock("${block.id}");\nonEvent("${e.value}");\n`;
-      };
-    });
+    toolboxCategories.forEach((category: any) => {
+      const catColor = category.color || "#4C97FF";
 
-    // 2. Generate a distinct block for EVERY action
-    actions.forEach((a: any) => {
-      const blockName = `action_${a.value}`;
-      delete (Blockly.Blocks as any)[blockName]; // Clear cache on reload
-      
-      // Determine the Scratch color based on keywords
-      let blockColor = "#4C97FF"; // Default Motion Blue
-      if (a.value.includes('SOUND') || a.label.includes('SOUND')) blockColor = "#CF63CF"; // Scratch Sound Pink
-      if (a.value.includes('COLOR') || a.value.includes('LOOKS') || a.label.includes('COLOR')) blockColor = "#9966FF"; // Scratch Looks Purple
+      (category.blocks || []).forEach((b: any) => {
+        const isEventBlock = b.value.includes('EVENT') || b.value.includes('ON_') || b.value.includes('WHEN_') || category.category.toUpperCase().includes('EVENT');
+        const blockPrefix = isEventBlock ? 'event_' : 'action_';
+        const blockName = `${blockPrefix}${b.value}`;
+        
+        delete (Blockly.Blocks as any)[blockName]; 
+        
+        (Blockly.Blocks as any)[blockName] = {
+          init: function(this: any) {
+            this.appendDummyInput().appendField(b.label);
+            
+            if (isEventBlock) {
+               this.appendStatementInput("DO").setCheck(null);
+               if (this.setHat) this.setHat("cap"); 
+            } else {
+               this.setPreviousStatement(true, null); 
+               this.setNextStatement(true, null); 
+            }
+            this.setColour(catColor);
+          }
+        };
 
-      (Blockly.Blocks as any)[blockName] = {
-        init: function(this: any) {
-          this.appendDummyInput().appendField(a.label);
-          this.setPreviousStatement(true, null); 
-          this.setNextStatement(true, null); 
-          this.setColour(blockColor);
-        }
-      };
-      (javascriptGenerator as any).forBlock[blockName] = function(block: any) {
-        return `highlightBlock("${block.id}");\nexecuteAction("${a.value}");\n`;
-      };
+        (javascriptGenerator as any).forBlock[blockName] = function(block: any) {
+          if (isEventBlock) {
+             const innerCode = javascriptGenerator.statementToCode(block, 'DO');
+             return `highlightBlock("${block.id}");\nonEvent("${b.value}", function() {\n${innerCode}});\n`;
+          } else {
+             return `highlightBlock("${block.id}");\nexecuteAction("${b.value}");\n`;
+          }
+        };
+      });
     });
   };
 
   const formatPseudocode = (rawCode: string) => {
     let code = rawCode.replace(/highlightBlock\(".*?"\);\n/g, '');
-    code = code.replace(/onEvent\("(.*?)"\);\n/g, 'WHEN the $1 key is pressed:\n');
+    code = code.replace(/onEvent\("(.*?)", function\(\) \{\n([\s\S]*?)\}\);\n/g, 'WHEN: $1 TRIGGERED\n$2');
     code = code.replace(/executeAction\("(.*?)"\);\n/g, '  -> DO: $1\n');
     return code.replace(/^\s*[\r\n]/gm, '');
   };
 
   useEffect(() => {
+    if (showInitialBriefing) return; 
+
     const textToType = currentStepData?.lore_text;
     if (textToType) {
       if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
@@ -170,7 +289,7 @@ export default function LessonPlayerPage() {
       setIsTyping(false);
     }
     return () => { if (typingIntervalRef.current) clearInterval(typingIntervalRef.current); }
-  }, [currentStepData?.lore_text, currentStepIndex]);
+  }, [currentStepData?.lore_text, currentStepIndex, showInitialBriefing]);
 
   useEffect(() => {
     setScannedVocabText(prev => prev + " " + displayedLore);
@@ -215,8 +334,11 @@ export default function LessonPlayerPage() {
     
     sortedVocab.forEach(v => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`\\b(${escapedTerm})\\b`, 'gi');
-        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)] cursor-help" title="${v.definition}">$1</span>`);
+        // NEW: (?![^<]*>) prevents replacing words that are already inside HTML tags
+        const regex = new RegExp(`\\b(${escapedTerm})\\b(?![^<]*>)`, 'gi');
+        // NEW: Replace double quotes in the definition to prevent breaking the title attribute
+        const safeDef = v.definition.replace(/"/g, '&quot;');
+        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)] cursor-help" title="${safeDef}">$1</span>`);
     });
     return formattedText;
   };
@@ -228,8 +350,11 @@ export default function LessonPlayerPage() {
     
     sortedVocab.forEach((v: any) => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`\\b(${escapedTerm})\\b`, 'gi');
-        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)] cursor-help" title="${v.definition}">$1</span>`);
+        // NEW: (?![^<]*>) prevents replacing words that are already inside HTML tags
+        const regex = new RegExp(`\\b(${escapedTerm})\\b(?![^<]*>)`, 'gi');
+        // NEW: Replace double quotes in the definition to prevent breaking the title attribute
+        const safeDef = v.definition.replace(/"/g, '&quot;');
+        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)] cursor-help" title="${safeDef}">$1</span>`);
     });
     return formattedText;
   };
@@ -264,17 +389,18 @@ export default function LessonPlayerPage() {
           setIsReadOnly(true);
 
           const totalSteps = missionData.mission_config?.steps?.length || 1;
-          setCurrentStepIndex(totalSteps - 1);
-          setHighestReachedStep(totalSteps - 1);
+          setCurrentStepIndex(totalSteps); 
+          setHighestReachedStep(totalSteps);
+          
+          setShowInitialBriefing(false);
         }
       } catch (err) { setErrorMsg("A critical system error occurred."); } finally { setLoading(false); }
     }
     initMission();
   }, [id, router]);
 
-  // --- UPDATED BLOCKLY TOOLBOX: SCRATCH CATEGORIES ---
   useEffect(() => {
-    if (!mission || mission.sandbox_type === 'none' || mission.sandbox_type === 'p5js' || !blocklyDiv.current) return;
+    if (showInitialBriefing || !mission || mission.sandbox_type === 'none' || mission.sandbox_type === 'p5js' || !blocklyDiv.current) return;
     if (workspace.current) return;
 
     defineCustomBlocks(mission.mission_config);
@@ -287,41 +413,71 @@ export default function LessonPlayerPage() {
       }
     });
 
-    // Dynamically categorize the blocks like Scratch!
-    const events = mission.mission_config?.events || [];
-    const actions = mission.mission_config?.actions || [];
+    const makeCodeTheme = Blockly.Theme.defineTheme('makecode_style', {
+      name: 'makecode_style',
+      base: Blockly.Themes.Classic,
+      blockStyles: {
+        "event_blocks": { "colourPrimary": "#eab308" }, 
+        "action_blocks": { "colourPrimary": "#3b82f6" },
+      },
+      componentStyles: {
+        'workspaceBackgroundColour': '#020617',
+        'toolboxBackgroundColour': '#0f172a',
+        'toolboxForegroundColour': '#94a3b8',
+        'flyoutBackgroundColour': '#0f172a',
+        'flyoutOpacity': 1,
+        'scrollbarColour': '#1e293b',
+        'insertionMarkerColour': '#ffffff',
+        'insertionMarkerOpacity': 0.3,
+      }
+    });
 
-    const eventBlocks = events.map((e: any) => ({ kind: 'block', type: `event_${e.value}` }));
-    const motionBlocks = actions.filter((a: any) => a.value.includes('MOVE')).map((a: any) => ({ kind: 'block', type: `action_${a.value}` }));
-    const soundBlocks = actions.filter((a: any) => a.value.includes('SOUND') || a.label.includes('SOUND')).map((a: any) => ({ kind: 'block', type: `action_${a.value}` }));
-    const looksBlocks = actions.filter((a: any) => a.value.includes('COLOR') || a.value.includes('LOOKS') || a.label.includes('COLOR')).map((a: any) => ({ kind: 'block', type: `action_${a.value}` }));
+    const toolboxCategories = mission.mission_config?.toolbox || [];
+    const toolboxContents = toolboxCategories.map((cat: any) => {
+       const mappedBlocks = (cat.blocks || []).map((b: any) => {
+          const isEventBlock = b.value.includes('EVENT') || b.value.includes('ON_') || b.value.includes('WHEN_') || cat.category.toUpperCase().includes('EVENT');
+          const blockPrefix = isEventBlock ? 'event_' : 'action_';
+          return { kind: 'block', type: `${blockPrefix}${b.value}` };
+       });
 
-    const toolboxContents = [];
-    if (eventBlocks.length > 0) toolboxContents.push({ kind: 'category', name: 'Events', colour: '#FFBF00', contents: eventBlocks });
-    if (motionBlocks.length > 0) toolboxContents.push({ kind: 'category', name: 'Motion', colour: '#4C97FF', contents: motionBlocks });
-    if (looksBlocks.length > 0) toolboxContents.push({ kind: 'category', name: 'Looks', colour: '#9966FF', contents: looksBlocks });
-    if (soundBlocks.length > 0) toolboxContents.push({ kind: 'category', name: 'Sound', colour: '#CF63CF', contents: soundBlocks });
+       return {
+         kind: 'category',
+         name: cat.category || 'Tools',
+         colour: cat.color || '#4C97FF',
+         contents: mappedBlocks
+       };
+    });
 
     workspace.current = Blockly.inject(blocklyDiv.current, {
       toolbox: { kind: 'categoryToolbox', contents: toolboxContents },
-      theme: pioneerTheme, 
-      grid: { spacing: 20, length: 3, colour: '#1e293b', snap: true }, 
-      zoom: { controls: true, wheel: true, startScale: 1.0 }, 
+      theme: mission.sandbox_type === 'makecode' ? makeCodeTheme : pioneerTheme, 
+      renderer: 'zelos',  
+      grid: { spacing: 25, length: 3, colour: '#1e293b', snap: true },
+      zoom: { controls: false, wheel: true, startScale: 1.1 },
       trashcan: true
     });
 
     workspace.current.addChangeListener((e) => {
+        if (e.type === Blockly.Events.BLOCK_MOVE || e.type === Blockly.Events.BLOCK_CREATE || e.type === Blockly.Events.BLOCK_DELETE) {
+            setStepVerified(false);
+            if (workspace.current) {
+                workspace.current.getAllBlocks(false).forEach(block => {
+                    block.setColour(getBlockOriginalColor(block.type));
+                });
+            }
+        }
+
         if (e.type !== Blockly.Events.UI && e.type !== Blockly.Events.FINISHED_LOADING && workspace.current) {
             setLiveCode(formatPseudocode(javascriptGenerator.workspaceToCode(workspace.current)));
         }
     });
-  }, [mission, loading]);
+  }, [mission, loading, showInitialBriefing, getBlockOriginalColor]);
 
   useEffect(() => {
-    if (isCodeStep && workspace.current) {
+    if (isCodeStep && workspace.current && !showInitialBriefing) {
       setTimeout(() => { if (workspace.current) Blockly.svgResize(workspace.current); }, 50);
     }
-  }, [isCodeStep]);
+  }, [isCodeStep, showInitialBriefing]);
 
   const handleReplayMission = () => {
     setIsReadOnly(false); 
@@ -336,64 +492,115 @@ export default function LessonPlayerPage() {
     if (workspace.current) workspace.current.clear();
   };
 
-  // --- UPDATED RUN SIMULATION: READING DISTINCT BLOCK TYPES ---
   const runSimulation = async () => {
     if (!workspace.current) return;
+    
+    workspace.current.getAllBlocks(false).forEach(block => {
+        block.setColour(getBlockOriginalColor(block.type));
+    });
+
     setIsRunning(true); setIsExecuting(true); setStepVerified(false);
     setSimLogs([`[INITIALIZING_${theme.console.toUpperCase()}]...`]);
     await new Promise(r => setTimeout(r, 1000));
 
     const topBlocks = workspace.current.getTopBlocks(true);
-    let userStacks: string[] = [];
+    let userStacksData: { blocks: { value: string, block: Blockly.Block }[] }[] = [];
     
     for (const topBlock of topBlocks) {
-        let currentBlock: Blockly.Block | null = topBlock;
-        let currentStack: string[] = [];
+        if (topBlock.type.startsWith('event_')) {
+            let currentStack: { value: string, block: Blockly.Block }[] = [];
+            const ev = topBlock.type.replace('event_', ''); 
+            currentStack.push({ value: ev, block: topBlock });
+            setSimLogs(prev => [...prev, `[EVENT BINDING]: ${ev} Listener Active.`]);
 
-        while (currentBlock) {
-            if (!isRunning && isExecuting) break;
-            workspace.current.highlightBlock(currentBlock.id);
-            
-            // Read the custom distinct block types
-            if (currentBlock.type.startsWith('event_')) {
-                const ev = currentBlock.type.replace('event_', ''); 
-                currentStack.push(ev);
-                setSimLogs(prev => [...prev, `[EVENT INITIALIZED]: ${ev} Key Listener.`]);
-            } else if (currentBlock.type.startsWith('action_')) {
-                const act = currentBlock.type.replace('action_', ''); 
-                currentStack.push(act);
-                setSimLogs(prev => [...prev, `[ACTION BINDING]: ${act}`]);
-            }
-            await new Promise(r => setTimeout(r, 600)); 
+            workspace.current.highlightBlock(topBlock.id);
+            await new Promise(r => setTimeout(r, 600));
             workspace.current.highlightBlock(null);
-            currentBlock = currentBlock.getNextBlock();
+
+            let innerBlock: Blockly.Block | null = topBlock.getInputTargetBlock('DO');
+            
+            while (innerBlock) {
+                if (!isRunning && isExecuting) break;
+                workspace.current.highlightBlock(innerBlock.id);
+                
+                if (innerBlock.type.startsWith('action_')) {
+                    const act = innerBlock.type.replace('action_', ''); 
+                    currentStack.push({ value: act, block: innerBlock });
+                    setSimLogs(prev => [...prev, `[ACTION EXECUTION]: ${act}`]);
+                }
+                await new Promise(r => setTimeout(r, 600)); 
+                workspace.current.highlightBlock(null);
+                innerBlock = innerBlock.getNextBlock();
+            }
+            if (currentStack.length > 0) userStacksData.push({ blocks: currentStack });
         }
-        if (currentStack.length > 0) userStacks.push(currentStack.join(','));
     }
 
     const winSequence = currentStepData.win_sequence || [];
-    const eventValues = (mission?.mission_config?.events || [{ value: 'RIGHT_ARROW' }]).map((e: any) => e.value);
     
-    let expectedStacks: string[] = [];
+    const allEventValues: string[] = [];
+    (mission?.mission_config?.toolbox || []).forEach((cat: any) => {
+       (cat.blocks || []).forEach((b: any) => {
+          if (b.value.includes('EVENT') || b.value.includes('ON_') || b.value.includes('WHEN_') || cat.category.toUpperCase().includes('EVENT')) {
+             allEventValues.push(b.value);
+          }
+       });
+    });
+    
+    let expectedStacks: string[][] = [];
     let currentExpectedStack: string[] = [];
     
     for (const item of winSequence) {
-         if (eventValues.includes(item)) {
-             if (currentExpectedStack.length > 0) expectedStacks.push(currentExpectedStack.join(','));
+         if (allEventValues.includes(item)) {
+             if (currentExpectedStack.length > 0) expectedStacks.push(currentExpectedStack);
              currentExpectedStack = [item];
          } else {
              currentExpectedStack.push(item);
          }
     }
-    if (currentExpectedStack.length > 0) expectedStacks.push(currentExpectedStack.join(','));
+    if (currentExpectedStack.length > 0) expectedStacks.push(currentExpectedStack);
 
-    const isSuccess = expectedStacks.length > 0 && expectedStacks.every(expected => userStacks.includes(expected));
+    let isSuccess = true;
+
+    for (const expectedStack of expectedStacks) {
+        const expectedEvent = expectedStack[0];
+        const userStack = userStacksData.find(us => us.blocks[0].value === expectedEvent);
+        
+        if (!userStack) {
+            isSuccess = false;
+            continue;
+        }
+
+        for (let i = 0; i < Math.max(expectedStack.length, userStack.blocks.length); i++) {
+            const uBlock = userStack.blocks[i];
+            const eValue = expectedStack[i];
+
+            if (uBlock) {
+                if (uBlock.value === eValue) {
+                    uBlock.block.setColour('#22c55e'); 
+                } else {
+                    uBlock.block.setColour('#ef4444'); 
+                    isSuccess = false;
+                }
+            } else {
+                isSuccess = false; 
+            }
+        }
+    }
+
+    for (const us of userStacksData) {
+        const startsWithExpected = expectedStacks.some(es => es[0] === us.blocks[0].value);
+        if (!startsWithExpected) {
+            us.blocks.forEach(ub => ub.block.setColour('#ef4444')); 
+            isSuccess = false;
+        }
+    }
 
     if (isSuccess) {
-        setSimLogs(prev => [...prev, `[SUCCESS]: All Event Listeners Verified.`, `[${theme.successCode}]`]);
+        setSimLogs(prev => [...prev, `[SUCCESS]: Logic Requirements Met.`, `[${theme.successCode}]`]);
         setStepVerified(true);
     } else {
-        setSimLogs(prev => [...prev, `[FAIL]: Logic mismatch detected. Try again.`, "[RETRY_SEQUENCE]"]);
+        setSimLogs(prev => [...prev, `[FAIL]: Logic mismatch detected. Review highlighted blocks.`, "[RETRY_SEQUENCE]"]);
         setStepVerified(false);
     }
     setIsExecuting(false);
@@ -402,6 +609,12 @@ export default function LessonPlayerPage() {
   const endSimulation = () => { setIsRunning(false); setIsExecuting(false); setSimLogs([]); workspace.current?.highlightBlock(null); };
   
   const advanceToNextStep = () => { 
+    if (currentStepIndex === steps.length - 1) {
+      if (isCaptureStep || currentStepData.type === 'capture') {
+        handleComplete();
+      }
+      return;
+    }
     setStepVerified(false); 
     endSimulation(); 
     setCurrentStepIndex(prev => {
@@ -480,8 +693,22 @@ export default function LessonPlayerPage() {
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
   if (errorMsg) return ( <div className="h-screen bg-[#020617] flex flex-col items-center justify-center text-white space-y-6"><ShieldAlert size={64} className="text-red-500" /><h1 className="text-2xl font-black uppercase tracking-widest">{errorMsg}</h1><Link href="/student/dashboard" className="px-8 py-3 bg-white text-black rounded-xl font-black uppercase text-xs">Return to Dashboard</Link></div> );
 
+  // Check step config first, fallback to mission root
+  const initialBriefingText = steps[0]?.lore_text || mission?.lore_text || "Awaiting transmission...";
+
   return (
-    <main className="h-screen text-white flex flex-col overflow-hidden bg-[#020617] font-sans">
+    <main className="h-screen text-white flex flex-col overflow-hidden bg-[#020617] font-sans relative">
+      
+      {/* --- INITIAL IMMERSIVE BRIEFING OVERLAY --- */}
+      <AnimatePresence>
+        {showInitialBriefing && initialBriefingText && (
+           <MissionBriefingOverlay 
+              text={initialBriefingText} 
+              onComplete={() => setShowInitialBriefing(false)} 
+           />
+        )}
+      </AnimatePresence>
+
       <style>{` .blocklyToolboxContents { padding-top: 48px !important; } .blocklyTreeRow { margin-bottom: 12px !important; } .blocklyFlyoutScrollbar { display: none !important; } `}</style>
 
       <nav className="h-20 border-b border-white/5 px-8 flex items-center justify-between z-30 bg-[#020617] shrink-0">
@@ -513,7 +740,12 @@ export default function LessonPlayerPage() {
               <button onClick={runSimulation} disabled={isExecuting || isReadOnly} className={`flex items-center gap-2 px-6 py-3 rounded-xl text-black text-[10px] font-black uppercase tracking-widest transition-all ${isExecuting || isReadOnly ? 'bg-slate-700' : 'bg-blue-500 hover:scale-105 shadow-lg shadow-blue-500/20'}`}>
                 {isExecuting ? <Loader2 className="animate-spin" size={14} /> : <Play size={14} fill="currentColor" />} {stepVerified ? "Re-Verify" : theme.verifyBtn}
               </button>
-              <button onClick={advanceToNextStep} disabled={!stepVerified && !isReadOnly} className={`flex items-center gap-2 px-8 py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all ${stepVerified || isReadOnly ? 'bg-white text-black hover:scale-105 shadow-xl' : 'bg-white/5 text-slate-600'}`}>
+              
+              <button 
+                onClick={advanceToNextStep} 
+                disabled={!stepVerified && !isReadOnly} 
+                className={`flex items-center gap-2 px-8 py-3 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all ${stepVerified || isReadOnly ? 'bg-white text-black hover:scale-105 shadow-xl' : 'bg-white/5 text-slate-600'}`}
+              >
                 Next Task <ArrowRight size={14} />
               </button>
             </>
@@ -648,37 +880,78 @@ export default function LessonPlayerPage() {
               )
             )}
 
-            {/* BLOCKLY WORKSPACE */}
+            {/* BLOCKLY & MAKECODE WORKSPACE SELECTOR */}
             <div id="blockly-workspace-container" className={`space-y-4 ${isCodeStep ? 'block' : 'hidden'}`}>
-               <div className="flex items-center justify-between px-4">
-                  <div className="flex flex-col gap-2">
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Workspace // Logic_Check</h3>
+              <div className="flex gap-6 h-[600px]">
+                <div className="flex-1 rounded-[32px] overflow-hidden border border-white/10 relative shadow-xl bg-[#020617]">
+                  
+                  {/* HEADER BAR */}
+                  <div className="absolute top-0 left-0 right-0 h-14 bg-black/40 border-b border-white/5 z-20 flex items-center justify-between px-6">
+                    <div className="flex items-center gap-2">
+                      <div className={`size-2 rounded-full ${stepVerified ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
+                      <span className="text-[10px] font-black uppercase text-blue-400 tracking-widest">
+                        {stepVerified ? 'Concepts_Verified' : 'Concept_Workspace'}
+                      </span>
+                    </div>
+                    
+                    {/* GATEKEEPER BUTTON */}
+                    <button 
+                      disabled={!stepVerified}
+                      onClick={() => window.open("https://makecode.microbit.org/", "_blank")}
+                      className={`flex items-center gap-2 px-4 py-1.5 rounded-xl text-[9px] font-black uppercase transition-all ${
+                        stepVerified 
+                        ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg' 
+                        : 'bg-white/5 text-slate-700 border border-white/5 cursor-not-allowed grayscale'
+                      }`}
+                    >
+                      Open in MakeCode <ArrowUpRight size={12} />
+                    </button>
                   </div>
-               </div>
 
-               <div className="flex gap-6 h-[550px]">
-                  <div className="flex-1 rounded-b-[32px] rounded-t-lg overflow-hidden border border-white/10 relative bg-[#020617] shadow-xl">
-                    <div ref={blocklyDiv} className="absolute inset-0" />
+                  {/* DYNAMIC SANDBOX CONTENT */}
+                  <div className="absolute inset-0 pt-14">
+                    {/* MakeCode Renderer: Renders on top if verified */}
+                    {mission.sandbox_type === 'makecode' && stepVerified && (
+                      <div className="absolute inset-0 z-10 bg-[#020617]">
+                        <MakeCodeRenderer code={getMakeCodeRenderString(liveCode)} />
+                      </div>
+                    )}
+                    {/* Blockly Canvas: Always in DOM to prevent crashes, just visually hidden when MakeCode renders on top */}
+                    <div ref={blocklyDiv} className="w-full h-full" />
                   </div>
-                  <div className="w-[340px] flex flex-col rounded-[32px] overflow-hidden border border-white/10 bg-[#0f172a] shadow-2xl shrink-0">
-                     <div className="p-4 border-b border-white/5 bg-black/40 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Code2 size={14} className="text-purple-400" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Plain_English_Translator</span>
+                </div>
+
+                {/* Side Panel: Only show Translator for Blockly missions */}
+                <div className="w-[340px] flex flex-col rounded-[32px] overflow-hidden border border-white/10 bg-[#0f172a] shadow-2xl shrink-0">
+                  <div className="p-4 border-b border-white/5 bg-black/40 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Code2 size={14} className="text-purple-400" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        {mission.sandbox_type === 'makecode' && stepVerified ? 'Concept_Verified' : 'Plain_English_Translator'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex-1 p-6 overflow-y-auto no-scrollbar bg-[#020617]/50">
+                    {mission.sandbox_type === 'makecode' && stepVerified ? (
+                      <div className="space-y-4 opacity-70 flex flex-col items-center justify-center h-full text-center">
+                         <CheckCircle2 size={32} className="text-green-500" />
+                         <p className="text-[10px] font-bold text-slate-400 leading-relaxed uppercase tracking-widest">
+                           Your logic is sound.<br/> You are now cleared to build this in the full MakeCode environment.
+                         </p>
+                      </div>
+                    ) : (
+                      liveCode ? (
+                        <pre className="text-[11px] font-mono text-purple-400 whitespace-pre-wrap leading-relaxed tracking-tight">{liveCode}</pre>
+                      ) : (
+                        <div className="h-full flex flex-col items-center justify-center opacity-30 text-center space-y-4">
+                          <Code2 size={32} />
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Awaiting<br/>Logic Input</p>
                         </div>
-                     </div>
-                     <div className="flex-1 p-6 overflow-y-auto no-scrollbar bg-[#020617]/50">
-                        {liveCode ? (
-                           <pre className="text-[11px] font-mono text-purple-400 whitespace-pre-wrap leading-relaxed tracking-tight">{liveCode}</pre>
-                        ) : (
-                           <div className="h-full flex flex-col items-center justify-center opacity-30 text-center space-y-4">
-                              <Code2 size={32} />
-                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Awaiting<br/>Logic Input</p>
-                           </div>
-                        )}
-                     </div>
+                      )
+                    )}
                   </div>
-               </div>
+                </div>
+              </div>
             </div>
             
             {/* BLUEPRINT / MVP SECTION */}
@@ -781,7 +1054,7 @@ export default function LessonPlayerPage() {
                         <div className="text-center space-y-3 z-10 relative">
                           <h3 className="text-3xl font-black italic uppercase tracking-tighter">Capture Final Logic</h3>
                           <p className="text-slate-400 text-sm max-w-md mx-auto leading-relaxed">
-                            Open your Scratch studio, assemble your logic blocks exactly as planned, and submit a screenshot to clear this sector.
+                            Open your MakeCode studio, assemble your logic blocks exactly as planned, and submit a screenshot to clear this sector.
                           </p>
                         </div>
                         <button onClick={startCapture} className="px-10 py-5 bg-blue-500 text-black font-black uppercase text-xs tracking-widest rounded-2xl hover:scale-105 transition-all shadow-[0_0_30px_rgba(59,130,246,0.3)] relative z-10">

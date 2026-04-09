@@ -102,8 +102,11 @@ export default function LandingPage() {
   });
 
   useEffect(() => {
+    // TEMPORARY DISABLE: Paused for the Polokwane Bootcamp Ad Campaign
+    const isPopupDisabled = true; 
+
     const hasSeenPopup = sessionStorage.getItem("rad_welcome_seen");
-    if (!hasSeenPopup) {
+    if (!hasSeenPopup && !isPopupDisabled) {
       // 2 seconds delay for suspenseful dramatic entry
       const timer = setTimeout(() => {
         setShowWelcomePopup(true);

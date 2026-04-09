@@ -6,7 +6,7 @@ import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import PioneerXPBar from "@/components/ui/PioneerXPBar";
 import { 
   Play, Rocket, UserCheck, Loader2, Clock,
-  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle
+  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle, BookOpen, ChevronRight
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -26,8 +26,12 @@ export default function DashboardPage() {
   const router = useRouter();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  
+  // Course & Task States
   const [activeTask, setActiveTask] = useState<ActiveTaskData | null>(null);
-  const [courseTitle, setCourseTitle] = useState("Game Creator Bootcamp");
+  const [courseTitle, setCourseTitle] = useState("Academy Uplink");
+  const [allEnrollments, setAllEnrollments] = useState<any[]>([]); // NEW: Store all courses
+  
   const [completionStats, setCompletionStats] = useState({ completed: 0, total: 0 });
   
   // Modal & Confirmation States
@@ -60,27 +64,28 @@ export default function DashboardPage() {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', userId).single();
         if (profile) {
           setUserProfile(profile);
-          // DISABLED FOR LAUNCH: Do not auto-show the welcome guide
-          // if (profile.show_welcome_guide) {
-          //   setShowGuideModal(true);
-          // }
         }
         
-        const { data: enrollment } = await supabase
+        // --- UPDATED: Fetch ALL enrollments instead of just one ---
+        const { data: enrollmentsData } = await supabase
           .from('enrollments')
-          .select('course_id, active_task, courses(title)')
-          .eq('student_id', userId)
-          .maybeSingle();
+          .select('course_id, active_task, courses(*)')
+          .eq('student_id', userId);
         
-        if (enrollment) {
-          const rawCourse = enrollment.courses as any;
+        if (enrollmentsData && enrollmentsData.length > 0) {
+          setAllEnrollments(enrollmentsData);
+          
+          // Use the first enrolled course as the "Primary" Hero focus
+          const primaryEnrollment = enrollmentsData[0];
+          const rawCourse = primaryEnrollment.courses as any;
           setCourseTitle(Array.isArray(rawCourse) ? rawCourse[0]?.title : rawCourse?.title || "Course");
 
-          if (enrollment.active_task) {
-            setActiveTask(enrollment.active_task as ActiveTaskData);
+          if (primaryEnrollment.active_task) {
+            setActiveTask(primaryEnrollment.active_task as ActiveTaskData);
           }
 
-          await autoSyncPointer(userId, enrollment.course_id, enrollment.active_task);
+          // Auto-sync pointer for the primary course
+          await autoSyncPointer(userId, primaryEnrollment.course_id, primaryEnrollment.active_task);
         }
       } catch (err) {
         console.error("DASHBOARD_INIT_ERROR:", err);
@@ -145,11 +150,11 @@ export default function DashboardPage() {
       if (calculatedTask) {
         setActiveTask(calculatedTask);
         if (!currentPointer || JSON.stringify(currentPointer) !== JSON.stringify(calculatedTask)) {
-          await supabase.from('enrollments').update({ active_task: calculatedTask }).eq('student_id', userId);
+          await supabase.from('enrollments').update({ active_task: calculatedTask }).eq('student_id', userId).eq('course_id', courseId);
         }
       } else if (!calculatedTask && currentPointer) {
          setActiveTask(null);
-         await supabase.from('enrollments').update({ active_task: null }).eq('student_id', userId);
+         await supabase.from('enrollments').update({ active_task: null }).eq('student_id', userId).eq('course_id', courseId);
       }
     }
 
@@ -165,7 +170,7 @@ export default function DashboardPage() {
   return (
     <DashboardClientWrapper initialStats={stats}>
       <main className="min-h-screen lg:mr-80 relative overflow-hidden text-left bg-[#020617] pb-20">
-        <div className="max-w-4xl mx-auto p-6 md:p-12 space-y-10 relative z-10">
+        <div className="max-w-4xl mx-auto p-6 md:p-12 space-y-12 relative z-10">
           
           <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-white/5 pb-8">
             <div className="space-y-2 text-left">
@@ -204,6 +209,9 @@ export default function DashboardPage() {
             <div className="relative z-10 space-y-6"><PioneerXPBar xp={currentXP} rankName={stats.currentLevel.name} floor={stats.currentLevel.floor} ceiling={stats.nextLevel.xpRequired} /></div>
           </section>
 
+          {/* =========================================
+              THE HERO: ACTIVE MISSION (CONTINUE LEARNING)
+              ========================================= */}
           <section className="space-y-6">
             <div className="flex items-center justify-between px-4">
               <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-500">
@@ -267,18 +275,13 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="relative bg-[#020617] border border-white/5 rounded-[56px] text-center shadow-2xl overflow-hidden group min-h-[400px] flex flex-col items-center justify-center">
-                
-                {/* 1. Massive Background Watermark */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden opacity-[0.02] group-hover:opacity-[0.05] transition-opacity duration-1000">
                   <span className="text-[8rem] md:text-[12rem] font-black text-white whitespace-nowrap -rotate-12 italic tracking-tighter">
                     COMING SOON
                   </span>
                 </div>
-
-                {/* 2. Cyberpunk Diagonal Warning Ribbon */}
                 <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-14 bg-blue-500/10 border-y border-blue-500/20 -rotate-12 backdrop-blur-sm flex items-center justify-center gap-8 shadow-[0_0_50px_rgba(59,130,246,0.15)]">
-                      {/* Repeating ribbon text */}
                       {[...Array(8)].map((_, i) => (
                         <span key={i} className="text-blue-400 font-black text-[10px] uppercase tracking-[0.4em] flex items-center gap-8 drop-shadow-[0_0_10px_rgba(59,130,246,0.8)]">
                           DEPLOYING SOON <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
@@ -286,8 +289,6 @@ export default function DashboardPage() {
                       ))}
                   </div>
                 </div>
-
-                {/* 3. Foreground Content (Frosted Glass Panel) */}
                 <div className="relative z-10 space-y-6 flex flex-col items-center backdrop-blur-md bg-[#020617]/60 p-8 md:p-12 rounded-[40px] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] max-w-lg mx-4">
                   <div className="w-20 h-20 bg-[#0f172a] border border-white/10 rounded-2xl flex items-center justify-center shadow-inner relative group-hover:scale-105 transition-transform duration-500">
                      <div className="absolute inset-0 border border-blue-500/30 rounded-2xl animate-ping opacity-20" />
@@ -300,32 +301,60 @@ export default function DashboardPage() {
                     </p>
                   </div>
                 </div>
-                
-                {/* 4. Ambient Background Glow behind the ribbon */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-32 bg-blue-500/10 blur-[80px] -rotate-12 pointer-events-none z-0" />
-
               </div>
             )}
           </section>
+
+          {/* =========================================
+              NEW: THE LIBRARY (ALL ENROLLED COURSES)
+              ========================================= */}
+          {allEnrollments.length > 0 && (
+            <section className="space-y-6 pt-6">
+              <div className="flex items-center gap-3 px-4 border-b border-white/5 pb-4">
+                <BookOpen size={16} className="text-blue-500" />
+                <h3 className="text-sm font-black uppercase tracking-widest text-white italic">Active Directives (Courses)</h3>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {allEnrollments.map((enrollment) => {
+                  const courseData = Array.isArray(enrollment.courses) ? enrollment.courses[0] : enrollment.courses;
+                  if (!courseData) return null;
+
+                  return (
+                    <Link 
+                      key={enrollment.course_id} 
+                      href="/student/courses" // Routes to their master roadmap view
+                      className="group bg-white/[0.02] border border-white/5 rounded-[32px] p-6 hover:bg-white/[0.04] hover:border-white/10 transition-all flex flex-col justify-between min-h-[200px]"
+                    >
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[8px] font-black uppercase tracking-widest">
+                            {enrollment.status === 'active' ? 'Uplink Active' : 'Offline'}
+                          </span>
+                        </div>
+                        <div>
+                          <h4 className="text-xl font-black uppercase italic tracking-tighter leading-tight group-hover:text-blue-400 transition-colors">
+                            {courseData.title}
+                          </h4>
+                          <p className="text-xs text-slate-500 mt-2 line-clamp-2 leading-relaxed">
+                            {courseData.description}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-4 border-t border-white/5 flex items-center justify-between text-slate-400 group-hover:text-white transition-colors">
+                        <span className="text-[10px] font-black uppercase tracking-widest">Enter Sector</span>
+                        <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
         </div>
       </main>
-
-      {/* DISABLED FOR LAUNCH: REVISIT BRIEFING BUTTON
-      <div className="fixed right-6 bottom-32 z-40 hidden lg:block w-64">
-          <button 
-            onClick={() => setShowGuideModal(true)}
-            className="w-full p-4 rounded-2xl bg-blue-500/5 border border-white/5 flex items-center gap-3 group hover:bg-blue-500/10 hover:border-blue-500/30 transition-all text-left"
-          >
-            <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-              <MonitorPlay size={20} />
-            </div>
-            <div>
-              <p className="text-[10px] font-black text-white uppercase italic leading-none">System Tutorial</p>
-              <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest mt-1">Revisit Briefing</p>
-            </div>
-          </button>
-      </div> 
-      */}
 
       {/* --- MISSION BRIEFING POPUP --- */}
       <AnimatePresence>

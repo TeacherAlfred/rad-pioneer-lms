@@ -119,15 +119,22 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
               
               {/* Text Content */}
               <div className="flex-1 space-y-6">
-                <h2 className="text-3xl md:text-4xl font-black text-white italic uppercase tracking-tight leading-none">
-                  {currentCard.title}
-                </h2>
-                <p 
-                    className="text-base md:text-lg text-slate-300 leading-relaxed"
-                    dangerouslySetInnerHTML={{ 
-                    __html: formatText ? formatText(currentCard.content) : currentCard.content 
-                    }}
+                
+                {/* UPDATED: We now format the title so words like "Micro:bit" get highlighted! */}
+                <h2 
+                  className="text-3xl md:text-4xl font-black text-white italic uppercase tracking-tight leading-none"
+                  dangerouslySetInnerHTML={{ 
+                    __html: formatText ? formatText(currentCard.title) : currentCard.title 
+                  }}
                 />
+
+                <p 
+                  className="text-base md:text-lg text-slate-300 leading-relaxed"
+                  dangerouslySetInnerHTML={{ 
+                    __html: formatText ? formatText(currentCard.content) : currentCard.content 
+                  }}
+                />
+                
               </div>
 
               {/* Optional Media Area (GIF/Image) */}
