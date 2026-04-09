@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { 
   ChevronLeft, Lock, CheckCircle2, Loader2, 
   Zap, BarChart3, ChevronDown, ChevronUp, ShieldCheck, ShieldAlert
@@ -11,9 +11,10 @@ import { supabase } from "@/lib/supabase";
 import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrapper";
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 
-export default function CourseRoadmapPage() {
+// --- SEPARATE THE COMPONENT THAT USES useSearchParams ---
+function CoursesContent() {
   const router = useRouter();
-  const searchParams = useSearchParams(); // NEW: To grab the specific course from the URL
+  const searchParams = useSearchParams();
   const targetCourseId = searchParams.get('courseId');
 
   const [loading, setLoading] = useState(true);
@@ -33,7 +34,7 @@ export default function CourseRoadmapPage() {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
         if (profile) setUserProfile(profile);
 
-        // --- UPDATED: Securely fetch the targeted course, or fallback to the most recent one ---
+        // Fetch targeted course or fallback to most recent
         let query = supabase
           .from('enrollments')
           .select('course_id, courses(*)')
@@ -49,26 +50,23 @@ export default function CourseRoadmapPage() {
 
         if (enrollError) throw enrollError;
 
-        const enrollment = enrollmentData?.[0]; // Safely grab the first result
+        const enrollment = enrollmentData?.[0];
 
         if (enrollment) {
           const rawCourse = enrollment.courses as any;
           setCourseData(Array.isArray(rawCourse) ? rawCourse[0] : rawCourse);
 
-          // 1. Flat Query: Get pure modules and missions
           const { data: modulesData } = await supabase
             .from('modules')
             .select(`*, missions (*)`)
             .eq('course_id', enrollment.course_id)
             .order('order_index', { ascending: true });
 
-          // 2. Flat Query: Get pure completion data
           const { data: techArchive } = await supabase.from('tech_archive').select('mission_id').eq('student_id', localUser.id);
           const completedMissions = new Set((techArchive || []).map(t => t.mission_id));
 
           const { data: quizAttempts } = await supabase.from('quiz_attempts').select('module_id, passed, score').eq('student_id', localUser.id);
           
-          // Map quiz attempts to their best scores
           const quizMap = (quizAttempts || []).reduce((acc: any, curr: any) => {
             if (!acc[curr.module_id]) acc[curr.module_id] = { passed: false, bestScore: 0 };
             if (curr.passed) acc[curr.module_id].passed = true;
@@ -77,7 +75,7 @@ export default function CourseRoadmapPage() {
           }, {});
 
           if (modulesData) {
-            let globalPrevComplete = true; // Week 1 is open by default
+            let globalPrevComplete = true; 
             let activeModId: string | null = null;
             let totalMissions = 0;
             let totalCompleted = 0;
@@ -190,15 +188,12 @@ export default function CourseRoadmapPage() {
           <section className="space-y-6">
             {modules.length === 0 ? (
               <div className="relative bg-[#020617] border border-white/5 rounded-[56px] text-center shadow-2xl overflow-hidden group min-h-[500px] flex flex-col items-center justify-center mt-12">
-                
-                {/* Background Watermark */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden opacity-[0.02] group-hover:opacity-[0.04] transition-opacity duration-1000">
                   <span className="text-[6rem] md:text-[10rem] font-black text-white whitespace-nowrap -rotate-12 italic tracking-tighter">
                     CLASSIFIED
                   </span>
                 </div>
 
-                {/* Cyberpunk Diagonal Warning Ribbon */}
                 <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-14 bg-fuchsia-500/10 border-y border-fuchsia-500/20 -rotate-12 backdrop-blur-sm flex items-center justify-center gap-8 shadow-[0_0_50px_rgba(217,70,239,0.15)]">
                       {[...Array(8)].map((_, i) => (
@@ -209,7 +204,6 @@ export default function CourseRoadmapPage() {
                   </div>
                 </div>
 
-                {/* Foreground Content */}
                 <div className="relative z-10 space-y-6 flex flex-col items-center backdrop-blur-md bg-[#020617]/70 p-8 md:p-14 rounded-[40px] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] max-w-lg mx-4">
                   <div className="w-24 h-24 bg-[#0f172a] border border-white/10 rounded-3xl flex items-center justify-center shadow-inner relative group-hover:scale-105 transition-transform duration-500">
                      <div className="absolute inset-0 border border-fuchsia-500/30 rounded-3xl animate-ping opacity-20" />
@@ -226,9 +220,7 @@ export default function CourseRoadmapPage() {
                   </Link>
                 </div>
                 
-                {/* Ambient Glow */}
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-40 bg-fuchsia-500/10 blur-[100px] -rotate-12 pointer-events-none z-0" />
-
               </div>
             ) : (
               modules.map((mod) => {
@@ -287,5 +279,18 @@ export default function CourseRoadmapPage() {
       </main>
       <ProfileSidebar />
     </DashboardClientWrapper>
+  );
+}
+
+// --- WRAP THE CONTENT IN SUSPENSE FOR NEXT.JS BUILD ---
+export default function CourseRoadmapPage() {
+  return (
+    <Suspense fallback={
+      <div className="h-screen bg-[#020617] flex items-center justify-center">
+        <Loader2 className="animate-spin text-blue-500" size={40} />
+      </div>
+    }>
+      <CoursesContent />
+    </Suspense>
   );
 }
