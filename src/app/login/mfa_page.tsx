@@ -40,7 +40,6 @@ export default function LoginPage() {
 
     try {
       if (mode === "staff" || mode === "parent") {
-        // DIRECT LOGIN - MFA DISABLED FOR NOW
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
           email: typedName,
           password: typedPin,
@@ -48,7 +47,7 @@ export default function LoginPage() {
 
         if (authError) throw authError;
 
-        // Fetch the profile to securely route based on their actual database role
+        // NEW: Fetch the profile to securely route based on their actual database role
         const { data: userProfile, error: profileError } = await supabase
           .from('profiles')
           .select('role')
@@ -64,7 +63,7 @@ export default function LoginPage() {
           // Send true admins to the main command center / courses
           window.location.href = "/admin/dashboard"; 
         } else if (userProfile.role === 'educator') {
-          // Send teachers directly to their instructional portal
+          // Send teachers directly to their new instructional portal
           router.push("/teacher/dashboard");
         } else if (userProfile.role === 'guardian') {
           // Send parents to their portal
@@ -88,6 +87,7 @@ export default function LoginPage() {
       if (userFound && userFound.length > 0) {
         const dbUser = userFound[0];
         
+        // BUG FIX: Check temp_entry_pin (where Onboarding saves it) OR pin_hash
         const isPinMatch = 
           String(dbUser.temp_entry_pin).trim() === String(typedPin).trim() || 
           String(dbUser.pin_hash).trim() === String(typedPin).trim();
@@ -119,12 +119,15 @@ export default function LoginPage() {
               .eq('id', dbUser.id);
           }
 
+          // Attempt to log them into Supabase Auth with shadow email
+          // We don't check for an error here in case the shadow auth account hasn't been generated yet
           const shadowEmail = `${typedName.toLowerCase()}@pioneer.bot`;
           await supabase.auth.signInWithPassword({
             email: shadowEmail,
             password: typedPin,
           });
 
+          // Set the critical local session variable
           localStorage.setItem("pioneer_session", JSON.stringify(dbUser));
           router.push("/student/dashboard");
         } else {
@@ -289,25 +292,22 @@ export default function LoginPage() {
           )}
 
           {(mode === "student-standard" || mode === "staff" || mode === "parent") && (
-            <motion.form key="form" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} onSubmit={handleStandardLogin} className="space-y-8">
+            <form key="form" onSubmit={handleStandardLogin} className="space-y-8">
               <button type="button" onClick={() => setMode("initial")} className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-white transition-colors"><ArrowLeft size={16} /> Back</button>
               <h2 className="text-3xl font-black uppercase italic tracking-tighter text-center">{mode === "staff" ? "Teacher Login" : mode === "parent" ? "Parent Login" : "Student Login"}</h2>
-              
+              <div className="space-y-4">
+                <input required type="text" value={identifier} onChange={(e) => setIdentifier(e.target.value)} className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 px-6 font-bold text-lg focus:border-rad-blue outline-none transition-all" placeholder={mode === "student-standard" ? "Profile Username" : "Email"} />
+                <input required type={mode === "student-standard" ? "number" : "password"} value={secret} onChange={(e) => setSecret(e.target.value)} className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 px-6 font-bold text-lg focus:border-rad-blue outline-none transition-all" placeholder={mode === "student-standard" ? "4-Digit PIN" : "Password"} />
+              </div>
               {error && (
                 <div className="p-4 rounded-xl bg-rad-red/10 border border-rad-red/20">
                    <p className="text-rad-red text-sm font-bold text-center">{error}</p>
                 </div>
               )}
-
-              <div className="space-y-4">
-                <input required type="text" value={identifier} onChange={(e) => setIdentifier(e.target.value)} className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 px-6 font-bold text-lg focus:border-rad-blue outline-none transition-all" placeholder={mode === "student-standard" ? "Profile Username" : "Email"} />
-                <input required type={mode === "student-standard" ? "number" : "password"} value={secret} onChange={(e) => setSecret(e.target.value)} className="w-full h-16 rounded-2xl bg-white/5 border border-white/10 px-6 font-bold text-lg focus:border-rad-blue outline-none transition-all" placeholder={mode === "student-standard" ? "4-Digit PIN" : "Password"} />
-              </div>
-              
-              <button type="submit" disabled={loading} className={`w-full h-20 rounded-3xl font-black uppercase italic text-xl shadow-lg hover:scale-105 transition-all ${mode === "staff" ? 'bg-rad-purple text-white hover:bg-rad-purple/90' : mode === "parent" ? 'bg-rad-green text-[#020617] hover:bg-rad-green/90' : 'bg-rad-blue text-[#020617] hover:bg-rad-blue/90'}`}>
+              <button type="submit" disabled={loading} className={`w-full h-20 rounded-3xl font-black uppercase italic text-xl shadow-lg hover:scale-105 transition-all ${mode === "staff" ? 'bg-rad-purple' : mode === "parent" ? 'bg-rad-green' : 'bg-rad-blue'}`}>
                 {loading ? <Loader2 className="animate-spin mx-auto" /> : "Sign In"}
               </button>
-            </motion.form>
+            </form>
           )}
         </AnimatePresence>
       </div>

@@ -47,7 +47,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // PROTECT /admin
-if (url.pathname.startsWith('/admin')) {
+  if (url.pathname.startsWith('/admin')) {
     if (!user) {
       url.pathname = '/login'
       return NextResponse.redirect(url)
@@ -59,7 +59,7 @@ if (url.pathname.startsWith('/admin')) {
       return NextResponse.redirect(url)
     }
 
-    // --- MFA ENFORCEMENT ---
+    /* // --- MFA ENFORCEMENT TEMPORARILY DISABLED ---
     const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
     
     // Check if user has MFA set up (nextLevel === 'aal2') 
@@ -74,6 +74,7 @@ if (url.pathname.startsWith('/admin')) {
       url.pathname = '/admin/verify'
       return NextResponse.redirect(url)
     }
+    */
   }
 
   return supabaseResponse

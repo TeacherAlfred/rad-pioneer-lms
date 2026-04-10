@@ -7,7 +7,7 @@ import {
   ChevronRight, Phone, Mail, Target, BookOpen, 
   MessageSquare, Shield, Clock, Plus, Zap, Laptop,
   CheckCircle2, ChevronLeft, CalendarCheck, Loader2, X, Edit2, Save, MapPin, Video, CalendarPlus,
-  CalendarDays, Repeat, CheckSquare, Square
+  CalendarDays, Repeat, CheckSquare, Square, UserPlus
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -50,6 +50,7 @@ export default function TeacherDashboard() {
   const [activeStudent, setActiveStudent] = useState<any | null>(null);
   const [metricDrilldown, setMetricDrilldown] = useState<string | null>(null);
   const [isBulkScheduleOpen, setIsBulkScheduleOpen] = useState(false);
+  const [editingLessonGroup, setEditingLessonGroup] = useState<any | null>(null);
   
   const [students, setStudents] = useState<any[]>([]);
   const [availableCourses, setAvailableCourses] = useState<string[]>(AVAILABLE_COURSES);
@@ -166,16 +167,84 @@ export default function TeacherDashboard() {
     });
   };
 
-  const handleScheduleLesson = async (studentId: string, currentSchedule: any[], newLesson: any) => {
-    await updateStudentMetadata(studentId, { 
-      schedule: [...currentSchedule, { id: Math.random().toString(36).substring(7), ...newLesson }] 
-    });
+  // --- NEW: MULTI-STUDENT SCHEDULING ---
+  const handleScheduleLesson = async (primaryStudentId: string, additionalStudentIds: string[], newLesson: any) => {
+    try {
+      const allIds = [primaryStudentId, ...additionalStudentIds];
+      
+      await Promise.all(allIds.map(async (id) => {
+        const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', id).single();
+        if (profile) {
+          const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+          const currentSchedule = meta.schedule || [];
+          meta.schedule = [...currentSchedule, { id: Math.random().toString(36).substring(7), ...newLesson }];
+          await supabase.from('profiles').update({ metadata: meta }).eq('id', id);
+        }
+      }));
+
+      await fetchDashboardData();
+    } catch (err) {
+      console.error("Failed to schedule lesson:", err);
+      alert("An error occurred while scheduling.");
+    }
   };
 
   const handleDeleteLesson = async (studentId: string, currentSchedule: any[], lessonIdToDelete: string) => {
     await updateStudentMetadata(studentId, { 
       schedule: currentSchedule.filter(l => l.id !== lessonIdToDelete) 
     });
+  };
+
+  // --- BATCH EDIT LESSON GROUP ---
+  const handleSaveLessonEdits = async (lessonGroup: any, finalAttendees: any[], newDateISO: string) => {
+    try {
+      const originalAttendees = lessonGroup.attendees || [];
+      const originalIds = originalAttendees.map((a: any) => a.studentId);
+      const finalIds = finalAttendees.map((a: any) => a.studentId);
+
+      const removedIds = originalIds.filter((id: string) => !finalIds.includes(id));
+      const keptIds = originalIds.filter((id: string) => finalIds.includes(id));
+      const addedIds = finalIds.filter((id: string) => !originalIds.includes(id));
+
+      const updateStudentScheduleOnly = async (studentId: string, mutator: (sched: any[]) => any[]) => {
+         const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', studentId).single();
+         if(profile) {
+             const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+             meta.schedule = mutator(meta.schedule || []);
+             await supabase.from('profiles').update({ metadata: meta }).eq('id', studentId);
+         }
+      };
+
+      await Promise.all([
+        // 1. Remove dropped students
+        ...removedIds.map((id: string) => {
+          const origAtt = originalAttendees.find((a: any) => a.studentId === id);
+          return updateStudentScheduleOnly(id, sched => sched.filter(l => l.id !== origAtt?.lessonId));
+        }),
+        // 2. Update date for kept students
+        ...keptIds.map((id: string) => {
+          const origAtt = originalAttendees.find((a: any) => a.studentId === id);
+          return updateStudentScheduleOnly(id, sched => sched.map(l => (l.id === origAtt?.lessonId ? { ...l, date: newDateISO } : l)));
+        }),
+        // 3. Create new lesson instance for added students
+        ...addedIds.map((id: string) => {
+          const newLesson = {
+            id: Math.random().toString(36).substring(7),
+            date: newDateISO,
+            topic: lessonGroup.topic,
+            course: lessonGroup.course,
+            delivery: lessonGroup.delivery,
+            reminders: { parents: true, teacher: true }
+          };
+          return updateStudentScheduleOnly(id, sched => [...sched, newLesson]);
+        })
+      ]);
+
+      await fetchDashboardData();
+    } catch (err) {
+      console.error("Failed to update lesson edits:", err);
+      alert("Failed to update lesson.");
+    }
   };
 
   // --- BULK SCHEDULER ENGINE ---
@@ -198,6 +267,8 @@ export default function TeacherDashboard() {
         id: Math.random().toString(36).substring(7),
         date: lessonDate.toISOString(),
         topic: topicStr,
+        course: params.course,
+        delivery: params.delivery,
         reminders: params.reminders
       });
     }
@@ -208,7 +279,20 @@ export default function TeacherDashboard() {
       if(!student) return;
 
       const currentSchedule = student.schedule || [];
-      const newSchedule = [...currentSchedule, ...lessonsToCreate];
+      
+      // CONFLICT RESOLUTION: PREVENT DUPLICATES
+      const filteredLessonsToCreate = lessonsToCreate.filter(newLesson => {
+         const newLessonDateString = new Date(newLesson.date).toLocaleDateString();
+         const isDuplicate = currentSchedule.some((existingLesson: any) => {
+            const existingLessonDateString = new Date(existingLesson.date).toLocaleDateString();
+            return existingLessonDateString === newLessonDateString && existingLesson.topic === newLesson.topic;
+         });
+         return !isDuplicate;
+      });
+
+      if (filteredLessonsToCreate.length === 0) return;
+
+      const newSchedule = [...currentSchedule, ...filteredLessonsToCreate];
 
       const { data: profile, error: fetchErr } = await supabase.from('profiles').select('metadata').eq('id', id).single();
       if (!fetchErr) {
@@ -222,18 +306,7 @@ export default function TeacherDashboard() {
       }
     }));
 
-    // Batch update UI
-    setStudents(prev => prev.map(s => {
-      if (params.studentIds.includes(s.id)) {
-        return {
-          ...s,
-          course: params.course,
-          delivery_method: params.delivery,
-          schedule: [...(s.schedule || []), ...lessonsToCreate]
-        };
-      }
-      return s;
-    }));
+    await fetchDashboardData();
   };
 
   const todayClassesCount = useMemo(() => {
@@ -246,8 +319,10 @@ export default function TeacherDashboard() {
       if (s.schedule) {
         s.schedule.forEach((lesson: any) => {
           const t = new Date(lesson.date).getTime();
+          const delivery = lesson.delivery || s.delivery_method || 'In-person';
+          const topic = lesson.topic || s.course;
           if (t >= todayStart && t < todayEnd) {
-            uniqueClasses.add(`${t}-${s.course}-${s.delivery_method}`);
+            uniqueClasses.add(`${t}-${topic}-${delivery}`);
           }
         });
       }
@@ -310,7 +385,7 @@ export default function TeacherDashboard() {
              <StudentIntelligence students={students} onSelectStudent={setActiveStudent} />
           </div>
           <div className="lg:col-span-1">
-             <ItinerarySidebar students={students} />
+             <ItinerarySidebar students={students} onEditLesson={setEditingLessonGroup} />
           </div>
         </div>
       </div>
@@ -319,14 +394,26 @@ export default function TeacherDashboard() {
       <MetricDrilldownModal metric={metricDrilldown} students={students} onClose={() => setMetricDrilldown(null)} onSelectStudent={setActiveStudent} />
       
       <StudentDossier 
-        student={activeStudent} onClose={() => setActiveStudent(null)} 
-        onAssignCourse={handleAssignCourse} onScheduleLesson={handleScheduleLesson} onDeleteLesson={handleDeleteLesson}
+        student={activeStudent} 
+        students={students}
+        onClose={() => setActiveStudent(null)} 
+        onAssignCourse={handleAssignCourse} 
+        onScheduleLesson={handleScheduleLesson} 
+        onDeleteLesson={handleDeleteLesson}
         availableCourses={availableCourses}
       />
 
       <BulkScheduleModal
         isOpen={isBulkScheduleOpen} onClose={() => setIsBulkScheduleOpen(false)}
         students={students} availableCourses={availableCourses} onSchedule={handleBulkSchedule}
+      />
+
+      <EditLessonModal 
+        isOpen={!!editingLessonGroup}
+        lessonGroup={editingLessonGroup}
+        students={students}
+        onClose={() => setEditingLessonGroup(null)}
+        onSave={handleSaveLessonEdits}
       />
 
     </div>
@@ -600,7 +687,7 @@ function StudentIntelligence({ students, onSelectStudent }: { students: any[], o
   );
 }
 
-function ItinerarySidebar({ students }: { students: any[] }) {
+function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditLesson: (lessonGroup: any) => void }) {
   const [viewMode, setViewMode] = useState<'today' | 'next5'>('today');
 
   const aggregatedLessons = useMemo(() => {
@@ -615,32 +702,34 @@ function ItinerarySidebar({ students }: { students: any[] }) {
       (student.schedule || []).map((lesson: any) => {
          const lessonDate = new Date(lesson.date);
          return {
-            id: lesson.id,
+            lessonId: lesson.id,
             dateObj: lessonDate,
             dateTs: lessonDate.getTime(),
             topic: lesson.topic,
+            studentId: student.id,
             studentName: student.name,
-            course: student.course,
-            delivery: student.delivery_method || 'In-person'
+            course: lesson.course || student.course, // prioritize lesson-specific course if set
+            delivery: lesson.delivery || student.delivery_method || 'In-person'
          };
       })
     );
 
     const groupedMap = new Map<string, any>();
     rawLessons.forEach(lesson => {
-      const key = `${lesson.dateTs}-${lesson.course}-${lesson.delivery}`;
+      // Group exact same timeslot + topic + delivery mode
+      const key = `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
       if (!groupedMap.has(key)) {
         groupedMap.set(key, {
-          id: lesson.id,
+          key: key,
           dateObj: lesson.dateObj,
           dateTs: lesson.dateTs,
           course: lesson.course,
           topic: lesson.topic,
           delivery: lesson.delivery,
-          students: [lesson.studentName]
+          attendees: [{ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId }]
         });
       } else {
-        groupedMap.get(key).students.push(lesson.studentName);
+        groupedMap.get(key).attendees.push({ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId });
       }
     });
 
@@ -685,13 +774,13 @@ function ItinerarySidebar({ students }: { students: any[] }) {
               <p className="text-xs font-bold text-slate-500 italic">No scheduled lessons found for this view.</p>
             </div>
           ) : (
-            displayLessons.map((lesson, idx) => {
-              const isOnline = lesson.delivery === 'Online';
-              const timeString = lesson.dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-              const dateString = viewMode === 'next5' ? lesson.dateObj.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'}) + " • " : "";
+            displayLessons.map((lessonGroup, idx) => {
+              const isOnline = lessonGroup.delivery === 'Online';
+              const timeString = lessonGroup.dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+              const dateString = viewMode === 'next5' ? lessonGroup.dateObj.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'}) + " • " : "";
 
               return (
-                <div key={`${lesson.id}-${idx}`} className="relative flex gap-4 items-start group">
+                <div key={`${lessonGroup.key}-${idx}`} className="relative flex gap-4 items-start group">
                   <div className={`w-6 h-6 rounded-full ${isOnline ? 'bg-purple-500/20' : 'bg-blue-500/20'} border-2 border-[#0f172a] flex items-center justify-center z-10 shrink-0 mt-0.5`}>
                     <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-purple-400' : 'bg-blue-400'}`}/>
                   </div>
@@ -701,15 +790,24 @@ function ItinerarySidebar({ students }: { students: any[] }) {
                         {dateString}{timeString}
                       </p>
                       <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => onEditLesson(lessonGroup)} 
+                          className="p-1 hover:bg-white/10 rounded-lg text-slate-500 hover:text-white transition-colors border border-transparent hover:border-white/10"
+                          title="Edit Session"
+                        >
+                          <Edit2 size={12} />
+                        </button>
                         <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                          {lesson.students.length} {lesson.students.length === 1 ? 'Student' : 'Students'}
+                          {lessonGroup.attendees.length} {lessonGroup.attendees.length === 1 ? 'Student' : 'Students'}
                         </span>
                         {isOnline ? <Video size={12} className="text-purple-500/50" /> : <MapPin size={12} className="text-blue-500/50" />}
                       </div>
                     </div>
-                    <p className="text-sm font-bold text-white leading-tight">{lesson.course}</p>
-                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1 font-bold line-clamp-1 border-b border-white/5 pb-2 mb-2">{lesson.topic}</p>
-                    <p className="text-xs text-slate-300 leading-tight">{lesson.students.join(', ')}</p>
+                    <p className="text-sm font-bold text-white leading-tight">{lessonGroup.course}</p>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1 font-bold line-clamp-1 border-b border-white/5 pb-2 mb-2">{lessonGroup.topic}</p>
+                    <p className="text-xs text-slate-300 leading-tight">
+                      {lessonGroup.attendees.map((a: any) => a.studentName).join(', ')}
+                    </p>
                   </div>
                 </div>
               );
@@ -732,7 +830,7 @@ function ItinerarySidebar({ students }: { students: any[] }) {
   );
 }
 
-function StudentDossier({ student, onClose, onAssignCourse, onScheduleLesson, onDeleteLesson, availableCourses }: any) {
+function StudentDossier({ student, students, onClose, onAssignCourse, onScheduleLesson, onDeleteLesson, availableCourses }: any) {
   const [cachedStudent, setCachedStudent] = useState<any>(null);
   
   const [isEditingCourse, setIsEditingCourse] = useState(false);
@@ -743,6 +841,8 @@ function StudentDossier({ student, onClose, onAssignCourse, onScheduleLesson, on
   const [isScheduling, setIsScheduling] = useState(false);
   const [newLessonDate, setNewLessonDate] = useState("");
   const [newLessonTopic, setNewLessonTopic] = useState("");
+  const [newLessonDelivery, setNewLessonDelivery] = useState("In-person");
+  const [additionalStudents, setAdditionalStudents] = useState<string[]>([]);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   useEffect(() => {
@@ -752,6 +852,8 @@ function StudentDossier({ student, onClose, onAssignCourse, onScheduleLesson, on
       setSelectedDelivery(student.delivery_method || "In-person");
       setIsEditingCourse(false);
       setIsScheduling(false);
+      setNewLessonDelivery(student.delivery_method || "In-person");
+      setAdditionalStudents([]);
     }
   }, [student]);
 
@@ -768,15 +870,21 @@ function StudentDossier({ student, onClose, onAssignCourse, onScheduleLesson, on
   const handleSaveLesson = async () => {
     if (!displayStudent || !newLessonDate || !newLessonTopic) return;
     setIsSavingSchedule(true);
-    await onScheduleLesson(displayStudent.id, displayStudent.schedule || [], {
+    
+    // Pass the primary student ID and any piggybacked additional students
+    await onScheduleLesson(displayStudent.id, additionalStudents, {
       date: newLessonDate,
       topic: newLessonTopic,
+      course: displayStudent.course, // Force the lesson to inherit the primary student's course
+      delivery: newLessonDelivery,
       reminders: { parents: true, teacher: true }
     });
+    
     setIsSavingSchedule(false);
     setIsScheduling(false);
     setNewLessonDate("");
     setNewLessonTopic("");
+    setAdditionalStudents([]);
   };
 
   if (!displayStudent) return null;
@@ -873,9 +981,18 @@ function StudentDossier({ student, onClose, onAssignCourse, onScheduleLesson, on
 
                  {isScheduling && (
                    <div className="bg-[#020617] border border-blue-500/30 p-5 rounded-2xl mb-6 space-y-4">
-                     <div className="space-y-1">
-                       <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Lesson Date & Time</label>
-                       <input type="datetime-local" value={newLessonDate} onChange={e => setNewLessonDate(e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                       <div className="space-y-1">
+                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Lesson Date & Time</label>
+                         <input type="datetime-local" value={newLessonDate} onChange={e => setNewLessonDate(e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
+                       </div>
+                       <div className="space-y-1">
+                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Delivery Mode</label>
+                         <select value={newLessonDelivery} onChange={e => setNewLessonDelivery(e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none">
+                           <option value="In-person">In-person</option>
+                           <option value="Online">Online</option>
+                         </select>
+                       </div>
                      </div>
                      <div className="space-y-1">
                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Syllabus Topic</label>
@@ -884,6 +1001,29 @@ function StudentDossier({ student, onClose, onAssignCourse, onScheduleLesson, on
                          {syllabus.map(lesson => <option key={lesson.week} value={`Week ${lesson.week}: ${lesson.title}`}>Week {lesson.week} - {lesson.title}</option>)}
                        </select>
                      </div>
+                     
+                     {newLessonDelivery === "In-person" && (
+                        <div className="space-y-2 pt-2 border-t border-white/5">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Add Other Students (Group Lesson)</label>
+                          <div className="max-h-32 overflow-y-auto custom-scrollbar bg-[#0f172a] rounded-xl border border-white/5 p-2">
+                             {students.filter((s: any) => s.id !== displayStudent.id).map((s: any) => (
+                                <label key={s.id} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
+                                   <input 
+                                      type="checkbox" 
+                                      checked={additionalStudents.includes(s.id)}
+                                      onChange={(e) => {
+                                         if (e.target.checked) setAdditionalStudents(prev => [...prev, s.id]);
+                                         else setAdditionalStudents(prev => prev.filter(id => id !== s.id));
+                                      }}
+                                      className="w-4 h-4 rounded bg-black/50 border-white/10 text-blue-500 focus:ring-0 focus:ring-offset-0"
+                                   />
+                                   <span className="text-sm font-bold text-slate-300">{s.name}</span>
+                                </label>
+                             ))}
+                          </div>
+                        </div>
+                     )}
+
                      <div className="flex justify-end gap-2 pt-2">
                         <button onClick={() => setIsScheduling(false)} className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancel</button>
                         <button onClick={handleSaveLesson} disabled={isSavingSchedule || !newLessonDate || !newLessonTopic} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors disabled:opacity-50 flex items-center gap-2">
@@ -927,7 +1067,7 @@ function StudentDossier({ student, onClose, onAssignCourse, onScheduleLesson, on
 }
 
 // ---------------------------------------------------------
-// NEW: BULK SCHEDULING MODAL
+// BULK SCHEDULING MODAL
 // ---------------------------------------------------------
 function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSchedule }: any) {
   const [course, setCourse] = useState(availableCourses[0] || "");
@@ -953,7 +1093,7 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
       setSelectedStudentIds(new Set(eligibleStudents.map((s: any) => s.id)));
       setStartTopic(""); 
     }
-  }, [course, isOpen]); // removed eligibleStudents to prevent infinite loop of selections
+  }, [course, isOpen]);
 
   const syllabus = getSyllabusForCourse(course);
 
@@ -1142,6 +1282,135 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
             </div>
           </div>
 
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------
+// NEW: EDIT LESSON MODAL
+// ---------------------------------------------------------
+function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any) {
+  const [dateStr, setDateStr] = useState("");
+  const [attendees, setAttendees] = useState<any[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && lessonGroup) {
+      // Convert to local time format for datetime-local input
+      const d = lessonGroup.dateObj;
+      const tzOffset = d.getTimezoneOffset() * 60000; 
+      const localISOTime = (new Date(d.getTime() - tzOffset)).toISOString().slice(0,16);
+      
+      setDateStr(localISOTime);
+      setAttendees(lessonGroup.attendees || []);
+    }
+  }, [isOpen, lessonGroup]);
+
+  if (!isOpen || !lessonGroup) return null;
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    const newDateISO = new Date(dateStr).toISOString();
+    await onSave(lessonGroup, attendees, newDateISO);
+    setIsSaving(false);
+    onClose();
+  };
+
+  const handleAddStudent = (studentId: string) => {
+    if (!studentId) return;
+    const student = students.find((s: any) => s.id === studentId);
+    if (student && !attendees.find(a => a.studentId === student.id)) {
+       setAttendees(prev => [...prev, { studentId: student.id, studentName: student.name }]);
+    }
+  };
+
+  const availableToAdd = students.filter((s: any) => !attendees.find(a => a.studentId === s.id));
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-6">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
+      <motion.div 
+        initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+        className="relative bg-[#0f172a] border border-white/10 rounded-[40px] w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+      >
+        <div className="p-6 border-b border-white/5 flex justify-between items-center bg-white/[0.02] shrink-0">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-blue-500/20 text-blue-400 rounded-2xl border border-blue-500/30"><Edit2 size={20} /></div>
+            <div>
+                <h2 className="text-xl font-black uppercase italic tracking-tighter text-white leading-none">Edit Session</h2>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1 line-clamp-1">{lessonGroup.topic}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-2 bg-white/5 hover:bg-white/10 rounded-full"><X size={20} /></button>
+        </div>
+
+        <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-widest text-blue-400 ml-2">Date & Time</label>
+            <input 
+              type="datetime-local" 
+              value={dateStr} 
+              onChange={e => setDateStr(e.target.value)} 
+              className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500 cursor-pointer" 
+            />
+          </div>
+
+          <div className="space-y-4 pt-4 border-t border-white/5">
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Manage Attendees</label>
+              <span className="text-[9px] font-black bg-white/5 px-2 py-1 rounded text-slate-400">{attendees.length} Students</span>
+            </div>
+            
+            <div className="bg-[#020617] border border-white/5 rounded-2xl p-2 max-h-48 overflow-y-auto custom-scrollbar">
+              {attendees.length === 0 ? (
+                <div className="p-4 text-center text-xs text-rose-400 italic font-bold">This session will be completely deleted.</div>
+              ) : (
+                attendees.map((a: any) => (
+                  <div key={a.studentId} className="flex justify-between items-center p-3 hover:bg-white/5 rounded-xl transition-colors group">
+                    <span className="text-sm font-bold text-white">{a.studentName}</span>
+                    <button 
+                      onClick={() => setAttendees(prev => prev.filter(att => att.studentId !== a.studentId))}
+                      className="text-xs font-bold text-rose-500/50 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
+                    >
+                      <X size={14}/> Remove
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* ONLY ALLOW ADDING MORE STUDENTS IF IN-PERSON */}
+            {lessonGroup.delivery === 'In-person' && availableToAdd.length > 0 && (
+               <div className="bg-[#0f172a] border border-blue-500/20 rounded-2xl p-4">
+                 <label className="text-[9px] font-black uppercase tracking-widest text-blue-400 mb-2 flex items-center gap-1"><UserPlus size={10}/> Add Student to Group</label>
+                 <select 
+                    value="" 
+                    onChange={e => handleAddStudent(e.target.value)} 
+                    className="w-full bg-[#020617] border border-white/10 rounded-xl px-3 py-3 text-sm font-bold text-slate-300 outline-none focus:border-blue-500 appearance-none"
+                 >
+                    <option value="" disabled>Select a student to add...</option>
+                    {availableToAdd.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                 </select>
+               </div>
+            )}
+
+            {attendees.length < lessonGroup.attendees?.length && (
+              <p className="text-[9px] text-rose-400 italic px-2 font-bold mt-2">Removing a student completely un-enrolls them from this specific timeslot.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-white/5 bg-black/40 flex justify-between items-center gap-4 shrink-0">
+          <button onClick={onClose} className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancel</button>
+          <button 
+            onClick={handleSave}
+            disabled={isSaving || !dateStr}
+            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-2xl font-black uppercase italic text-xs tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50"
+          >
+            {isSaving ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Save Changes
+          </button>
         </div>
       </motion.div>
     </div>

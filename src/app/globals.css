@@ -49,3 +49,18 @@ body {
   background-color: rgba(69, 167, 154, 0.3);
   color: white;
 }
+
+/* --- FIX FOR NATIVE DATE PICKER ICONS IN DARK MODE --- */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) opacity(70%);
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover {
+    filter: invert(1) opacity(100%);
+}
