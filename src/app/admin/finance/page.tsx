@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, Fragment } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, CreditCard, TrendingUp, AlertTriangle, Tag,
@@ -28,6 +28,8 @@ export default function FinancePortal() {
   const router = useRouter(); 
   const [loading, setLoading] = useState(true);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   
   const [records, setRecords] = useState<any[]>([]);
   const [billingItems, setBillingItems] = useState<any[]>([]);
@@ -45,6 +47,7 @@ export default function FinancePortal() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
+  const [isGroupedByExpiry, setIsGroupedByExpiry] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmittingManual, setIsSubmittingManual] = useState(false);
@@ -53,7 +56,7 @@ export default function FinancePortal() {
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [whatsAppBody, setWhatsAppBody] = useState("");
   
-  // --- NEW: BATCH DISPATCHER STATES ---
+  // --- BATCH DISPATCHER STATES ---
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [batchIndex, setBatchIndex] = useState(0);
@@ -282,7 +285,28 @@ export default function FinancePortal() {
     return result;
   }, [records, activeFilter, searchQuery, vipQuoteIds]);
 
-  // --- BATCH HELPERS ---
+  // --- BATCH & GROUPING HELPERS ---
+  const groupedQuotes = useMemo(() => {
+    if (!isGroupedByExpiry) return null;
+    
+    const groups: Record<string, { dateObj: number, records: any[] }> = {};
+    
+    filteredRecords.forEach(rec => {
+      if (rec.doc_type !== 'quote') return; // Grouping is specifically for quotes workflow
+      
+      const d = rec.expires_at ? new Date(rec.expires_at) : new Date(new Date(rec.created_at).getTime() + 7 * 24 * 60 * 60 * 1000);
+      const display = d.toLocaleDateString('en-ZA');
+      
+      if (!groups[display]) {
+        groups[display] = { dateObj: d.getTime(), records: [] };
+      }
+      groups[display].records.push(rec);
+    });
+
+    // Sort ascending so the most urgent (or most recently expired) are at the top
+    return Object.entries(groups).sort((a, b) => a[1].dateObj - b[1].dateObj);
+  }, [filteredRecords, isGroupedByExpiry]);
+
   const handleToggleSelectRecord = (id: string) => {
     setSelectedRecordIds(prev => 
       prev.includes(id) ? prev.filter(rId => rId !== id) : [...prev, id]
@@ -291,8 +315,8 @@ export default function FinancePortal() {
 
   const handleSelectAllVisibleQuotes = () => {
     const visibleQuotes = filteredRecords.filter(r => r.doc_type === 'quote' && r.status === 'pending');
-    if (selectedRecordIds.length === visibleQuotes.length) {
-      setSelectedRecordIds([]); // Deselect all
+    if (selectedRecordIds.length === visibleQuotes.length && visibleQuotes.length > 0) {
+      setSelectedRecordIds([]); 
     } else {
       setSelectedRecordIds(visibleQuotes.map(r => r.id));
     }
@@ -836,16 +860,28 @@ export default function FinancePortal() {
               </motion.div>
             </AnimatePresence>
           ) : (
-            <button 
-              onClick={() => setActiveFilter(activeFilter === 'pareto' ? null : 'pareto')}
-              className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                activeFilter === 'pareto' 
-                ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20 scale-105' 
-                : 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20'
-              }`}
-            >
-              <Target size={14} /> VIP Pipeline (80/20)
-            </button>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setIsGroupedByExpiry(!isGroupedByExpiry)}
+                className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                  isGroupedByExpiry 
+                  ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/20 scale-105' 
+                  : 'bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10'
+                }`}
+              >
+                <Clock size={14} /> Group By Expiry
+              </button>
+              <button 
+                onClick={() => setActiveFilter(activeFilter === 'pareto' ? null : 'pareto')}
+                className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                  activeFilter === 'pareto' 
+                  ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20 scale-105' 
+                  : 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20'
+                }`}
+              >
+                <Target size={14} /> VIP Pipeline (80/20)
+              </button>
+            </div>
           )}
         </div>
 
@@ -883,35 +919,113 @@ export default function FinancePortal() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {filteredRecords.map((rec) => {
-                    const needsInvoice = rec.doc_type === 'quote' && rec.status === 'accepted' && !rec.metadata?.converted_to_invoice;
-                    const isVipQuote = vipQuoteIds.has(rec.id);
-                    const isSelectable = rec.doc_type === 'quote' && rec.status === 'pending';
-                    const isSelected = selectedRecordIds.includes(rec.id);
-                    const dueDate = rec.expires_at 
-                        ? new Date(rec.expires_at).toLocaleDateString('en-ZA') 
-                        : new Date(new Date(rec.created_at).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-ZA');
-                    
-                    return (
-                      <LedgerRow 
-                        key={rec.id}
-                        isSelected={isSelected}
-                        isSelectable={isSelectable}
-                        onToggleSelect={() => handleToggleSelectRecord(rec.id)}
-                        name={rec.profiles?.display_name || rec.metadata?.prospect_name || 'Unknown Entity'} 
-                        type={rec.doc_type === 'quote' ? 'Quotation' : 'Invoice'} 
-                        amount={`R ${rec.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} 
-                        dueDate={dueDate}
-                        status={rec.status.charAt(0).toUpperCase() + rec.status.slice(1)} 
-                        refId={`${rec.doc_type === 'quote' ? 'QT' : 'INV'}-${rec.invoice_number}`} 
-                        needsInvoice={needsInvoice}
-                        isVip={isVipQuote}
-                        onClick={() => handleViewDocument(rec)} 
-                        onProfileClick={(e: React.MouseEvent) => handleViewProspect(rec, e)}
-                      />
-                    );
-                  })}
-                  {filteredRecords.length === 0 && (
+                  {isGroupedByExpiry && groupedQuotes ? (
+                    groupedQuotes.length > 0 ? (
+                      groupedQuotes.map(([dateDisplay, groupData]) => {
+                        const selectableGroupIds = groupData.records.filter(r => r.status === 'pending').map(r => r.id);
+                        const isGroupFullySelected = selectableGroupIds.length > 0 && selectableGroupIds.every(id => selectedRecordIds.includes(id));
+                        const isCollapsed = collapsedGroups[dateDisplay];
+                        
+                        return (
+                          <Fragment key={dateDisplay}>
+                            <tr 
+                              onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateDisplay]: !prev[dateDisplay] }))}
+                              className="bg-purple-500/10 border-y border-purple-500/20 cursor-pointer hover:bg-purple-500/20 transition-colors group"
+                            >
+                              <td className="px-6 py-3 w-12 text-center" onClick={(e) => e.stopPropagation()}>
+                                {selectableGroupIds.length > 0 && (
+                                  <input 
+                                     type="checkbox" 
+                                     checked={isGroupFullySelected}
+                                     onChange={() => {
+                                       if (isGroupFullySelected) {
+                                         setSelectedRecordIds(prev => prev.filter(id => !selectableGroupIds.includes(id)));
+                                       } else {
+                                         setSelectedRecordIds(prev => Array.from(new Set([...prev, ...selectableGroupIds])));
+                                       }
+                                     }}
+                                     className="w-4 h-4 rounded border-purple-500/30 bg-black/50 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 cursor-pointer" 
+                                  />
+                                )}
+                              </td>
+                              <td colSpan={4} className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-purple-400">
+                                <div className="flex items-center gap-2">
+                                  <ChevronRight 
+                                    size={14} 
+                                    className={`transition-transform duration-200 ${isCollapsed ? '' : 'rotate-90'}`} 
+                                  />
+                                  Expiry Date: {dateDisplay} 
+                                  <span className="ml-2 px-2 py-0.5 bg-purple-500/20 rounded-md text-purple-300">
+                                    {groupData.records.length} Quotes
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                            {!isCollapsed && groupData.records.map((rec) => {
+                              const needsInvoice = rec.doc_type === 'quote' && rec.status === 'accepted' && !rec.metadata?.converted_to_invoice;
+                              const isVipQuote = vipQuoteIds.has(rec.id);
+                              const isSelectable = rec.doc_type === 'quote' && rec.status === 'pending';
+                              const isSelected = selectedRecordIds.includes(rec.id);
+                              const dueDate = rec.expires_at 
+                                  ? new Date(rec.expires_at).toLocaleDateString('en-ZA') 
+                                  : new Date(new Date(rec.created_at).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-ZA');
+                              
+                              return (
+                                <LedgerRow 
+                                  key={rec.id}
+                                  isSelected={isSelected}
+                                  isSelectable={isSelectable}
+                                  onToggleSelect={() => handleToggleSelectRecord(rec.id)}
+                                  name={rec.profiles?.display_name || rec.metadata?.prospect_name || 'Unknown Entity'} 
+                                  type={rec.doc_type === 'quote' ? 'Quotation' : 'Invoice'} 
+                                  amount={`R ${rec.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} 
+                                  dueDate={dueDate}
+                                  status={rec.status.charAt(0).toUpperCase() + rec.status.slice(1)} 
+                                  refId={`${rec.doc_type === 'quote' ? 'QT' : 'INV'}-${rec.invoice_number}`} 
+                                  needsInvoice={needsInvoice}
+                                  isVip={isVipQuote}
+                                  onClick={() => handleViewDocument(rec)} 
+                                  onProfileClick={(e: React.MouseEvent) => handleViewProspect(rec, e)}
+                                />
+                              );
+                            })}
+                          </Fragment>
+                        );
+                      })
+                    ) : (
+                      <tr><td colSpan={5} className="p-8 text-center text-slate-500 text-sm italic">No quotes available to group.</td></tr>
+                    )
+                  ) : (
+                    filteredRecords.map((rec) => {
+                      const needsInvoice = rec.doc_type === 'quote' && rec.status === 'accepted' && !rec.metadata?.converted_to_invoice;
+                      const isVipQuote = vipQuoteIds.has(rec.id);
+                      const isSelectable = rec.doc_type === 'quote' && rec.status === 'pending';
+                      const isSelected = selectedRecordIds.includes(rec.id);
+                      const dueDate = rec.expires_at 
+                          ? new Date(rec.expires_at).toLocaleDateString('en-ZA') 
+                          : new Date(new Date(rec.created_at).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-ZA');
+                      
+                      return (
+                        <LedgerRow 
+                          key={rec.id}
+                          isSelected={isSelected}
+                          isSelectable={isSelectable}
+                          onToggleSelect={() => handleToggleSelectRecord(rec.id)}
+                          name={rec.profiles?.display_name || rec.metadata?.prospect_name || 'Unknown Entity'} 
+                          type={rec.doc_type === 'quote' ? 'Quotation' : 'Invoice'} 
+                          amount={`R ${rec.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} 
+                          dueDate={dueDate}
+                          status={rec.status.charAt(0).toUpperCase() + rec.status.slice(1)} 
+                          refId={`${rec.doc_type === 'quote' ? 'QT' : 'INV'}-${rec.invoice_number}`} 
+                          needsInvoice={needsInvoice}
+                          isVip={isVipQuote}
+                          onClick={() => handleViewDocument(rec)} 
+                          onProfileClick={(e: React.MouseEvent) => handleViewProspect(rec, e)}
+                        />
+                      );
+                    })
+                  )}
+                  {!isGroupedByExpiry && filteredRecords.length === 0 && (
                     <tr><td colSpan={5} className="p-8 text-center text-slate-500 text-sm italic">No records found matching your search or filter.</td></tr>
                   )}
                 </tbody>
