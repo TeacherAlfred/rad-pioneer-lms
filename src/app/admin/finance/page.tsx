@@ -107,7 +107,6 @@ export default function FinancePortal() {
   }
 
   const analytics = useMemo(() => {
-    // ... (Analytics logic remains identical)
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
@@ -283,7 +282,7 @@ export default function FinancePortal() {
     return result;
   }, [records, activeFilter, searchQuery, vipQuoteIds]);
 
-  // --- NEW: BATCH HELPERS ---
+  // --- BATCH HELPERS ---
   const handleToggleSelectRecord = (id: string) => {
     setSelectedRecordIds(prev => 
       prev.includes(id) ? prev.filter(rId => rId !== id) : [...prev, id]
@@ -878,8 +877,8 @@ export default function FinancePortal() {
                        />
                     </th>
                     <th className="px-4 py-5">Household / Lead</th>
-                    <th className="px-8 py-5">Document Type</th>
-                    <th className="px-8 py-5">Amount</th>
+                    <th className="px-8 py-5">Document</th>
+                    <th className="px-8 py-5">Amount & Terms</th>
                     <th className="px-8 py-5 text-right">Status</th>
                   </tr>
                 </thead>
@@ -889,6 +888,9 @@ export default function FinancePortal() {
                     const isVipQuote = vipQuoteIds.has(rec.id);
                     const isSelectable = rec.doc_type === 'quote' && rec.status === 'pending';
                     const isSelected = selectedRecordIds.includes(rec.id);
+                    const dueDate = rec.expires_at 
+                        ? new Date(rec.expires_at).toLocaleDateString('en-ZA') 
+                        : new Date(new Date(rec.created_at).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-ZA');
                     
                     return (
                       <LedgerRow 
@@ -899,6 +901,7 @@ export default function FinancePortal() {
                         name={rec.profiles?.display_name || rec.metadata?.prospect_name || 'Unknown Entity'} 
                         type={rec.doc_type === 'quote' ? 'Quotation' : 'Invoice'} 
                         amount={`R ${rec.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} 
+                        dueDate={dueDate}
                         status={rec.status.charAt(0).toUpperCase() + rec.status.slice(1)} 
                         refId={`${rec.doc_type === 'quote' ? 'QT' : 'INV'}-${rec.invoice_number}`} 
                         needsInvoice={needsInvoice}
@@ -1554,7 +1557,7 @@ export default function FinancePortal() {
   );
 }
 
-function LedgerRow({ name, type, amount, status, refId, needsInvoice, isVip, onClick, onProfileClick, isSelectable, isSelected, onToggleSelect }: any) {
+function LedgerRow({ name, type, amount, dueDate, status, refId, needsInvoice, isVip, onClick, onProfileClick, isSelectable, isSelected, onToggleSelect }: any) {
   const isOverdue = status === 'Overdue';
   const isQuote = type === 'Quotation';
   const isAccepted = status === 'Accepted';
@@ -1611,11 +1614,20 @@ function LedgerRow({ name, type, amount, status, refId, needsInvoice, isVip, onC
           </div>
         </div>
       </td>
-      <td className="px-8 py-6 text-xs font-bold text-slate-300 flex items-center gap-2 mt-2">
-        {isQuote ? <FileText size={14} className="text-purple-400"/> : <Receipt size={14} className="text-emerald-400"/>}
-        {type}
+      <td className="px-8 py-6">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-300">
+          {isQuote ? <FileText size={14} className="text-purple-400"/> : <Receipt size={14} className="text-emerald-400"/>}
+          {type}
+        </div>
       </td>
-      <td className="px-8 py-6 text-sm font-black text-slate-400">{amount}</td>
+      <td className="px-8 py-6">
+        <div className="flex flex-col items-start justify-center">
+          <span className="text-sm font-black text-slate-300 whitespace-nowrap">{amount}</span>
+          <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-slate-500 mt-1.5">
+            <Clock size={10} /> {isQuote ? 'Valid Until:' : 'Due Date:'} {dueDate}
+          </div>
+        </div>
+      </td>
       <td className="px-8 py-6 text-right">
         <span className={`px-3 py-1 rounded-lg text-[9px] font-black uppercase border ${
           isOverdue ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 
