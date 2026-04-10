@@ -103,6 +103,55 @@ function MissionBriefingOverlay({ text, onComplete }: { text: string, onComplete
   );
 }
 
+// --- NEW TOAST NOTIFICATION COMPONENT ---
+function ToastNotification({ message, type, onClose }: { message: string | null, type: 'error' | 'success', onClose: () => void }) {
+  useEffect(() => {
+    if (message) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [message, onClose]);
+
+  return (
+    <AnimatePresence>
+      {message && (
+        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none w-full max-w-md px-4">
+          <motion.div 
+            initial={{ opacity: 0, y: -50, scale: 0.9 }} 
+            animate={{ opacity: 1, y: 0, scale: 1 }} 
+            exit={{ opacity: 0, y: -20, scale: 0.9 }} 
+            className={`pointer-events-auto rounded-[32px] p-6 shadow-2xl flex items-center gap-4 relative overflow-hidden border ${
+              type === 'error' 
+                ? 'bg-[#0f172a] border-red-500/30 shadow-red-900/20' 
+                : 'bg-[#0f172a] border-green-500/30 shadow-green-900/20'
+            }`}
+          >
+            <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${type === 'error' ? 'bg-red-500' : 'bg-green-500'}`} />
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${
+              type === 'error' 
+                ? 'bg-red-500/20 border-red-500/30 text-red-400' 
+                : 'bg-green-500/20 border-green-500/30 text-green-400'
+            }`}>
+              {type === 'error' ? <ShieldAlert size={24} /> : <CheckCircle2 size={24} />}
+            </div>
+            <div className="flex-1 pr-2">
+              <h3 className="text-xs font-black uppercase tracking-widest text-white leading-none mb-1.5">
+                {type === 'error' ? 'System Alert' : 'Success'}
+              </h3>
+              <p className="text-sm font-bold text-slate-400 leading-tight">{message}</p>
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors shrink-0">
+              <X size={20} />
+            </button>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 
 export default function LessonPlayerPage() {
   const { id } = useParams();
@@ -114,6 +163,7 @@ export default function LessonPlayerPage() {
   const [mission, setMission] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<{ text: string, type: 'error' | 'success' } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -146,7 +196,10 @@ export default function LessonPlayerPage() {
     beyond: ""
   });
 
-  // CRITICAL FIX 1: Stable callback to prevent AnimatePresence looping
+  const showToast = (text: string, type: 'error' | 'success' = 'error') => {
+    setToastMsg({ text, type });
+  };
+
   const handleBriefingComplete = useCallback(() => {
     setShowInitialBriefing(false);
   }, []);
@@ -158,22 +211,35 @@ export default function LessonPlayerPage() {
     });
   }, []);
 
-  const theme = mission?.mission_config?.theme || {
+  // GLOBAL PARSED CONFIG
+  const parsedConfig = useMemo(() => {
+    if (!mission) return {};
+    if (typeof mission.mission_config === 'string') {
+      try {
+        return JSON.parse(mission.mission_config);
+      } catch (e) {
+        console.error("Failed to parse mission_config string", e);
+        return {};
+      }
+    }
+    return mission.mission_config || {};
+  }, [mission]);
+
+  const theme = parsedConfig.theme || {
       briefing: "Mission_Briefing", console: "System_Console", verifyBtn: "Test Logic", successCode: "LOGIC_VERIFIED",
   };
 
   const steps = useMemo(() => {
     if (!mission) return [];
-    let dbSteps = mission.mission_config?.steps || [];
+    let dbSteps = parsedConfig.steps || [];
     
     if (dbSteps.length === 0) {
       dbSteps = [{
         type: 'capture',
         media_url: mission.video_url,
         lore_text: mission.lore_text || "Execute the sequence.",
-        vocabulary: mission.mission_config?.vocabulary || [],
-        win_sequence: mission.mission_config?.win_sequence || [],
-        prompts: { mvp: { question: "MVP Options", options: [] }, beyond: { question: "Beyond MVP" } },
+        vocabulary: parsedConfig.vocabulary || [],
+        win_sequence: parsedConfig.win_sequence || [],
         cards: []
       }];
     } else {
@@ -186,7 +252,7 @@ export default function LessonPlayerPage() {
       }
     }
     return dbSteps;
-  }, [mission]);
+  }, [mission, parsedConfig]);
 
   const currentStepData = useMemo(() => steps[currentStepIndex] || {}, [steps, currentStepIndex]);
 
@@ -217,14 +283,14 @@ export default function LessonPlayerPage() {
 
   const getBlockOriginalColor = useCallback((blockType: string) => {
     const typeVal = blockType.replace('event_', '').replace('action_', '');
-    const categories = mission?.mission_config?.toolbox || [];
+    const categories = parsedConfig.toolbox || [];
     for (const cat of categories) {
       for (const b of cat.blocks || []) {
         if (b.value === typeVal) return cat.color || '#4C97FF';
       }
     }
     return '#4C97FF';
-  }, [mission]);
+  }, [parsedConfig]);
 
   const defineCustomBlocks = (config: any) => {
     const toolboxCategories = config?.toolbox || [];
@@ -294,8 +360,6 @@ export default function LessonPlayerPage() {
     return () => { if (typingIntervalRef.current) clearInterval(typingIntervalRef.current); }
   }, [currentStepData?.lore_text, currentStepIndex, showInitialBriefing]);
 
-  // CRITICAL FIX 2: Check displayedLore directly in the scanner.
-  // REMOVED the dangerous chained useEffect that was appending string data every 20ms and crashing React.
   useEffect(() => {
     if (!currentStepData?.vocabulary) return;
     const stepVocab = currentStepData.vocabulary;
@@ -303,7 +367,6 @@ export default function LessonPlayerPage() {
     const newlyRevealed = stepVocab.filter((v: any) => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b${escapedTerm}\\b`, 'i');
-        // Now it safely checks BOTH the card text and the currently typing lore text!
         return regex.test(scannedVocabText) || regex.test(displayedLore); 
     });
 
@@ -338,7 +401,6 @@ export default function LessonPlayerPage() {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b(${escapedTerm})\\b(?![^<]*>)`, 'gi');
         const safeDef = v.definition.replace(/"/g, '&quot;');
-        // CRITICAL FIX: Added inline-block, relative, z-10, and extra margins
         formattedText = formattedText.replace(regex, `<span class="inline-block relative z-10 text-purple-300 font-black bg-purple-500/20 px-2 py-0.5 mx-1 rounded-md border border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.4)] cursor-help" title="${safeDef}">$1</span>`);
     });
     return formattedText;
@@ -353,7 +415,6 @@ export default function LessonPlayerPage() {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b(${escapedTerm})\\b(?![^<]*>)`, 'gi');
         const safeDef = v.definition.replace(/"/g, '&quot;');
-        // CRITICAL FIX: Added inline-block, relative, z-10, and extra margins
         formattedText = formattedText.replace(regex, `<span class="inline-block relative z-10 text-purple-300 font-black bg-purple-500/20 px-2 py-0.5 mx-1 rounded-md border border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.4)] cursor-help" title="${safeDef}">$1</span>`);
     });
     return formattedText;
@@ -388,7 +449,13 @@ export default function LessonPlayerPage() {
           setStepVerified(true); 
           setIsReadOnly(true);
 
-          const totalSteps = missionData.mission_config?.steps?.length || 1;
+          // Use the parsedConfig to get the correct step length
+          let configObj = missionData.mission_config || {};
+          if (typeof configObj === 'string') {
+            try { configObj = JSON.parse(configObj); } catch(e) { configObj = {}; }
+          }
+          const totalSteps = configObj.steps?.length || 1;
+          
           setCurrentStepIndex(totalSteps); 
           setHighestReachedStep(totalSteps);
           
@@ -403,7 +470,7 @@ export default function LessonPlayerPage() {
     if (showInitialBriefing || !mission || mission.sandbox_type === 'none' || mission.sandbox_type === 'p5js' || !blocklyDiv.current) return;
     if (workspace.current) return;
 
-    defineCustomBlocks(mission.mission_config);
+    defineCustomBlocks(parsedConfig);
     
     const pioneerTheme = Blockly.Theme.defineTheme('pioneer_dark', {
       name: 'pioneer_dark', base: Blockly.Themes.Classic,
@@ -432,7 +499,7 @@ export default function LessonPlayerPage() {
       }
     });
 
-    const toolboxCategories = mission.mission_config?.toolbox || [];
+    const toolboxCategories = parsedConfig.toolbox || [];
     const toolboxContents = toolboxCategories.map((cat: any) => {
        const mappedBlocks = (cat.blocks || []).map((b: any) => {
           const isEventBlock = b.value.includes('EVENT') || b.value.includes('ON_') || b.value.includes('WHEN_') || cat.category.toUpperCase().includes('EVENT');
@@ -471,9 +538,8 @@ export default function LessonPlayerPage() {
             setLiveCode(formatPseudocode(javascriptGenerator.workspaceToCode(workspace.current)));
         }
     });
-  }, [mission, loading, showInitialBriefing, getBlockOriginalColor]);
+  }, [mission, loading, showInitialBriefing, getBlockOriginalColor, parsedConfig]);
 
-  // CRITICAL FIX 3: Safe cleanup for timeouts
   useEffect(() => {
     if (isCodeStep && workspace.current && !showInitialBriefing) {
       const timer = setTimeout(() => { if (workspace.current) Blockly.svgResize(workspace.current); }, 50);
@@ -541,7 +607,7 @@ export default function LessonPlayerPage() {
     const winSequence = currentStepData.win_sequence || [];
     
     const allEventValues: string[] = [];
-    (mission?.mission_config?.toolbox || []).forEach((cat: any) => {
+    (parsedConfig.toolbox || []).forEach((cat: any) => {
        (cat.blocks || []).forEach((b: any) => {
           if (b.value.includes('EVENT') || b.value.includes('ON_') || b.value.includes('WHEN_') || cat.category.toUpperCase().includes('EVENT')) {
              allEventValues.push(b.value);
@@ -646,12 +712,16 @@ export default function LessonPlayerPage() {
   const confirmCapture = () => { if (tempCaptureBlob) { setImagePreview(URL.createObjectURL(tempCaptureBlob)); setShowCapturePreview(false); } };
 
   const handleComplete = async () => {
+    const hasBlueprintStep = parsedConfig.steps?.some((step: any) => step.type === 'blueprint');
+    
     const finalMVP = blueprint.mvp.join(", ");
     const finalBeyond = blueprint.beyond;
 
-    if (!finalMVP || !imagePreview) {
-      alert("Incomplete Uplink! Ensure you have answered the Blueprint and captured a snapshot."); return;
+    if ((hasBlueprintStep && !finalMVP) || !imagePreview) {
+      showToast("Incomplete Uplink! Ensure you have captured a snapshot" + (hasBlueprintStep ? " and answered the Blueprint." : "."), "error"); 
+      return;
     }
+
     setIsSaving(true);
     try {
       let newHistoryArray = [...imageHistory];
@@ -666,12 +736,13 @@ export default function LessonPlayerPage() {
 
       const { error: archiveError } = await supabase.from('tech_archive').upsert({
         student_id: user.id, mission_id: mission.id, title: mission.title,
-        description: finalMVP, win_condition: finalBeyond, 
+        description: finalMVP || "Logic Complete", 
+        win_condition: finalBeyond, 
         media_url: newHistoryString, status: 'completed', xp_earned: mission.xp_reward || 50,
         type: 'blueprint'
       }, { onConflict: 'student_id,mission_id' });
 
-      if (archiveError) { alert(`Database Error: ${archiveError.message}`); setIsSaving(false); return; }
+      if (archiveError) { showToast(`Database Error: ${archiveError.message}`, "error"); setIsSaving(false); return; }
 
       if (!isReadOnly) {
         const newXP = (user.xp || 0) + (mission.xp_reward || 50);
@@ -683,7 +754,7 @@ export default function LessonPlayerPage() {
       setImageHistory(newHistoryArray); setImagePreview(newHistoryArray[0]);
       setIsReadOnly(true); setIsCompleted(true);
       confetti({ particleCount: 200, spread: 70, origin: { y: 0.6 } });
-    } catch (err) { alert("An unexpected error occurred during the uplink."); } finally { setIsSaving(false); }
+    } catch (err) { showToast("An unexpected error occurred during the uplink.", "error"); } finally { setIsSaving(false); }
   };
 
   const renderMediaContent = (url: string | undefined) => {
@@ -700,6 +771,8 @@ export default function LessonPlayerPage() {
   return (
     <main className="h-screen text-white flex flex-col overflow-hidden bg-[#020617] font-sans relative">
       
+      <ToastNotification message={toastMsg?.text || null} type={toastMsg?.type || 'error'} onClose={() => setToastMsg(null)} />
+
       {/* --- INITIAL IMMERSIVE BRIEFING OVERLAY --- */}
       <AnimatePresence>
         {showInitialBriefing && initialBriefingText && (
