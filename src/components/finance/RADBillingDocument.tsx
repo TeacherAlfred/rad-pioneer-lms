@@ -26,6 +26,11 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
   
   const grandTotal = subTotal - totalDiscount;
 
+  // Helper for consistent currency formatting
+  const formatZAR = (amount: number) => {
+    return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
   return (
     <div className="w-full max-w-4xl mx-auto bg-[#020617] text-white p-6 md:p-12 rounded-[32px] md:rounded-[40px] border border-white/10 shadow-2xl font-sans overflow-hidden">
       
@@ -107,13 +112,13 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
                       )}
                     </td>
                     <td className="py-6 text-center text-slate-400">{qty}</td>
-                    <td className="py-6 text-right">R {price.toLocaleString()}</td>
+                    <td className="py-6 text-right">R {formatZAR(price)}</td>
                     {totalDiscount > 0 && (
                       <td className="py-6 text-right text-emerald-400">
-                        {disc > 0 ? `-${disc}%` : '-'}
+                        {disc > 0 ? `-${disc.toFixed(2)}%` : '-'}
                       </td>
                     )}
-                    <td className="py-6 text-right font-black">R {lineTotal.toLocaleString()}</td>
+                    <td className="py-6 text-right font-black">R {formatZAR(lineTotal)}</td>
                   </tr>
                );
             })}
@@ -140,19 +145,19 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
                 <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5 text-sm">
                   <div>
                     <p className="text-[9px] font-black uppercase text-slate-500">Qty x Price</p>
-                    <p className="text-slate-300">{qty} x R {price.toLocaleString()}</p>
+                    <p className="text-slate-300">{qty} x R {formatZAR(price)}</p>
                   </div>
                   {disc > 0 && (
                     <div className="text-right">
                       <p className="text-[9px] font-black uppercase text-slate-500">Discount</p>
-                      <p className="text-emerald-400">-{disc}%</p>
+                      <p className="text-emerald-400">-{disc.toFixed(2)}%</p>
                     </div>
                   )}
                 </div>
                 
                 <div className="flex justify-between items-end pt-2">
                   <span className="text-[10px] font-black uppercase text-emerald-500">Line Total</span>
-                  <span className="font-black text-lg">R {lineTotal.toLocaleString()}</span>
+                  <span className="font-black text-lg">R {formatZAR(lineTotal)}</span>
                 </div>
              </div>
            );
@@ -161,22 +166,22 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
 
       {/* TOTALS SECTOR */}
       <div className="flex justify-end mb-10 md:mb-12 border-t border-white/10 md:border-none pt-6 md:pt-0">
-        <div className="w-full md:w-72 bg-white/5 md:bg-transparent p-6 md:p-0 rounded-3xl md:rounded-none space-y-3">
-          <div className="flex justify-between text-sm md:text-base">
-            <span className="text-slate-500 uppercase font-black text-[10px] md:text-xs tracking-widest mt-1">Sub_Total</span>
-            <span className="font-bold text-slate-300">R {subTotal.toLocaleString()}</span>
+        <div className="w-full md:w-80 bg-white/5 md:bg-transparent p-6 md:p-0 rounded-3xl md:rounded-none space-y-3">
+          <div className="flex justify-between text-sm md:text-base gap-4">
+            <span className="text-slate-500 uppercase font-black text-[10px] md:text-xs tracking-widest mt-1 shrink-0">Sub_Total</span>
+            <span className="font-bold text-slate-300 whitespace-nowrap">R {formatZAR(subTotal)}</span>
           </div>
           
           {totalDiscount > 0 && (
-            <div className="flex justify-between text-sm md:text-base">
-                <span className="text-slate-500 uppercase font-black text-[10px] md:text-xs tracking-widest mt-1">Total_Discount</span>
-                <span className="font-bold text-emerald-400">- R {totalDiscount.toLocaleString()}</span>
+            <div className="flex justify-between text-sm md:text-base gap-4">
+                <span className="text-slate-500 uppercase font-black text-[10px] md:text-xs tracking-widest mt-1 shrink-0">Total_Discount</span>
+                <span className="font-bold text-emerald-400 whitespace-nowrap">- R {formatZAR(totalDiscount)}</span>
             </div>
           )}
 
-          <div className="pt-4 border-t border-white/10 flex justify-between items-end">
-            <span className="text-emerald-500 uppercase font-black text-xs md:text-sm tracking-widest mb-1">Total_Due</span>
-            <span className="text-4xl font-black italic tracking-tighter text-white">R {grandTotal.toLocaleString()}</span>
+          <div className="pt-4 border-t border-white/10 flex justify-between items-end gap-4">
+            <span className="text-emerald-500 uppercase font-black text-xs md:text-sm tracking-widest mb-1 shrink-0">Total_Due</span>
+            <span className="text-3xl md:text-4xl font-black italic tracking-tighter text-white whitespace-nowrap">R {formatZAR(grandTotal)}</span>
           </div>
         </div>
       </div>

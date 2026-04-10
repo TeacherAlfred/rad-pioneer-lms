@@ -47,12 +47,32 @@ export default function LoginPage() {
 
         if (authError) throw authError;
 
-        // CHECK FOR YOUR ADMIN ID
-        if (authData.user?.id === 'adfefd6c-954c-4e13-9423-5519aa89980a') {
-          window.location.href = "/admin/courses";
-        } else {
-          router.push(mode === "staff" ? "/admin/courses" : "/parent/dashboard");
+        // NEW: Fetch the profile to securely route based on their actual database role
+        const { data: userProfile, error: profileError } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('auth_user_id', authData.user?.id)
+          .single();
+
+        if (profileError || !userProfile) {
+          throw new Error("Profile access denied. Please contact support.");
         }
+
+        // SMART ROUTING ENGINE
+        if (userProfile.role === 'admin') {
+          // Send true admins to the main command center / courses
+          window.location.href = "/admin/dashboard"; 
+        } else if (userProfile.role === 'educator') {
+          // Send teachers directly to their new instructional portal
+          router.push("/teacher/dashboard");
+        } else if (userProfile.role === 'guardian') {
+          // Send parents to their portal
+          router.push("/parent/dashboard");
+        } else {
+          // Fallback safety
+          router.push("/");
+        }
+        
         return;
       }
 

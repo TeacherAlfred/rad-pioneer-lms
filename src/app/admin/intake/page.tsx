@@ -205,10 +205,9 @@ export default function ManualIntakeTerminal() {
                     
                     <div className="space-y-2 md:col-span-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2 flex items-center gap-1">
-                         <Calendar size={12}/> Date of Birth
+                         <Calendar size={12}/> Date of Birth (Optional)
                       </label>
                       <input 
-                        required 
                         type="date" 
                         value={pioneer.dob} 
                         onChange={e => handlePioneerChange(pioneer.id, 'dob', e.target.value)} 

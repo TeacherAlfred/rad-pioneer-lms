@@ -4,6 +4,7 @@ import { useState, useEffect, use } from "react";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
 import { 
   ArrowLeft, Plus, Edit3, Trash2, 
   Gamepad2, GripVertical, Trophy, Code, FileText,
@@ -134,7 +135,6 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
     if (!safeMission.mission_config.steps) safeMission.mission_config.steps = [];
     if (!safeMission.mission_config.theme) safeMission.mission_config.theme = {};
     
-    // V1 TO V2 DATA MIGRATION
     if (!safeMission.mission_config.toolbox) {
       safeMission.mission_config.toolbox = [];
       if (safeMission.mission_config.events?.length > 0) {
@@ -144,6 +144,19 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
         safeMission.mission_config.toolbox.push({ category: "Actions", color: "#3b82f6", blocks: safeMission.mission_config.actions });
       }
     }
+
+    // --- CRITICAL FIX: PREPARE STABLE IDs FOR DRAG AND DROP ---
+    safeMission.mission_config.steps.forEach((step: any) => {
+      if (step.cards && Array.isArray(step.cards)) {
+        // Force the array to be properly sorted by order first
+        step.cards.sort((a: any, b: any) => a.order - b.order);
+        // Map over them and inject a stable _dndId if one doesn't exist
+        step.cards.forEach((c: any, i: number) => {
+          c.order = i + 1; // Repair any broken orders
+          if (!c._dndId) c._dndId = `dnd-${Math.random().toString(36).substr(2, 9)}`;
+        });
+      }
+    });
 
     setEditingMission(safeMission);
     setDeepDiveView('main');
@@ -209,12 +222,21 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
       if (!prev) return prev;
       const newSteps = [...prev.mission_config.steps];
       const currentCards = newSteps[activeStepIndex].cards || [];
-      newSteps[activeStepIndex].cards = [...currentCards, { order: currentCards.length + 1, title: "", content: "" }];
+      newSteps[activeStepIndex].cards = [
+        ...currentCards, 
+        { 
+          _dndId: `dnd-${Math.random().toString(36).substr(2, 9)}`, // Assign stable DND ID to new card
+          order: currentCards.length + 1, 
+          title: "", 
+          content: "", 
+          media_url: "" 
+        }
+      ];
       return { ...prev, mission_config: { ...prev.mission_config, steps: newSteps } };
     });
   };
 
-  const updateCardInActiveStep = (cIndex: number, key: 'title'|'content', value: string) => {
+  const updateCardInActiveStep = (cIndex: number, key: 'title'|'content'|'media_url', value: string) => {
     setEditingMission((prev: any) => {
       if (!prev) return prev;
       const newSteps = [...prev.mission_config.steps];
@@ -229,6 +251,35 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
       const newSteps = [...prev.mission_config.steps];
       newSteps[activeStepIndex].cards.splice(cIndex, 1);
       newSteps[activeStepIndex].cards.forEach((c: any, i: number) => c.order = i + 1);
+      return { ...prev, mission_config: { ...prev.mission_config, steps: newSteps } };
+    });
+  };
+
+  // --- DRAG AND DROP HANDLER FOR CARDS ---
+  const onDragEnd = (result: DropResult) => {
+    if (!result.destination) return;
+    if (result.source.index === result.destination.index) return;
+
+    const sourceIndex = result.source.index;
+    const destinationIndex = result.destination.index;
+
+    setEditingMission((prev: any) => {
+      if (!prev) return prev;
+      
+      const newSteps = [...prev.mission_config.steps];
+      const cardsList = Array.from(newSteps[activeStepIndex].cards);
+      
+      // Extract the dragged item
+      const [reorderedItem] = cardsList.splice(sourceIndex, 1);
+      // Inject it at the new destination
+      cardsList.splice(destinationIndex, 0, reorderedItem);
+      
+      // Update the "order" integer for every card based on its new array position
+      cardsList.forEach((c: any, i: number) => {
+        c.order = i + 1;
+      });
+
+      newSteps[activeStepIndex].cards = cardsList;
       return { ...prev, mission_config: { ...prev.mission_config, steps: newSteps } };
     });
   };
@@ -431,7 +482,6 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
                         </div>
                       </div>
                     </div>
-                    {/* ONLY ONE EDIT BUTTON NOW -> Opens the Deep Dive Storyboard */}
                     <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => handleOpenMissionEdit(miss)} className="p-2 text-slate-400 hover:text-rad-blue hover:bg-rad-blue/10 rounded-xl transition-all border border-transparent hover:border-rad-blue/30"><Edit3 size={18} /></button>
                     </div>
@@ -492,7 +542,6 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
                 {deepDiveView === 'main' && (
                   <div className="p-12 flex-1 bg-black/20 overflow-y-auto no-scrollbar space-y-12">
                     
-                    {/* Mission Metadata (Moved from Quick Edit) */}
                     <div className="bg-[#0f172a]/60 border border-white/5 p-8 rounded-[32px] space-y-6">
                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-white/5 pb-4">Mission Metadata</h4>
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -527,7 +576,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
                 {/* --- SEQUENCE STEPS EDITOR --- */}
                 {deepDiveView === 'steps' && (
                   <div className="flex flex-1 overflow-hidden bg-black/20">
-                    <div className="w-80 border-r border-white/10 flex flex-col bg-[#0f172a]/40">
+                    <div className="w-80 border-r border-white/10 flex flex-col bg-[#0f172a]/40 shrink-0">
                       <div className="p-6 border-b border-white/10 bg-white/[0.02] flex justify-between items-center">
                         <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 italic">Step_Timeline</h4>
                         <button onClick={() => {
@@ -548,7 +597,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
                       </div>
                     </div>
                     
-                    <div className="flex-1 overflow-y-auto p-12 no-scrollbar bg-[#020617]/40">
+                    <div className="flex-1 overflow-y-auto p-12 no-scrollbar bg-[#020617]/40 w-full">
                       {editingMission.mission_config.steps?.[activeStepIndex] ? (
                         <div className="space-y-10 max-w-3xl">
                           <div className="flex justify-between items-center border-b border-white/5 pb-6">
@@ -574,7 +623,7 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
                             </div>
                           </div>
 
-                          {/* --- SEQUENCE CARDS BUILDER --- */}
+                          {/* --- SEQUENCE CARDS BUILDER w/ DRAG AND DROP --- */}
                           <div className="space-y-6 pt-10 border-t border-white/10">
                             <div className="flex justify-between items-center">
                               <label className="text-[10px] font-black text-blue-400 uppercase tracking-[0.2em] flex items-center gap-2">
@@ -586,30 +635,63 @@ export default function CourseModulesPage({ params }: { params: Promise<{ course
                             </div>
                             
                             <div className="grid grid-cols-1 gap-4">
-                              {(editingMission.mission_config.steps[activeStepIndex].cards || []).map((card: any, cIdx: number) => (
-                                <div key={cIdx} className="flex flex-col gap-4 p-6 bg-white/[0.02] border border-white/5 rounded-[32px] group hover:border-white/20 transition-all">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-lg">Card {cIdx + 1}</span>
-                                    <button onClick={() => removeCardFromActiveStep(cIdx)} className="text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16}/></button>
-                                  </div>
-                                  <div className="space-y-3">
-                                     <input 
-                                        type="text" 
-                                        value={card.title || ""} 
-                                        onChange={e => updateCardInActiveStep(cIdx, 'title', e.target.value)} 
-                                        className="w-full bg-transparent border-b border-white/10 text-white font-black uppercase text-xl py-2 outline-none focus:border-blue-400" 
-                                        placeholder="CARD TITLE"
-                                     />
-                                     <textarea 
-                                        rows={3} 
-                                        value={card.content || ""} 
-                                        onChange={e => updateCardInActiveStep(cIdx, 'content', e.target.value)} 
-                                        className="w-full bg-black/20 border border-white/10 rounded-2xl px-5 py-4 text-sm text-slate-300 outline-none focus:border-blue-400 resize-none leading-relaxed" 
-                                        placeholder="Instructional content or explanation..." 
-                                     />
-                                  </div>
-                                </div>
-                              ))}
+                              <DragDropContext onDragEnd={onDragEnd}>
+                                <Droppable droppableId="sequence-cards">
+                                  {(provided) => (
+                                    <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-4">
+                                      {(editingMission.mission_config.steps[activeStepIndex].cards || []).map((card: any, cIdx: number) => (
+                                        <Draggable key={card._dndId} draggableId={card._dndId} index={cIdx}>
+                                          {(provided, snapshot) => (
+                                            <div 
+                                              ref={provided.innerRef}
+                                              {...provided.draggableProps}
+                                              className={`flex flex-col gap-4 p-6 bg-white/[0.02] border rounded-[32px] group transition-all ${snapshot.isDragging ? 'border-blue-500 shadow-2xl bg-[#0f172a]' : 'border-white/5 hover:border-white/20'}`}
+                                            >
+                                              <div className="flex justify-between items-center">
+                                                <div className="flex items-center gap-4">
+                                                  <div {...provided.dragHandleProps} className="text-slate-600 hover:text-white cursor-grab active:cursor-grabbing">
+                                                    <GripVertical size={20} />
+                                                  </div>
+                                                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-white/5 px-3 py-1 rounded-lg">Card {card.order}</span>
+                                                </div>
+                                                <button onClick={() => removeCardFromActiveStep(cIdx)} className="text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16}/></button>
+                                              </div>
+                                              <div className="space-y-3">
+                                                 <input 
+                                                    type="text" 
+                                                    value={card.title || ""} 
+                                                    onChange={e => updateCardInActiveStep(cIdx, 'title', e.target.value)} 
+                                                    className="w-full bg-transparent border-b border-white/10 text-white font-black uppercase text-xl py-2 outline-none focus:border-blue-400" 
+                                                    placeholder="CARD TITLE"
+                                                 />
+                                                 <textarea 
+                                                    rows={3} 
+                                                    value={card.content || ""} 
+                                                    onChange={e => updateCardInActiveStep(cIdx, 'content', e.target.value)} 
+                                                    className="w-full bg-black/20 border border-white/10 rounded-2xl px-5 py-4 text-sm text-slate-300 outline-none focus:border-blue-400 resize-none leading-relaxed" 
+                                                    placeholder="Instructional content or explanation..." 
+                                                 />
+                                                 <div className="relative pt-2">
+                                                    <Video className="absolute left-4 top-1/2 translate-y-[-2px] text-slate-500" size={14} />
+                                                    <input 
+                                                      type="text" 
+                                                      value={card.media_url || ""} 
+                                                      onChange={e => updateCardInActiveStep(cIdx, 'media_url', e.target.value)} 
+                                                      className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-xs text-blue-400 outline-none focus:border-blue-400" 
+                                                      placeholder="Optional Image or Video URL for this card..."
+                                                    />
+                                                 </div>
+                                              </div>
+                                            </div>
+                                          )}
+                                        </Draggable>
+                                      ))}
+                                      {provided.placeholder}
+                                    </div>
+                                  )}
+                                </Droppable>
+                              </DragDropContext>
+
                               {(!editingMission.mission_config.steps[activeStepIndex].cards || editingMission.mission_config.steps[activeStepIndex].cards.length === 0) && (
                                 <div className="text-center p-6 border border-dashed border-white/10 rounded-3xl text-slate-500 text-[10px] font-black uppercase tracking-widest italic">
                                   No instructional cards added to this step.

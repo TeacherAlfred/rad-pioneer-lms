@@ -4,13 +4,12 @@ import { useState, useEffect, Suspense } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Plus, Trash2, Save, Send, User, ArrowRight,
-  Search, Package, Calculator, ArrowLeft, ChevronDown, Eye, X, Shield, Printer, CreditCard, Loader2, Calendar, FileText, Download 
+  Search, Package, Calculator, ArrowLeft, ChevronDown, Eye, X, Shield, Printer, CreditCard, Loader2, Calendar, FileText, Download, CheckCircle2 
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import RADBillingDocument from "@/components/finance/RADBillingDocument";
-
 
 export default function BillingComposerPage() {
   return (
@@ -27,13 +26,15 @@ function BillingComposer() {
   const initialLeadId = searchParams.get('leadId');
   const prospectName = searchParams.get('prospectName');
   const prospectEmail = searchParams.get('prospectEmail');
-  const convertFromQuoteId = searchParams.get('convertFromQuote'); // NEW: Catch Quote to Invoice conversions
+  const prospectPhone = searchParams.get('prospectPhone');
+  const convertFromQuoteId = searchParams.get('convertFromQuote'); 
   const initialType = (searchParams.get('mode') as 'invoice' | 'quote') || (searchParams.get('type') as 'invoice' | 'quote') || 'invoice';
 
   const [docType, setDocType] = useState<'invoice' | 'quote'>(initialType);
   const [expiryDate, setExpiryDate] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
   const [isIframe, setIsIframe] = useState(false);
 
@@ -66,7 +67,6 @@ function BillingComposer() {
     setIsIframe(window.self !== window.top);
     fetchInitialData();
     
-    // --- NEW: Handle Quote to Invoice Conversion Logic ---
     if (convertFromQuoteId) {
         fetchQuoteToConvert(convertFromQuoteId);
     } else if (initialLeadId) {
@@ -76,6 +76,7 @@ function BillingComposer() {
         id: `prospect-${Date.now()}`,
         display_name: prospectName,
         email: prospectEmail || "",
+        phone: prospectPhone || "",
         metadata: { email: prospectEmail }
       });
     }
@@ -123,25 +124,22 @@ function BillingComposer() {
     if (data) setSelectedGuardian(data);
   }
 
-  // --- NEW: Fetch Quote to Pre-fill Composer ---
   async function fetchQuoteToConvert(quoteId: string) {
      const { data: quote } = await supabase.from('billing_records').select('*, profiles(*)').eq('id', quoteId).single();
      if (quote) {
-        setDocType('invoice'); // Force it to invoice
+        setDocType('invoice'); 
         setLineItems(quote.line_items || []);
         setGlobalNote(quote.metadata?.global_note || '');
         if (quote.profiles) {
             setSelectedGuardian(quote.profiles);
         }
         
-        // Give the new invoice a default 7-day payment term
         const nextWeek = new Date();
         nextWeek.setDate(nextWeek.getDate() + 7);
         setExpiryDate(nextWeek.toISOString().split('T')[0]);
      }
   }
 
-  // --- UPDATED: Multi-Action Finalize (Email or PDF) ---
   const handleFinalize = async (action: 'email' | 'pdf') => {
     if (!selectedGuardian) return alert("Select a recipient first.");
     
@@ -153,15 +151,14 @@ function BillingComposer() {
       const metadataToSave: any = { 
         global_note: globalNote,
         prospect_name: isTempProspect ? selectedGuardian.display_name : null,
-        prospect_email: isTempProspect ? selectedGuardian.email : null
+        prospect_email: isTempProspect ? selectedGuardian.email : null,
+        prospect_phone: isTempProspect ? selectedGuardian.phone : null
       };
 
-      // --- NEW: Leave breadcrumb if converting from quote ---
       if (convertFromQuoteId) {
           metadataToSave.converted_from_quote = convertFromQuoteId;
       }
 
-      // 1. Save the Document to the Database
       const { data: newRecord, error: dbError } = await supabase
         .from('billing_records')
         .insert({
@@ -180,7 +177,6 @@ function BillingComposer() {
 
       if (dbError) throw dbError;
 
-      // Update old quote status if converting
       if (convertFromQuoteId) {
           const { data: oldQuote } = await supabase.from('billing_records').select('metadata').eq('id', convertFromQuoteId).single();
           if (oldQuote) {
@@ -190,7 +186,6 @@ function BillingComposer() {
           }
       }
 
-      // 2. Execute the requested action (Email or PDF Download)
       if (action === 'email') {
           const templateSlug = docType === 'invoice' ? 'billing_invoice' : 'billing_quote';
           const { data: templateData } = await supabase.from('email_templates').select('body_content').eq('slug', templateSlug).single();
@@ -217,10 +212,9 @@ function BillingComposer() {
           });
 
           if (!res.ok) throw new Error("Database updated, but email transmission failed.");
-          alert(`Success! ${docType.toUpperCase()} recorded and transmitted via email.`);
+          setSuccessMessage(`Success! ${docType.toUpperCase()} recorded and transmitted via email.`);
 
       } else if (action === 'pdf') {
-          // Dynamically import PDF libraries
           const htmlToImage = await import("html-to-image");
           // @ts-ignore
           const jsPDFModule = await import("jspdf/dist/jspdf.umd.min.js");
@@ -261,15 +255,21 @@ function BillingComposer() {
             });
           }
           
-          pdf.save(`${docReference}_RAD_Academy.pdf`);
-          alert(`Success! ${docType.toUpperCase()} recorded to ledger and downloaded as PDF.`);
+          // AUTO-NAMING UPDATE
+          const firstName = selectedGuardian.display_name.split(' ')[0] || "Unknown";
+          pdf.save(`${docReference}_${firstName}_RAD-Academy.pdf`);
+          
+          setSuccessMessage(`Success! ${docType.toUpperCase()} recorded to ledger and downloaded as PDF.`);
       }
       
-      if (isIframe) {
-        window.location.reload(); 
-      } else {
-        router.push('/admin/finance');
-      }
+      // Delay to let the user see the success modal
+      setTimeout(() => {
+        if (isIframe) {
+          window.location.reload(); 
+        } else {
+          router.push('/admin/finance');
+        }
+      }, 2000);
       
     } catch (err: any) {
       alert("Operational Failure: " + err.message);
@@ -296,8 +296,8 @@ function BillingComposer() {
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans text-left">
-      <div className="max-w-6xl mx-auto space-y-10">
+    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans text-left relative overflow-hidden">
+      <div className="max-w-6xl mx-auto space-y-10 relative z-10">
         
         {/* HEADER */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
@@ -346,7 +346,6 @@ function BillingComposer() {
                   <div key={idx} className="bg-white/5 p-6 rounded-3xl border border-white/5 group relative">
                     <div className="flex flex-col md:flex-row gap-6 pr-8">
                       
-                      {/* LEFT SECTOR: Selection, Description, Note */}
                       <div className="flex-1 w-full space-y-4">
                         <div className="space-y-2">
                           <label className="text-[9px] font-black uppercase text-slate-500 ml-2">Item Selection</label>
@@ -381,7 +380,6 @@ function BillingComposer() {
                         </div>
                       </div>
 
-                      {/* RIGHT SECTOR: Values */}
                       <div className="flex gap-4">
                         <div className="w-20 space-y-2">
                           <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Qty</label>
@@ -399,7 +397,6 @@ function BillingComposer() {
 
                     </div>
                     
-                    {/* Delete Button */}
                     <div className="absolute right-5 top-10 flex items-center h-[42px]">
                       <button onClick={() => removeLine(idx)} className="text-slate-600 hover:text-rose-500 transition-colors">
                         <Trash2 size={18}/>
@@ -488,7 +485,6 @@ function BillingComposer() {
                   <span className="text-4xl font-black tracking-tighter italic">R {grandTotal.toLocaleString()}</span>
                 </div>
               </div>
-              {/* --- MULTI-ACTION BUTTONS --- */}
               <div className="flex flex-col gap-3">
                 <button 
                   onClick={() => handleFinalize('email')} 
@@ -552,7 +548,6 @@ function BillingComposer() {
       </AnimatePresence>
 
       {/* --- HIDDEN RENDER FOR INSTANT PDF EXPORT --- */}
-      {/* This renders the doc invisibly in the background so html-to-image can capture it without needing to open the Preview Modal */}
       <div className="absolute top-[-9999px] left-[-9999px] opacity-0 pointer-events-none">
         <div id="hidden-document-capture" className="w-[800px] p-8 bg-[#020617]">
           {selectedGuardian && (
@@ -572,6 +567,49 @@ function BillingComposer() {
           )}
         </div>
       </div>
+
+      <SuccessModal message={successMessage} onClose={() => setSuccessMessage(null)} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------
+// SUCCESS MODAL NOTIFICATION WIDGET
+// ---------------------------------------------------------
+function SuccessModal({ message, onClose }: { message: string | null, onClose: () => void }) {
+  useEffect(() => {
+    if (message) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [message, onClose]);
+
+  return (
+    <AnimatePresence>
+      {message && (
+        <div className="fixed bottom-10 right-10 z-[300] flex justify-end pointer-events-none">
+          <motion.div 
+            initial={{ opacity: 0, y: 50, scale: 0.9 }} 
+            animate={{ opacity: 1, y: 0, scale: 1 }} 
+            exit={{ opacity: 0, y: 20, scale: 0.9 }} 
+            className="bg-[#0f172a] border border-emerald-500/30 rounded-2xl p-5 shadow-2xl shadow-emerald-900/20 flex items-center gap-4 max-w-sm w-full pointer-events-auto relative overflow-hidden"
+          >
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
+            <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30">
+              <CheckCircle2 className="text-emerald-400" size={20} />
+            </div>
+            <div className="flex-1 pr-2">
+              <h3 className="text-xs font-black uppercase tracking-widest text-white leading-none mb-1">Success</h3>
+              <p className="text-[10px] font-bold text-slate-400 leading-tight">{message}</p>
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors shrink-0">
+              <X size={16} />
+            </button>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 }

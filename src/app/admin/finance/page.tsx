@@ -4,22 +4,31 @@ import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, CreditCard, TrendingUp, AlertTriangle, Tag,
-  CheckCircle2, Clock, Filter, Search, Download, UserPlus,
-  Plus, ChevronRight, Wallet, Receipt, Loader2, Activity, X, Shield, FileText, Printer, BarChart3, Package, FilterX, User, Target, Save, Edit3, Trash2
+  CheckCircle2, Clock, Filter, Search, Download, UserPlus, MessageCircle,
+  Plus, ChevronRight, Wallet, Receipt, Loader2, Activity, X, Shield, FileText, Printer, BarChart3, Package, FilterX, User, Target, Save, Edit3, Trash2, Send
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 
-// Import your components
 import RADBillingDocument from "@/components/finance/RADBillingDocument";
 import RADStatement from "@/components/finance/RADStatement";
+
+// --- WhatsApp Number Formatter ---
+const formatWhatsAppNumber = (phone: string) => {
+  if (!phone) return "";
+  let cleaned = phone.replace(/\D/g, ''); 
+  if (cleaned.startsWith('0')) {
+    cleaned = '27' + cleaned.substring(1); 
+  }
+  return cleaned;
+};
 
 export default function FinancePortal() {
   const router = useRouter(); 
   const [loading, setLoading] = useState(true);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
-  // WORKSPACE STATE
   const [records, setRecords] = useState<any[]>([]);
   const [billingItems, setBillingItems] = useState<any[]>([]);
   const [activeParentsCount, setActiveParentsCount] = useState(0);
@@ -31,17 +40,24 @@ export default function FinancePortal() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
-  // INLINE ITEM EDITOR STATE
   const [isEditingItems, setIsEditingItems] = useState(false);
   const [editItems, setEditItems] = useState<any[]>([]);
 
-  // FILTERING & SEARCH STATE
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
 
-  // MANUAL ENTRY STATE
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmittingManual, setIsSubmittingManual] = useState(false);
+  
+  // --- WHATSAPP COMPOSER STATES ---
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [whatsAppBody, setWhatsAppBody] = useState("");
+  
+  // --- NEW: BATCH DISPATCHER STATES ---
+  const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [batchIndex, setBatchIndex] = useState(0);
+
   const [formData, setFormData] = useState({
     guardian_id: "",
     doc_type: "invoice",
@@ -78,10 +94,6 @@ export default function FinancePortal() {
         .neq('role', 'student')
         .order('display_name', { ascending: true });
 
-      if (guardianError) {
-        console.error("Guardian fetch error:", guardianError.message);
-      }
-
       if (recordsData) setRecords(recordsData);
       if (itemsData) setBillingItems(itemsData);
       if (count !== null) setActiveParentsCount(count);
@@ -94,10 +106,8 @@ export default function FinancePortal() {
     }
   }
 
-  // ==========================================
-  // REAL-TIME ANALYTICS ENGINE
-  // ==========================================
   const analytics = useMemo(() => {
+    // ... (Analytics logic remains identical)
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
@@ -208,9 +218,6 @@ export default function FinancePortal() {
     };
   }, [records, billingItems, activeParentsCount]);
 
-  // ==========================================
-  // PARETO (80/20) IDENTIFIER ENGINE
-  // ==========================================
   const vipQuoteIds = useMemo(() => {
     const pendingQuotes = records.filter(r => r.doc_type === 'quote' && r.status === 'pending');
     const sortedQuotes = [...pendingQuotes].sort((a, b) => Number(b.total_amount) - Number(a.total_amount));
@@ -229,9 +236,6 @@ export default function FinancePortal() {
     return paretoIds;
   }, [records]);
 
-  // ==========================================
-  // TABLE FILTERING & SEARCH LOGIC
-  // ==========================================
   const filteredRecords = useMemo(() => {
     let result = [...records];
 
@@ -279,14 +283,41 @@ export default function FinancePortal() {
     return result;
   }, [records, activeFilter, searchQuery, vipQuoteIds]);
 
-  // ==========================================
-  // UI HANDLERS
-  // ==========================================
+  // --- NEW: BATCH HELPERS ---
+  const handleToggleSelectRecord = (id: string) => {
+    setSelectedRecordIds(prev => 
+      prev.includes(id) ? prev.filter(rId => rId !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllVisibleQuotes = () => {
+    const visibleQuotes = filteredRecords.filter(r => r.doc_type === 'quote' && r.status === 'pending');
+    if (selectedRecordIds.length === visibleQuotes.length) {
+      setSelectedRecordIds([]); // Deselect all
+    } else {
+      setSelectedRecordIds(visibleQuotes.map(r => r.id));
+    }
+  };
+
+  const batchSelectedQuotes = useMemo(() => {
+    return records.filter(r => selectedRecordIds.includes(r.id));
+  }, [records, selectedRecordIds]);
+
+
   const handleViewDocument = (rec: any) => {
     const recipientName = rec.profiles?.display_name || rec.metadata?.prospect_name || "Unknown Guardian";
     const recipientEmail = rec.metadata?.prospect_email || "";
+    
+    // BULLETPROOF PHONE EXTRACTION
+    const rawPhone = rec.metadata?.prospect_phone 
+                  || rec.metadata?.phone 
+                  || rec.profiles?.metadata?.phone 
+                  || rec.profiles?.phone 
+                  || rec.phone
+                  || "";
+                  
+    const recipientPhone = rawPhone.toString().trim();
 
-    // SANITIZE LEGACY/MANUAL ITEMS TO PREVENT NaN CRASHES
     const sanitizedItems = (rec.line_items || []).map((item: any) => ({
       desc: item.desc || item.description || 'Custom Entry',
       qty: Number(item.qty) || 1,
@@ -301,22 +332,21 @@ export default function FinancePortal() {
         docId: rec.id,
         status: rec.status,
         docNumber: `${rec.doc_type === 'quote' ? 'QT' : 'INV'}-${rec.invoice_number}`,
-        recipient: { id: rec.guardian_id, name: recipientName, email: recipientEmail },
+        recipient: { id: rec.guardian_id, name: recipientName, email: recipientEmail, phone: recipientPhone },
         items: sanitizedItems,
         date: new Date(rec.created_at).toLocaleDateString('en-ZA'),
         dueDate: rec.expires_at ? new Date(rec.expires_at).toLocaleDateString('en-ZA') : new Date(new Date(rec.created_at).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-ZA'),
         globalNote: rec.metadata?.global_note
       }
     });
+    setWhatsAppBody("");
   };
 
-  // --- INLINE ITEM EDITOR FUNCTIONS ---
-  // --- INLINE ITEM EDITOR FUNCTIONS ---
   const handleEditItemChange = (index: number, field: string, value: string) => {
     const newItems = [...editItems];
     
     if (field === 'disc_rand') {
-      newItems[index].disc_rand = value; // Keep the raw string so you can type "250.00"
+      newItems[index].disc_rand = value; 
       newItems[index].disc_type = 'rand';
       
       const randVal = Number(value) || 0;
@@ -377,11 +407,10 @@ export default function FinancePortal() {
       const newTotal = editItems.reduce((acc, item) => {
         const p = Number(item.price) || 0;
         const q = Number(item.qty) || 0;
-        const d = Number(item.disc) || 0; // Uses the exact percentage for math
+        const d = Number(item.disc) || 0;
         return acc + (p * q * (1 - d / 100));
       }, 0);
 
-      // Clean the items before pushing to DB (remove the temp UI properties)
       const cleanedItems = editItems.map(item => ({
         desc: item.desc,
         qty: Number(item.qty) || 0,
@@ -409,6 +438,7 @@ export default function FinancePortal() {
       });
 
       setIsEditingItems(false);
+      setSuccessMessage("Line items updated successfully.");
       fetchFinanceData();
 
     } catch (err: any) {
@@ -417,7 +447,6 @@ export default function FinancePortal() {
       setIsUpdatingStatus(false);
     }
   };
-
 
   const handleViewProspect = (rec: any, e: React.MouseEvent) => {
     e.stopPropagation(); 
@@ -475,7 +504,7 @@ export default function FinancePortal() {
 
        if (updateErr) throw updateErr;
 
-       alert(isAlreadyAccepted ? "Client profile generated and verified successfully!" : "Quote accepted! Client profile verified and active.");
+       setSuccessMessage(isAlreadyAccepted ? "Client profile generated and verified successfully!" : "Quote accepted! Client profile verified and active.");
        setActiveDoc(null);
        fetchFinanceData(); 
     } catch (err: any) {
@@ -497,7 +526,7 @@ export default function FinancePortal() {
 
        if (updateErr) throw updateErr;
 
-       alert("Invoice successfully marked as PAID.");
+       setSuccessMessage("Invoice successfully marked as PAID.");
        setActiveDoc(null);
        fetchFinanceData(); 
     } catch (err: any) {
@@ -551,7 +580,10 @@ export default function FinancePortal() {
         });
       }
       
-      pdf.save(`${activeDoc.data.docNumber}_RAD_Academy.pdf`);
+      const firstName = activeDoc.data.recipient.name.split(' ')[0] || "Unknown";
+      pdf.save(`${activeDoc.data.docNumber}_${firstName}_RAD-Academy.pdf`);
+      
+      setSuccessMessage("PDF downloaded successfully.");
     } catch (err) {
       console.error("PDF Generation failed:", err);
       alert("Failed to generate PDF. Please try again.");
@@ -560,7 +592,6 @@ export default function FinancePortal() {
     }
   };
 
-  // MANUAL ENTRY HANDLER
   const handleManualEntry = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.guardian_id) {
@@ -586,7 +617,6 @@ export default function FinancePortal() {
           doc_type: formData.doc_type,
           payment_reference: `INV-${invNumber}`,
           created_at: issueDate,
-          // SAVED PROPERLY PREVENTING FUTURE NaN
           line_items: [{ desc: formData.description, price: amount, qty: 1, disc: 0 }]
         }]);
 
@@ -614,6 +644,7 @@ export default function FinancePortal() {
         status: "pending", paid_at: new Date().toISOString().split('T')[0]
       });
       
+      setSuccessMessage("Manual record saved to ledger successfully.");
       await fetchFinanceData();
 
     } catch (error: any) {
@@ -623,6 +654,10 @@ export default function FinancePortal() {
     }
   };
 
+  // --- RENDER HELPERS ---
+  const visibleQuotesCount = filteredRecords.filter(r => r.doc_type === 'quote' && r.status === 'pending').length;
+  const areAllVisibleQuotesSelected = visibleQuotesCount > 0 && selectedRecordIds.length === visibleQuotesCount;
+
   if (loading) return (
     <div className="h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
       <Loader2 className="animate-spin text-emerald-500" size={40} />
@@ -631,8 +666,8 @@ export default function FinancePortal() {
   );
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans selection:bg-emerald-500/30">
-      <div className="max-w-7xl mx-auto space-y-10">
+    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans selection:bg-emerald-500/30 relative">
+      <div className="max-w-7xl mx-auto space-y-10 relative z-10">
         
         {/* HEADER */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
@@ -674,17 +709,13 @@ export default function FinancePortal() {
           </div>
         </header>
 
-        {/* ==========================================
-            LIVE ANALYTICS DASHBOARD 
-            ========================================== */}
+        {/* LIVE ANALYTICS DASHBOARD */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           
-          {/* SECTOR 1: Collections & Revenue */}
           <div className="bg-white/[0.02] border border-white/10 rounded-[32px] p-6 space-y-6 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-6 opacity-5"><Wallet size={100} /></div>
             <h3 className="text-xs font-black uppercase tracking-widest text-emerald-500 flex items-center gap-2"><CreditCard size={14}/> Collections (Month)</h3>
             <div className="grid grid-cols-2 gap-4">
-               {/* CLICKABLE: Generated Due */}
                <div 
                  onClick={() => setActiveFilter(activeFilter === 'invoices_month_generated' ? null : 'invoices_month_generated')}
                  className={`cursor-pointer rounded-xl p-2 -ml-2 transition-all ${activeFilter === 'invoices_month_generated' ? 'bg-emerald-500/20 shadow-inner border border-emerald-500/30' : 'hover:bg-white/5 border border-transparent'}`}
@@ -693,7 +724,6 @@ export default function FinancePortal() {
                  <p className="text-xl font-black mt-1">R {analytics.invoices.monthGenerated.toLocaleString()}</p>
                </div>
                
-               {/* CLICKABLE: Outstanding */}
                <div 
                  onClick={() => setActiveFilter(activeFilter === 'invoices_month_outstanding' ? null : 'invoices_month_outstanding')}
                  className={`cursor-pointer rounded-xl p-2 -ml-2 transition-all ${activeFilter === 'invoices_month_outstanding' ? 'bg-rose-500/20 shadow-inner border border-rose-500/30' : 'hover:bg-white/5 border border-transparent'}`}
@@ -718,12 +748,10 @@ export default function FinancePortal() {
             </div>
           </div>
 
-          {/* SECTOR 2: Quote Pipeline */}
           <div className="bg-white/[0.02] border border-white/10 rounded-[32px] p-6 space-y-6 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-6 opacity-5"><FileText size={100} /></div>
             <h3 className="text-xs font-black uppercase tracking-widest text-purple-400 flex items-center gap-2"><TrendingUp size={14}/> Quote Pipeline</h3>
             
-            {/* CLICKABLE FILTERS: Top Row */}
             <div className="grid grid-cols-4 gap-2 text-center">
                <div onClick={() => setActiveFilter(activeFilter === 'quotes_tdy' ? null : 'quotes_tdy')} className={`cursor-pointer rounded-lg transition-colors p-1 ${activeFilter === 'quotes_tdy' ? 'bg-purple-500/20 shadow-inner' : 'hover:bg-white/5'}`}>
                   <p className="text-[9px] uppercase tracking-widest text-slate-500">Tdy</p>
@@ -734,7 +762,6 @@ export default function FinancePortal() {
                <div className="border-l border-white/10 p-1"><p className="text-[9px] uppercase tracking-widest text-slate-500">All</p><p className="font-bold">{analytics.quotes.total}</p></div>
             </div>
 
-            {/* CLICKABLE FILTERS: Bottom Row */}
             <div className="border-t border-white/10 pt-4 grid grid-cols-4 gap-2 text-center">
                <div onClick={() => setActiveFilter(activeFilter === 'quotes_valid' ? null : 'quotes_valid')} className={`cursor-pointer rounded-lg transition-colors p-1 ${activeFilter === 'quotes_valid' ? 'bg-emerald-500/20 shadow-inner' : 'hover:bg-white/5'}`}>
                  <p className="text-[9px] uppercase tracking-widest text-slate-500">Valid</p>
@@ -755,7 +782,6 @@ export default function FinancePortal() {
             </div>
           </div>
 
-          {/* SECTOR 3: Product & Conversion */}
           <div className="bg-white/[0.02] border border-white/10 rounded-[32px] p-6 space-y-6 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-6 opacity-5"><Package size={100} /></div>
             <h3 className="text-xs font-black uppercase tracking-widest text-blue-400 flex items-center gap-2"><Activity size={14}/> Item Intelligence (Paid)</h3>
@@ -779,8 +805,8 @@ export default function FinancePortal() {
 
         </div>
 
-        {/* MAIN LEDGER HEADER: SEARCH & PARETO */}
-        <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+        {/* MAIN LEDGER HEADER & FLOATING ACTIONS */}
+        <div className="flex flex-col md:flex-row gap-4 items-center justify-between relative">
           <div className="relative w-full md:max-w-md group">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-emerald-400 transition-colors" size={18} />
             <input 
@@ -792,16 +818,36 @@ export default function FinancePortal() {
             />
           </div>
 
-          <button 
-            onClick={() => setActiveFilter(activeFilter === 'pareto' ? null : 'pareto')}
-            className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
-              activeFilter === 'pareto' 
-              ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20 scale-105' 
-              : 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20'
-            }`}
-          >
-            <Target size={14} /> VIP Pipeline (80/20)
-          </button>
+          {selectedRecordIds.length > 0 ? (
+            <AnimatePresence>
+              <motion.div 
+                initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, scale: 0.95 }}
+                className="flex items-center gap-3 bg-[#25D366]/10 border border-[#25D366]/30 px-4 py-2 rounded-2xl shadow-xl shadow-[#25D366]/10"
+              >
+                <span className="text-[#25D366] font-black text-[10px] uppercase tracking-widest pl-2">
+                  {selectedRecordIds.length} Selected
+                </span>
+                <button 
+                  onClick={() => { setWhatsAppBody(""); setBatchIndex(0); setIsBatchModalOpen(true); }}
+                  className="bg-[#25D366] text-[#020617] px-4 py-2 rounded-xl text-[10px] font-black uppercase flex items-center gap-2 hover:bg-[#20bd5a] transition-colors"
+                >
+                  <Send size={14} /> Batch WhatsApp
+                </button>
+                <button onClick={() => setSelectedRecordIds([])} className="text-slate-400 hover:text-white p-1 ml-2"><X size={16}/></button>
+              </motion.div>
+            </AnimatePresence>
+          ) : (
+            <button 
+              onClick={() => setActiveFilter(activeFilter === 'pareto' ? null : 'pareto')}
+              className={`flex items-center gap-2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                activeFilter === 'pareto' 
+                ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20 scale-105' 
+                : 'bg-amber-500/10 text-amber-500 border border-amber-500/20 hover:bg-amber-500/20'
+              }`}
+            >
+              <Target size={14} /> VIP Pipeline (80/20)
+            </button>
+          )}
         </div>
 
         {/* MAIN LEDGER */}
@@ -823,7 +869,15 @@ export default function FinancePortal() {
               <table className="w-full text-left">
                 <thead className="bg-white/5 text-[9px] font-black uppercase tracking-widest text-slate-400 border-b border-white/5">
                   <tr>
-                    <th className="px-8 py-5">Household / Lead</th>
+                    <th className="px-6 py-5 w-12 text-center">
+                       <input 
+                         type="checkbox" 
+                         checked={areAllVisibleQuotesSelected}
+                         onChange={handleSelectAllVisibleQuotes}
+                         className="w-4 h-4 rounded border-white/10 bg-black/50 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 cursor-pointer" 
+                       />
+                    </th>
+                    <th className="px-4 py-5">Household / Lead</th>
                     <th className="px-8 py-5">Document Type</th>
                     <th className="px-8 py-5">Amount</th>
                     <th className="px-8 py-5 text-right">Status</th>
@@ -833,10 +887,15 @@ export default function FinancePortal() {
                   {filteredRecords.map((rec) => {
                     const needsInvoice = rec.doc_type === 'quote' && rec.status === 'accepted' && !rec.metadata?.converted_to_invoice;
                     const isVipQuote = vipQuoteIds.has(rec.id);
+                    const isSelectable = rec.doc_type === 'quote' && rec.status === 'pending';
+                    const isSelected = selectedRecordIds.includes(rec.id);
                     
                     return (
                       <LedgerRow 
                         key={rec.id}
+                        isSelected={isSelected}
+                        isSelectable={isSelectable}
+                        onToggleSelect={() => handleToggleSelectRecord(rec.id)}
                         name={rec.profiles?.display_name || rec.metadata?.prospect_name || 'Unknown Entity'} 
                         type={rec.doc_type === 'quote' ? 'Quotation' : 'Invoice'} 
                         amount={`R ${rec.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`} 
@@ -850,17 +909,15 @@ export default function FinancePortal() {
                     );
                   })}
                   {filteredRecords.length === 0 && (
-                    <tr><td colSpan={4} className="p-8 text-center text-slate-500 text-sm italic">No records found matching your search or filter.</td></tr>
+                    <tr><td colSpan={5} className="p-8 text-center text-slate-500 text-sm italic">No records found matching your search or filter.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {/* RECENT ACTIVITY SIDEBAR */}
           <div className="lg:col-span-1 space-y-6">
             
-            {/* CARD 1: SALES FUNNEL (QUOTES) */}
             <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-6">
               <h3 className="text-sm font-black uppercase tracking-widest text-white flex items-center gap-2 border-b border-white/5 pb-6">
                 <FileText size={18} className="text-purple-500"/> Sales Funnel
@@ -896,8 +953,7 @@ export default function FinancePortal() {
               </div>
             </div>
 
-            {/* CARD 2: REVENUE PIPELINE (INVOICES) */}
-            <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-6">
+            <div className="bg-white/[0.02] border border-white/10 rounded-[40px] p-8 shadow-2xl space-y-6">
               <h3 className="text-sm font-black uppercase tracking-widest text-white flex items-center gap-2 border-b border-white/5 pb-6">
                 <Receipt size={18} className="text-blue-500"/> Revenue Pipeline
               </h3>
@@ -1062,6 +1118,172 @@ export default function FinancePortal() {
         )}
       </AnimatePresence>
 
+      {/* SINGLE WHATSAPP MESSAGE MODAL */}
+      <AnimatePresence>
+        {isWhatsAppModalOpen && activeDoc && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsWhatsAppModalOpen(false)} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+              className="relative bg-[#0f172a] border border-white/10 rounded-[48px] w-full max-w-lg overflow-hidden shadow-2xl flex flex-col"
+            >
+              <div className="p-8 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-[#25D366]/20 rounded-2xl border border-[#25D366]/30 text-[#25D366]"><MessageCircle size={28} /></div>
+                  <div>
+                      <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white leading-none">WhatsApp Dispatch</h2>
+                      <p className="text-[10px] font-black text-[#25D366] uppercase tracking-[0.2em] mt-2">To: {activeDoc.data.recipient.phone}</p>
+                  </div>
+                </div>
+                <button onClick={() => setIsWhatsAppModalOpen(false)} className="text-slate-500 hover:text-white transition-colors"><X size={28} /></button>
+              </div>
+
+              <div className="p-8">
+                 <div className="flex flex-col border border-white/10 rounded-[24px] overflow-hidden focus-within:border-[#25D366] transition-colors">
+                    <div className="bg-white/5 px-6 py-4 text-sm font-medium text-slate-400">
+                      Hi {activeDoc.data.recipient.name.split(' ')[0]},
+                    </div>
+                    <textarea 
+                      rows={4}
+                      placeholder="Type an optional custom message here... (e.g. Just a reminder to accept by Friday!)"
+                      value={whatsAppBody}
+                      onChange={(e) => setWhatsAppBody(e.target.value)}
+                      className="w-full bg-[#020617] px-6 py-4 text-sm text-white outline-none resize-none leading-relaxed placeholder:text-slate-600"
+                    />
+                    <div className="bg-white/5 px-6 py-4 text-sm font-medium text-slate-400 border-t border-white/5 break-all">
+                      Here is the link to review and accept your quote from RAD Academy:
+                      <br /><br />
+                      {window.location.origin}/quote/{activeDoc.data.docId}
+                      <br /><br />
+                      Let me know if you have any questions!
+                    </div>
+                 </div>
+              </div>
+
+              <div className="p-8 border-t border-white/5 bg-black/40 flex justify-between items-center gap-8">
+                <button onClick={() => setIsWhatsAppModalOpen(false)} className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancel</button>
+                <button 
+                  onClick={() => {
+                    const firstName = activeDoc.data.recipient.name.split(' ')[0] || "Client";
+                    const link = `${window.location.origin}/quote/${activeDoc.data.docId}`;
+                    const customText = whatsAppBody.trim() ? `${whatsAppBody.trim()}\n\n` : '';
+                    
+                    const fullMessage = `Hi ${firstName},\n\n${customText}Here is the link to review and accept your quote from RAD Academy:\n\n${link}\n\nLet me know if you have any questions!`;
+                    const phone = formatWhatsAppNumber(activeDoc.data.recipient.phone);
+                    
+                    window.open(`whatsapp://send?phone=${phone}&text=${encodeURIComponent(fullMessage)}`, '_blank');
+                    setIsWhatsAppModalOpen(false);
+                  }}
+                  className="bg-[#25D366] text-[#020617] px-8 py-4 rounded-3xl font-black uppercase italic text-xs tracking-widest flex items-center gap-3 hover:bg-[#20bd5a] shadow-2xl shadow-[#25D366]/20 transition-all"
+                >
+                  <MessageCircle size={18} /> Launch App
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BATCH WHATSAPP DISPATCHER MODAL */}
+      <AnimatePresence>
+        {isBatchModalOpen && batchSelectedQuotes.length > 0 && (
+          <div className="fixed inset-0 z-[250] flex items-center justify-center p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+              className="relative bg-[#0f172a] border border-[#25D366]/30 rounded-[48px] w-full max-w-lg overflow-hidden shadow-[0_0_50px_rgba(37,211,102,0.1)] flex flex-col"
+            >
+              <div className="p-8 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-[#25D366] text-[#0f172a] rounded-2xl shadow-lg shadow-[#25D366]/20"><Send size={28} /></div>
+                  <div>
+                      <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white leading-none">Rapid-Fire Dispatch</h2>
+                      <p className="text-[10px] font-black text-[#25D366] uppercase tracking-[0.2em] mt-2">
+                         Queue: {batchIndex + 1} of {batchSelectedQuotes.length}
+                      </p>
+                  </div>
+                </div>
+                <button onClick={() => { setIsBatchModalOpen(false); setSelectedRecordIds([]); }} className="text-slate-500 hover:text-white transition-colors"><X size={28} /></button>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="w-full h-1 bg-black/40">
+                <motion.div 
+                   className="h-full bg-[#25D366]"
+                   initial={{ width: 0 }}
+                   animate={{ width: `${((batchIndex) / batchSelectedQuotes.length) * 100}%` }}
+                />
+              </div>
+
+              <div className="p-8 space-y-6">
+                 {batchIndex === 0 && (
+                   <p className="text-xs text-slate-400 font-medium leading-relaxed bg-blue-500/10 border border-blue-500/20 p-4 rounded-2xl text-blue-400">
+                     <span className="font-black uppercase tracking-widest text-[10px] block mb-1">How this works:</span>
+                     You are sending a bulk message. Write your master message once. When you click "Send & Next", WhatsApp will open for the current client. Switch back to this window to trigger the next one!
+                   </p>
+                 )}
+
+                 <div className="flex flex-col border border-[#25D366]/30 rounded-[24px] overflow-hidden focus-within:border-[#25D366] transition-colors shadow-inner bg-[#020617]">
+                    <div className="bg-white/5 px-6 py-4 text-sm font-medium text-emerald-400 border-b border-white/5">
+                      Hi <span className="font-bold text-white bg-white/10 px-2 py-0.5 rounded-md">{"{Client First Name}"}</span>,
+                    </div>
+                    <textarea 
+                      rows={4}
+                      placeholder="Type your master message here... (It will be sent to everyone in the queue)"
+                      value={whatsAppBody}
+                      onChange={(e) => setWhatsAppBody(e.target.value)}
+                      className="w-full bg-transparent px-6 py-4 text-sm text-white outline-none resize-none leading-relaxed placeholder:text-slate-600"
+                    />
+                    <div className="bg-white/5 px-6 py-4 text-sm font-medium text-slate-400 border-t border-white/5">
+                      Here is the link to review and accept your quote from RAD Academy:
+                      <br /><br />
+                      <span className="font-mono text-emerald-400 text-xs">{"{Unique Quote Link}"}</span>
+                      <br /><br />
+                      Let me know if you have any questions!
+                    </div>
+                 </div>
+              </div>
+
+              <div className="p-8 border-t border-white/5 bg-black/40 flex justify-between items-center gap-8">
+                <button onClick={() => { setIsBatchModalOpen(false); setSelectedRecordIds([]); }} className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-rose-400 transition-colors">Abort Queue</button>
+                <button 
+                  onClick={() => {
+                    const currentRec = batchSelectedQuotes[batchIndex];
+                    const rawPhone = currentRec.metadata?.prospect_phone || currentRec.metadata?.phone || currentRec.profiles?.metadata?.phone || currentRec.profiles?.phone || currentRec.phone || "";
+                    const safePhone = formatWhatsAppNumber(rawPhone.toString().trim());
+
+                    const recipientName = currentRec.profiles?.display_name || currentRec.metadata?.prospect_name || "Client";
+                    const firstName = recipientName.split(' ')[0];
+                    const link = `${window.location.origin}/quote/${currentRec.id}`;
+                    
+                    const customText = whatsAppBody.trim() ? `${whatsAppBody.trim()}\n\n` : '';
+                    const fullMessage = `Hi ${firstName},\n\n${customText}Here is the link to review and accept your quote from RAD Academy:\n\n${link}\n\nLet me know if you have any questions!`;
+                    
+                    if (safePhone && safePhone.length > 5) {
+                       window.open(`whatsapp://send?phone=${safePhone}&text=${encodeURIComponent(fullMessage)}`, '_blank');
+                    } else {
+                       alert(`Warning: No valid phone number found for ${recipientName}. Opening WhatsApp with blank contact.`);
+                       window.open(`whatsapp://send?text=${encodeURIComponent(fullMessage)}`, '_blank');
+                    }
+
+                    if (batchIndex < batchSelectedQuotes.length - 1) {
+                       setBatchIndex(prev => prev + 1);
+                    } else {
+                       setIsBatchModalOpen(false);
+                       setSelectedRecordIds([]);
+                       setSuccessMessage("Batch Dispatch Complete!");
+                    }
+                  }}
+                  className="bg-[#25D366] text-[#020617] px-8 py-4 rounded-3xl font-black uppercase italic text-xs tracking-widest flex items-center gap-3 hover:bg-[#20bd5a] shadow-2xl shadow-[#25D366]/20 transition-all"
+                >
+                  <Send size={18} /> {batchIndex < batchSelectedQuotes.length - 1 ? 'Send & Load Next' : 'Send Final'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* DOCUMENT VIEW SLIDE-OVER */}
       <AnimatePresence>
         {activeDoc && (
@@ -1161,7 +1383,6 @@ export default function FinancePortal() {
 
               <div className="pt-6 border-t border-white/5 flex flex-wrap gap-4">
                  
-                 {/* INLINE EDIT BUTTON */}
                  {!isEditingItems && activeDoc.type !== 'statement' && (
                     <button 
                       onClick={() => { 
@@ -1218,6 +1439,23 @@ export default function FinancePortal() {
                     </button>
                  )}
                  
+                 {/* --- WHATSAPP COMPOSER TRIGGER (SINGLE) --- */}
+                 {!isEditingItems && activeDoc.type === 'quote' && (
+                   <button 
+                     disabled={!activeDoc.data.recipient.phone || activeDoc.data.recipient.phone.length <= 5}
+                     onClick={() => setIsWhatsAppModalOpen(true)}
+                     className={`px-8 py-4 rounded-2xl font-black uppercase italic tracking-widest transition-all flex items-center justify-center gap-2 shadow-xl ${
+                       activeDoc.data.recipient.phone && activeDoc.data.recipient.phone.length > 5 
+                         ? 'bg-[#25D366]/10 text-[#25D366] border border-[#25D366]/30 hover:bg-[#25D366] hover:text-white shadow-[#25D366]/10 cursor-pointer'
+                         : 'bg-white/5 text-slate-600 border border-white/5 cursor-not-allowed'
+                     }`}
+                     title={activeDoc.data.recipient.phone && activeDoc.data.recipient.phone.length > 5 ? "Send via WhatsApp" : "No valid phone number found for this lead"}
+                   >
+                     <MessageCircle size={16} /> Send via WhatsApp
+                   </button>
+                 )}
+
+                 {/* Existing PDF Button */}
                  {!isEditingItems && (
                    <button 
                      onClick={handleDownloadPDF}
@@ -1310,13 +1548,13 @@ export default function FinancePortal() {
           </div>
         )}
       </AnimatePresence>
+
+      <SuccessModal message={successMessage} onClose={() => setSuccessMessage(null)} />
     </div>
   );
 }
 
-// --- Internal Page UI Components ---
-
-function LedgerRow({ name, type, amount, status, refId, needsInvoice, isVip, onClick, onProfileClick }: any) {
+function LedgerRow({ name, type, amount, status, refId, needsInvoice, isVip, onClick, onProfileClick, isSelectable, isSelected, onToggleSelect }: any) {
   const isOverdue = status === 'Overdue';
   const isQuote = type === 'Quotation';
   const isAccepted = status === 'Accepted';
@@ -1331,10 +1569,22 @@ function LedgerRow({ name, type, amount, status, refId, needsInvoice, isVip, onC
           ? 'bg-amber-500/[0.05] hover:bg-amber-500/[0.08] border-l-4 border-amber-500' 
           : isVip 
           ? 'bg-amber-500/[0.08] hover:bg-amber-500/[0.12] border-l-4 border-amber-500/60'
+          : isSelected
+          ? 'bg-[#25D366]/10 hover:bg-[#25D366]/20 border-l-4 border-[#25D366]'
           : 'hover:bg-white/[0.02] border-l-4 border-transparent'
       }`}
     >
-      <td className="px-8 py-6">
+      <td className="px-6 py-5 w-12 text-center relative" onClick={(e) => e.stopPropagation()}>
+        {isSelectable && (
+           <input 
+             type="checkbox" 
+             checked={isSelected}
+             onChange={onToggleSelect}
+             className="w-4 h-4 rounded border-white/10 bg-black/50 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 cursor-pointer" 
+           />
+        )}
+      </td>
+      <td className="px-4 py-6">
         <div className="flex items-center gap-3">
           <button 
             onClick={onProfileClick}
@@ -1378,5 +1628,46 @@ function LedgerRow({ name, type, amount, status, refId, needsInvoice, isVip, onC
         </span>
       </td>
     </tr>
+  );
+}
+
+// ---------------------------------------------------------
+// SUCCESS MODAL NOTIFICATION WIDGET
+// ---------------------------------------------------------
+function SuccessModal({ message, onClose }: { message: string | null, onClose: () => void }) {
+  useEffect(() => {
+    if (message) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [message, onClose]);
+
+  return (
+    <AnimatePresence>
+      {message && (
+        <div className="fixed bottom-10 right-10 z-[300] flex justify-end pointer-events-none">
+          <motion.div 
+            initial={{ opacity: 0, y: 50, scale: 0.9 }} 
+            animate={{ opacity: 1, y: 0, scale: 1 }} 
+            exit={{ opacity: 0, y: 20, scale: 0.9 }} 
+            className="bg-[#0f172a] border border-emerald-500/30 rounded-2xl p-5 shadow-2xl shadow-emerald-900/20 flex items-center gap-4 max-w-sm w-full pointer-events-auto relative overflow-hidden"
+          >
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
+            <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30">
+              <CheckCircle2 className="text-emerald-400" size={20} />
+            </div>
+            <div className="flex-1 pr-2">
+              <h3 className="text-xs font-black uppercase tracking-widest text-white leading-none mb-1">Success</h3>
+              <p className="text-[10px] font-bold text-slate-400 leading-tight">{message}</p>
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors shrink-0">
+              <X size={16} />
+            </button>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 }

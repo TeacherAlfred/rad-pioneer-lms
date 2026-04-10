@@ -48,7 +48,7 @@ function MissionBriefingOverlay({ text, onComplete }: { text: string, onComplete
         i++;
         if (i >= text.length) {
           clearInterval(typeInterval);
-          setPhase('waiting'); // Wait for user interaction instead of a timeout
+          setPhase('waiting'); 
         }
       }, 30); 
       return () => clearInterval(typeInterval);
@@ -61,10 +61,9 @@ function MissionBriefingOverlay({ text, onComplete }: { text: string, onComplete
     }
   }, [phase, onComplete]);
 
-  // Click handler: Fast-forward typing or close overlay
   const handleInteraction = () => {
     if (phase === 'typing') {
-      setDisplayedText(text); // Fast forward to full text
+      setDisplayedText(text); 
       setPhase('waiting');
     } else if (phase === 'waiting') {
       setPhase('done');
@@ -88,7 +87,6 @@ function MissionBriefingOverlay({ text, onComplete }: { text: string, onComplete
           {phase !== 'done' && <span className={`inline-block w-4 h-8 ml-2 bg-green-400 align-middle ${!cursorVisible ? 'opacity-0' : 'opacity-100'}`} />}
         </p>
         
-        {/* Call to action appears when typing is done */}
         <AnimatePresence>
           {phase === 'waiting' && (
             <motion.div 
@@ -147,6 +145,11 @@ export default function LessonPlayerPage() {
     mvp: [] as string[],
     beyond: ""
   });
+
+  // CRITICAL FIX 1: Stable callback to prevent AnimatePresence looping
+  const handleBriefingComplete = useCallback(() => {
+    setShowInitialBriefing(false);
+  }, []);
 
   const handleCardChange = useCallback((content: string) => {
     setScannedVocabText(prev => {
@@ -291,10 +294,8 @@ export default function LessonPlayerPage() {
     return () => { if (typingIntervalRef.current) clearInterval(typingIntervalRef.current); }
   }, [currentStepData?.lore_text, currentStepIndex, showInitialBriefing]);
 
-  useEffect(() => {
-    setScannedVocabText(prev => prev + " " + displayedLore);
-  }, [displayedLore]);
-
+  // CRITICAL FIX 2: Check displayedLore directly in the scanner.
+  // REMOVED the dangerous chained useEffect that was appending string data every 20ms and crashing React.
   useEffect(() => {
     if (!currentStepData?.vocabulary) return;
     const stepVocab = currentStepData.vocabulary;
@@ -302,7 +303,8 @@ export default function LessonPlayerPage() {
     const newlyRevealed = stepVocab.filter((v: any) => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b${escapedTerm}\\b`, 'i');
-        return regex.test(scannedVocabText); 
+        // Now it safely checks BOTH the card text and the currently typing lore text!
+        return regex.test(scannedVocabText) || regex.test(displayedLore); 
     });
 
     if (newlyRevealed.length > 0) {
@@ -325,7 +327,7 @@ export default function LessonPlayerPage() {
             return hasChanges ? newExpanded : prev;
         });
     }
-  }, [scannedVocabText, currentStepData?.vocabulary]);
+  }, [scannedVocabText, displayedLore, currentStepData?.vocabulary]);
 
   const getFormattedLore = () => {
     if (!revealedVocab || revealedVocab.length === 0) return displayedLore;
@@ -334,11 +336,10 @@ export default function LessonPlayerPage() {
     
     sortedVocab.forEach(v => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // NEW: (?![^<]*>) prevents replacing words that are already inside HTML tags
         const regex = new RegExp(`\\b(${escapedTerm})\\b(?![^<]*>)`, 'gi');
-        // NEW: Replace double quotes in the definition to prevent breaking the title attribute
         const safeDef = v.definition.replace(/"/g, '&quot;');
-        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)] cursor-help" title="${safeDef}">$1</span>`);
+        // CRITICAL FIX: Added inline-block, relative, z-10, and extra margins
+        formattedText = formattedText.replace(regex, `<span class="inline-block relative z-10 text-purple-300 font-black bg-purple-500/20 px-2 py-0.5 mx-1 rounded-md border border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.4)] cursor-help" title="${safeDef}">$1</span>`);
     });
     return formattedText;
   };
@@ -350,11 +351,10 @@ export default function LessonPlayerPage() {
     
     sortedVocab.forEach((v: any) => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // NEW: (?![^<]*>) prevents replacing words that are already inside HTML tags
         const regex = new RegExp(`\\b(${escapedTerm})\\b(?![^<]*>)`, 'gi');
-        // NEW: Replace double quotes in the definition to prevent breaking the title attribute
         const safeDef = v.definition.replace(/"/g, '&quot;');
-        formattedText = formattedText.replace(regex, `<span class="text-purple-300 font-black bg-purple-500/20 px-1.5 py-0.5 mx-0.5 rounded-md border border-purple-500/40 shadow-[0_0_10px_rgba(168,85,247,0.3)] cursor-help" title="${safeDef}">$1</span>`);
+        // CRITICAL FIX: Added inline-block, relative, z-10, and extra margins
+        formattedText = formattedText.replace(regex, `<span class="inline-block relative z-10 text-purple-300 font-black bg-purple-500/20 px-2 py-0.5 mx-1 rounded-md border border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.4)] cursor-help" title="${safeDef}">$1</span>`);
     });
     return formattedText;
   };
@@ -473,9 +473,11 @@ export default function LessonPlayerPage() {
     });
   }, [mission, loading, showInitialBriefing, getBlockOriginalColor]);
 
+  // CRITICAL FIX 3: Safe cleanup for timeouts
   useEffect(() => {
     if (isCodeStep && workspace.current && !showInitialBriefing) {
-      setTimeout(() => { if (workspace.current) Blockly.svgResize(workspace.current); }, 50);
+      const timer = setTimeout(() => { if (workspace.current) Blockly.svgResize(workspace.current); }, 50);
+      return () => clearTimeout(timer);
     }
   }, [isCodeStep, showInitialBriefing]);
 
@@ -693,7 +695,6 @@ export default function LessonPlayerPage() {
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
   if (errorMsg) return ( <div className="h-screen bg-[#020617] flex flex-col items-center justify-center text-white space-y-6"><ShieldAlert size={64} className="text-red-500" /><h1 className="text-2xl font-black uppercase tracking-widest">{errorMsg}</h1><Link href="/student/dashboard" className="px-8 py-3 bg-white text-black rounded-xl font-black uppercase text-xs">Return to Dashboard</Link></div> );
 
-  // Check step config first, fallback to mission root
   const initialBriefingText = steps[0]?.lore_text || mission?.lore_text || "Awaiting transmission...";
 
   return (
@@ -704,7 +705,7 @@ export default function LessonPlayerPage() {
         {showInitialBriefing && initialBriefingText && (
            <MissionBriefingOverlay 
               text={initialBriefingText} 
-              onComplete={() => setShowInitialBriefing(false)} 
+              onComplete={handleBriefingComplete} 
            />
         )}
       </AnimatePresence>

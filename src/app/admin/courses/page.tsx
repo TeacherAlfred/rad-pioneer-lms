@@ -18,6 +18,7 @@ export default function AdminCoursesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"all" | "public" | "private" | "draft">("all");
   const [sortBy, setSortBy] = useState<SortOption>("name");
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // --- EDIT MODAL STATE ---
   const [editingCourse, setEditingCourse] = useState<any | null>(null);
@@ -68,6 +69,7 @@ export default function AdminCoursesPage() {
 
       if (error) throw error;
       
+      setSuccessMessage("Course calibrated and synced successfully.");
       setEditingCourse(null);
       await fetchCourses();
     } catch (err) {
@@ -81,7 +83,6 @@ export default function AdminCoursesPage() {
   // --- ENROLLMENT ENGINE LOGIC ---
   const handleOpenEnrollment = async (course: any) => {
     setEnrollCourse(course);
-    setSelectedStudentIds([]);
     setStudentSearch("");
 
     // 1. Fetch all student profiles
@@ -93,7 +94,7 @@ export default function AdminCoursesPage() {
     
     setStudents(stData || []);
 
-    // 2. Fetch existing enrollments for this specific course to prevent duplicates
+    // 2. Fetch existing enrollments for this specific course
     const { data: enData } = await supabase
        .from('enrollments')
        .select('student_id')
@@ -101,6 +102,8 @@ export default function AdminCoursesPage() {
        
     const existingIds = (enData || []).map(e => e.student_id);
     setEnrolledStudentIds(existingIds);
+    // 3. Pre-select already enrolled students
+    setSelectedStudentIds(existingIds); 
   };
 
   const handleToggleStudent = (id: string) => {
@@ -111,22 +114,40 @@ export default function AdminCoursesPage() {
 
   const handleExecuteEnrollment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedStudentIds.length === 0) return;
     setIsEnrolling(true);
 
     try {
-      // Build the batch insertion payload
-      const payloads = selectedStudentIds.map(id => ({
-        student_id: id,
-        course_id: enrollCourse.id,
-        status: 'active'
-      }));
+      // Differentiate between new enrollments and un-enrollments
+      const toInsert = selectedStudentIds.filter(id => !enrolledStudentIds.includes(id));
+      const toDelete = enrolledStudentIds.filter(id => !selectedStudentIds.includes(id));
 
-      const { error } = await supabase.from('enrollments').insert(payloads);
-      
-      if (error) throw error;
+      if (toInsert.length === 0 && toDelete.length === 0) {
+        setEnrollCourse(null);
+        return;
+      }
 
-      alert(`Successfully registered ${selectedStudentIds.length} pioneer(s) into the course!`);
+      // Execute Insertions
+      if (toInsert.length > 0) {
+        const payloads = toInsert.map(id => ({
+          student_id: id,
+          course_id: enrollCourse.id,
+          status: 'active'
+        }));
+        const { error: insertError } = await supabase.from('enrollments').insert(payloads);
+        if (insertError) throw insertError;
+      }
+
+      // Execute Deletions
+      if (toDelete.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('enrollments')
+          .delete()
+          .eq('course_id', enrollCourse.id)
+          .in('student_id', toDelete);
+        if (deleteError) throw deleteError;
+      }
+
+      setSuccessMessage(`Roster synced! (+${toInsert.length} enrolled, -${toDelete.length} removed)`);
       setEnrollCourse(null);
       
     } catch (err: any) {
@@ -135,6 +156,8 @@ export default function AdminCoursesPage() {
       setIsEnrolling(false);
     }
   };
+
+  const hasEnrollmentChanges = selectedStudentIds.length !== enrolledStudentIds.length || selectedStudentIds.some(id => !enrolledStudentIds.includes(id));
 
   // --- SORT & FILTER LOGIC ---
   const processedCourses = courses
@@ -301,10 +324,10 @@ export default function AdminCoursesPage() {
                     <span className="text-[10px] font-black uppercase tracking-widest">Modules</span>
                   </Link>
                   
-                  {/* --- NEW: ENROLL BUTTON --- */}
+                  {/* --- ENROLL BUTTON --- */}
                   <button onClick={() => handleOpenEnrollment(course)} className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 hover:bg-emerald-600 hover:border-emerald-600 py-5 rounded-3xl transition-all group/btn shadow-xl">
                     <UserPlus size={18} className="text-emerald-400 group-hover/btn:text-white" />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-300 group-hover/btn:text-white">Enroll</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-300 group-hover/btn:text-white">Roster</span>
                   </button>
                 </div>
               </motion.div>
@@ -404,7 +427,7 @@ export default function AdminCoursesPage() {
                   <div className="flex items-center gap-4">
                     <div className="p-3 bg-emerald-500/20 rounded-2xl border border-emerald-500/30 text-emerald-400"><Users size={28} /></div>
                     <div>
-                        <h2 className="text-3xl font-black uppercase italic tracking-tighter text-white leading-none">Batch Enrollment</h2>
+                        <h2 className="text-3xl font-black uppercase italic tracking-tighter text-white leading-none">Roster Synchronization</h2>
                         <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] mt-2">Target: {enrollCourse.title}</p>
                     </div>
                   </div>
@@ -426,19 +449,16 @@ export default function AdminCoursesPage() {
                          <div className="py-12 text-center text-slate-500 text-sm font-bold italic uppercase tracking-widest">No Pioneers Found</div>
                       ) : (
                          filteredStudents.map(student => {
-                            const isEnrolled = enrolledStudentIds.includes(student.id);
                             const isSelected = selectedStudentIds.includes(student.id);
                             
                             return (
                                <div 
                                  key={student.id}
-                                 onClick={() => !isEnrolled && handleToggleStudent(student.id)}
-                                 className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${
-                                    isEnrolled 
-                                    ? 'bg-white/5 border-transparent opacity-50 cursor-not-allowed' 
-                                    : isSelected 
-                                      ? 'bg-emerald-600/10 border-emerald-500/30 cursor-pointer' 
-                                      : 'bg-[#020617] border-white/5 cursor-pointer hover:border-white/20'
+                                 onClick={() => handleToggleStudent(student.id)}
+                                 className={`flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer ${
+                                    isSelected 
+                                      ? 'bg-emerald-600/10 border-emerald-500/30' 
+                                      : 'bg-[#020617] border-white/5 hover:border-white/20'
                                  }`}
                                >
                                   <div>
@@ -446,13 +466,9 @@ export default function AdminCoursesPage() {
                                      <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mt-1">Age: {student.metadata?.age || 'Unknown'}</p>
                                   </div>
                                   <div>
-                                     {isEnrolled ? (
-                                        <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500 flex items-center gap-1"><CheckCircle2 size={12}/> Enrolled</span>
-                                     ) : (
-                                        <div className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-colors ${isSelected ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-white/20'}`}>
-                                           {isSelected && <CheckCircle2 size={14} className="text-white"/>}
-                                        </div>
-                                     )}
+                                    <div className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-colors ${isSelected ? 'bg-emerald-500 border-emerald-500' : 'bg-transparent border-white/20'}`}>
+                                       {isSelected && <CheckCircle2 size={14} className="text-white"/>}
+                                    </div>
                                   </div>
                                </div>
                             )
@@ -463,13 +479,13 @@ export default function AdminCoursesPage() {
 
                 <div className="p-10 border-t border-white/5 bg-black/40 flex justify-between items-center gap-8 shrink-0">
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                     <span className="text-emerald-400 text-lg mr-2">{selectedStudentIds.length}</span> Selected
+                     <span className="text-emerald-400 text-lg mr-2">{selectedStudentIds.length}</span> Active Selection
                   </div>
                   <button 
-                    type="submit" disabled={isEnrolling || selectedStudentIds.length === 0}
+                    type="submit" disabled={isEnrolling || !hasEnrollmentChanges}
                     className="bg-emerald-600 text-white px-10 py-5 rounded-3xl font-black uppercase italic text-xs tracking-widest flex items-center gap-3 hover:bg-emerald-500 shadow-2xl shadow-emerald-600/30 transition-all disabled:opacity-50"
                   >
-                    {isEnrolling ? <Loader2 size={18} className="animate-spin" /> : <UserPlus size={18} />} Execute_Enrollment
+                    {isEnrolling ? <Loader2 size={18} className="animate-spin" /> : <UserPlus size={18} />} Sync_Roster
                   </button>
                 </div>
               </motion.form>
@@ -478,6 +494,50 @@ export default function AdminCoursesPage() {
         </AnimatePresence>
 
       </div>
+      
+      {/* SUCCESS NOTIFICATION WIDGET */}
+      <SuccessModal message={successMessage} onClose={() => setSuccessMessage(null)} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------
+// SUCCESS MODAL NOTIFICATION WIDGET
+// ---------------------------------------------------------
+function SuccessModal({ message, onClose }: { message: string | null, onClose: () => void }) {
+  useEffect(() => {
+    if (message) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [message, onClose]);
+
+  return (
+    <AnimatePresence>
+      {message && (
+        <div className="fixed bottom-10 right-10 z-[300] flex justify-end pointer-events-none">
+          <motion.div 
+            initial={{ opacity: 0, y: 50, scale: 0.9 }} 
+            animate={{ opacity: 1, y: 0, scale: 1 }} 
+            exit={{ opacity: 0, y: 20, scale: 0.9 }} 
+            className="bg-[#0f172a] border border-emerald-500/30 rounded-2xl p-5 shadow-2xl shadow-emerald-900/20 flex items-center gap-4 max-w-sm w-full pointer-events-auto relative overflow-hidden"
+          >
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
+            <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30">
+              <CheckCircle2 className="text-emerald-400" size={20} />
+            </div>
+            <div className="flex-1 pr-2">
+              <h3 className="text-xs font-black uppercase tracking-widest text-white leading-none mb-1">Success</h3>
+              <p className="text-[10px] font-bold text-slate-400 leading-tight">{message}</p>
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors shrink-0">
+              <X size={16} />
+            </button>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 }

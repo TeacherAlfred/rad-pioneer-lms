@@ -12,11 +12,9 @@ import { motion, AnimatePresence } from "framer-motion";
 const STATUS_OPTIONS = ["New Lead", "Attempted Contact", "Engaged", "Warm (Pending Close)", "Converted (Won)", "Lost"];
 const SOURCE_OPTIONS = ["Meta Ad - Polokwane Bootcamp", "Meta Ad - General", "Google Search", "Referral", "Website Contact Form", "Other"];
 
-// --- NEW: WhatsApp Number Formatter ---
-// Automatically cleans the number and formats SA numbers (0 -> 27) for the API
 const formatWhatsAppNumber = (phone: string) => {
   if (!phone) return "";
-  let cleaned = phone.replace(/\D/g, ''); // Strip non-numeric characters
+  let cleaned = phone.replace(/\D/g, ''); 
   if (cleaned.startsWith('0')) {
     cleaned = '27' + cleaned.substring(1); 
   }
@@ -27,21 +25,19 @@ export default function ProspectsCRM() {
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [prospects, setProspects] = useState<any[]>([]);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
-  // Filtering States
   const [searchQuery, setSearchQuery] = useState("");
   const [filterPipeline, setFilterPipeline] = useState<string>("All");
   const [filterAction, setFilterAction] = useState("");
   const [filterDate, setFilterDate] = useState("");
   const [filterQuote, setFilterQuote] = useState<"All" | "Sent" | "Not Sent">("All");
   
-  // Stats State
   const [stats, setStats] = useState({ 
     total: 0, active: 0, newLead: 0, attempted: 0, 
     engaged: 0, warm: 0, converted: 0, lost: 0 
   });
 
-  // Full Page Editor & Modal States
   const [selectedProspect, setSelectedProspect] = useState<any>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false); 
@@ -104,10 +100,12 @@ export default function ProspectsCRM() {
         const { data, error } = await supabase.from('prospects').insert([{ ...payload, contact_log: [] }]).select().single();
         if (error) throw error;
         setProspects([data, ...prospects]);
+        setSuccessMessage("New prospect created successfully!");
       } else {
         const { error } = await supabase.from('prospects').update(payload).eq('id', selectedProspect.id);
         if (error) throw error;
         setProspects(prospects.map(p => p.id === selectedProspect.id ? { ...p, ...payload } : p));
+        setSuccessMessage("Prospect updated successfully!");
       }
       
       setIsCreating(false);
@@ -145,6 +143,7 @@ export default function ProspectsCRM() {
       setSelectedProspect(updatedProspect);
       setProspects(prospects.map(p => p.id === selectedProspect.id ? updatedProspect : p));
       setNewLogText("");
+      setSuccessMessage("Log entry added successfully.");
     } catch (err) {
       alert("Failed to add log entry.");
     } finally {
@@ -154,11 +153,11 @@ export default function ProspectsCRM() {
 
   const handleDeleteLog = async (logId: string) => {
     const updatedLogs = selectedProspect.contact_log.filter((l: any) => l.id !== logId);
-    
     try {
       await supabase.from('prospects').update({ contact_log: updatedLogs }).eq('id', selectedProspect.id);
       setSelectedProspect({ ...selectedProspect, contact_log: updatedLogs });
       setProspects(prospects.map(p => p.id === selectedProspect.id ? { ...p, contact_log: updatedLogs } : p));
+      setSuccessMessage("Log entry removed.");
     } catch (err) {
       alert("Failed to delete log.");
     }
@@ -313,7 +312,6 @@ export default function ProspectsCRM() {
                   </button>
                 )}
               </div>
-
             </div>
 
             {/* TABLE */}
@@ -343,7 +341,6 @@ export default function ProspectsCRM() {
                             {p.phone && (
                               <div className="flex items-center gap-2">
                                 <span className="flex items-center gap-2"><PhoneCall size={12}/> {p.phone}</span>
-                                {/* --- NEW: DIRECT WHATSAPP APP LINK --- */}
                                 <a 
                                   href={`whatsapp://send?phone=${formatWhatsAppNumber(p.phone)}`} 
                                   target="_blank" 
@@ -462,7 +459,6 @@ export default function ProspectsCRM() {
                   
                   <div className="space-y-5 relative z-10">
 
-                    {/* --- NEW: DIRECT WHATSAPP APP LINK IN SIDEBAR --- */}
                     {selectedProspect.phone && !isCreating && (
                       <a 
                         href={`whatsapp://send?phone=${formatWhatsAppNumber(selectedProspect.phone)}`}
@@ -475,7 +471,6 @@ export default function ProspectsCRM() {
                       </a>
                     )}
                     
-                    {/* Generate Quote Button */}
                     {!isCreating && (
                       <button 
                         onClick={() => setIsQuoteModalOpen(true)}
@@ -492,7 +487,6 @@ export default function ProspectsCRM() {
                       </select>
                     </div>
                     
-                    {/* QUOTE SENT CHECKBOX */}
                     <div className="space-y-2 pt-2 border-t border-fuchsia-500/20 mt-2">
                       <label className="flex items-center gap-3 cursor-pointer group">
                         <div className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${selectedProspect.quote_sent ? 'bg-fuchsia-500 border-fuchsia-500' : 'bg-[#020617] border-white/20 group-hover:border-fuchsia-500/50'}`}>
@@ -532,7 +526,6 @@ export default function ProspectsCRM() {
                   <div className="bg-white/[0.02] border border-white/5 p-8 rounded-[40px] shadow-2xl space-y-6">
                     <h3 className="text-sm font-black uppercase tracking-widest text-white flex items-center gap-2 border-b border-white/5 pb-4"><Clock size={18}/> Contact Log</h3>
                     
-                    {/* Add new Log Entry */}
                     <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-3">
                        <div className="flex flex-col gap-3">
                          <select value={newLogType} onChange={e => setNewLogType(e.target.value)} className="bg-[#020617] border border-white/10 rounded-lg px-3 py-2 text-xs font-bold text-white outline-none">
@@ -543,7 +536,6 @@ export default function ProspectsCRM() {
                        </div>
                     </div>
 
-                    {/* Timeline */}
                     <div className="space-y-4 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-white/10 before:to-transparent mt-8">
                       {(selectedProspect.contact_log || []).map((log: any) => (
                         <div key={log.id} className="relative flex items-start group is-active mb-6">
@@ -574,7 +566,7 @@ export default function ProspectsCRM() {
 
       </div>
 
-      {/* --- QUOTE ENGINE MODAL --- */}
+      {/* QUOTE ENGINE MODAL */}
       <AnimatePresence>
         {isQuoteModalOpen && selectedProspect && (
           <motion.div 
@@ -585,7 +577,6 @@ export default function ProspectsCRM() {
           >
             <div className="w-full max-w-6xl h-full max-h-[90vh] bg-[#020617] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl shadow-fuchsia-900/20 flex flex-col relative">
               
-              {/* Modal Header */}
               <div className="flex items-center justify-between p-6 border-b border-white/5 bg-white/[0.02]">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-fuchsia-500/20 flex items-center justify-center border border-fuchsia-500/30">
@@ -605,10 +596,9 @@ export default function ProspectsCRM() {
                 </button>
               </div>
 
-              {/* Iframe Loading the Composer (Passing Lead Data via URL parameters so the composer can pre-fill) */}
               <div className="flex-1 w-full bg-[#0f172a] relative">
                 <iframe 
-                  src={`/admin/finance/composer?mode=quote&prospectName=${encodeURIComponent(selectedProspect.name)}&prospectEmail=${encodeURIComponent(selectedProspect.email || '')}`} 
+                  src={`/admin/finance/composer?mode=quote&prospectName=${encodeURIComponent(selectedProspect.name)}&prospectEmail=${encodeURIComponent(selectedProspect.email || '')}&prospectPhone=${encodeURIComponent(selectedProspect.phone || '')}`} 
                   className="w-full h-full absolute inset-0 border-none"
                   title="Finance Composer"
                 />
@@ -619,6 +609,52 @@ export default function ProspectsCRM() {
         )}
       </AnimatePresence>
 
+      {/* SUCCESS NOTIFICATION WIDGET */}
+      <SuccessModal 
+        message={successMessage} 
+        onClose={() => setSuccessMessage(null)} 
+      />
     </div>
+  );
+}
+
+// ---------------------------------------------------------
+// SUCCESS MODAL NOTIFICATION WIDGET
+// ---------------------------------------------------------
+function SuccessModal({ message, onClose }: { message: string | null, onClose: () => void }) {
+  useEffect(() => {
+    if (message) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [message, onClose]);
+
+  return (
+    <AnimatePresence>
+      {message && (
+        <div className="fixed bottom-10 right-10 z-[300] flex justify-end pointer-events-none">
+          <motion.div 
+            initial={{ opacity: 0, y: 50, scale: 0.9 }} 
+            animate={{ opacity: 1, y: 0, scale: 1 }} 
+            exit={{ opacity: 0, y: 20, scale: 0.9 }} 
+            className="bg-[#0f172a] border border-emerald-500/30 rounded-2xl p-5 shadow-2xl shadow-emerald-900/20 flex items-center gap-4 max-w-sm w-full pointer-events-auto relative overflow-hidden"
+          >
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
+            <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30">
+              <CheckCircle2 className="text-emerald-400" size={20} />
+            </div>
+            <div className="flex-1 pr-2">
+              <h3 className="text-xs font-black uppercase tracking-widest text-white leading-none mb-1">Success</h3>
+              <p className="text-[10px] font-bold text-slate-400 leading-tight">{message}</p>
+            </div>
+            <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors shrink-0">
+              <X size={16} />
+            </button>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 }
