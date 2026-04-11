@@ -45,7 +45,8 @@ function BillingComposer() {
   const [selectedGuardian, setSelectedGuardian] = useState<any>(null);
   const [suggestedGuardians, setSuggestedGuardians] = useState<any[]>([]);
 
-  const [lineItems, setLineItems] = useState<any[]>([{ desc: '', note: '', qty: 1, price: 0, disc: 0 }]);
+  // UPDATED STATE: Include disc_type and disc_rand for feature parity
+  const [lineItems, setLineItems] = useState<any[]>([{ desc: '', note: '', qty: 1, price: 0, disc: 0, disc_type: 'pct', disc_rand: "0.00" }]);
   const [globalDisc, setGlobalDisc] = useState(0);
   const [globalNote, setGlobalNote] = useState("");
 
@@ -128,7 +129,13 @@ function BillingComposer() {
      const { data: quote } = await supabase.from('billing_records').select('*, profiles(*)').eq('id', quoteId).single();
      if (quote) {
         setDocType('invoice'); 
-        setLineItems(quote.line_items || []);
+        // Map existing quote lines to ensure they have the new disc fields
+        const mappedItems = (quote.line_items || []).map((item: any) => ({
+           ...item,
+           disc_type: 'pct',
+           disc_rand: ((Number(item.price) * Number(item.qty) * Number(item.disc)) / 100).toFixed(2)
+        }));
+        setLineItems(mappedItems);
         setGlobalNote(quote.metadata?.global_note || '');
         if (quote.profiles) {
             setSelectedGuardian(quote.profiles);
@@ -159,6 +166,15 @@ function BillingComposer() {
           metadataToSave.converted_from_quote = convertFromQuoteId;
       }
 
+      // Clean line items for DB save (remove ephemeral calculation fields)
+      const cleanLineItems = lineItems.map(item => ({
+         desc: item.desc,
+         note: item.note,
+         qty: item.qty,
+         price: item.price,
+         disc: item.disc
+      }));
+
       const { data: newRecord, error: dbError } = await supabase
         .from('billing_records')
         .insert({
@@ -166,7 +182,7 @@ function BillingComposer() {
           payment_reference: paymentReference,
           guardian_id: dbGuardianId, 
           total_amount: grandTotal,
-          line_items: lineItems,
+          line_items: cleanLineItems,
           status: 'pending',
           doc_type: docType,
           expires_at: docType === 'quote' || docType === 'invoice' ? expiryDate : null,
@@ -255,14 +271,12 @@ function BillingComposer() {
             });
           }
           
-          // AUTO-NAMING UPDATE
           const firstName = selectedGuardian.display_name.split(' ')[0] || "Unknown";
           pdf.save(`${docReference}_${firstName}_RAD-Academy.pdf`);
           
           setSuccessMessage(`Success! ${docType.toUpperCase()} recorded to ledger and downloaded as PDF.`);
       }
       
-      // Delay to let the user see the success modal
       setTimeout(() => {
         if (isIframe) {
           window.location.reload(); 
@@ -286,12 +300,50 @@ function BillingComposer() {
     }
   };
 
-  const addLine = () => setLineItems([...lineItems, { desc: '', note: '', qty: 1, price: 0, disc: 0 }]);
+  const addLine = () => setLineItems([...lineItems, { desc: '', note: '', qty: 1, price: 0, disc: 0, disc_type: 'pct', disc_rand: "0.00" }]);
   const removeLine = (idx: number) => setLineItems(lineItems.filter((_, i) => i !== idx));
+  
+  // UPDATED LINE LOGIC TO AUTO-CALCULATE DISCOUNTS
   const updateLine = (idx: number, field: string, val: any) => {
     const next = [...lineItems];
-    if (field === 'disc' && Number(val) < 0) val = 0;
-    next[idx][field] = val;
+    
+    if (field === 'disc_rand') {
+      next[idx].disc_rand = val; 
+      next[idx].disc_type = 'rand';
+      
+      const randVal = Number(val) || 0;
+      const price = Number(next[idx].price) || 0;
+      const qty = Number(next[idx].qty) || 0;
+      const totalValue = price * qty;
+      
+      next[idx].disc = totalValue > 0 ? (randVal / totalValue) * 100 : 0;
+    } else if (field === 'disc') {
+      let finalPct = Number(val) || 0;
+      if (finalPct < 0) finalPct = 0;
+      
+      next[idx].disc = finalPct; 
+      next[idx].disc_type = 'pct';
+      
+      const price = Number(next[idx].price) || 0;
+      const qty = Number(next[idx].qty) || 0;
+      next[idx].disc_rand = ((price * qty * finalPct) / 100).toFixed(2);
+    } else {
+      next[idx][field] = val;
+      
+      // Recalculate opposing field if price or qty changes
+      const newPrice = Number(next[idx].price) || 0;
+      const newQty = Number(next[idx].qty) || 0;
+      const totalValue = newPrice * newQty;
+      
+      if (next[idx].disc_type === 'rand') {
+          const randVal = Number(next[idx].disc_rand) || 0;
+          next[idx].disc = totalValue > 0 ? (randVal / totalValue) * 100 : 0;
+      } else {
+          const pctVal = Number(next[idx].disc) || 0;
+          next[idx].disc_rand = ((totalValue * pctVal) / 100).toFixed(2);
+      }
+    }
+    
     setLineItems(next);
   };
 
@@ -344,7 +396,7 @@ function BillingComposer() {
               <div className="space-y-4">
                 {lineItems.map((item, idx) => (
                   <div key={idx} className="bg-white/5 p-6 rounded-3xl border border-white/5 group relative">
-                    <div className="flex flex-col md:flex-row gap-6 pr-8">
+                    <div className="flex flex-col xl:flex-row xl:flex-wrap gap-6 pr-8">
                       
                       <div className="flex-1 w-full space-y-4">
                         <div className="space-y-2">
@@ -380,18 +432,34 @@ function BillingComposer() {
                         </div>
                       </div>
 
-                      <div className="flex gap-4">
-                        <div className="w-20 space-y-2">
+                      <div className="flex flex-wrap gap-4 pt-2 xl:pt-0">
+                        <div className="w-20 space-y-2 shrink-0">
                           <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Qty</label>
-                          <input type="number" value={item.qty} onChange={(e) => updateLine(idx, 'qty', e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center" />
+                          <input type="number" value={item.qty} onChange={(e) => updateLine(idx, 'qty', e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" />
                         </div>
-                        <div className="w-28 space-y-2">
-                          <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Unit Price</label>
-                          <input type="number" value={item.price} onChange={(e) => updateLine(idx, 'price', e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center" />
+                        <div className="w-28 space-y-2 shrink-0">
+                          <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Unit Price (R)</label>
+                          <input type="number" step="0.01" value={item.price} onChange={(e) => updateLine(idx, 'price', e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" />
                         </div>
-                        <div className="w-20 space-y-2">
-                          <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Disc%</label>
-                          <input type="number" value={item.disc} onChange={(e) => updateLine(idx, 'disc', e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-emerald-400 text-center min-w-[70px]" />
+                        <div className="w-20 space-y-2 shrink-0">
+                          <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Disc (%)</label>
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            value={item.disc_type === 'rand' ? (Number(item.disc) || 0).toFixed(2) : (item.disc || 0)} 
+                            onChange={(e) => updateLine(idx, 'disc', e.target.value)} 
+                            className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-emerald-400 text-center outline-none focus:border-emerald-500" 
+                          />
+                        </div>
+                        <div className="w-24 space-y-2 shrink-0">
+                          <label className="text-[9px] font-black uppercase text-emerald-500 text-center block">Disc (R)</label>
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            value={item.disc_rand || ''} 
+                            onChange={(e) => updateLine(idx, 'disc_rand', e.target.value)} 
+                            className="w-full bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-xs font-black text-emerald-400 text-center outline-none focus:border-emerald-500" 
+                          />
                         </div>
                       </div>
 
@@ -412,7 +480,7 @@ function BillingComposer() {
                 <textarea 
                     value={globalNote} 
                     onChange={(e) => setGlobalNote(e.target.value)}
-                    className="w-full bg-[#0a0f1d] border border-white/10 rounded-2xl p-4 text-xs text-slate-300 outline-none focus:border-emerald-500 min-h-[80px]"
+                    className="w-full bg-[#0a0f1d] border border-white/10 rounded-2xl p-4 text-xs text-slate-300 outline-none focus:border-emerald-500 min-h-[80px] resize-none"
                     placeholder="Enter overall notes for this document (e.g. valid for Term 2 only, special conditions)..."
                 />
             </div>
@@ -473,8 +541,8 @@ function BillingComposer() {
               <h3 className="text-sm font-black uppercase tracking-widest opacity-60">Ledger_Final_Total</h3>
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <div className="flex justify-between opacity-70 text-[11px] font-bold"><span>Sub_Total</span><span>R {subTotal.toLocaleString()}</span></div>
-                  <div className="flex justify-between opacity-70 text-[11px] font-bold text-rose-200"><span>Line_Discounts</span><span>- R {lineItemTotalDisc.toLocaleString()}</span></div>
+                  <div className="flex justify-between opacity-70 text-[11px] font-bold"><span>Sub_Total</span><span>R {subTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+                  <div className="flex justify-between opacity-70 text-[11px] font-bold text-rose-200"><span>Line_Discounts</span><span>- R {lineItemTotalDisc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
                 </div>
                 <div className="pt-3 border-t border-white/20 space-y-2">
                    <label className="text-[9px] font-black uppercase opacity-60 ml-1 tracking-widest">Overall Adjustment %</label>
@@ -482,7 +550,7 @@ function BillingComposer() {
                 </div>
                 <div className="pt-4 border-t border-white/30 flex justify-between items-end">
                   <span className="font-black uppercase text-[10px]">Total_Payable</span>
-                  <span className="text-4xl font-black tracking-tighter italic">R {grandTotal.toLocaleString()}</span>
+                  <span className="text-4xl font-black tracking-tighter italic">R {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                 </div>
               </div>
               <div className="flex flex-col gap-3">

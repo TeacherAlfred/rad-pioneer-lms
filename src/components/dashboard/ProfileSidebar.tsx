@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { 
   Shield, Award, Box, Zap, Settings, Share2, 
   LayoutDashboard, Trophy, LogOut, ChevronRight, 
-  MonitorPlay, ChevronDown, ChevronUp, Clock
+  MonitorPlay, ChevronDown, ChevronUp, Clock, Brain
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -164,6 +164,18 @@ export default function ProfileSidebar() {
             </Link>
             <Link href="/student/leaderboard" className="group flex items-center gap-4 p-4 rounded-2xl bg-[#d7a94a]/5 border border-[#d7a94a]/10 hover:border-[#d7a94a]/40 transition-all text-left">
               <Trophy size={18} className="text-[#d7a94a]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Hall of Pioneers</span>
+            </Link>
+            <Link 
+              href="/math" 
+              className="flex items-center justify-between px-6 py-4 rounded-2xl bg-blue-600/10 text-blue-400 border border-blue-500/20 hover:bg-blue-600 hover:text-white transition-all group"
+            >
+              <div className="flex items-center gap-3">
+                <Brain size={20} className="group-hover:animate-pulse" />
+                <span className="font-black uppercase tracking-widest text-xs">Math Lab</span>
+              </div>
+              <span className="px-2 py-0.5 rounded-md bg-blue-500 text-white text-[8px] font-black uppercase tracking-widest">
+                Earn Sparks
+              </span>
             </Link>
           </nav>
 
