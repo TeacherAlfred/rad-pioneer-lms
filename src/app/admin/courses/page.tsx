@@ -46,6 +46,22 @@ export default function AdminCoursesPage() {
     setLoading(false);
   }
 
+  // --- FORMAT DATE FOR INPUT ---
+  const formatDateTimeLocal = (dateString: string | null) => {
+    if (!dateString) return "";
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return "";
+    const tzOffset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+  };
+
+  const handleEditClick = (course: any) => {
+    setEditingCourse({
+      ...course,
+      launch_date_input: formatDateTimeLocal(course.launch_date)
+    });
+  };
+
   // --- UPDATE LOGIC ---
   async function handleUpdateCourse(e: React.FormEvent) {
     e.preventDefault();
@@ -54,6 +70,10 @@ export default function AdminCoursesPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
 
+      const finalLaunchDate = editingCourse.launch_date_input 
+        ? new Date(editingCourse.launch_date_input).toISOString() 
+        : null;
+
       const { error } = await supabase
         .from('courses')
         .update({
@@ -61,7 +81,7 @@ export default function AdminCoursesPage() {
           description: editingCourse.description,
           is_published: editingCourse.is_published,
           visibility: editingCourse.visibility,
-          launch_date: editingCourse.launch_date,
+          launch_date: finalLaunchDate,
           updated_at: new Date().toISOString(),
           updated_by: user?.id
         })
@@ -294,7 +314,7 @@ export default function AdminCoursesPage() {
                     )}
                   </div>
                   <button 
-                    onClick={() => setEditingCourse(course)}
+                    onClick={() => handleEditClick(course)}
                     className="text-slate-600 hover:text-white transition-colors bg-white/5 p-2.5 rounded-2xl border border-white/5"
                   >
                     <Edit3 size={20} />
@@ -305,7 +325,7 @@ export default function AdminCoursesPage() {
                   <h3 className="text-3xl font-black uppercase italic leading-[0.85] group-hover:text-blue-400 transition-colors tracking-tighter">
                     {course.title}
                   </h3>
-                  {course.launch_date && !course.is_published && (
+                  {course.launch_date && (
                     <div className="flex items-center gap-2 text-blue-400 bg-blue-400/5 py-2 px-4 rounded-xl border border-blue-400/10 w-fit">
                       <Clock size={12} />
                       <span className="text-[9px] font-black uppercase tracking-widest italic">
@@ -343,9 +363,9 @@ export default function AdminCoursesPage() {
               <motion.form 
                 onSubmit={handleUpdateCourse}
                 initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-                className="relative bg-[#0f172a] border border-white/10 rounded-[56px] w-full max-w-2xl overflow-hidden shadow-2xl"
+                className="relative bg-[#0f172a] border border-white/10 rounded-[56px] w-full max-w-2xl overflow-hidden shadow-2xl max-h-[90vh] flex flex-col"
               >
-                <div className="p-10 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
+                <div className="p-10 border-b border-white/5 flex justify-between items-center bg-white/[0.02] shrink-0">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-blue-500/20 rounded-xl border border-blue-500/30 text-blue-400"><ShieldAlert size={24} /></div>
                     <h2 className="text-3xl font-black uppercase italic tracking-tighter text-white leading-none">Sector_Calibration</h2>
@@ -353,7 +373,7 @@ export default function AdminCoursesPage() {
                   <button type="button" onClick={() => setEditingCourse(null)} className="text-slate-500 hover:text-white transition-colors"><X size={28} /></button>
                 </div>
 
-                <div className="p-12 space-y-8">
+                <div className="p-12 space-y-8 overflow-y-auto custom-scrollbar flex-1">
                   <div className="space-y-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-2">Sector Title</label>
@@ -366,7 +386,7 @@ export default function AdminCoursesPage() {
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-600 uppercase tracking-widest ml-2">Sector Objective Narrative</label>
                       <textarea 
-                        rows={4} value={editingCourse.description}
+                        rows={4} value={editingCourse.description || ''}
                         onChange={e => setEditingCourse({...editingCourse, description: e.target.value})}
                         className="w-full bg-[#020617] border border-white/10 rounded-[32px] px-8 py-6 text-white text-sm outline-none focus:border-blue-500 resize-none italic font-medium leading-relaxed"
                       />
@@ -397,13 +417,28 @@ export default function AdminCoursesPage() {
                       </select>
                     </div>
                   </div>
+
+                  {/* NEW: LAUNCH DATE CONTROL */}
+                  <div className="space-y-2 pt-4 border-t border-white/5">
+                    <div className="flex items-center gap-2 mb-1 ml-2">
+                       <Calendar size={14} className="text-blue-400" />
+                       <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Scheduled Release Date</label>
+                    </div>
+                    <input 
+                      type="datetime-local" 
+                      value={editingCourse.launch_date_input || ''}
+                      onChange={e => setEditingCourse({...editingCourse, launch_date_input: e.target.value})}
+                      className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-8 py-5 text-white font-bold text-sm outline-none focus:border-blue-500 transition-all"
+                    />
+                    <p className="text-[10px] text-slate-500 italic mt-2 ml-2">Leave blank for immediate availability.</p>
+                  </div>
                 </div>
 
-                <div className="p-10 border-t border-white/5 bg-black/40 flex justify-end items-center gap-8">
+                <div className="p-10 border-t border-white/5 bg-black/40 flex justify-end items-center gap-8 shrink-0">
                   <button type="button" onClick={() => setEditingCourse(null)} className="text-[10px] font-black uppercase text-slate-600 tracking-widest hover:text-white transition-colors">Abort_Calibration</button>
                   <button 
                     type="submit" disabled={isUpdating}
-                    className="bg-blue-600 text-white px-14 py-5 rounded-3xl font-black uppercase italic text-xs tracking-widest flex items-center gap-3 hover:bg-blue-500 shadow-2xl shadow-blue-600/30 transition-all"
+                    className="bg-blue-600 text-white px-14 py-5 rounded-3xl font-black uppercase italic text-xs tracking-widest flex items-center gap-3 hover:bg-blue-500 shadow-2xl shadow-blue-600/30 transition-all disabled:opacity-50"
                   >
                     {isUpdating ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} Sync_to_Terminal
                   </button>

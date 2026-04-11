@@ -32,10 +32,10 @@ export default function LeaderboardPage() {
         const sessionData = localStorage.getItem("pioneer_session");
         const localUser = sessionData ? JSON.parse(sessionData) : null;
 
-        // 1. Calculate the PREVIOUS Full Period (Historical suspense logic)
+        // 1. Calculate the PREVIOUS Full Period
         const now = new Date();
         const start = new Date();
-        const end = new Date();
+        let end = new Date();
 
         if (view === 'weekly') {
           // Calculate Last Monday to Last Sunday
@@ -44,13 +44,16 @@ export default function LeaderboardPage() {
           start.setDate(now.getDate() - diffToLastMonday);
           start.setHours(0,0,0,0);
           
-          end.setDate(start.getDate() + 6);
+          // FIX: Clone the start date so we don't cause month-rollover bugs
+          end = new Date(start.getTime());
+          end.setDate(end.getDate() + 6);
           end.setHours(23,59,59,999);
         } else {
           // 1st of last month to end of last month
           start.setMonth(now.getMonth() - 1, 1);
           start.setHours(0,0,0,0);
           
+          end = new Date(now.getTime());
           end.setMonth(now.getMonth(), 0);
           end.setHours(23,59,59,999);
         }
@@ -98,10 +101,14 @@ export default function LeaderboardPage() {
             const rankIndex = sorted.findIndex((l: any) => l.id === localUser.id);
             setPersonalRank(rankIndex !== -1 ? rankIndex + 1 : null);
 
-            // Nudge Logic: Remind every 3rd visit if they haven't achieved their goal
-            const visitCount = parseInt(localStorage.getItem("coach_nudge_count") || "0");
-            if (visitCount % 3 === 0) setShowCoach(true);
-            localStorage.setItem("coach_nudge_count", (visitCount + 1).toString());
+            // FIX: Nudge Logic - Only pop up once per calendar day
+            const todayStr = new Date().toISOString().split('T')[0];
+            const lastCoachNudge = localStorage.getItem("last_coach_nudge_date");
+            
+            if (lastCoachNudge !== todayStr) {
+              setShowCoach(true);
+              localStorage.setItem("last_coach_nudge_date", todayStr);
+            }
           }
         }
       } catch (err) {

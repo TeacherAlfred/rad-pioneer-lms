@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 
 interface XPBarProps {
   xp?: number;
+  todayXP?: number;
   floor?: number;
   ceiling?: number;
   accentColor?: string;

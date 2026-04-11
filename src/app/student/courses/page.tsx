@@ -3,13 +3,26 @@
 import { useEffect, useState, Suspense } from "react";
 import { 
   ChevronLeft, Lock, CheckCircle2, Loader2, 
-  Zap, BarChart3, ChevronDown, ChevronUp, ShieldCheck, ShieldAlert
+  Zap, BarChart3, ChevronDown, ChevronUp, ShieldCheck, ShieldAlert, Clock, CalendarClock
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrapper";
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
+
+// Safely parse JSON configs from Supabase whether they return as strings or objects
+const safeParse = (data: any) => {
+  if (!data) return {};
+  if (typeof data === 'object') return data;
+  try { return JSON.parse(data); } catch(e) { return {}; }
+};
+
+// Format dates beautifully (e.g. "Apr 15, 2026")
+const formatUnlockDate = (dateString: string) => {
+  const d = new Date(dateString);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
 
 // --- SEPARATE THE COMPONENT THAT USES useSearchParams ---
 function CoursesContent() {
@@ -85,8 +98,24 @@ function CoursesContent() {
               const isQuizPassed = moduleQuiz.passed;
               const bestScore = moduleQuiz.bestScore;
 
-              const sortedMissions = (mod.missions || []).sort((a: any, b: any) => a.order_index - b.order_index);
+              // --- MODULE LEVEL CHECKS ---
+              const modConfig = safeParse(mod.module_config);
+              const modIsPublished = mod.is_published !== false && modConfig.is_published !== false && (mod.status || '').toLowerCase() !== 'draft';
               
+              const modUnlockDate = mod.unlock_date ? new Date(mod.unlock_date) : null;
+              const modIsDateLocked = modUnlockDate && modUnlockDate > new Date();
+
+              // Determine base accessibility of the entire Module Accordion
+              let modBaseStatus = 'locked';
+              if (isQuizPassed) modBaseStatus = 'completed';
+              else if (!modIsPublished) modBaseStatus = 'standby';
+              else if (modIsDateLocked) modBaseStatus = 'scheduled';
+              else if (globalPrevComplete) modBaseStatus = 'unlocked';
+              
+              // Set active module to the first unlocked one we find
+              if (modBaseStatus === 'unlocked' && !activeModId) activeModId = mod.id;
+
+              const sortedMissions = (mod.missions || []).sort((a: any, b: any) => a.order_index - b.order_index);
               let prevMissionInModuleDone = true; 
 
               const processedMissions = sortedMissions.map((m: any) => {
@@ -94,23 +123,44 @@ function CoursesContent() {
                 const isDone = completedMissions.has(m.id);
                 if (isDone) totalCompleted++;
                 
-                const status = isDone ? 'completed' : (globalPrevComplete && prevMissionInModuleDone ? 'unlocked' : 'locked');
+                // --- MISSION LEVEL CHECKS ---
+                const mConfig = safeParse(m.mission_config);
+                const missionIsPublished = m.is_published !== false && mConfig.is_published !== false && (m.status || '').toLowerCase() !== 'draft';
+                const mUnlockDate = m.unlock_date ? new Date(m.unlock_date) : null;
+                const mIsDateLocked = mUnlockDate && mUnlockDate > new Date();
                 
-                if (status === 'unlocked' && !activeModId) activeModId = mod.id;
+                const isEffectivelyPublished = modIsPublished && missionIsPublished;
+                const isEffectivelyDateLocked = modIsDateLocked || mIsDateLocked;
+                
+                let status = 'locked';
+                if (isDone) {
+                  status = 'completed';
+                } else if (!isEffectivelyPublished) {
+                  status = 'standby'; 
+                } else if (isEffectivelyDateLocked) {
+                  status = 'scheduled';
+                  m.displayDate = modIsDateLocked ? mod.unlock_date : m.unlock_date; // Pass down the date for the UI
+                } else if (globalPrevComplete && prevMissionInModuleDone) {
+                  status = 'unlocked';
+                }
 
                 prevMissionInModuleDone = isDone;
                 return { ...m, status };
               });
 
               const allMissionsDone = processedMissions.length > 0 && processedMissions.every((m: any) => m.status === 'completed');
-              const quizStatus = isQuizPassed ? 'completed' : (allMissionsDone ? 'unlocked' : 'locked');
               
-              if (quizStatus === 'unlocked' && !activeModId) activeModId = mod.id;
+              let quizStatus = 'locked';
+              if (isQuizPassed) quizStatus = 'completed';
+              else if (!modIsPublished) quizStatus = 'standby';
+              else if (modIsDateLocked) quizStatus = 'scheduled';
+              else if (allMissionsDone) quizStatus = 'unlocked';
 
               globalPrevComplete = isQuizPassed; 
 
               return { 
-                ...mod, 
+                ...mod,
+                modBaseStatus, // Track the overall accessibility of the accordion wrapper
                 missions: processedMissions, 
                 quiz: { status: quizStatus, passed: isQuizPassed, bestScore } 
               };
@@ -225,47 +275,108 @@ function CoursesContent() {
             ) : (
               modules.map((mod) => {
                 const isOpen = openModuleId === mod.id;
+                const isClickable = mod.modBaseStatus === 'unlocked' || mod.modBaseStatus === 'completed';
+
                 return (
-                  <div key={mod.id} className="bg-white/[0.02] border border-white/5 rounded-[40px] overflow-hidden transition-all shadow-2xl">
-                    <button onClick={() => setOpenModuleId(isOpen ? null : mod.id)} className="w-full flex items-center justify-between p-8 hover:bg-white/5 transition-all text-left">
+                  <div key={mod.id} className={`bg-white/[0.02] border border-white/5 rounded-[40px] overflow-hidden transition-all shadow-2xl ${isClickable ? '' : 'opacity-80'}`}>
+                    
+                    {/* ENFORCED MODULE ACCORDION HEADER */}
+                    <button 
+                      onClick={() => isClickable && setOpenModuleId(isOpen ? null : mod.id)} 
+                      className={`w-full flex flex-col md:flex-row md:items-center justify-between gap-4 p-8 transition-all text-left ${isClickable ? 'hover:bg-white/5 cursor-pointer' : 'cursor-not-allowed'}`}
+                    >
                       <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black border ${mod.quiz?.passed ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'}`}>M{mod.order_index}</div>
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black border shrink-0 ${mod.modBaseStatus === 'completed' ? 'bg-green-500/10 text-green-500 border-green-500/20' : isClickable ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-slate-800 text-slate-500 border-slate-700'}`}>M{mod.order_index}</div>
                         <div>
                           <h2 className="text-xl font-black uppercase italic tracking-tight text-white">{mod.title}</h2>
                           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">{mod.description}</p>
                         </div>
                       </div>
-                      {isOpen ? <ChevronUp className="text-slate-500" /> : <ChevronDown className="text-slate-500" />}
+
+                      {/* DYNAMIC LOCK STATUS BADGES */}
+                      <div className="shrink-0 mt-4 md:mt-0">
+                        {isClickable ? (
+                          isOpen ? <ChevronUp className="text-slate-500" /> : <ChevronDown className="text-slate-500" />
+                        ) : mod.modBaseStatus === 'scheduled' ? (
+                          <div className="flex items-center gap-2 text-amber-500 bg-amber-500/10 px-4 py-2 rounded-xl border border-amber-500/20">
+                            <CalendarClock size={16} />
+                            <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Unlocks {formatUnlockDate(mod.unlock_date)}</span>
+                          </div>
+                        ) : mod.modBaseStatus === 'standby' ? (
+                          <div className="flex items-center gap-2 text-slate-500 bg-white/5 px-4 py-2 rounded-xl border border-white/10">
+                            <Clock size={16} />
+                            <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Standby</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-slate-500 bg-white/5 px-4 py-2 rounded-xl border border-white/10">
+                            <Lock size={16} />
+                            <span className="text-[10px] font-black uppercase tracking-widest hidden sm:inline">Encrypted</span>
+                          </div>
+                        )}
+                      </div>
                     </button>
 
-                    {isOpen && (
+                    {/* ONLY RENDER INTERIOR IF OPENED (Which is now impossible if locked) */}
+                    {isOpen && isClickable && (
                       <div className="p-8 pt-0 grid gap-4 pl-12 md:pl-20 border-l-2 border-blue-500/20 ml-14 mb-8">
                         {mod.missions.map((m: any) => (
-                          <div key={m.id} className={`relative p-6 rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${m.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : m.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_rgba(59,130,246,0.1)]'}`}>
-                            <div className={`absolute -left-[39px] md:-left-[71px] w-6 h-6 rounded-full flex items-center justify-center border-4 border-[#020617] ${m.status === 'completed' ? 'bg-green-400' : m.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
-                              {m.status === 'completed' ? <CheckCircle2 size={12} className="text-[#020617]" /> : m.status === 'locked' ? <Lock size={10} className="text-[#020617]" /> : <div className="w-2 h-2 bg-[#020617] rounded-full" />}
+                          <div key={m.id} className={`relative p-6 rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${m.status === 'locked' || m.status === 'standby' || m.status === 'scheduled' ? 'bg-white/5 border-white/5 opacity-60' : m.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_rgba(59,130,246,0.1)]'}`}>
+                            <div className={`absolute -left-[39px] md:-left-[71px] w-6 h-6 rounded-full flex items-center justify-center border-4 border-[#020617] ${m.status === 'completed' ? 'bg-green-400' : m.status === 'locked' || m.status === 'standby' || m.status === 'scheduled' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
+                              {m.status === 'completed' ? <CheckCircle2 size={12} className="text-[#020617]" /> : m.status === 'locked' ? <Lock size={10} className="text-[#020617]" /> : m.status === 'standby' || m.status === 'scheduled' ? <Clock size={10} className="text-[#020617]" /> : <div className="w-2 h-2 bg-[#020617] rounded-full" />}
                             </div>
                             <div className="space-y-1">
-                              <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${m.status === 'completed' ? 'text-green-400' : 'text-blue-400'}`}>Milestone_{m.order_index}</span>
+                              <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${m.status === 'completed' ? 'text-green-400' : m.status === 'standby' ? 'text-slate-400' : m.status === 'scheduled' ? 'text-amber-500' : m.status === 'locked' ? 'text-slate-500' : 'text-blue-400'}`}>Milestone_{m.order_index}</span>
                               <h3 className="text-2xl font-black italic uppercase text-white tracking-tight">{m.title}</h3>
                             </div>
-                            {m.status !== 'locked' && (
-                              <button onClick={() => window.location.href = `/student/lesson/${m.id}`} className={`px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${m.status === 'completed' ? 'bg-white/10 text-white' : 'bg-white text-black hover:scale-105 shadow-xl'}`}>{m.status === 'completed' ? 'Review Archive' : 'Enter Mission'}</button>
+                            
+                            {/* DYNAMIC MISSION BUTTON STATES */}
+                            {m.status === 'scheduled' ? (
+                              <button disabled className="px-6 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest bg-amber-500/10 text-amber-500/80 border border-amber-500/20 cursor-not-allowed flex items-center gap-2 transition-all shrink-0">
+                                <CalendarClock size={14} /> Unlocks {formatUnlockDate(m.displayDate)}
+                              </button>
+                            ) : m.status === 'standby' ? (
+                              <button disabled className="px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex items-center gap-2 transition-all shrink-0">
+                                <Clock size={14} /> Standby
+                              </button>
+                            ) : m.status === 'locked' ? (
+                              <button disabled className="px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex items-center gap-2 transition-all shrink-0">
+                                <Lock size={14} /> Encrypted
+                              </button>
+                            ) : (
+                              <button onClick={() => window.location.href = `/student/lesson/${m.id}`} className={`px-8 py-4 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all shrink-0 ${m.status === 'completed' ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-white text-black hover:scale-105 shadow-[0_0_20px_rgba(59,130,246,0.4)]'}`}>
+                                {m.status === 'completed' ? 'Review Archive' : 'Enter Mission'}
+                              </button>
                             )}
                           </div>
                         ))}
 
-                        <div className={`relative p-8 mt-6 rounded-[32px] border-2 transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${mod.quiz?.status === 'locked' ? 'bg-white/5 border-white/5 opacity-50' : mod.quiz?.status === 'completed' ? 'bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_40px_rgba(234,179,8,0.1)]' : 'bg-blue-500/10 border-blue-500/50 shadow-[0_0_40px_rgba(59,130,246,0.2)]'}`}>
-                          <div className={`absolute -left-[39px] md:-left-[71px] w-8 h-8 rounded-full flex items-center justify-center border-4 border-[#020617] ${mod.quiz?.status === 'completed' ? 'bg-yellow-400' : mod.quiz?.status === 'locked' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
-                            {mod.quiz?.status === 'completed' ? <ShieldCheck size={16} className="text-[#020617]" /> : mod.quiz?.status === 'locked' ? <Lock size={12} className="text-[#020617]" /> : <ShieldAlert size={16} className="text-[#020617]" />}
+                        {/* MODULE QUIZ / CHECKPOINT */}
+                        <div className={`relative p-8 mt-6 rounded-[32px] border-2 transition-all flex flex-col md:flex-row md:items-center justify-between gap-6 ${mod.quiz?.status === 'locked' || mod.quiz?.status === 'standby' || mod.quiz?.status === 'scheduled' ? 'bg-white/5 border-white/5 opacity-50' : mod.quiz?.status === 'completed' ? 'bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_40px_rgba(234,179,8,0.1)]' : 'bg-blue-500/10 border-blue-500/50 shadow-[0_0_40px_rgba(59,130,246,0.2)]'}`}>
+                          <div className={`absolute -left-[39px] md:-left-[71px] w-8 h-8 rounded-full flex items-center justify-center border-4 border-[#020617] ${mod.quiz?.status === 'completed' ? 'bg-yellow-400' : mod.quiz?.status === 'locked' || mod.quiz?.status === 'standby' || mod.quiz?.status === 'scheduled' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
+                            {mod.quiz?.status === 'completed' ? <ShieldCheck size={16} className="text-[#020617]" /> : mod.quiz?.status === 'standby' || mod.quiz?.status === 'scheduled' ? <Clock size={12} className="text-[#020617]" /> : mod.quiz?.status === 'locked' ? <Lock size={12} className="text-[#020617]" /> : <ShieldAlert size={16} className="text-[#020617]" />}
                           </div>
                           <div className="space-y-1">
-                            <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${mod.quiz?.status === 'completed' ? 'text-yellow-400' : 'text-blue-400'}`}>Knowledge_Uplink</span>
+                            <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${mod.quiz?.status === 'completed' ? 'text-yellow-400' : mod.quiz?.status === 'locked' || mod.quiz?.status === 'standby' || mod.quiz?.status === 'scheduled' ? 'text-slate-500' : 'text-blue-400'}`}>Knowledge_Uplink</span>
                             <h3 className="text-3xl font-black italic uppercase text-white tracking-tight">Level-Up Checkpoint</h3>
                             {mod.quiz?.status === 'completed' && <p className="text-[10px] font-black uppercase tracking-widest text-yellow-400 mt-2">Best Score: {mod.quiz?.bestScore}%</p>}
                           </div>
-                          {mod.quiz?.status !== 'locked' && (
-                            <button onClick={() => window.location.href = `/student/quiz/${mod.id}`} className={`px-8 py-5 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all ${mod.quiz?.status === 'completed' ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-500/30' : 'bg-blue-500 text-black hover:scale-105 shadow-[0_0_20px_rgba(59,130,246,0.4)]'}`}>{mod.quiz?.status === 'completed' ? 'Review Checkpoint' : 'Start Checkpoint'}</button>
+                          
+                          {mod.quiz?.status === 'scheduled' ? (
+                            <button disabled className="px-6 py-5 rounded-2xl font-black uppercase italic text-xs tracking-widest bg-amber-500/10 text-amber-500/80 border border-amber-500/20 cursor-not-allowed flex items-center gap-2 transition-all shrink-0">
+                              <CalendarClock size={14} /> Unlocks {formatUnlockDate(mod.unlock_date)}
+                            </button>
+                          ) : mod.quiz?.status === 'standby' ? (
+                            <button disabled className="px-8 py-5 rounded-2xl font-black uppercase italic text-xs tracking-widest bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex items-center gap-2 transition-all shrink-0">
+                              <Clock size={14} /> Standby
+                            </button>
+                          ) : mod.quiz?.status === 'locked' ? (
+                            <button disabled className="px-8 py-5 rounded-2xl font-black uppercase italic text-xs tracking-widest bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex items-center gap-2 transition-all shrink-0">
+                              <Lock size={14} /> Encrypted
+                            </button>
+                          ) : (
+                            <button onClick={() => window.location.href = `/student/quiz/${mod.id}`} className={`px-8 py-5 rounded-2xl font-black uppercase italic text-xs tracking-widest transition-all shrink-0 ${mod.quiz?.status === 'completed' ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-500/30' : 'bg-blue-500 text-black hover:scale-105 shadow-[0_0_20px_rgba(59,130,246,0.4)]'}`}>
+                              {mod.quiz?.status === 'completed' ? 'Review Checkpoint' : 'Start Checkpoint'}
+                            </button>
                           )}
                         </div>
                       </div>

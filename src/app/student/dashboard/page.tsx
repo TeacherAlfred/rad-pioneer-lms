@@ -30,9 +30,10 @@ export default function DashboardPage() {
   // Course & Task States
   const [activeTask, setActiveTask] = useState<ActiveTaskData | null>(null);
   const [courseTitle, setCourseTitle] = useState("Academy Uplink");
-  const [allEnrollments, setAllEnrollments] = useState<any[]>([]); // NEW: Store all courses
+  const [allEnrollments, setAllEnrollments] = useState<any[]>([]); 
   
   const [completionStats, setCompletionStats] = useState({ completed: 0, total: 0 });
+  const [todayXP, setTodayXP] = useState(0); // NEW: Track points earned today
   
   // Modal & Confirmation States
   const [showGuideModal, setShowGuideModal] = useState(false);
@@ -66,7 +67,20 @@ export default function DashboardPage() {
           setUserProfile(profile);
         }
         
-        // --- UPDATED: Fetch ALL enrollments instead of just one ---
+        // --- NEW: Fetch XP earned today ---
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        
+        const { data: xpLogs } = await supabase
+          .from('xp_logs')
+          .select('amount')
+          .eq('student_id', userId) // Note: change 'student_id' to your actual user column if different
+          .gte('created_at', todayStart.toISOString());
+          
+        const earnedToday = (xpLogs || []).reduce((acc, curr) => acc + curr.amount, 0);
+        setTodayXP(earnedToday);
+
+        // Fetch ALL enrollments
         const { data: enrollmentsData } = await supabase
           .from('enrollments')
           .select('course_id, active_task, courses(*)')
@@ -206,7 +220,16 @@ export default function DashboardPage() {
 
           <section className="bg-gradient-to-br from-[#1e293b] to-[#020617] p-10 rounded-[48px] border border-white/10 relative overflow-hidden shadow-2xl">
             <Rocket className="absolute -right-8 -bottom-8 size-48 text-white/5 -rotate-12 pointer-events-none" />
-            <div className="relative z-10 space-y-6"><PioneerXPBar xp={currentXP} rankName={stats.currentLevel.name} floor={stats.currentLevel.floor} ceiling={stats.nextLevel.xpRequired} /></div>
+            <div className="relative z-10 space-y-6">
+              {/* --- PASS todayXP TO THE XP BAR --- */}
+              <PioneerXPBar 
+                xp={currentXP} 
+                todayXP={todayXP} 
+                rankName={stats.currentLevel.name} 
+                floor={stats.currentLevel.floor} 
+                ceiling={stats.nextLevel.xpRequired} 
+              />
+            </div>
           </section>
 
           {/* =========================================
