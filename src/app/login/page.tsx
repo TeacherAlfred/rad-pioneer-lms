@@ -106,23 +106,21 @@ export default function LoginPage() {
               .eq('id', dbUser.id);
           }
 
-          // --- AUTH SIGN IN ---
-          const shadowEmail = `${typedName.toLowerCase()}@pioneer.bot`;
+          // --- PERMISSIVE AUTH SIGN IN (RESTORED) ---
+          const shadowEmail = `${typedName.toLowerCase().replace(/\s/g, '')}@pioneer.bot`;
+          const securePassword = `PIONEER-${typedPin}`; 
           
-          // Applying the PIONEER- workaround for 4-digit PINs
-          const securePassword = `PIONEER-${typedPin}`;
-
-          const { error: signInError } = await supabase.auth.signInWithPassword({
+          // We attempt to sign them in (for new Math users), but we DO NOT throw an error if it fails.
+          // This allows your legacy Pioneers to slip through just like they used to.
+          await supabase.auth.signInWithPassword({
             email: shadowEmail,
             password: securePassword,
           });
 
-          if (signInError) throw signInError;
-
+          // Set the session so the frontend grants access
           localStorage.setItem("pioneer_session", JSON.stringify(dbUser));
 
-          // --- MATH PORTAL ROUTING LOGIC ---
-          // Check if metadata contains a grade (Which defines a Math Portal user)
+          // --- ROUTING LOGIC ---
           const meta = typeof dbUser.metadata === 'string' 
             ? JSON.parse(dbUser.metadata) 
             : dbUser.metadata;
