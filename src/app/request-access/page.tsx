@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, ArrowRight, ShieldCheck, User, Users, 
@@ -8,13 +8,15 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase"; 
 
 type Intent = "math" | "robotics" | null;
 
-export default function RequestAccessPage() {
+// 1. Rename your main function to Content
+function RequestAccessContent() {
   const router = useRouter();
+  const searchParams = useSearchParams(); // Added URL parameter hook
   
   // Routing & Flow State
   const [intent, setIntent] = useState<Intent>(null);
@@ -36,6 +38,15 @@ export default function RequestAccessPage() {
     pin: "",      
     botField: ""
   });
+
+  // 2. Added this useEffect to catch the URL parameters instantly
+  useEffect(() => {
+    const urlIntent = searchParams.get("intent") as Intent;
+    if (urlIntent === "math" || urlIntent === "robotics") {
+      setIntent(urlIntent);
+      setStep(1); // Jump straight to the form
+    }
+  }, [searchParams]);
 
   // --- SUBMISSION HANDLERS ---
 
@@ -242,7 +253,13 @@ export default function RequestAccessPage() {
            </div>
         </Link>
         {step > 0 && (
-          <button onClick={() => { setStep(0); setIntent(null); setFormError(""); }} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white flex items-center gap-2 transition-colors">
+          <button onClick={() => { 
+            // 3. Clear URL when going back to pathway selection
+            router.replace('/request-access');
+            setStep(0); 
+            setIntent(null); 
+            setFormError(""); 
+          }} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white flex items-center gap-2 transition-colors">
             <ArrowLeft size={12} /> Back
           </button>
         )}
@@ -342,5 +359,14 @@ export default function RequestAccessPage() {
         </AnimatePresence>
       </section>
     </main>
+  );
+}
+
+// 4. Wrap the entire export in Suspense to prevent Next.js build errors with useSearchParams
+export default function RequestAccessPage() {
+  return (
+    <Suspense fallback={<div className="h-screen bg-[#020617] flex items-center justify-center text-emerald-500"><Loader2 className="animate-spin" size={32} /></div>}>
+      <RequestAccessContent />
+    </Suspense>
   );
 }
