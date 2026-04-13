@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { 
   Shield, Award, Box, Zap, Settings, Share2, 
   LayoutDashboard, Trophy, LogOut, ChevronRight, 
-  MonitorPlay, ChevronDown, ChevronUp, Clock, Brain
+  MonitorPlay, ChevronDown, ChevronUp, Clock, Brain, Lock
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -94,7 +94,6 @@ export default function ProfileSidebar() {
   if (!user) return null;
 
   return (
-    /* Removed 'hidden lg:flex' and 'fixed' to allow the parent drawer to control visibility and positioning */
     <aside className="h-full w-full lg:w-80 lg:fixed lg:right-0 lg:top-0 lg:h-screen bg-[#020617] lg:border-l border-white/5 flex flex-col z-50 overflow-hidden">
       
       {/* Header */}
@@ -102,10 +101,10 @@ export default function ProfileSidebar() {
         <div className="relative pt-10 pb-6 px-6 rounded-[32px] bg-gradient-to-b from-[#5574a9]/10 to-transparent border border-white/5 text-center">
           <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-20 h-20 rounded-full bg-slate-800 border-4 border-[#45a79a] p-1 overflow-hidden shadow-[0_0_20px_rgba(69,167,154,0.3)]">
             <div className="w-full h-full rounded-full bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center text-white font-black text-xl italic uppercase">
-              {user.display_name?.substring(0, 2)}
+              {user.student_identifier?.substring(0, 2)}
             </div>
           </div>
-          <h3 className="text-xl font-black text-white uppercase italic mt-4 leading-none">{user.display_name}</h3>
+          <h3 className="text-xl font-black text-white uppercase italic mt-4 leading-none">{user.student_identifier}</h3>
           
           <p className="text-[10px] font-bold text-[#45a79a] uppercase tracking-[0.2em] mb-4 mt-1">Rank // XP: {user.xp}</p>
           
@@ -147,9 +146,18 @@ export default function ProfileSidebar() {
             <Link href="/student/blueprints" className="group flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-[#5574a9]/50 transition-all text-left">
               <Box size={18} className="text-[#5574a9]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Tech Archive</span>
             </Link>
-            <Link href="/student/leaderboard" className="group flex items-center gap-4 p-4 rounded-2xl bg-[#d7a94a]/5 border border-[#d7a94a]/10 hover:border-[#d7a94a]/40 transition-all text-left">
-              <Trophy size={18} className="text-[#d7a94a]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Hall of Pioneers</span>
-            </Link>
+            
+            {/* Disabled Hall of Pioneers */}
+            <div className="group flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5 opacity-60 cursor-not-allowed text-left">
+              <div className="flex items-center gap-4">
+                <Trophy size={18} className="text-slate-600" />
+                <span className="text-[10px] font-black uppercase text-slate-500">Hall of Pioneers</span>
+              </div>
+              <span className="flex items-center gap-1 text-[7px] font-bold text-slate-500 uppercase tracking-widest border border-white/10 px-2 py-0.5 rounded-md bg-black/50">
+                <Lock size={8} /> Locked
+              </span>
+            </div>
+
             <Link 
               href="/math" 
               className="flex items-center justify-between px-6 py-4 rounded-2xl bg-blue-600/10 text-blue-400 border border-blue-500/20 hover:bg-blue-600 hover:text-white transition-all group"
@@ -164,7 +172,8 @@ export default function ProfileSidebar() {
             </Link>
           </nav>
 
-          <div className="space-y-4">
+          {/* Hidden Leader Toolkit (Code preserved for future use) */}
+          <div className="hidden space-y-4">
             <h4 className="text-[10px] font-black uppercase text-slate-600 px-2 text-left">Leader Toolkit</h4>
             <div className="grid grid-cols-2 gap-3 pb-4">
               {[
@@ -224,9 +233,10 @@ export default function ProfileSidebar() {
         </button>
         
         <div className="pt-2 pb-6 lg:pb-0 flex items-center justify-between">
-          <div className="relative group cursor-not-allowed">
-            <Settings size={18} className="text-slate-700 opacity-50" />
-          </div>
+          {/* Activated Settings Button */}
+          <Link href="/student/settings" className="relative group cursor-pointer p-2 -ml-2 rounded-xl hover:bg-white/5 transition-colors">
+            <Settings size={18} className="text-slate-400 group-hover:text-white transition-all group-hover:rotate-90 duration-500" />
+          </Link>
           <div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#88be56] animate-pulse" /><span className="text-[9px] font-bold text-slate-600 uppercase">Connection: Active</span></div>
         </div>
       </div>

@@ -29,8 +29,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   
   // Course & Task States
-  const [activeTask, setActiveTask] = useState<ActiveTaskData | null>(null);
-  const [courseTitle, setCourseTitle] = useState("Academy Uplink");
   const [allEnrollments, setAllEnrollments] = useState<any[]>([]); 
   
   const [completionStats, setCompletionStats] = useState({ completed: 0, total: 0 });
@@ -91,16 +89,8 @@ export default function DashboardPage() {
         if (enrollmentsData && enrollmentsData.length > 0) {
           setAllEnrollments(enrollmentsData);
           
-          // Use the first enrolled course as the "Primary" Hero focus
+          // Auto-sync pointer for the primary course to update stats
           const primaryEnrollment = enrollmentsData[0];
-          const rawCourse = primaryEnrollment.courses as any;
-          setCourseTitle(Array.isArray(rawCourse) ? rawCourse[0]?.title : rawCourse?.title || "Course");
-
-          if (primaryEnrollment.active_task) {
-            setActiveTask(primaryEnrollment.active_task as ActiveTaskData);
-          }
-
-          // Auto-sync pointer for the primary course
           await autoSyncPointer(userId, primaryEnrollment.course_id, primaryEnrollment.active_task);
         }
       } catch (err) {
@@ -152,7 +142,7 @@ export default function DashboardPage() {
             calculatedTask = {
               type: 'checkpoint',
               id: mod.id,
-              title: 'Knowledge Uplink',
+              title: 'Module Checkpoint',
               moduleTitle: mod.title,
               moduleDesc: mod.description || "Master the concepts of this sector to advance!",
               moduleVideo: mod.video_url
@@ -164,13 +154,14 @@ export default function DashboardPage() {
       setCompletionStats({ completed: totalCompleted, total: totalMissions });
 
       if (calculatedTask) {
-        setActiveTask(calculatedTask);
         if (!currentPointer || JSON.stringify(currentPointer) !== JSON.stringify(calculatedTask)) {
           await supabase.from('enrollments').update({ active_task: calculatedTask }).eq('student_id', userId).eq('course_id', courseId);
+          // Update local state to reflect the new task immediately
+          setAllEnrollments(prev => prev.map(e => e.course_id === courseId ? { ...e, active_task: calculatedTask } : e));
         }
       } else if (!calculatedTask && currentPointer) {
-         setActiveTask(null);
          await supabase.from('enrollments').update({ active_task: null }).eq('student_id', userId).eq('course_id', courseId);
+         setAllEnrollments(prev => prev.map(e => e.course_id === courseId ? { ...e, active_task: null } : e));
       }
     }
 
@@ -186,7 +177,7 @@ export default function DashboardPage() {
   return (
     <DashboardClientWrapper initialStats={stats}>
       <main className="min-h-screen lg:mr-80 relative overflow-hidden text-left bg-[#020617]">
-        <div className="max-w-4xl mx-auto p-4 sm:p-6 md:p-12 space-y-8 md:space-y-12 relative z-10 pb-12 md:pb-20">
+        <div className="max-w-4xl lg:max-w-5xl mx-auto p-4 sm:p-6 md:p-12 space-y-8 md:space-y-12 relative z-10 pb-12 md:pb-20">
           
           {/* =========================================
               HEADER SECTION
@@ -214,7 +205,7 @@ export default function DashboardPage() {
               </div>
               <div className="flex-1 md:flex-none bg-white/5 p-4 md:px-6 md:py-4 rounded-[20px] md:rounded-3xl border border-white/10 flex items-center justify-between md:justify-start md:gap-4 shadow-xl">
                 <div className="text-left md:text-right">
-                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Uplinks</p>
+                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Tasks</p>
                   <p className="text-xl md:text-2xl font-black text-white italic leading-none">{completionStats.completed}/{completionStats.total}</p>
                 </div>
                 <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl md:rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20 shrink-0">
@@ -241,157 +232,138 @@ export default function DashboardPage() {
           </section>
 
           {/* =========================================
-              THE HERO: ACTIVE MISSION
-              ========================================= */}
-          <section className="space-y-4 md:space-y-6">
-            <div className="flex items-center justify-between px-2 md:px-4">
-              <h3 className="text-[10px] md:text-[11px] font-black uppercase tracking-widest text-slate-500">
-                {activeTask?.type === 'checkpoint' ? 'System_Checkpoint_Pending' : 'Active_Mission_Uplink'}
-              </h3>
-              <Link href="/student/courses" className="flex items-center gap-1.5 md:gap-2 text-blue-400 text-[9px] md:text-[10px] font-black uppercase tracking-widest hover:underline transition-all">
-                <Map size={12} className="md:w-3.5 md:h-3.5" /> View Roadmap
-              </Link>
-            </div>
-
-            {activeTask ? (
-              <div className="relative rounded-[32px] md:rounded-[56px] overflow-hidden border border-white/10 bg-[#020617] shadow-2xl flex flex-col">
-                
-                {/* Image/Video Header Area */}
-                <div className="relative h-48 md:h-80 w-full overflow-hidden bg-slate-900 shrink-0">
-                  {activeTask.moduleVideo ? (
-                    <video 
-                      key={activeTask.moduleVideo} 
-                      src={activeTask.moduleVideo}
-                      autoPlay 
-                      loop 
-                      muted 
-                      playsInline 
-                      className="w-full h-full object-cover opacity-60" 
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-tr from-blue-600/20 to-purple-600/20">
-                       <Rocket size={48} className="md:w-16 md:h-16 text-white/10 animate-pulse" />
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#020617] via-[#020617]/40 to-transparent" />
-                  
-                  {/* Module Badge - Fixed max width and wrapping */}
-                  <div className="absolute top-4 left-4 right-4 md:top-6 md:left-8 md:right-auto pointer-events-none pr-4">
-                    <div className="inline-block px-3 py-1.5 md:px-4 md:py-1.5 rounded-xl md:rounded-full text-[8px] sm:text-[9px] md:text-[10px] font-black uppercase tracking-widest border bg-black/60 text-white border-white/20 backdrop-blur-md italic leading-snug md:leading-normal max-w-[90%] md:max-w-full text-left break-words whitespace-normal">
-                      {activeTask.type === 'checkpoint' ? 'Final Verification' : activeTask.moduleTitle}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Content Area - Fixed Margin and Text Sizing */}
-                <div className="px-5 md:px-14 pb-8 md:pb-12 -mt-8 md:-mt-16 relative z-10 flex-1 flex flex-col">
-                  <div className="flex flex-col md:flex-row items-start md:items-end justify-between gap-6 md:gap-8 flex-1 w-full">
-                    
-                    <div className="space-y-3 md:space-y-4 text-left w-full md:max-w-xl">
-                      <h2 className="text-2xl sm:text-3xl md:text-6xl font-black text-white tracking-tighter italic uppercase leading-[0.95] md:leading-[0.85] drop-shadow-md break-words">
-                        {activeTask.title}
-                      </h2>
-                      <div className="flex gap-2.5 md:gap-3 items-start bg-blue-500/5 border border-blue-500/10 p-4 md:p-5 rounded-2xl md:rounded-3xl shadow-inner">
-                        <Sparkles className="text-blue-400 shrink-0 mt-0.5 md:mt-1 w-4 h-4 md:w-5 md:h-5" />
-                        <p className="text-slate-300 text-xs md:text-sm leading-relaxed font-medium">
-                          {activeTask.moduleDesc || "Your next challenge awaits! Complete this mission to unlock new creator powers."}
-                        </p>
-                      </div>
-                    </div>
-
-                    <Link 
-                      href={activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`} 
-                      className={`w-16 h-16 md:w-32 md:h-32 rounded-full flex items-center justify-center transition-all shadow-xl md:shadow-2xl hover:scale-105 md:hover:scale-110 shrink-0 group self-end md:self-auto ${
-                        activeTask.type === 'checkpoint' ? 'bg-yellow-500 text-black' : 'bg-white text-slate-950'
-                      }`}
-                    >
-                      {activeTask.type === 'checkpoint' ? (
-                        <ShieldCheck className="w-8 h-8 md:w-12 md:h-12" />
-                      ) : (
-                        <Play fill="currentColor" className="w-7 h-7 md:w-11 md:h-11 ml-1 md:ml-1.5" />
-                      )}
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="relative bg-[#020617] border border-white/5 rounded-[32px] md:rounded-[56px] text-center shadow-2xl overflow-hidden group min-h-[300px] md:min-h-[400px] flex flex-col items-center justify-center">
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden opacity-[0.02] group-hover:opacity-[0.05] transition-opacity duration-1000">
-                  <span className="text-[5rem] sm:text-[8rem] md:text-[12rem] font-black text-white whitespace-nowrap -rotate-12 italic tracking-tighter">
-                    COMING SOON
-                  </span>
-                </div>
-                <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-10 md:h-14 bg-blue-500/10 border-y border-blue-500/20 -rotate-12 backdrop-blur-sm flex items-center justify-center gap-4 md:gap-8 shadow-[0_0_50px_rgba(59,130,246,0.15)]">
-                      {[...Array(8)].map((_, i) => (
-                        <span key={i} className="text-blue-400 font-black text-[8px] md:text-[10px] uppercase tracking-[0.4em] flex items-center gap-4 md:gap-8 drop-shadow-[0_0_10px_rgba(59,130,246,0.8)]">
-                          DEPLOYING SOON <span className="w-1 md:w-1.5 h-1 md:h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                        </span>
-                      ))}
-                  </div>
-                </div>
-                <div className="relative z-10 space-y-4 md:space-y-6 flex flex-col items-center backdrop-blur-md bg-[#020617]/60 p-6 md:p-12 rounded-[24px] md:rounded-[40px] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] max-w-[90%] md:max-w-lg mx-auto">
-                  <div className="w-14 h-14 md:w-20 md:h-20 bg-[#0f172a] border border-white/10 rounded-xl md:rounded-2xl flex items-center justify-center shadow-inner relative group-hover:scale-105 transition-transform duration-500">
-                     <div className="absolute inset-0 border border-blue-500/30 rounded-xl md:rounded-2xl animate-ping opacity-20" />
-                     <Clock className="w-6 h-6 md:w-8 md:h-8 text-blue-400" />
-                  </div>
-                  <div className="space-y-1.5 md:space-y-2">
-                    <h2 className="text-xl md:text-3xl font-black uppercase tracking-tight text-white drop-shadow-lg">Courses Locked</h2>
-                    <p className="text-slate-400 text-xs md:text-sm leading-relaxed">
-                      Your portal is currently empty. Courses and missions will appear here once they are initialized by Command.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* =========================================
-              THE LIBRARY (YOUR COURSES)
+              UNIFIED LIBRARY: COURSES + NEXT LESSON
               ========================================= */}
           {allEnrollments.length > 0 && (
-            <section className="space-y-4 md:space-y-6 pt-4 md:pt-6">
+            <section className="space-y-6 md:space-y-8 pt-2 md:pt-4">
               <div className="flex items-center gap-2.5 md:gap-3 px-2 md:px-4 border-b border-white/5 pb-3 md:pb-4">
-                <BookOpen className="w-4 h-4 md:w-4 md:h-4 text-blue-500" />
-                <h3 className="text-xs md:text-sm font-black uppercase tracking-widest text-white italic">Your Courses</h3>
+                <BookOpen className="w-4 h-4 md:w-5 md:h-5 text-blue-500" />
+                <h3 className="text-sm md:text-base font-black uppercase tracking-widest text-white italic text-left">Your Courses</h3>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+              <div className="space-y-6 md:space-y-8">
                 {allEnrollments.map((enrollment) => {
                   const courseData = Array.isArray(enrollment.courses) ? enrollment.courses[0] : enrollment.courses;
                   if (!courseData) return null;
+                  
+                  const activeTask = enrollment.active_task as ActiveTaskData;
 
                   return (
-                    <Link 
+                    <div 
                       key={enrollment.course_id} 
-                      href="/student/courses" 
-                      className="group bg-white/[0.02] border border-white/5 rounded-[24px] md:rounded-[32px] p-5 md:p-6 hover:bg-white/[0.04] hover:border-white/10 transition-all flex flex-col justify-between min-h-[160px] md:min-h-[200px]"
+                      className="relative bg-white/[0.02] border border-white/5 rounded-[32px] md:rounded-[48px] overflow-hidden flex flex-col md:flex-row shadow-2xl group"
                     >
-                      <div className="space-y-3 md:space-y-4">
-                        <div className="flex items-center gap-2">
-                          <span className={`px-2 md:px-2.5 py-1 rounded border text-[7px] md:text-[8px] font-black uppercase tracking-widest ${
-                            enrollment.status === 'active' 
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                              : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
-                          }`}>
-                            {enrollment.status === 'active' ? 'Registered' : 'Not Registered'}
+                      {/* --- LEFT SIDE: COURSE PRECEDENCE --- */}
+                      <div className="p-6 md:p-10 md:w-[55%] flex flex-col justify-between relative z-10 border-b md:border-b-0 md:border-r border-white/5 bg-[#020617]/40">
+                        <div className="space-y-4 md:space-y-6">
+                          <div>
+                            <span className={`px-2.5 py-1 rounded-md border text-[8px] font-black uppercase tracking-widest ${
+                              enrollment.status === 'active' 
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                                : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                            }`}>
+                              {enrollment.status === 'active' ? 'Registered' : 'Not Registered'}
+                            </span>
+                          </div>
+                          
+                          <div>
+                            <h2 className="text-3xl md:text-5xl font-black text-white uppercase italic tracking-tighter leading-[0.9] drop-shadow-sm">
+                              {courseData.title}
+                            </h2>
+                            <p className="text-sm text-slate-400 mt-4 leading-relaxed font-medium">
+                              {courseData.description}
+                            </p>
+                          </div>
+                        </div>
+
+                        <Link href="/student/courses" className="mt-8 pt-4 border-t border-white/5 flex items-center justify-between text-slate-500 hover:text-white transition-colors group/link w-full">
+                          <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+                            <Map size={14} className="text-slate-600 group-hover/link:text-blue-400 transition-colors" /> View Course Roadmap
                           </span>
-                        </div>
-                        <div>
-                          <h4 className="text-lg md:text-xl font-black text-white uppercase italic tracking-tighter leading-tight group-hover:text-blue-400 transition-colors">
-                            {courseData.title}
-                          </h4>
-                          <p className="text-[11px] md:text-xs text-slate-500 mt-1.5 md:mt-2 line-clamp-2 leading-relaxed">
-                            {courseData.description}
-                          </p>
-                        </div>
+                          <ChevronRight size={16} className="group-hover/link:translate-x-1 transition-transform" />
+                        </Link>
                       </div>
 
-                      <div className="mt-4 md:mt-6 pt-3 md:pt-4 border-t border-white/5 flex items-center justify-between text-slate-400 group-hover:text-white transition-colors">
-                        <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest">Enter Sector</span>
-                        <ChevronRight className="w-3.5 h-3.5 md:w-4 md:h-4 group-hover:translate-x-1 transition-transform" />
+                      {/* --- RIGHT SIDE: NEXT LESSON SUPPORT --- */}
+                      <div className="md:w-[45%] relative bg-[#020617] flex flex-col overflow-hidden min-h-[260px] md:min-h-0">
+                        {activeTask ? (
+                          <>
+                            {/* Cinematic Background with Darker Fade for CTA Contrast */}
+                            <div className="absolute inset-0 z-0">
+                              {activeTask.moduleVideo ? (
+                                <video 
+                                  src={activeTask.moduleVideo}
+                                  autoPlay loop muted playsInline 
+                                  className="w-full h-full object-cover opacity-20 md:opacity-30" 
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-gradient-to-br from-blue-900/20 to-purple-900/20" />
+                              )}
+                              <div className="absolute inset-0 bg-gradient-to-t from-[#020617] via-[#020617]/80 to-transparent" />
+                            </div>
+
+                            <div className="relative z-10 p-6 md:p-8 flex flex-col h-full">
+                              
+                              <div className="flex items-center justify-between mb-auto">
+                                <span className="text-[9px] font-black uppercase tracking-widest text-blue-400 flex items-center gap-1.5">
+                                  <Sparkles size={12} /> Your Next Lesson
+                                </span>
+                              </div>
+
+                              <div className="flex flex-col gap-5 my-6">
+                                <div>
+                                  <h3 className="text-2xl md:text-3xl font-black text-white italic uppercase tracking-tighter leading-tight drop-shadow-md">
+                                    {activeTask.title}
+                                  </h3>
+                                </div>
+
+                                {/* MASSIVE CTA BUTTON */}
+                                <Link 
+                                  href={activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`} 
+                                  className={`w-full py-4 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl ${
+                                    activeTask.type === 'checkpoint' 
+                                      ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black hover:shadow-[0_0_30px_rgba(245,158,11,0.4)]' 
+                                      : 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white hover:shadow-[0_0_30px_rgba(59,130,246,0.4)]'
+                                  }`}
+                                >
+                                  {/* Glossy Top Highlight */}
+                                  <div className="absolute top-0 inset-x-0 h-1/2 bg-white/20 rounded-t-2xl pointer-events-none" />
+                                  
+                                  {activeTask.type === 'checkpoint' ? (
+                                    <>
+                                      <ShieldCheck className="w-5 h-5 md:w-6 md:h-6 animate-pulse" />
+                                      <span className="font-black uppercase tracking-widest text-xs md:text-sm italic">Start Final Review</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="w-6 h-6 md:w-8 md:h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                        <Play fill="currentColor" className="w-3 h-3 md:w-4 md:h-4 ml-0.5" />
+                                      </div>
+                                      <span className="font-black uppercase tracking-widest text-xs md:text-sm italic">Begin Lesson</span>
+                                    </>
+                                  )}
+                                </Link>
+                              </div>
+
+                              {/* Footer: Module/Week Badge */}
+                              <div className="mt-auto pt-4 border-t border-white/10">
+                                <p className="text-[8px] md:text-[9px] font-black uppercase tracking-widest text-slate-400 truncate">
+                                  {activeTask.moduleTitle}
+                                </p>
+                              </div>
+
+                            </div>
+                          </>
+                        ) : (
+                          /* Empty/Locked State for Right Panel */
+                          <div className="relative z-10 p-6 md:p-8 flex flex-col items-center justify-center h-full text-center bg-black/20">
+                            <Clock className="w-8 h-8 text-slate-600 mb-3" />
+                            <span className="text-xs font-black uppercase text-slate-500">Sector Clear</span>
+                            <span className="text-[10px] text-slate-600 mt-1 uppercase font-bold tracking-widest">Awaiting Command Initialization</span>
+                          </div>
+                        )}
                       </div>
-                    </Link>
+                    </div>
                   );
                 })}
               </div>
@@ -488,7 +460,6 @@ export default function DashboardPage() {
 
       {/* --- DESKTOP SIDEBAR (ALWAYS VISIBLE ON LARGE SCREENS) --- */}
       <div className="hidden lg:block">
-        {/* We mount this normally without the mobile props to keep TS happy */}
         <ProfileSidebar />
       </div>
 
@@ -532,7 +503,6 @@ export default function DashboardPage() {
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto no-scrollbar relative">
-                 {/* Re-mounts the sidebar component so it fetches fresh data when opened */}
                  <ProfileSidebar />
               </div>
             </motion.div>
