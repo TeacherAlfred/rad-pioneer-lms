@@ -179,7 +179,15 @@ export default function ProspectsCRM() {
   };
 
   const filteredProspects = prospects.filter(p => {
-    const matchesSearch = p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.email?.toLowerCase().includes(searchQuery.toLowerCase()) || p.phone?.includes(searchQuery);
+    // Clean the search query and the phone number for better matching (digits only)
+    const cleanSearch = searchQuery.replace(/\D/g, '');
+    const cleanPhone = p.phone ? p.phone.replace(/\D/g, '') : '';
+
+    const matchesSearch = 
+      p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      p.email?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      p.phone?.includes(searchQuery) || // Matches exact string (e.g. "082 123")
+      (cleanSearch !== "" && cleanPhone.includes(cleanSearch)); // Matches digits only (e.g. "082123")
     
     const matchesPipeline = filterPipeline === "All" ? true 
       : filterPipeline === "Active" ? !['Lost', 'Converted (Won)'].includes(p.status)
