@@ -17,7 +17,6 @@ export default function ProfileSidebar() {
   const scrollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   const [user, setUser] = useState<any>(null);
-  const [copied, setCopied] = useState(false);
   const [unlockedItems, setUnlockedItems] = useState<string[]>([]);
   
   const [canScrollUp, setCanScrollUp] = useState(false);
@@ -92,23 +91,11 @@ export default function ProfileSidebar() {
 
   useEffect(() => { checkScroll(); }, [user, unlockedItems, checkScroll]);
 
-  const handleShare = () => {
-    // Disabled functionality for now
-    // const url = `${window.location.origin}/student/portfolio/${user?.id || ''}`;
-    // navigator.clipboard.writeText(url);
-    // setCopied(true);
-    // setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleOpenBriefing = () => {
-    // Disabled functionality for now
-    // window.dispatchEvent(new CustomEvent('open-mission-briefing'));
-  };
-
   if (!user) return null;
 
   return (
-    <aside className="fixed right-0 top-0 h-screen w-80 bg-[#020617] border-l border-white/5 hidden lg:flex flex-col z-50 overflow-hidden">
+    /* Removed 'hidden lg:flex' and 'fixed' to allow the parent drawer to control visibility and positioning */
+    <aside className="h-full w-full lg:w-80 lg:fixed lg:right-0 lg:top-0 lg:h-screen bg-[#020617] lg:border-l border-white/5 flex flex-col z-50 overflow-hidden">
       
       {/* Header */}
       <div className="p-8 pb-4 shrink-0 relative z-20 bg-[#020617]">
@@ -120,7 +107,6 @@ export default function ProfileSidebar() {
           </div>
           <h3 className="text-xl font-black text-white uppercase italic mt-4 leading-none">{user.display_name}</h3>
           
-          {/* Replaced 'Grade 01' with 'Rank' */}
           <p className="text-[10px] font-bold text-[#45a79a] uppercase tracking-[0.2em] mb-4 mt-1">Rank // XP: {user.xp}</p>
           
           <div className="flex justify-center gap-2">
@@ -149,12 +135,11 @@ export default function ProfileSidebar() {
         <div 
           ref={scrollContainerRef} 
           onScroll={checkScroll} 
-          className="h-full overflow-y-auto px-8 space-y-8 no-scrollbar scroll-smooth pt-2"
+          className="h-full overflow-y-auto px-8 space-y-8 no-scrollbar scroll-smooth pt-2 pb-10"
         >
           <nav className="flex flex-col gap-3">
             <h4 className="text-[10px] font-black uppercase text-slate-600 px-2 text-left">Navigation</h4>
             
-            {/* Renamed to 'Dashboard' */}
             <Link href="/student/dashboard" className="group flex items-center gap-4 p-4 rounded-2xl bg-[#45a79a]/5 border border-[#45a79a]/10 hover:border-[#45a79a]/50 transition-all text-left">
               <LayoutDashboard size={18} className="text-[#45a79a]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Dashboard</span>
             </Link>
@@ -218,15 +203,12 @@ export default function ProfileSidebar() {
       {/* Footer */}
       <div className="p-8 pt-4 bg-[#020617] border-t border-white/5 mt-auto space-y-4 shrink-0 relative z-20">
         <div className="flex gap-3">
-          
-          {/* Tutorial Button (Disabled State) */}
           <button disabled className="flex-1 p-3 rounded-2xl bg-white/[0.02] border border-white/5 flex flex-col items-center justify-center gap-1 cursor-not-allowed opacity-50 relative group">
             <MonitorPlay size={18} className="text-slate-600" />
             <span className="text-[8px] font-black text-slate-500 uppercase italic leading-none">Tutorial</span>
             <div className="absolute -top-2 -right-2 bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-md text-[7px] font-bold uppercase opacity-0 group-hover:opacity-100 transition-opacity">Soon</div>
           </button>
 
-          {/* Share Button (Disabled State) */}
           <button disabled className="flex-1 p-3 rounded-2xl bg-white/[0.02] border border-white/5 flex flex-col items-center justify-center gap-1 cursor-not-allowed opacity-50 relative group">
              <div className="flex flex-col items-center gap-1 text-slate-600">
                <Share2 size={18} />
@@ -236,17 +218,15 @@ export default function ProfileSidebar() {
           </button>
         </div>
         
-        <button onClick={() => { localStorage.removeItem("pioneer_session"); router.push("/"); }} className="w-full h-14 rounded-2xl bg-red-500/5 border border-red-500/10 hover:bg-red-500/10 hover:border-red-500/40 flex items-center justify-between px-6 transition-all group">
+        <button onClick={() => { localStorage.removeItem("pioneer_session"); window.location.href = "/"; }} className="w-full h-14 rounded-2xl bg-red-500/5 border border-red-500/10 hover:bg-red-500/10 hover:border-red-500/40 flex items-center justify-between px-6 transition-all group">
           <div className="flex items-center gap-3"><LogOut size={16} className="text-red-500" /><span className="text-[9px] font-black uppercase text-red-500">End Session</span></div>
           <ChevronRight size={14} className="text-red-900 group-hover:text-red-500 transition-colors" />
         </button>
         
-        <div className="pt-2 flex items-center justify-between">
-          {/* Settings Button (Disabled State) */}
+        <div className="pt-2 pb-6 lg:pb-0 flex items-center justify-between">
           <div className="relative group cursor-not-allowed">
             <Settings size={18} className="text-slate-700 opacity-50" />
           </div>
-          
           <div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#88be56] animate-pulse" /><span className="text-[9px] font-bold text-slate-600 uppercase">Connection: Active</span></div>
         </div>
       </div>

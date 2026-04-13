@@ -195,7 +195,6 @@ export default function LandingPage() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-4 w-full">
-                  {/* ROUTED TO NEW REQUEST ACCESS PAGE */}
                   <Link href="/request-access" className="w-full py-5 bg-white text-[#020617] rounded-2xl font-black uppercase italic tracking-widest text-xs hover:bg-slate-200 transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] hover:scale-[1.02]">
                     Request Access
                   </Link>
@@ -221,23 +220,22 @@ export default function LandingPage() {
           <Link href="/login" className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
             <UserCircle size={16} /> Login
           </Link>
-          {/* ROUTED TO NEW REQUEST ACCESS PAGE */}
           <Link href="/request-access" className="px-6 py-3 rounded-full bg-white text-[#020617] text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg">Request Access</Link>
         </div>
 
-        <div className="flex md:hidden flex-col items-center gap-3 mt-2 w-full max-w-[250px]">
-          <div className="w-full flex gap-3">
+        {/* MOBILE NAV BUTTONS */}
+        <div className="flex md:hidden flex-col items-center gap-3 mt-4 w-full sm:max-w-sm px-2">
+          <div className="w-full flex gap-4">
              <Link href="/login" className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-full border border-white/10 bg-white/5 text-white text-[11px] font-black uppercase tracking-widest">
                <UserCircle size={14} /> Login
              </Link>
-             {/* ROUTED TO NEW REQUEST ACCESS PAGE */}
              <Link href="/request-access" className="flex-1 text-center flex items-center justify-center py-3.5 rounded-full bg-white text-[#020617] text-[11px] font-black uppercase tracking-widest shadow-lg">Register</Link>
           </div>
         </div>
       </nav>
 
       {/* 2. HERO SECTION */}
-      <section className="relative min-h-[100dvh] md:min-h-[85vh] flex items-center px-8 overflow-hidden pt-44 md:pt-20">
+      <section className="relative min-h-[100dvh] md:min-h-[85vh] flex items-center px-6 md:px-8 overflow-hidden pt-36 md:pt-20">
         <div className="absolute inset-0 z-0 overflow-hidden bg-[#020617]">
           <video autoPlay muted loop playsInline className="w-full h-full object-cover opacity-40 grayscale mix-blend-luminosity">
             <source src="/video_clips/Learning Should Be Fun_1080p.mp4" type="video/mp4" />
@@ -254,26 +252,26 @@ export default function LandingPage() {
         </div>
         
         <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: "easeOut" }} className="max-w-7xl mx-auto w-full relative z-10">
-          <div className="max-w-3xl space-y-8 backdrop-blur-[2px]">
+          <div className="max-w-3xl space-y-6 md:space-y-8 backdrop-blur-[2px]">
             <div className="inline-flex items-center gap-3 px-1">
               <div className="w-8 h-[1px] bg-rad-blue" />
               <span className="text-[10px] font-black uppercase tracking-[0.3em] text-rad-blue leading-none">2026 Intake Open</span>
             </div>
             
-            <h1 className="font-black uppercase italic tracking-tighter leading-[0.85] text-5xl md:text-[90px] drop-shadow-2xl">
+            <h1 className="font-black uppercase italic tracking-tighter leading-[0.9] md:leading-[0.85] text-[44px] sm:text-5xl md:text-[90px] drop-shadow-2xl">
               <span className="text-rad-teal">
-                <span className="text-7xl md:text-[130px]">R</span>edefining
+                <span className="text-[64px] sm:text-7xl md:text-[130px]">R</span>edefining
               </span> <br />
               <span className="text-rad-blue">
-                <span className="text-7xl md:text-[130px]">A</span>frican
+                <span className="text-[64px] sm:text-7xl md:text-[130px]">A</span>frican
               </span> <br />
               <span className="text-rad-purple">
-                <span className="text-7xl md:text-[130px]">D</span>reams.
+                <span className="text-[64px] sm:text-7xl md:text-[130px]">D</span>reams.
               </span>
             </h1>
             
-            <div className="pl-6 border-l-2 border-rad-teal space-y-4">
-              <p className="text-lg md:text-xl text-white font-medium italic leading-relaxed drop-shadow-md">
+            <div className="pl-4 md:pl-6 border-l-2 border-rad-teal space-y-4">
+              <p className="text-base sm:text-lg md:text-xl text-white font-medium italic leading-relaxed drop-shadow-md">
                 Empowering the African child to build globally impactful solutions.
               </p>
               <p className="text-sm md:text-base text-slate-300 font-light italic leading-relaxed drop-shadow-md">
@@ -300,8 +298,9 @@ export default function LandingPage() {
 
           <div className="relative h-auto md:h-[500px] w-full group">
             <AnimatePresence mode="wait">
-              <motion.div key={featuredPrograms[index].id} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.4 }} className="relative md:absolute inset-0 flex flex-col md:flex-row rounded-[32px] md:rounded-[48px] overflow-hidden bg-white/[0.03] border border-white/10 shadow-2xl">
-                <div className="w-full md:w-1/2 h-48 md:h-full relative bg-[#0f172a] overflow-hidden shrink-0">
+              <motion.div key={featuredPrograms[index].id} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.4 }} className="relative md:absolute inset-0 flex flex-col md:flex-row rounded-[24px] md:rounded-[48px] overflow-hidden bg-white/[0.03] border border-white/10 shadow-2xl">
+                
+                <div className="w-full md:w-1/2 h-56 sm:h-64 md:h-full relative bg-[#0f172a] overflow-hidden shrink-0">
                   {featuredPrograms[index].isVideo ? (
                     <video autoPlay muted loop playsInline className="w-full h-full object-cover">
                       <source src={featuredPrograms[index].image || featuredPrograms[index].fallbackImage} type="video/mp4" />
@@ -309,22 +308,22 @@ export default function LandingPage() {
                   ) : (
                     <Image src={featuredPrograms[index].image || featuredPrograms[index].fallbackImage || "/logo/rad-logo_white_2.png"} alt={featuredPrograms[index].title} fill className="object-cover" />
                   )}
-                  <div className={`absolute top-6 left-6 md:top-8 md:left-8 px-4 py-2 rounded-2xl ${featuredPrograms[index].accent} text-white text-[10px] font-black uppercase tracking-[0.2em] shadow-xl`}>
+                  <div className={`absolute top-4 left-4 md:top-8 md:left-8 px-3 py-1.5 md:px-4 md:py-2 rounded-xl md:rounded-2xl ${featuredPrograms[index].accent} text-white text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] shadow-xl`}>
                     {featuredPrograms[index].label}
                   </div>
                 </div>
 
-                <div className="w-full md:w-1/2 p-6 md:p-16 flex flex-col justify-center gap-6 md:gap-10">
+                <div className="w-full md:w-1/2 p-6 sm:p-8 md:p-16 flex flex-col justify-center gap-5 md:gap-10">
                   <div className="space-y-4 md:space-y-6">
                     <div className="space-y-2 md:space-y-3">
-                      <h3 className="text-2xl md:text-5xl font-black uppercase italic tracking-tighter leading-none text-white">{featuredPrograms[index].title}</h3>
+                      <h3 className="text-[28px] sm:text-4xl md:text-5xl font-black uppercase italic tracking-tighter leading-[1.1] md:leading-none text-white">{featuredPrograms[index].title}</h3>
                       <div className="flex items-center gap-2 text-slate-500">
                         <MapPin size={14} className="md:w-4 md:h-4" />
                         <span className="text-[10px] md:text-[11px] font-black uppercase tracking-widest">{featuredPrograms[index].location}</span>
                       </div>
                     </div>
                     
-                    <p className="text-slate-400 text-sm md:text-lg font-medium leading-relaxed italic line-clamp-3 md:line-clamp-none">{featuredPrograms[index].details}</p>
+                    <p className="text-slate-400 text-sm md:text-lg font-medium leading-relaxed italic">{featuredPrograms[index].details}</p>
 
                     <div className="flex items-center gap-3 p-3 md:p-4 rounded-xl md:rounded-2xl bg-white/5 border border-white/5 w-fit">
                         <Clock size={14} className="text-rad-blue md:w-4 md:h-4" />
@@ -332,15 +331,14 @@ export default function LandingPage() {
                     </div>
                   </div>
                   
-                  {/* ROUTED TO NEW REQUEST ACCESS PAGE */}
-                  <Link href="/request-access" className="flex items-center justify-center gap-4 px-6 md:px-10 py-4 md:py-5 rounded-2xl md:rounded-3xl bg-white text-[#020617] font-black uppercase italic tracking-tighter hover:bg-slate-200 transition-all text-sm group/btn shadow-xl">
+                  <Link href="/request-access" className="flex items-center justify-center gap-3 md:gap-4 px-6 md:px-10 py-3.5 md:py-5 rounded-2xl md:rounded-3xl bg-white text-[#020617] font-black uppercase italic tracking-tighter hover:bg-slate-200 transition-all text-xs md:text-sm group/btn shadow-xl mt-2 md:mt-0">
                     Register Interest <ArrowRight size={16} className="md:w-[18px] md:h-[18px] group-hover/btn:translate-x-1 transition-transform" />
                   </Link>
                 </div>
               </motion.div>
             </AnimatePresence>
             
-            <div className="flex md:hidden items-center justify-center gap-4 mt-6 absolute -bottom-16 left-0 right-0">
+            <div className="flex md:hidden items-center justify-center gap-4 mt-8 absolute -bottom-20 left-0 right-0">
               <button onClick={prev} className="p-3 rounded-full bg-white/5 border border-white/10 active:bg-white/10 transition-all"><ChevronLeft size={18} /></button>
               <div className="flex gap-2">
                 {featuredPrograms.map((_, i) => (<div key={i} className={`w-1.5 h-1.5 rounded-full ${i === index ? 'bg-white' : 'bg-white/20'}`} />))}
@@ -390,7 +388,7 @@ export default function LandingPage() {
         </motion.div>
       </section>
 
-      {/* 5. MOBILE EVENTS GALLERY */}
+      {/* 5. MOBILE EVENTS GALLERY (UPGRADED CINEMATIC UI) */}
       <motion.section initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: "easeOut" }} className="md:hidden py-16 relative border-t border-white/5 mt-10">
         <div className="space-y-1 mb-8 px-6">
           <h2 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-600 leading-none mb-2">Academy Memories</h2>
@@ -399,66 +397,86 @@ export default function LandingPage() {
         
         <div className="flex overflow-x-auto gap-4 snap-x snap-mandatory pb-8 px-6 w-full no-scrollbar">
            {pastEvents.map((item) => (
-              <div key={item.id} onClick={() => item.gallery.length > 0 && setSelectedEvent(item)} className={`min-w-[85vw] shrink-0 snap-center rounded-[32px] overflow-hidden bg-white/[0.02] border border-white/5 p-4 flex flex-col active:scale-[0.98] transition-transform select-none ${item.gallery.length > 0 ? 'cursor-pointer shadow-lg' : 'opacity-50 grayscale'}`} onContextMenu={(e) => e.preventDefault()}>
-                <div className="w-full h-56 bg-[#0f172a] rounded-[24px] overflow-hidden relative shadow-inner">
-                  <Image src={item.thumbnail || '/logo/rad-logo_white_2.png'} alt={item.title} fill className="object-cover opacity-80" draggable={false} />
-                  {item.gallery.length > 0 ? (
-                    <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 flex items-center gap-2">
-                      <div className="flex gap-1"><div className="w-1.5 h-1.5 bg-white rounded-full" /><div className="w-1.5 h-1.5 bg-white/50 rounded-full" /><div className="w-1.5 h-1.5 bg-white/30 rounded-full" /></div>
-                    </div>
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm"><span className="text-[9px] font-black tracking-widest text-slate-400 uppercase">Awaiting Uploads</span></div>
-                  )}
-                  <div className="absolute top-4 left-1/2 -translate-x-1/2 w-16 h-4 bg-white/10 backdrop-blur-sm -rotate-2" />
+              <div 
+                key={item.id} 
+                onClick={() => item.gallery.length > 0 && setSelectedEvent(item)} 
+                className={`min-w-[80vw] sm:min-w-[60vw] aspect-[4/5] shrink-0 snap-center rounded-[32px] overflow-hidden relative flex flex-col justify-end active:scale-[0.98] transition-transform select-none ${item.gallery.length > 0 ? 'cursor-pointer shadow-2xl border border-white/10' : 'opacity-50 grayscale border border-white/5'}`} 
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                <div className="absolute inset-0 bg-[#0f172a] z-0">
+                  <Image src={item.thumbnail || '/logo/rad-logo_white_2.png'} alt={item.title} fill className="object-cover opacity-90" draggable={false} />
                 </div>
-                <div className="pt-5 pb-2 px-2 text-center">
-                  <p className="text-sm font-black uppercase italic tracking-widest text-white leading-tight mb-1">{item.title}</p>
-                  <p className="text-[9px] uppercase tracking-[0.2em] text-slate-500">{item.location}</p>
+
+                {item.gallery.length > 0 ? (
+                  <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 flex items-center gap-1.5 shadow-lg z-10">
+                    <ImageIcon size={12} className="text-rad-blue" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-white">{item.gallery.length} Photos</span>
+                  </div>
+                ) : (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10">
+                    <span className="text-[10px] font-black tracking-widest text-slate-400 uppercase bg-black/40 px-4 py-2 rounded-full border border-white/5">Awaiting Uploads</span>
+                  </div>
+                )}
+
+                <div className="absolute inset-0 bg-gradient-to-t from-[#020617] via-[#020617]/70 to-transparent z-0" />
+
+                <div className="relative z-10 p-6 w-full">
+                  <h3 className="text-2xl sm:text-3xl font-black uppercase italic tracking-tighter text-white leading-none mb-2 shadow-sm">{item.title}</h3>
+                  <div className="flex items-center gap-1.5 text-rad-blue">
+                    <MapPin size={12} />
+                    <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em]">{item.location}</p>
+                  </div>
                 </div>
               </div>
            ))}
         </div>
       </motion.section>
 
-      {/* POPUP GALLERY MODAL */}
+      {/* POPUP GALLERY MODAL (UPGRADED CINEMATIC MOBILE UI) */}
       <AnimatePresence>
         {selectedEvent && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 md:p-8">
-            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="bg-[#020617] border border-white/10 rounded-[32px] md:rounded-[48px] w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
-              <div className="flex items-center justify-between p-6 md:p-8 border-b border-white/10 bg-white/[0.02] shrink-0">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[60] bg-black/95 backdrop-blur-xl flex items-center justify-center md:p-8">
+            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="bg-[#020617] md:border border-white/10 rounded-none md:rounded-[48px] w-full h-full md:h-auto md:max-h-[90vh] md:max-w-6xl flex flex-col shadow-2xl overflow-hidden relative">
+              
+              <div className="flex items-center justify-between p-5 sm:p-6 md:p-8 border-b border-white/10 bg-black/40 md:bg-white/[0.02] backdrop-blur-2xl shrink-0 sticky top-0 z-20">
                 <div>
-                  <h3 className="text-xl md:text-3xl font-black uppercase italic tracking-tighter text-white">{selectedEvent.title}</h3>
-                  <p className="text-[10px] md:text-xs font-black uppercase tracking-[0.2em] text-rad-blue">{selectedEvent.location}</p>
+                  <h3 className="text-xl md:text-3xl font-black uppercase italic tracking-tighter text-white drop-shadow-lg">{selectedEvent.title}</h3>
+                  <div className="flex items-center gap-1.5 text-rad-blue mt-1">
+                    <MapPin size={12} className="md:w-4 md:h-4" />
+                    <p className="text-[10px] md:text-xs font-black uppercase tracking-[0.2em]">{selectedEvent.location}</p>
+                  </div>
                 </div>
-                <button onClick={() => setSelectedEvent(null)} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all"><X size={20} /></button>
+                <button onClick={() => setSelectedEvent(null)} className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-white/10 md:bg-white/5 border border-white/20 md:border-white/10 flex items-center justify-center text-white md:text-slate-400 hover:text-white hover:bg-white/20 transition-all backdrop-blur-md shrink-0"><X size={20} /></button>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4 md:p-8 no-scrollbar bg-black/20">
-                <div className={`grid gap-4 md:gap-6 grid-cols-2 ${selectedEvent.gallery.length <= 4 ? "md:grid-cols-2" : "md:grid-cols-4"}`}>
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 no-scrollbar bg-black/40 md:bg-black/20 relative z-10">
+                <div className={`grid gap-6 md:gap-6 grid-cols-1 sm:grid-cols-2 ${selectedEvent.gallery.length <= 4 ? "md:grid-cols-2" : "md:grid-cols-4"}`}>
                   {selectedEvent.gallery.map((imgSrc: string, i: number) => (
-                    <div key={i} className="w-full aspect-square rounded-[20px] md:rounded-[32px] overflow-hidden border border-white/5 relative bg-[#0f172a] shadow-lg group select-none" onContextMenu={(e) => e.preventDefault()}>
-                      <Image src={imgSrc || '/logo/rad-logo_white_2.png'} alt={`Gallery image ${i + 1}`} fill sizes="(max-width: 768px) 50vw, 25vw" className="object-cover" draggable={false} />
-                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/10">
+                    <div key={i} className="w-full aspect-[4/3] sm:aspect-square md:aspect-square rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 md:border-white/5 relative bg-[#0f172a] shadow-2xl md:shadow-lg group select-none" onContextMenu={(e) => e.preventDefault()}>
+                      <Image src={imgSrc || '/logo/rad-logo_white_2.png'} alt={`Gallery image ${i + 1}`} fill sizes="(max-width: 768px) 100vw, 25vw" className="object-cover transition-transform duration-700 group-hover:scale-105" draggable={false} />
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/10 pointer-events-none">
                         <div className="-rotate-[35deg] flex flex-col items-center opacity-[0.20] mix-blend-overlay">
-                          <p className="text-white font-black uppercase tracking-[0.3em] text-lg md:text-2xl whitespace-nowrap">RAD Gallery</p>
-                          <p className="text-white font-black uppercase tracking-[0.1em] text-[10px] md:text-sm whitespace-nowrap mt-1">{selectedEvent.title}</p>
+                          <p className="text-white font-black uppercase tracking-[0.3em] text-2xl md:text-2xl whitespace-nowrap drop-shadow-md">RAD Gallery</p>
+                          <p className="text-white font-black uppercase tracking-[0.1em] text-xs md:text-sm whitespace-nowrap mt-1 drop-shadow-md">{selectedEvent.title}</p>
                         </div>
                       </div>
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-100 md:opacity-0 pointer-events-none" />
                     </div>
                   ))}
                 </div>
+                <div className="h-12 md:hidden" />
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* 6. NEW GLOBAL FOOTER */}
-      <footer className="border-t border-white/5 bg-[#020617] pt-16 pb-8 px-8 md:px-12 relative overflow-hidden mt-10 md:mt-0">
+      {/* 6. NEW GLOBAL FOOTER (TIGHTER MOBILE UI) */}
+      <footer className="border-t border-white/5 bg-[#020617] pt-12 md:pt-16 pb-8 px-6 md:px-12 relative overflow-hidden mt-10 md:mt-0">
         <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3/4 h-48 bg-rad-blue/5 blur-[120px] pointer-events-none" />
 
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-16 md:gap-12 justify-between relative z-10">
-          <div className="space-y-8 md:w-1/3">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row gap-10 md:gap-12 justify-between relative z-10">
+          <div className="space-y-6 md:space-y-8 md:w-1/3">
             <div className="space-y-6">
               <div className="relative w-[120px]">
                 <Image src="/logo/rad-logo_white_2.png" alt="RAD Academy Logo" width={120} height={40} unoptimized style={{ width: '100%', height: 'auto', display: 'block' }} />
@@ -487,46 +505,46 @@ export default function LandingPage() {
           </div>
 
           <div className="md:w-1/3 flex flex-col justify-center">
-            <div className="p-8 rounded-[32px] bg-white/[0.02] border border-white/5 relative overflow-hidden group hover:border-white/10 transition-colors shadow-lg">
+            <div className="p-6 md:p-8 rounded-[24px] md:rounded-[32px] bg-white/[0.02] border border-white/5 relative overflow-hidden group hover:border-white/10 transition-colors shadow-lg">
               <div className="flex items-center gap-3 mb-6">
                 <div className="p-2.5 rounded-xl bg-white/5 text-slate-300 border border-white/10"><MapPin size={20} /></div>
                 <h4 className="text-white font-black uppercase tracking-[0.2em] text-[11px]">In-Person Lessons</h4>
               </div>
-              <h5 className="text-white text-lg font-black italic tracking-tighter uppercase mb-3">Menlyn, Pretoria</h5>
-              <p className="text-slate-400 text-sm leading-relaxed italic mb-6">
+              <h5 className="text-white text-base md:text-lg font-black italic tracking-tighter uppercase mb-2 md:mb-3">Menlyn, Pretoria</h5>
+              <p className="text-slate-400 text-xs md:text-sm leading-relaxed italic mb-5 md:mb-6">
                 Join our collaborative weekend sessions to get hands-on experience with real-world robotics and hardware.
               </p>
-              <div className="flex flex-col gap-2 p-4 rounded-2xl bg-[#020617] border border-white/5 shadow-inner">
-                <div className="flex items-center justify-between"><span className="text-white text-[10px] font-black uppercase tracking-widest">Saturday</span><span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">10:00 - 11:00</span></div>
+              <div className="flex flex-col gap-1.5 md:gap-2 p-3 md:p-4 rounded-xl md:rounded-2xl bg-[#020617] border border-white/5 shadow-inner">
+                <div className="flex items-center justify-between"><span className="text-white text-[9px] md:text-[10px] font-black uppercase tracking-widest">Saturday</span><span className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-widest">10:00 - 11:00</span></div>
                 <div className="h-[1px] w-full bg-white/5" />
-                <div className="flex items-center justify-between"><span className="text-white text-[10px] font-black uppercase tracking-widest">Sunday</span><span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">14:00 - 15:00</span></div>
+                <div className="flex items-center justify-between"><span className="text-white text-[9px] md:text-[10px] font-black uppercase tracking-widest">Sunday</span><span className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-widest">14:00 - 15:00</span></div>
               </div>
             </div>
           </div>
 
           <div className="md:w-1/3">
-            <div className="p-8 rounded-[32px] bg-gradient-to-b from-rad-blue/10 to-[#020617] border border-rad-blue/20 relative overflow-hidden group hover:border-rad-blue/40 transition-colors shadow-2xl h-full flex flex-col justify-center">
+            <div className="p-6 md:p-8 rounded-[24px] md:rounded-[32px] bg-gradient-to-b from-rad-blue/10 to-[#020617] border border-rad-blue/20 relative overflow-hidden group hover:border-rad-blue/40 transition-colors shadow-2xl h-full flex flex-col justify-center">
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rad-blue via-rad-purple to-rad-teal" />
               <div className="flex items-center gap-3 mb-6">
                 <div className="p-2.5 rounded-xl bg-rad-blue/20 text-rad-blue border border-rad-blue/30"><Award size={20} /></div>
                 <h4 className="text-white font-black uppercase tracking-[0.2em] text-[11px]">Premium Online Lessons</h4>
               </div>
-              <h5 className="text-white text-lg font-black italic tracking-tighter uppercase mb-3">1-on-1 Mentorship</h5>
-              <p className="text-slate-400 text-sm leading-relaxed italic mb-6">
+              <h5 className="text-white text-base md:text-lg font-black italic tracking-tighter uppercase mb-2 md:mb-3">1-on-1 Mentorship</h5>
+              <p className="text-slate-400 text-xs md:text-sm leading-relaxed italic mb-5 md:mb-6">
                 Avoid crowded group classes. Our premium online students receive dedicated, personalized coaching from expert instructors.
               </p>
-              <div className="flex items-center gap-3 p-4 rounded-2xl bg-[#020617] border border-white/5 shadow-inner mt-auto">
+              <div className="flex items-center gap-3 p-3 md:p-4 rounded-xl md:rounded-2xl bg-[#020617] border border-white/5 shadow-inner mt-auto">
                 <Clock size={16} className="text-rad-blue" />
                 <div className="space-y-0.5">
-                  <p className="text-white text-[10px] font-black uppercase tracking-widest">Monday - Friday</p>
-                  <p className="text-rad-blue text-[10px] font-black uppercase tracking-widest">15:00 - 18:00</p>
+                  <p className="text-white text-[9px] md:text-[10px] font-black uppercase tracking-widest">Monday - Friday</p>
+                  <p className="text-rad-blue text-[9px] md:text-[10px] font-black uppercase tracking-widest">15:00 - 18:00</p>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="max-w-7xl mx-auto mt-16 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-6 pb-6">
+        <div className="max-w-7xl mx-auto mt-10 md:mt-16 pt-6 md:pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4 md:gap-6 pb-6 text-center md:text-left">
            <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.5em]">RAD Academy // © 2026</p>
            <div className="flex gap-8 text-[10px] font-bold text-slate-600 uppercase tracking-widest"></div>
         </div>
