@@ -36,7 +36,6 @@ export default function LoginPage() {
 
     try {
       if (mode === "staff" || mode === "parent") {
-        // DIRECT LOGIN - MFA DISABLED FOR NOW
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
           email: typedName,
           password: typedPin,
@@ -44,18 +43,14 @@ export default function LoginPage() {
 
         if (authError) throw authError;
 
-        // Fetch the profile to securely route based on their actual database role
         const { data: userProfile, error: profileError } = await supabase
           .from('profiles')
           .select('role')
           .eq('auth_user_id', authData.user?.id)
           .single();
 
-        if (profileError || !userProfile) {
-          throw new Error("Profile access denied. Please contact support.");
-        }
+        if (profileError || !userProfile) throw new Error("Profile access denied.");
 
-        // SMART ROUTING ENGINE
         if (userProfile.role === 'admin') {
           window.location.href = "/admin/dashboard"; 
         } else if (userProfile.role === 'educator') {
@@ -65,7 +60,6 @@ export default function LoginPage() {
         } else {
           router.push("/");
         }
-        
         return;
       }
 
@@ -85,6 +79,7 @@ export default function LoginPage() {
           String(dbUser.pin_hash).trim() === String(typedPin).trim();
 
         if (isPinMatch) {
+          // --- STREAK LOGIC ---
           const todayUTC = new Date().toISOString().split('T')[0];
           const lastActive = dbUser.last_active_date;
           let newStreak = dbUser.current_streak || 0;
@@ -111,14 +106,33 @@ export default function LoginPage() {
               .eq('id', dbUser.id);
           }
 
+          // --- AUTH SIGN IN ---
           const shadowEmail = `${typedName.toLowerCase()}@pioneer.bot`;
-          await supabase.auth.signInWithPassword({
+          
+          // Applying the PIONEER- workaround for 4-digit PINs
+          const securePassword = `PIONEER-${typedPin}`;
+
+          const { error: signInError } = await supabase.auth.signInWithPassword({
             email: shadowEmail,
-            password: typedPin,
+            password: securePassword,
           });
 
+          if (signInError) throw signInError;
+
           localStorage.setItem("pioneer_session", JSON.stringify(dbUser));
-          router.push("/student/dashboard");
+
+          // --- MATH PORTAL ROUTING LOGIC ---
+          // Check if metadata contains a grade (Which defines a Math Portal user)
+          const meta = typeof dbUser.metadata === 'string' 
+            ? JSON.parse(dbUser.metadata) 
+            : dbUser.metadata;
+
+          if (meta && meta.grade) {
+            router.push("/math");
+          } else {
+            router.push("/student/dashboard");
+          }
+          
         } else {
           setError("Oops! That Secret Code didn't work.");
         }
