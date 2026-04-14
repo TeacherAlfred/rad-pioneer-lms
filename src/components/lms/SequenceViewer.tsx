@@ -78,7 +78,7 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
       );
     }
 
-    // PREMIUM IMAGE RENDERING (Reverted to full size lg:aspect-square for the card)
+    // PREMIUM IMAGE RENDERING
     return (
       <div 
         onClick={() => setExpandedImage(url)}
@@ -113,10 +113,11 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
 
   return (
     <>
-      <div className="w-full max-w-5xl mx-auto bg-gradient-to-b from-[#0f172a] to-[#020617] rounded-[48px] border border-white/10 overflow-hidden shadow-2xl flex flex-col min-h-[500px]">
+      {/* Changed to h-full to flex perfectly inside the 65vh parent constraint */}
+      <div className="w-full h-full max-w-5xl mx-auto bg-gradient-to-b from-[#0f172a] to-[#020617] rounded-[48px] border border-white/10 overflow-hidden shadow-2xl flex flex-col relative">
         
         {/* --- HEADER & PROGRESS BAR --- */}
-        <div className="p-6 md:p-8 border-b border-white/5 bg-white/[0.02]">
+        <div className="p-6 md:p-8 border-b border-white/5 bg-white/[0.02] shrink-0">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3 text-purple-400">
               <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/20">
@@ -139,8 +140,48 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
           </div>
         </div>
 
-        {/* --- DYNAMIC CARD CONTENT AREA --- */}
-        <div className="flex-1 relative overflow-visible p-6 md:p-12 flex items-center">
+        {/* --- DYNAMIC CARD CONTENT AREA (WITH FLOATING ARROWS) --- */}
+        {/* Adjusted padding: pb-24 md:pb-28 to leave space for the bottom buttons */}
+        <div className="flex-1 relative overflow-hidden px-8 md:px-16 pt-6 md:pt-8 pb-24 md:pb-28 flex flex-col justify-center">
+          
+          {/* FLOATING LEFT ARROW - Anchored to Bottom Left */}
+          <AnimatePresence>
+            {!isFirstCard && (
+              <motion.button
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                onClick={handlePrev}
+                className="absolute left-6 md:left-10 bottom-6 md:bottom-10 z-40 w-10 h-10 md:w-14 md:h-14 flex items-center justify-center rounded-full bg-black/50 border border-white/10 hover:bg-white/10 text-white backdrop-blur-md transition-all hover:scale-110 shadow-xl"
+              >
+                <ChevronLeft className="w-6 h-6 md:w-8 md:h-8 mr-0.5" />
+              </motion.button>
+            )}
+          </AnimatePresence>
+
+          {/* FLOATING RIGHT ARROW / COMPLETE BUTTON - Anchored to Bottom Right */}
+          <motion.button
+            key={isLastCard ? 'complete' : 'next'}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            onClick={handleNext}
+            className={`absolute right-6 md:right-10 bottom-6 md:bottom-10 z-40 flex items-center justify-center gap-2 transition-all hover:scale-105 backdrop-blur-md ${
+                isLastCard 
+                ? 'w-10 h-10 md:w-auto md:h-auto md:px-6 md:py-4 rounded-full bg-emerald-500 text-black shadow-[0_0_30px_rgba(16,185,129,0.3)] border border-emerald-400 font-black uppercase tracking-widest text-xs' 
+                : 'w-10 h-10 md:w-14 md:h-14 rounded-full bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] border border-blue-400'
+            }`}
+          >
+            {isLastCard ? (
+              <>
+                <span className="hidden md:inline">Complete</span>
+                <CheckCircle2 className="w-5 h-5 md:w-6 md:h-6" />
+              </>
+            ) : (
+              <ChevronRight className="w-6 h-6 md:w-8 md:h-8 ml-0.5" />
+            )}
+          </motion.button>
+
+          {/* SLIDING CONTENT */}
           <AnimatePresence initial={false} custom={direction} mode="wait">
             <motion.div
               key={currentIndex}
@@ -150,19 +191,19 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
               animate="center"
               exit="exit"
               transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              className="w-full overflow-visible"
+              className="w-full"
             >
               <div className={`grid gap-8 lg:gap-12 items-center ${currentCard.media_url ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1 max-w-3xl mx-auto text-center'}`}>
                 
                 {/* Text Content */}
-                <div className={`space-y-6 p-2 overflow-visible ${!currentCard.media_url && 'flex flex-col items-center'}`}>
+                <div className={`space-y-6 p-2 ${!currentCard.media_url && 'flex flex-col items-center'}`}>
                   <h2 
                     className="text-3xl md:text-5xl font-black text-white italic uppercase tracking-tighter leading-[1.1] pb-2"
                     dangerouslySetInnerHTML={{ __html: formatText ? formatText(currentCard.title) : currentCard.title }}
                   />
 
                   <div 
-                    className="text-base md:text-lg text-slate-300 leading-loose font-medium pb-2"
+                    className="text-sm md:text-base text-slate-300 leading-loose font-medium pb-2"
                     dangerouslySetInnerHTML={{ __html: formatText ? formatText(currentCard.content) : currentCard.content }}
                   />
                 </div>
@@ -178,35 +219,9 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
           </AnimatePresence>
         </div>
 
-        {/* --- NAVIGATION FOOTER --- */}
-        <div className="p-6 md:p-8 border-t border-white/5 bg-black/40 flex items-center justify-between gap-4 shrink-0">
-          <button
-            onClick={handlePrev}
-            disabled={isFirstCard}
-            className="px-6 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all flex items-center gap-2 disabled:opacity-0 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white"
-          >
-            <ChevronLeft size={16} /> Back
-          </button>
-
-          <button
-            onClick={handleNext}
-            className={`px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all flex items-center gap-2 shadow-2xl ${
-              isLastCard 
-                ? "bg-emerald-600 text-white hover:bg-emerald-500 hover:scale-105 shadow-emerald-900/40 border border-emerald-500/50" 
-                : "bg-purple-600 text-white hover:bg-purple-500 hover:scale-105 shadow-purple-900/40 border border-purple-500/50"
-            }`}
-          >
-            {isLastCard ? (
-              <>Lock & Complete <CheckCircle2 size={16} /></>
-            ) : (
-              <>Next Sequence <ChevronRight size={16} /></>
-            )}
-          </button>
-        </div>
-
       </div>
 
-      {/* --- NEW: LIGHTBOX MODAL --- */}
+      {/* --- LIGHTBOX MODAL --- */}
       <AnimatePresence>
         {expandedImage && (
           <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 md:p-12">

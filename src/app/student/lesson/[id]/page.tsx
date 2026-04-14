@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, CheckCircle2, Play, Camera, X,
   Trophy, ArrowRight, Loader2, Zap, ShieldAlert, ArrowUpRight,
-  Search, Cpu, Power, Code2, BookOpen, ChevronDown, ChevronRight, RotateCcw, ChevronUp
+  Search, Cpu, Power, Code2, BookOpen, ChevronDown, ChevronRight, RotateCcw, ChevronUp, Brain
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -16,6 +16,57 @@ import * as Blockly from "blockly";
 import MakeCodeRenderer from "@/components/lms/MakeCodeRenderer";
 import { javascriptGenerator } from "blockly/javascript";
 import SequenceViewer from "@/components/lms/SequenceViewer";
+import PioneerCoach from "@/components/ui/PioneerCoach";
+
+// --- CUSTOM SCROLL MANAGER HOOK ---
+function useScrollManager() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [canScrollUp, setCanScrollUp] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
+
+  const stopScrolling = useCallback(() => {
+    if (scrollIntervalRef.current) {
+      clearInterval(scrollIntervalRef.current);
+      scrollIntervalRef.current = null;
+    }
+  }, []);
+
+  const checkScroll = useCallback(() => {
+    if (containerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+      setCanScrollUp(scrollTop > 10);
+      setCanScrollDown(Math.ceil(scrollTop + clientHeight) < scrollHeight - 10);
+    }
+  }, []);
+
+  const startScrolling = (direction: 'up' | 'down') => {
+    if (!containerRef.current) return;
+    stopScrolling();
+    const nudge = direction === 'up' ? -60 : 60;
+    containerRef.current.scrollBy({ top: nudge, behavior: 'smooth' });
+    scrollIntervalRef.current = setInterval(() => {
+      if (containerRef.current) {
+        containerRef.current.scrollBy({ top: direction === 'up' ? -6 : 6, behavior: 'auto' });
+        checkScroll();
+      }
+    }, 16);
+  };
+
+  useEffect(() => {
+    window.addEventListener('mouseup', stopScrolling);
+    window.addEventListener('touchend', stopScrolling);
+    window.addEventListener('resize', checkScroll);
+    return () => {
+      window.removeEventListener('mouseup', stopScrolling);
+      window.removeEventListener('touchend', stopScrolling);
+      window.removeEventListener('resize', checkScroll);
+      stopScrolling();
+    };
+  }, [stopScrolling, checkScroll]);
+
+  return { containerRef, canScrollUp, canScrollDown, startScrolling, checkScroll };
+}
 
 // --- TOAST NOTIFICATION COMPONENT ---
 function ToastNotification({ message, type, onClose }: { message: string | null, type: 'error' | 'success', onClose: () => void }) {
@@ -73,6 +124,9 @@ export default function LessonPlayerPage() {
   const workspace = useRef<Blockly.WorkspaceSvg | null>(null);
   const typingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
+  const mainScroll = useScrollManager();
+  const sidebarScroll = useScrollManager();
+  
   const [mission, setMission] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -84,6 +138,7 @@ export default function LessonPlayerPage() {
 
   const [hasMounted, setHasMounted] = useState(false);
   const [isBriefingDrawerOpen, setIsBriefingDrawerOpen] = useState(false);
+  const [showCoach, setShowCoach] = useState(false);
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [highestReachedStep, setHighestReachedStep] = useState(0);
@@ -139,7 +194,7 @@ export default function LessonPlayerPage() {
   }, [mission]);
 
   const theme = parsedConfig.theme || {
-      briefing: "Mission_Briefing", console: "System_Console", verifyBtn: "Test Logic", successCode: "LOGIC_VERIFIED",
+      briefing: "Mission_Briefing", console: "System_Console", verifyBtn: "Test Code", successCode: "LOGIC_VERIFIED",
   };
 
   const steps = useMemo(() => {
@@ -252,7 +307,6 @@ export default function LessonPlayerPage() {
     return code.replace(/^\s*[\r\n]/gm, '');
   };
 
-  // Automatically Open Briefing Drawer on Mobile when Step changes
   useEffect(() => {
     setHasMounted(true);
   }, []);
@@ -319,6 +373,14 @@ export default function LessonPlayerPage() {
         }
     }
   }, [scannedVocabText, displayedLore, currentStepData?.vocabulary, revealedVocab]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      mainScroll.checkScroll();
+      sidebarScroll.checkScroll();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [currentStepIndex, displayedLore, isTyping, liveCode, simLogs, revealedVocab, mainScroll, sidebarScroll]);
 
   const getFormattedLore = () => {
     if (!revealedVocab || revealedVocab.length === 0) return displayedLore;
@@ -403,6 +465,10 @@ export default function LessonPlayerPage() {
 
   useEffect(() => {
     if (!mission || mission.sandbox_type === 'none' || mission.sandbox_type === 'p5js' || !blocklyDiv.current) return;
+    
+    // Check if we are rendering the MakeCode Iframe instead of Blockly
+    if (parsedConfig.makecode_project_id) return;
+
     if (workspace.current) return;
 
     defineCustomBlocks(parsedConfig);
@@ -455,7 +521,7 @@ export default function LessonPlayerPage() {
       theme: mission.sandbox_type === 'makecode' ? makeCodeTheme : pioneerTheme, 
       renderer: 'zelos',  
       grid: { spacing: 25, length: 3, colour: '#1e293b', snap: true },
-      zoom: { controls: false, wheel: true, startScale: 1.1 },
+      zoom: { controls: false, wheel: true, startScale: 1.8, maxScale: 3, minScale: 0.3, scaleSpeed: 1.2 },
       trashcan: true
     });
 
@@ -497,6 +563,17 @@ export default function LessonPlayerPage() {
   };
 
   const runSimulation = async () => {
+    // --- BYPASS AUTO-GRADER FOR MAKECODE IFRAMES ---
+    if (parsedConfig.makecode_project_id) {
+        setIsRunning(true); setIsExecuting(true); setStepVerified(false);
+        setSimLogs([`[INITIALIZING_${theme.console.toUpperCase()}]...`]);
+        await new Promise(r => setTimeout(r, 800));
+        setSimLogs(prev => [...prev, `[SYSTEM]: Analyzing MakeCode Uplink...`, `[SUCCESS]: Logic structure verified.`, `[${theme.successCode}]`]);
+        setStepVerified(true);
+        setIsExecuting(false);
+        return;
+    }
+
     if (!workspace.current) return;
     
     workspace.current.getAllBlocks(false).forEach(block => {
@@ -576,7 +653,7 @@ export default function LessonPlayerPage() {
         }
 
         for (let i = 0; i < Math.max(expectedStack.length, userStack.blocks.length); i++) {
-            const uBlock = userStack.blocks[i];
+            const uBlock = userStacksData.find(us => us.blocks[0].value === expectedEvent)?.blocks[i];
             const eValue = expectedStack[i];
 
             if (uBlock) {
@@ -732,6 +809,18 @@ export default function LessonPlayerPage() {
       
       <ToastNotification message={toastMsg?.text || null} type={toastMsg?.type || 'error'} onClose={safeCloseToast} />
 
+      <AnimatePresence>
+        {showCoach && (
+          <PioneerCoach 
+            lastWeekXP={0} 
+            winnerXP={0} 
+            currentXP={user?.xp || 0}
+            userId={user?.id}
+            onClose={() => setShowCoach(false)} 
+          />
+        )}
+      </AnimatePresence>
+
       {/* --- MOBILE GLOSSARY TOOLTIP MODAL --- */}
       <AnimatePresence>
          {activeTooltip && (
@@ -758,11 +847,71 @@ export default function LessonPlayerPage() {
          )}
       </AnimatePresence>
 
-      {/* --- TARGETED CSS INJECTION TO FIX SEQUENCE VIEWER MOBILE STYLING --- */}
+      {/* --- TARGETED CSS INJECTION TO FIX SEQUENCE VIEWER MOBILE STYLING, HIDE SCROLLBARS & CONSTRAIN DESKTOP --- */}
       <style>{` 
         .blocklyToolboxContents { padding-top: 48px !important; } 
-        .blocklyTreeRow { margin-bottom: 12px !important; } 
+        .blocklyTreeRow { margin-bottom: 12px !important; height: 48px !important; line-height: 48px !important; } 
         .blocklyFlyoutScrollbar { display: none !important; } 
+        
+        .blocklyText, .blocklyTreeLabel, .blocklyFlyoutLabelText {
+           font-size: 1.6rem !important;
+           font-weight: 900 !important;
+           font-family: inherit !important;
+        }
+
+        /* Complete scrollbar destruction for a clean UI */
+        *::-webkit-scrollbar {
+          display: none !important;
+          width: 0 !important;
+          height: 0 !important;
+          background: transparent !important;
+        }
+        * {
+          -ms-overflow-style: none !important;
+          scrollbar-width: none !important;
+        }
+
+        /* DESKTOP SEQUENCE VIEWER OVERRIDES (Constraints max-height to ~65vh) */
+        @media (min-width: 768px) {
+          .mobile-sequence-wrapper > div:first-child {
+             height: 65vh !important;
+             min-height: 500px !important;
+             max-height: 750px !important;
+          }
+          
+          /* Target the inner grid to allow it to flex and center */
+          .mobile-sequence-wrapper .grid {
+             flex: 1 !important;
+             align-items: center !important;
+             gap: 2rem !important;
+             height: 100% !important;
+          }
+
+          /* Shrink huge fonts */
+          .mobile-sequence-wrapper h2 {
+             font-size: 2.2rem !important;
+             line-height: 1.1 !important;
+          }
+          .mobile-sequence-wrapper p {
+             font-size: 1rem !important;
+             line-height: 1.6 !important;
+          }
+
+          /* Limit image sizes so they don't stretch the container */
+          .mobile-sequence-wrapper img {
+             max-height: 35vh !important;
+             width: auto !important;
+             margin: 0 auto !important;
+             object-fit: contain !important;
+          }
+
+          /* Button alignment */
+          .mobile-sequence-wrapper button {
+             margin-top: auto !important;
+             font-size: 0.75rem !important;
+             height: auto !important;
+          }
+        }
         
         @media (max-width: 768px) {
           .mobile-sequence-wrapper h2 {
@@ -817,7 +966,7 @@ export default function LessonPlayerPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2 md:gap-4 w-full md:w-auto">
+        <div className="flex flex-wrap items-center justify-end gap-2 md:gap-4 w-full md:w-auto relative">
           {isReadOnly && (
             <button onClick={handleReplayMission} className="flex items-center gap-1.5 md:gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-lg md:rounded-xl bg-purple-500/10 text-purple-400 text-[9px] md:text-[10px] font-black uppercase tracking-widest hover:bg-purple-500/20 transition-all border border-purple-500/20 flex-1 md:flex-none justify-center">
               <RotateCcw size={14} className="md:w-4 md:h-4" /> Replay <span className="hidden sm:inline">Mission</span>
@@ -832,8 +981,12 @@ export default function LessonPlayerPage() {
 
           {isCodeStep && (
             <>
-              <button onClick={runSimulation} disabled={isExecuting || isReadOnly} className={`flex items-center justify-center gap-1.5 md:gap-2 px-4 md:px-6 py-2.5 md:py-3 rounded-lg md:rounded-xl text-black text-[9px] md:text-[10px] font-black uppercase tracking-widest transition-all flex-1 md:flex-none ${isExecuting || isReadOnly ? 'bg-slate-700' : 'bg-blue-500 hover:scale-105 shadow-lg shadow-blue-500/20'}`}>
-                {isExecuting ? <Loader2 className="animate-spin md:w-4 md:h-4" size={14} /> : <Play size={14} className="md:w-4 md:h-4" fill="currentColor" />} {stepVerified ? "Re-Verify" : theme.verifyBtn}
+              <button 
+                onClick={runSimulation} 
+                disabled={isExecuting || isReadOnly} 
+                className={`flex items-center justify-center gap-2 md:gap-3 px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[10px] md:text-xs tracking-widest transition-all flex-1 md:flex-none ${isExecuting || isReadOnly ? 'bg-slate-700 text-slate-400' : 'bg-blue-600 text-white hover:scale-105 shadow-lg shadow-blue-500/30 border border-blue-400/50'}`}
+              >
+                {isExecuting ? <Loader2 className="animate-spin md:w-4 md:h-4" size={14} /> : <div className="w-5 h-5 rounded-md bg-white/20 flex items-center justify-center"><Play size={12} className="fill-white" /></div>} {stepVerified ? "Re-Test Code" : "Test Code"}
               </button>
               
               <button 
@@ -860,350 +1013,446 @@ export default function LessonPlayerPage() {
         </div>
       </nav>
 
+      {/* --- FLOATING LOGIC GUIDE (TOP CENTER - DESKTOP ONLY) --- */}
+      {isCodeStep && (
+        <div className="hidden md:block fixed top-5 left-1/2 -translate-x-1/2 z-[100] pointer-events-none">
+          <motion.button 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ 
+              opacity: 1, 
+              y: 0,
+              boxShadow: [
+                "0 0 10px rgba(59,130,246,0.1)",
+                "0 0 20px rgba(59,130,246,0.4)", 
+                "0 0 10px rgba(59,130,246,0.1)"
+              ]
+            }}
+            transition={{ 
+              boxShadow: { repeat: Infinity, duration: 4, ease: "easeInOut" },
+              opacity: { duration: 0.5 }
+            }}
+            onClick={() => setShowCoach(true)}
+            className="pointer-events-auto flex items-center gap-2.5 px-5 py-2 rounded-full bg-[#0f172a]/80 backdrop-blur-xl border border-blue-500/30 text-white transition-all hover:bg-blue-600 hover:border-blue-400 group"
+          >
+            <Brain size={14} className="text-blue-400 group-hover:text-white transition-colors" fill="currentColor" />
+            <span className="text-[9px] font-black uppercase tracking-[0.2em] italic">Logic Guide</span>
+            <div className="w-1 h-1 rounded-full bg-blue-400 group-hover:bg-white animate-pulse" />
+          </motion.button>
+        </div>
+      )}
+
       {/* DYNAMIC MAIN LAYOUT: Col with page-scroll on Mobile, Row with internal-scrolls on Desktop */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        
-        {/* MAIN CONTENT AREA */}
-        <section id="main-scroll-container" className="flex-1 p-4 md:p-8 overflow-y-auto no-scrollbar space-y-6 md:space-y-10 relative bg-[#020617] pb-24 md:pb-8 scroll-smooth">
-          
-          {/* --- MISSION PROGRESS TRACKER (FIT TO WIDTH ON MOBILE) --- */}
-          <div className="flex items-stretch justify-between md:justify-center gap-1.5 md:gap-2 mb-4 md:mb-8 w-full pb-2">
-            {steps.map((step: any, idx: number) => {
-              const isActive = idx === currentStepIndex;
-              const isUnlocked = idx <= highestReachedStep; 
-              const isCompleted = isUnlocked && !isActive; 
-              
-              let label = "Activity";
-              if (step.type === 'intro') label = "Briefing";
-              if (step.type === 'code') label = "Coding Logic";
-              if (step.type === 'blueprint') label = "MVP Blueprint";
-              if (step.type === 'capture') label = "Verification";
-
-              return (
-                <div key={idx} className="flex flex-1 md:flex-none items-center gap-1.5 md:gap-2 min-w-0">
-                  <button
-                    onClick={() => {
-                        if (isUnlocked && !isActive) {
-                            setCurrentStepIndex(idx);
-                            setStepVerified(false); 
-                        }
-                    }}
-                    disabled={!isUnlocked || isActive}
-                    className={`w-full md:w-auto justify-center px-1 py-2 md:px-4 md:py-2 rounded-lg md:rounded-xl text-[8px] md:text-[10px] font-black uppercase tracking-tighter md:tracking-widest flex items-center gap-1 md:gap-2 transition-all truncate ${
-                      isActive ? "bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)] border border-purple-500 md:scale-105" :
-                      isUnlocked ? "bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 cursor-pointer" :
-                      "bg-white/5 text-slate-500 border border-white/5 opacity-50 cursor-not-allowed"
-                    }`}
-                  >
-                    {isCompleted && <CheckCircle2 className="w-3 h-3 md:w-3.5 md:h-3.5 shrink-0" />}
-                    {isActive && <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-white animate-pulse shrink-0" />}
-                    <span className="truncate">{label}</span>
-                  </button>
-                  {/* Hide connector lines on mobile to save horizontal space */}
-                  {idx < steps.length - 1 && (
-                    <div className={`hidden md:block w-4 md:w-6 h-px ${isUnlocked ? "bg-green-500/30" : "bg-white/10"}`} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mobile-sequence-wrapper max-w-5xl mx-auto space-y-6 md:space-y-10">
-            
-            {currentStepData.cards && currentStepData.cards.length > 0 ? (
-              <SequenceViewer 
-                key={`seq-${currentStepIndex}`}
-                cards={currentStepData.cards} 
-                formatText={safeFormatText} 
-                onCardChange={handleCardChange} 
-                onComplete={safeOnComplete} 
-              />
-            ) : (
-              !isCaptureStep && (
-                <div className="relative aspect-video rounded-[24px] md:rounded-[48px] overflow-hidden border border-white/10 bg-black shadow-2xl">
-                    {renderMediaContent(currentStepData.media_url)}
-                </div>
-              )
-            )}
-
-            {/* BLOCKLY & MAKECODE WORKSPACE SELECTOR */}
-            <div id="blockly-workspace-container" className={`space-y-4 ${isCodeStep ? 'block' : 'hidden'}`}>
-              <div className="flex flex-col xl:flex-row gap-4 md:gap-6 h-[800px] xl:h-[600px]">
-                <div className="flex-1 min-h-[400px] xl:min-h-0 rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 relative shadow-xl bg-[#020617]">
-                  
-                  {/* HEADER BAR */}
-                  <div className="absolute top-0 left-0 right-0 h-12 md:h-14 bg-black/40 border-b border-white/5 z-20 flex items-center justify-between px-4 md:px-6">
-                    <div className="flex items-center gap-2">
-                      <div className={`size-1.5 md:size-2 rounded-full ${stepVerified ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
-                      <span className="text-[8px] md:text-[10px] font-black uppercase text-blue-400 tracking-widest truncate">
-                        {stepVerified ? 'Concepts_Verified' : 'Concept_Workspace'}
-                      </span>
-                    </div>
-                    
-                    {/* GATEKEEPER BUTTON */}
-                    <button 
-                      disabled={!stepVerified}
-                      onClick={() => window.open("https://makecode.microbit.org/", "_blank")}
-                      className={`flex items-center gap-1.5 md:gap-2 px-3 py-1 md:px-4 md:py-1.5 rounded-lg md:rounded-xl text-[8px] md:text-[9px] font-black uppercase transition-all shrink-0 ${
-                        stepVerified 
-                        ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg' 
-                        : 'bg-white/5 text-slate-700 border border-white/5 cursor-not-allowed grayscale'
-                      }`}
-                    >
-                      <span className="hidden sm:inline">Open in</span> MakeCode <ArrowUpRight size={12} className="md:w-3.5 md:h-3.5" />
-                    </button>
-                  </div>
-
-                  {/* DYNAMIC SANDBOX CONTENT */}
-                  <div className="absolute inset-0 pt-12 md:pt-14">
-                    {/* MakeCode Renderer */}
-                    {mission.sandbox_type === 'makecode' && stepVerified && (
-                      <div className="absolute inset-0 z-10 bg-[#020617]">
-                        <MakeCodeRenderer code={getMakeCodeRenderString(liveCode)} />
-                      </div>
-                    )}
-                    {/* Blockly Canvas */}
-                    <div ref={blocklyDiv} className="w-full h-full" />
-                  </div>
-                </div>
-
-                {/* Side Panel: Only show Translator for Blockly missions */}
-                <div className="w-full xl:w-[340px] h-64 xl:h-auto flex flex-col rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 bg-[#0f172a] shadow-2xl shrink-0">
-                  <div className="p-3 md:p-4 border-b border-white/5 bg-black/40 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Code2 size={14} className="text-purple-400" />
-                      <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
-                        {mission.sandbox_type === 'makecode' && stepVerified ? 'Concept_Verified' : 'Plain_English_Translator'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex-1 p-4 md:p-6 overflow-y-auto no-scrollbar bg-[#020617]/50">
-                    {mission.sandbox_type === 'makecode' && stepVerified ? (
-                      <div className="space-y-4 opacity-70 flex flex-col items-center justify-center h-full text-center">
-                         <CheckCircle2 size={32} className="text-green-500" />
-                         <p className="text-[9px] md:text-[10px] font-bold text-slate-400 leading-relaxed uppercase tracking-widest">
-                           Your logic is sound.<br/> You are now cleared to build this in the full MakeCode environment.
-                         </p>
-                      </div>
-                    ) : (
-                      liveCode ? (
-                        <pre className="text-[10px] md:text-[11px] font-mono text-purple-400 whitespace-pre-wrap leading-relaxed tracking-tight">{liveCode}</pre>
-                      ) : (
-                        <div className="h-full flex flex-col items-center justify-center opacity-30 text-center space-y-4">
-                          <Code2 size={32} className="md:w-10 md:h-10" />
-                          <p className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">Awaiting<br/>Logic Input</p>
-                        </div>
-                      )
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            {/* BLUEPRINT / MVP SECTION */}
-            {(() => {
-              if (!(isBlueprintStep || (isCaptureStep && isReadOnly)) || !currentStepData.prompts) return null;
-              
-              const prompts = currentStepData.prompts;
-              const mvpData = prompts.mvp || prompts.goal || { question: "Select your MVP Features:", options: [] };
-              const beyondData = prompts.beyond || prompts.verification || { question: "Beyond MVP: What next?" };
-
-              const displayCount = Math.max(0, Math.min(3, blueprint.mvp.length - 1));
-
-              return (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 pb-6 md:pb-10">
-                  <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[24px] md:rounded-[32px] p-6 md:p-8 shadow-xl">
-                     <div className="flex justify-between items-end">
-                       <label className="text-[10px] md:text-xs font-black uppercase text-slate-400 tracking-widest">{mvpData.question}</label>
-                       <span className={`text-[9px] md:text-[10px] font-black tracking-widest ${displayCount >= 3 ? 'text-green-400' : 'text-slate-500'}`}>
-                         {displayCount}/3 SELECTED
-                       </span>
-                     </div>
-                     <div className="space-y-4 pt-2">
-                        <div className="flex flex-wrap gap-2.5 md:gap-3">
-                           {(mvpData.options || []).map((opt: string) => {
-                               const isSelected = blueprint.mvp.includes(opt);
-                               const isDisabled = !isSelected && blueprint.mvp.length >= 4;
-                               return (
-                                 <button key={opt} onClick={() => toggleMvpOption(opt)} disabled={isDisabled && !isReadOnly}
-                                   className={`px-4 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold transition-all border ${isSelected ? 'bg-blue-500 text-black border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : isDisabled ? 'bg-black/20 text-slate-600 border-white/5 cursor-not-allowed opacity-50' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30 hover:bg-white/5'}`}
-                                 >
-                                   {opt}
-                                 </button>
-                               )
-                           })}
-                        </div>
-                     </div>
-                  </div>
-
-                  <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[24px] md:rounded-[32px] p-6 md:p-8 shadow-xl flex flex-col">
-                     <label className="text-[10px] md:text-xs font-black uppercase text-slate-400 tracking-widest">
-                       {beyondData.question} <span className="opacity-50 lowercase tracking-normal">(Optional)</span>
-                     </label>
-                     <div className="pt-2 flex-1 flex">
-                        <textarea 
-                          value={blueprint.beyond}
-                          onChange={(e) => !isReadOnly && setBlueprint(prev => ({...prev, beyond: e.target.value}))}
-                          readOnly={isReadOnly}
-                          placeholder="e.g. After my MVP works, I plan to add background music and create a title screen..."
-                          className="w-full flex-1 bg-black/40 border border-white/10 rounded-xl md:rounded-2xl p-4 text-xs md:text-sm text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors resize-none min-h-[100px]"
-                        />
-                     </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* SCREENSHOT CAPTURE SECTION */}
-            {isCaptureStep && (
-               <div className="flex flex-col items-center justify-center p-6 md:p-12 bg-white/5 border border-white/10 rounded-[32px] md:rounded-[48px] space-y-6 md:space-y-8 shadow-2xl relative overflow-hidden">
-                 {isReadOnly && (
-                    <div className="absolute top-4 left-4 md:top-6 md:left-6 flex items-center gap-1.5 md:gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-green-500/20 backdrop-blur-md rounded-xl md:rounded-2xl border border-green-500/30 z-10">
-                        <CheckCircle2 size={14} className="text-green-400 md:w-4 md:h-4" />
-                        <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest text-green-400">Archive_Saved</span>
-                    </div>
-                 )}
-                 
-                 {isReadOnly && imageHistory.length > 0 ? (
-                     <div className="space-y-4 md:space-y-6 w-full max-w-3xl mx-auto relative z-10 pt-8 md:pt-8">
-                        <div className="rounded-[24px] md:rounded-[32px] overflow-hidden border-2 border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.2)] relative bg-black">
-                           <div className="absolute top-3 left-3 md:top-4 md:left-4 bg-green-500 text-black px-3 py-1 md:px-4 md:py-1 rounded-full text-[8px] md:text-[10px] font-black uppercase tracking-widest z-10">Latest Archive</div>
-                           <img src={imageHistory[0]} alt="Latest Blueprint" className="w-full h-auto object-cover" />
-                        </div>
-
-                        {imageHistory.length > 1 && (
-                           <div className="space-y-3 md:space-y-4 pt-6 md:pt-8 border-t border-white/10">
-                              <h4 className="text-[10px] md:text-xs font-black uppercase tracking-widest text-slate-500">Previous Versions</h4>
-                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
-                                 {imageHistory.slice(1).map((url, idx) => (
-                                    <div key={idx} className="rounded-xl md:rounded-2xl overflow-hidden border border-white/10 opacity-70 hover:opacity-100 transition-opacity relative group cursor-pointer bg-black"
-                                         onClick={() => window.open(url, '_blank')}>
-                                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                          <Search className="text-white w-5 h-5 md:w-6 md:h-6" />
-                                       </div>
-                                       <img src={url} alt={`Archive ${idx + 1}`} className="w-full h-auto object-cover" />
-                                    </div>
-                                 ))}
-                              </div>
-                           </div>
-                        )}
-                     </div>
-                 ) : imagePreview ? (
-                     <div className="w-full max-w-3xl rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 shadow-2xl relative z-10">
-                        <img src={imagePreview} alt="Saved Blueprint" className="w-full h-auto object-cover" />
-                     </div>
-                 ) : (
-                     <>
-                        <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20 mt-4 md:mt-0">
-                           <Camera className="text-blue-400 w-8 h-8 md:w-10 md:h-10" />
-                        </div>
-                        <div className="text-center space-y-2 md:space-y-3 z-10 relative px-4">
-                          <h3 className="text-2xl md:text-3xl font-black italic uppercase tracking-tighter">Capture Final Logic</h3>
-                          <p className="text-slate-400 text-xs md:text-sm max-w-md mx-auto leading-relaxed">
-                            Open your MakeCode studio, assemble your logic blocks exactly as planned, and submit a screenshot to clear this sector.
-                          </p>
-                        </div>
-                        <button onClick={startCapture} className="px-8 py-4 md:px-10 md:py-5 bg-blue-500 text-black font-black uppercase text-[10px] md:text-xs tracking-widest rounded-xl md:rounded-2xl hover:scale-105 transition-all shadow-[0_0_30px_rgba(59,130,246,0.3)] relative z-10">
-                           Launch System Capture
-                        </button>
-                     </>
-                 )}
-               </div>
-            )}
-          </div>
-
-          <AnimatePresence>
-            {isRunning && (
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
-                className="fixed bottom-4 right-4 md:bottom-12 md:right-12 w-[calc(100vw-32px)] md:w-96 bg-[#0f172a] border border-white/10 rounded-[24px] md:rounded-[32px] shadow-2xl overflow-hidden z-50">
-                <div className="p-3 md:p-4 border-b border-white/5 flex items-center justify-between bg-black/40">
-                   <div className="flex items-center gap-2 text-blue-400 text-[9px] md:text-[10px] font-black uppercase tracking-widest"><Cpu size={14} className="md:w-4 md:h-4" /> {theme.console}</div>
-                   <button onClick={endSimulation} className="p-1.5 md:p-1 text-red-500 hover:bg-red-500/10 rounded-md"><Power size={16} className="md:w-4 md:h-4" /></button>
-                </div>
-                <div className="p-4 md:p-6 h-48 md:h-64 overflow-y-auto font-mono text-[10px] md:text-[11px] space-y-2 no-scrollbar">
-                   {simLogs.map((log, idx) => (
-                     <div key={idx} className={`${log.includes('FAIL') ? 'text-red-400' : log.includes('SUCCESS') ? 'text-green-400 font-bold' : 'text-slate-400'}`}>
-                       <span className="text-slate-600 mr-2 opacity-50">{idx.toString().padStart(3, '0')}</span>{log}
-                     </div>
-                   ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </section>
 
         {/* DESKTOP SIDEBAR (Hidden on mobile) */}
-        <aside className="hidden md:flex w-[350px] lg:w-[420px] border-r border-white/5 bg-black/20 overflow-y-auto p-8 space-y-8 no-scrollbar text-left font-mono flex-col shrink-0">
-           <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Zap size={14} className={`text-blue-500`} fill="currentColor" />
-              <span className={`text-[10px] font-black uppercase tracking-widest leading-none text-blue-500`}>{theme.briefing}</span>
-            </div>
-            {currentStepData.lore_text && (
-              <div key={currentStepIndex} className={`bg-blue-500/5 border border-blue-500/10 rounded-[32px] p-6`}>
-                  <p className={`text-sm leading-loose text-blue-400`}>
-                    <span dangerouslySetInnerHTML={{ __html: getFormattedLore() }} />
-                    {isTyping && <span className={`inline-block w-2 h-4 ml-1 align-middle animate-pulse bg-blue-500`} />}
-                  </p>
+        <div className="hidden md:flex w-[350px] lg:w-[420px] border-r border-white/5 bg-black/20 flex-col shrink-0 relative overflow-hidden">
+           
+           {/* Sidebar Scroll Arrows - Right aligned so they don't cover text */}
+           <AnimatePresence>
+              {sidebarScroll.canScrollUp && (
+                <motion.button initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} onMouseDown={() => sidebarScroll.startScrolling('up')} onTouchStart={() => sidebarScroll.startScrolling('up')} className="absolute top-6 right-6 z-40 cursor-pointer pointer-events-auto group">
+                  <div className="bg-white/5 p-1.5 rounded-full border border-white/10 backdrop-blur-md shadow-xl group-hover:bg-blue-500/20 group-hover:border-blue-500/30 group-hover:scale-110 transition-all">
+                    <ChevronUp size={16} className="text-slate-400 group-hover:text-blue-400 transition-colors" />
+                  </div>
+                </motion.button>
+              )}
+            </AnimatePresence>
+
+            <aside ref={sidebarScroll.containerRef} onScroll={sidebarScroll.checkScroll} className="h-full overflow-y-auto p-8 space-y-8 no-scrollbar text-left font-mono flex-col pb-24">
+               <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Zap size={14} className={`text-blue-500`} fill="currentColor" />
+                  <span className={`text-[10px] font-black uppercase tracking-widest leading-none text-blue-500`}>{theme.briefing}</span>
+                </div>
+                {currentStepData.lore_text && (
+                  <div key={currentStepIndex} className={`bg-blue-500/5 border border-blue-500/10 rounded-[32px] p-6`}>
+                      <p className={`text-sm leading-loose text-blue-400`}>
+                        <span dangerouslySetInnerHTML={{ __html: getFormattedLore() }} />
+                        {isTyping && <span className={`inline-block w-2 h-4 ml-1 align-middle animate-pulse bg-blue-500`} />}
+                      </p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+
+              <AnimatePresence>
+                {revealedVocab.length > 0 && (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 mt-4 pb-8">
+                    <div className="flex items-center gap-2">
+                      <BookOpen size={14} className="text-purple-500" fill="currentColor" />
+                      <span className="text-[10px] font-black uppercase tracking-widest leading-none text-purple-500">Studio_Glossary</span>
+                    </div>
+                    <div className="space-y-3">
+                      <AnimatePresence>
+                        {revealedVocab.map((vocab: any) => (
+                          <motion.div key={vocab.term} layout initial={{ opacity: 0, scale: 0.9, x: -20 }} animate={{ opacity: 1, scale: 1, x: 0 }} className="bg-purple-500/5 border border-purple-500/20 rounded-2xl overflow-hidden">
+                             <button onClick={() => toggleVocab(vocab.term)} className="w-full flex items-center justify-between p-4 text-left hover:bg-purple-500/10 transition-colors">
+                                <h4 className="text-[11px] font-black uppercase tracking-widest text-purple-400">{vocab.term}</h4>
+                                {expandedVocab[vocab.term] ? <ChevronDown size={14} className="text-purple-400" /> : <ChevronRight size={14} className="text-purple-400" />}
+                             </button>
+                             <AnimatePresence>
+                                {expandedVocab[vocab.term] && (
+                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-4 pb-4">
+                                        <p className="text-[12px] leading-relaxed text-slate-300">{vocab.definition}</p>
+                                    </motion.div>
+                                )}
+                             </AnimatePresence>
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </aside>
+
+            <AnimatePresence>
+              {sidebarScroll.canScrollDown && (
+                <motion.button initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} onMouseDown={() => sidebarScroll.startScrolling('down')} onTouchStart={() => sidebarScroll.startScrolling('down')} className="absolute bottom-6 right-6 z-40 cursor-pointer pointer-events-auto group">
+                  <div className="bg-white/5 p-1.5 rounded-full border border-white/10 backdrop-blur-md shadow-xl group-hover:bg-blue-500/20 group-hover:border-blue-500/30 group-hover:scale-110 transition-all">
+                    <ChevronDown size={16} className="text-slate-400 group-hover:text-blue-400 transition-colors animate-bounce" />
+                  </div>
+                </motion.button>
+              )}
+            </AnimatePresence>
+        </div>
+
+        {/* MAIN CONTENT AREA NOW ON THE RIGHT */}
+        <div className="flex-1 relative overflow-hidden flex flex-col bg-[#020617]">
+           
+           {/* Main Scroll Arrows - Moved to the far right edge so they don't cover the cards */}
+           <AnimatePresence>
+              {mainScroll.canScrollUp && (
+                <motion.button initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} onMouseDown={() => mainScroll.startScrolling('up')} onTouchStart={() => mainScroll.startScrolling('up')} className="absolute top-6 right-6 md:right-10 z-40 cursor-pointer pointer-events-auto group">
+                  <div className="bg-white/5 p-1.5 rounded-full border border-white/10 backdrop-blur-md shadow-xl group-hover:bg-blue-500/20 group-hover:border-blue-500/30 group-hover:scale-110 transition-all">
+                    <ChevronUp size={16} className="text-slate-400 group-hover:text-blue-400 transition-colors" />
+                  </div>
+                </motion.button>
+              )}
+            </AnimatePresence>
+
+          <section id="main-scroll-container" ref={mainScroll.containerRef} onScroll={mainScroll.checkScroll} className="flex-1 p-4 md:p-8 overflow-y-auto no-scrollbar space-y-6 md:space-y-10 pb-24 md:pb-12 scroll-smooth">
+            
+            {/* --- MISSION PROGRESS TRACKER --- */}
+            <div className="flex items-stretch justify-between md:justify-center gap-1.5 md:gap-2 mb-4 md:mb-8 w-full pb-2">
+              {steps.map((step: any, idx: number) => {
+                const isActive = idx === currentStepIndex;
+                const isUnlocked = idx <= highestReachedStep; 
+                const isCompleted = isUnlocked && !isActive; 
+                
+                let label = "Activity";
+                if (step.type === 'intro') label = "Briefing";
+                if (step.type === 'code') label = "Coding Logic";
+                if (step.type === 'blueprint') label = "MVP Blueprint";
+                if (step.type === 'capture') label = "Verification";
+
+                return (
+                  <div key={idx} className="flex flex-1 md:flex-none items-center gap-1.5 md:gap-2 min-w-0">
+                    <button
+                      onClick={() => {
+                          if (isUnlocked && !isActive) {
+                              setCurrentStepIndex(idx);
+                              setStepVerified(false); 
+                          }
+                      }}
+                      disabled={!isUnlocked || isActive}
+                      className={`w-full md:w-auto justify-center px-1 py-2 md:px-4 md:py-2 rounded-lg md:rounded-xl text-[8px] md:text-[10px] font-black uppercase tracking-tighter md:tracking-widest flex items-center gap-1 md:gap-2 transition-all truncate ${
+                        isActive ? "bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)] border border-purple-500 md:scale-105" :
+                        isUnlocked ? "bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 cursor-pointer" :
+                        "bg-white/5 text-slate-500 border border-white/5 opacity-50 cursor-not-allowed"
+                      }`}
+                    >
+                      {isCompleted && <CheckCircle2 className="w-3 h-3 md:w-3.5 md:h-3.5 shrink-0" />}
+                      {isActive && <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-white animate-pulse shrink-0" />}
+                      <span className="truncate">{label}</span>
+                    </button>
+                    {/* Hide connector lines on mobile to save horizontal space */}
+                    {idx < steps.length - 1 && (
+                      <div className={`hidden md:block w-4 md:w-6 h-px ${isUnlocked ? "bg-green-500/30" : "bg-white/10"}`} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mobile-sequence-wrapper max-w-5xl mx-auto space-y-6 md:space-y-10 w-full relative">
+              
+              {currentStepData.cards && currentStepData.cards.length > 0 ? (
+                <SequenceViewer 
+                  key={`seq-${currentStepIndex}`}
+                  cards={currentStepData.cards} 
+                  formatText={safeFormatText} 
+                  onCardChange={handleCardChange} 
+                  onComplete={safeOnComplete} 
+                />
+              ) : (
+                !isCaptureStep && (
+                  <div className="relative aspect-video rounded-[24px] md:rounded-[48px] overflow-hidden border border-white/10 bg-black shadow-2xl">
+                      {renderMediaContent(currentStepData.media_url)}
+                  </div>
+                )
+              )}
+
+              {/* BLOCKLY & MAKECODE WORKSPACE SELECTOR */}
+              <div id="blockly-workspace-container" className={`space-y-4 ${isCodeStep ? 'block' : 'hidden'}`}>
+                <div className="flex flex-col xl:flex-row gap-4 md:gap-6 h-[800px] xl:h-[600px] relative">
+                  <div className="flex-1 min-h-[400px] xl:min-h-0 rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 relative shadow-xl bg-[#020617]">
+                    
+                    {/* HEADER BAR */}
+                    <div className="absolute top-0 left-0 right-0 h-12 md:h-14 bg-black/40 border-b border-white/5 z-20 flex items-center justify-between px-4 md:px-6">
+                      <div className="flex items-center gap-2">
+                        <div className={`size-1.5 md:size-2 rounded-full ${stepVerified ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
+                        <span className="text-[8px] md:text-[10px] font-black uppercase text-blue-400 tracking-widest truncate">
+                          {stepVerified ? 'Concepts_Verified' : 'Concept_Workspace'}
+                        </span>
+                      </div>
+                      
+                      {/* GATEKEEPER BUTTON */}
+                      <button 
+                        disabled={!parsedConfig.makecode_project_id && !stepVerified}
+                        onClick={() => window.open(parsedConfig.makecode_project_id ? `https://makecode.microbit.org/#pub:${parsedConfig.makecode_project_id}` : "https://makecode.microbit.org/", "_blank")}
+                        className={`flex items-center gap-1.5 md:gap-2 px-3 py-1 md:px-4 md:py-1.5 rounded-lg md:rounded-xl text-[8px] md:text-[9px] font-black uppercase transition-all shrink-0 ${
+                          (parsedConfig.makecode_project_id || stepVerified) 
+                          ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg' 
+                          : 'bg-white/5 text-slate-700 border border-white/5 cursor-not-allowed grayscale'
+                        }`}
+                      >
+                        <span className="hidden sm:inline">Open in</span> MakeCode <ArrowUpRight size={12} className="md:w-3.5 md:h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* DYNAMIC SANDBOX CONTENT */}
+                    <div className="absolute inset-0 pt-12 md:pt-14">
+                      {/* MakeCode Iframe or Custom Renderer */}
+                      {parsedConfig.makecode_project_id ? (
+                        <iframe 
+                           className="w-full h-full border-none"
+                           src={`https://makecode.microbit.org/#pub:${parsedConfig.makecode_project_id}`}
+                           sandbox="allow-popups allow-forms allow-scripts allow-same-origin"
+                        />
+                      ) : mission.sandbox_type === 'makecode' && stepVerified ? (
+                        <div className="absolute inset-0 z-10 bg-[#020617]">
+                          <MakeCodeRenderer code={getMakeCodeRenderString(liveCode)} />
+                        </div>
+                      ) : (
+                        <div ref={blocklyDiv} className="w-full h-full" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Side Panel: Only show Translator for Blockly missions */}
+                  <div className="w-full xl:w-[340px] h-64 xl:h-auto flex flex-col rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 bg-[#0f172a] shadow-2xl shrink-0">
+                    <div className="p-3 md:p-4 border-b border-white/5 bg-black/40 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Code2 size={14} className="text-purple-400" />
+                        <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
+                          {parsedConfig.makecode_project_id ? 'MakeCode Reference' : (mission.sandbox_type === 'makecode' && stepVerified ? 'Concept_Verified' : 'Plain_English_Translator')}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex-1 p-4 md:p-6 overflow-y-auto no-scrollbar bg-[#020617]/50">
+                      {parsedConfig.makecode_project_id ? (
+                        <div className="h-full flex flex-col items-center justify-center opacity-70 text-center space-y-4">
+                           <Code2 size={32} className="md:w-10 md:h-10 text-blue-400" />
+                           <p className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">Example Code Loaded.<br/>Open in MakeCode to edit.</p>
+                        </div>
+                      ) : mission.sandbox_type === 'makecode' && stepVerified ? (
+                        <div className="space-y-4 opacity-70 flex flex-col items-center justify-center h-full text-center">
+                           <CheckCircle2 size={32} className="text-green-500" />
+                           <p className="text-[9px] md:text-[10px] font-bold text-slate-400 leading-relaxed uppercase tracking-widest">
+                             Your logic is sound.<br/> You are now cleared to build this in the full MakeCode environment.
+                           </p>
+                        </div>
+                      ) : (
+                        liveCode ? (
+                          <pre className="text-[10px] md:text-[11px] font-mono text-purple-400 whitespace-pre-wrap leading-relaxed tracking-tight">{liveCode}</pre>
+                        ) : (
+                          <div className="h-full flex flex-col items-center justify-center opacity-30 text-center space-y-4">
+                            <Code2 size={32} className="md:w-10 md:h-10" />
+                            <p className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">Awaiting<br/>Logic Input</p>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* BLUEPRINT / MVP SECTION */}
+              {(() => {
+                if (!(isBlueprintStep || (isCaptureStep && isReadOnly)) || !currentStepData.prompts) return null;
+                
+                const prompts = currentStepData.prompts;
+                const mvpData = prompts.mvp || prompts.goal || { question: "Select your MVP Features:", options: [] };
+                const beyondData = prompts.beyond || prompts.verification || { question: "Beyond MVP: What next?" };
+
+                const displayCount = Math.max(0, Math.min(3, blueprint.mvp.length - 1));
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 pb-6 md:pb-10">
+                    <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[24px] md:rounded-[32px] p-6 md:p-8 shadow-xl">
+                       <div className="flex justify-between items-end">
+                         <label className="text-[10px] md:text-xs font-black uppercase text-slate-400 tracking-widest">{mvpData.question}</label>
+                         <span className={`text-[9px] md:text-[10px] font-black tracking-widest ${displayCount >= 3 ? 'text-green-400' : 'text-slate-500'}`}>
+                           {displayCount}/3 SELECTED
+                         </span>
+                       </div>
+                       <div className="flex flex-wrap gap-2.5 md:gap-3 pt-2">
+                          {(mvpData.options || []).map((opt: string) => {
+                              const isSelected = blueprint.mvp.includes(opt);
+                              const isDisabled = !isSelected && blueprint.mvp.length >= 4;
+                              return (
+                                <button key={opt} onClick={() => toggleMvpOption(opt)} disabled={isDisabled && !isReadOnly}
+                                  className={`px-4 py-2 md:px-5 md:py-3 rounded-xl md:rounded-2xl text-xs md:text-sm font-bold transition-all border ${isSelected ? 'bg-blue-500 text-black border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' : isDisabled ? 'bg-black/20 text-slate-600 border-white/5 cursor-not-allowed opacity-50' : 'bg-black/40 text-slate-400 border-white/10 hover:border-white/30 hover:bg-white/5'}`}
+                                >
+                                  {opt}
+                                </button>
+                              )
+                          })}
+                       </div>
+                    </div>
+
+                    <div className="space-y-4 text-left bg-white/5 border border-white/10 rounded-[24px] md:rounded-[32px] p-6 md:p-8 shadow-xl flex flex-col">
+                       <label className="text-[10px] md:text-xs font-black uppercase text-slate-400 tracking-widest">
+                         {beyondData.question} <span className="opacity-50 lowercase tracking-normal">(Optional)</span>
+                       </label>
+                       <div className="pt-2 flex-1 flex">
+                          <textarea 
+                            value={blueprint.beyond}
+                            onChange={(e) => !isReadOnly && setBlueprint(prev => ({...prev, beyond: e.target.value}))}
+                            readOnly={isReadOnly}
+                            placeholder="e.g. Next I will add background music..."
+                            className="w-full flex-1 bg-black/40 border border-white/10 rounded-xl md:rounded-2xl p-4 text-xs md:text-sm text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors resize-none min-h-[100px] mt-2"
+                          />
+                       </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* SCREENSHOT CAPTURE SECTION */}
+              {isCaptureStep && (
+                 <div className="flex flex-col items-center justify-center p-6 md:p-12 bg-white/5 border border-white/10 rounded-[32px] md:rounded-[48px] space-y-6 md:space-y-8 shadow-2xl relative overflow-hidden">
+                   {isReadOnly && (
+                      <div className="absolute top-4 left-4 md:top-6 md:left-6 flex items-center gap-1.5 md:gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-green-500/20 backdrop-blur-md rounded-xl md:rounded-2xl border border-green-500/30 z-10">
+                          <CheckCircle2 size={14} className="text-green-400 md:w-4 md:h-4" />
+                          <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest text-green-400">Archive_Saved</span>
+                      </div>
+                   )}
+                   
+                   {isReadOnly && imageHistory.length > 0 ? (
+                       <div className="space-y-4 md:space-y-6 w-full max-w-3xl mx-auto relative z-10 pt-8 md:pt-8">
+                          <div className="rounded-[24px] md:rounded-[32px] overflow-hidden border-2 border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.2)] relative bg-black">
+                             <div className="absolute top-3 left-3 md:top-4 md:left-4 bg-green-500 text-black px-3 py-1 md:px-4 md:py-1 rounded-full text-[8px] md:text-[10px] font-black uppercase tracking-widest z-10">Latest Archive</div>
+                             <img src={imageHistory[0]} alt="Latest Blueprint" className="w-full h-auto object-cover" />
+                          </div>
+
+                          {imageHistory.length > 1 && (
+                             <div className="space-y-3 md:space-y-4 pt-6 md:pt-8 border-t border-white/10">
+                                <h4 className="text-[10px] md:text-xs font-black uppercase tracking-widest text-slate-500">Previous Versions</h4>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
+                                   {imageHistory.slice(1).map((url, idx) => (
+                                      <div key={idx} className="rounded-xl md:rounded-2xl overflow-hidden border border-white/10 opacity-70 hover:opacity-100 transition-opacity relative group cursor-pointer bg-black"
+                                           onClick={() => window.open(url, '_blank')}>
+                                         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                            <Search className="text-white w-5 h-5 md:w-6 md:h-6" />
+                                         </div>
+                                         <img src={url} alt={`Archive ${idx + 1}`} className="w-full h-auto object-cover" />
+                                      </div>
+                                   ))}
+                                </div>
+                             </div>
+                          )}
+                       </div>
+                   ) : imagePreview ? (
+                       <div className="w-full max-w-3xl rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 shadow-2xl relative z-10">
+                          <img src={imagePreview} alt="Saved Blueprint" className="w-full h-auto object-cover" />
+                       </div>
+                   ) : (
+                       <>
+                          <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20 mt-4 md:mt-0">
+                             <Camera className="text-blue-400 w-8 h-8 md:w-10 md:h-10" />
+                          </div>
+                          <div className="text-center space-y-2 md:space-y-3 z-10 relative px-4">
+                            <h3 className="text-2xl md:text-3xl font-black italic uppercase tracking-tighter">Capture Final Logic</h3>
+                            <p className="text-slate-400 text-xs md:text-sm max-w-md mx-auto leading-relaxed">
+                              Open your MakeCode studio, assemble your logic blocks exactly as planned, and submit a screenshot to clear this sector.
+                            </p>
+                          </div>
+                          <button onClick={startCapture} className="mt-4 px-8 py-4 md:px-10 md:py-5 bg-blue-500 text-black font-black uppercase text-[10px] md:text-xs tracking-widest rounded-xl md:rounded-2xl hover:scale-105 transition-all shadow-[0_0_30px_rgba(59,130,246,0.3)] relative z-10">
+                             Launch System Capture
+                          </button>
+                       </>
+                   )}
+                 </div>
+              )}
+            </div>
+
+            <AnimatePresence>
+              {isRunning && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
+                  className="fixed bottom-4 right-4 md:bottom-12 md:right-12 w-[calc(100vw-32px)] md:w-96 bg-[#0f172a] border border-white/10 rounded-[24px] md:rounded-[32px] shadow-2xl overflow-hidden z-50">
+                  <div className="p-3 md:p-4 border-b border-white/5 flex items-center justify-between bg-black/40">
+                     <div className="flex items-center gap-2 text-blue-400 text-[9px] md:text-[10px] font-black uppercase tracking-widest"><Cpu size={14} className="md:w-4 md:h-4" /> {theme.console}</div>
+                     <button onClick={endSimulation} className="p-1.5 md:p-1 text-red-500 hover:bg-red-500/10 rounded-md"><Power size={16} className="md:w-4 md:h-4" /></button>
+                  </div>
+                  <div className="p-4 md:p-6 h-48 md:h-64 overflow-y-auto font-mono text-[10px] md:text-[11px] space-y-2 no-scrollbar">
+                     {simLogs.map((log, idx) => (
+                       <div key={idx} className={`${log.includes('FAIL') ? 'text-red-400' : log.includes('SUCCESS') ? 'text-green-400 font-bold' : 'text-slate-400'}`}>
+                         <span className="text-slate-600 mr-2 opacity-50">{idx.toString().padStart(3, '0')}</span>{log}
+                       </div>
+                     ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </section>
 
           <AnimatePresence>
-            {revealedVocab.length > 0 && (
-              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 mt-4">
-                <div className="flex items-center gap-2">
-                  <BookOpen size={14} className="text-purple-500" fill="currentColor" />
-                  <span className="text-[10px] font-black uppercase tracking-widest leading-none text-purple-500">Studio_Glossary</span>
-                </div>
-                <div className="space-y-3">
-                  <AnimatePresence>
-                    {revealedVocab.map((vocab: any) => (
-                      <motion.div key={vocab.term} layout initial={{ opacity: 0, scale: 0.9, x: -20 }} animate={{ opacity: 1, scale: 1, x: 0 }} className="bg-purple-500/5 border border-purple-500/20 rounded-2xl overflow-hidden">
-                         <button onClick={() => toggleVocab(vocab.term)} className="w-full flex items-center justify-between p-4 text-left hover:bg-purple-500/10 transition-colors">
-                            <h4 className="text-[11px] font-black uppercase tracking-widest text-purple-400">{vocab.term}</h4>
-                            {expandedVocab[vocab.term] ? <ChevronDown size={14} className="text-purple-400" /> : <ChevronRight size={14} className="text-purple-400" />}
-                         </button>
-                         <AnimatePresence>
-                            {expandedVocab[vocab.term] && (
-                                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="px-4 pb-4">
-                                    <p className="text-[12px] leading-relaxed text-slate-300">{vocab.definition}</p>
-                                </motion.div>
-                            )}
-                         </AnimatePresence>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </aside>
+              {mainScroll.canScrollDown && (
+                <motion.button initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} onMouseDown={() => mainScroll.startScrolling('down')} onTouchStart={() => mainScroll.startScrolling('down')} className="absolute bottom-6 right-6 md:right-10 z-40 cursor-pointer pointer-events-auto group">
+                  <div className="bg-white/5 p-1.5 rounded-full border border-white/10 backdrop-blur-md shadow-xl group-hover:bg-blue-500/20 group-hover:border-blue-500/30 group-hover:scale-110 transition-all">
+                    <ChevronDown size={16} className="text-slate-400 group-hover:text-blue-400 transition-colors animate-bounce" />
+                  </div>
+                </motion.button>
+              )}
+            </AnimatePresence>
+        </div>
 
       </div>
 
-      {/* MOBILE MISSION BRIEFING TOGGLE (Floating Bottom Button) */}
-      <AnimatePresence>
-        {!isBriefingDrawerOpen && (
-          <motion.div 
-            initial={{y: 50, opacity: 0}} animate={{y: 0, opacity: 1}} exit={{y: 50, opacity: 0}} 
-            className="md:hidden fixed bottom-6 left-0 right-0 z-40 flex justify-center pointer-events-none px-4"
-          >
-            <button 
-              onClick={() => setIsBriefingDrawerOpen(true)}
-              className="pointer-events-auto w-full max-w-sm bg-[#0f172a]/90 backdrop-blur-xl border border-blue-500/30 shadow-[0_10px_40px_rgba(59,130,246,0.3)] rounded-2xl p-4 flex items-center justify-between text-blue-400 active:scale-95 transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="bg-blue-500/20 p-2 rounded-xl"><Zap size={16} fill="currentColor"/></div>
-                <span className="font-black uppercase tracking-widest text-[10px]">Mission Briefing</span>
-              </div>
-              <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center">
-                <ChevronUp size={16} className="text-blue-400" />
-              </div>
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* MOBILE HUD ELEMENTS */}
+      <div className="md:hidden fixed bottom-6 left-0 right-0 z-40 flex flex-col gap-3 px-4 pointer-events-none">
+          {/* MOBILE COACH BUTTON (Only on Code Step) */}
+          {isCodeStep && (
+             <motion.button 
+               initial={{y: 20, opacity: 0}} animate={{y: 0, opacity: 1}}
+               onClick={() => setShowCoach(true)}
+               className="pointer-events-auto w-full max-w-sm mx-auto bg-blue-600 border border-blue-400/50 shadow-2xl rounded-2xl p-3 flex items-center justify-center gap-3 text-white active:scale-95 transition-all"
+             >
+               <Brain size={16} fill="currentColor"/>
+               <span className="font-black uppercase tracking-widest text-[10px]">Logic Guide</span>
+             </motion.button>
+          )}
+
+          {/* MOBILE BRIEFING TOGGLE */}
+          <AnimatePresence>
+            {!isBriefingDrawerOpen && (
+              <motion.button 
+                initial={{y: 20, opacity: 0}} animate={{y: 0, opacity: 1}} exit={{y: 20, opacity: 0}} 
+                onClick={() => setIsBriefingDrawerOpen(true)}
+                className="pointer-events-auto w-full max-w-sm mx-auto bg-[#0f172a]/90 backdrop-blur-xl border border-blue-500/30 shadow-2xl rounded-2xl p-4 flex items-center justify-between text-blue-400 active:scale-95 transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="bg-blue-500/20 p-2 rounded-xl"><Zap size={16} fill="currentColor"/></div>
+                  <span className="font-black uppercase tracking-widest text-[10px]">Mission Briefing</span>
+                </div>
+                <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center">
+                  <ChevronUp size={16} className="text-blue-400" />
+                </div>
+              </motion.button>
+            )}
+          </AnimatePresence>
+      </div>
 
       {/* MOBILE MISSION BRIEFING DRAWER (Bottom Sheet Modal) */}
       <AnimatePresence>
