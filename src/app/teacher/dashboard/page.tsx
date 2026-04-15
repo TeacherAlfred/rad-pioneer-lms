@@ -7,9 +7,10 @@ import {
   ChevronRight, Phone, Mail, Target, BookOpen, 
   MessageSquare, Shield, Clock, Plus, Zap, Laptop,
   CheckCircle2, ChevronLeft, CalendarCheck, Loader2, X, Edit2, Save, MapPin, Video, CalendarPlus,
-  CalendarDays, Repeat, CheckSquare, Square, UserPlus
+  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useRouter, usePathname } from "next/navigation";
 
 const AVAILABLE_COURSES = [
   "Robotics Pioneer Bootcamp", 
@@ -47,14 +48,19 @@ const getSyllabusForCourse = (courseName: string) => {
 // MAIN PAGE COMPONENT
 // ==========================================
 export default function TeacherDashboard() {
-  const [activeStudent, setActiveStudent] = useState<any | null>(null);
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  
   const [metricDrilldown, setMetricDrilldown] = useState<string | null>(null);
   const [isBulkScheduleOpen, setIsBulkScheduleOpen] = useState(false);
   const [editingLessonGroup, setEditingLessonGroup] = useState<any | null>(null);
   
   const [students, setStudents] = useState<any[]>([]);
-  const [availableCourses, setAvailableCourses] = useState<string[]>(AVAILABLE_COURSES);
+  // Store the raw database courses instead of strings
+  const [activeCourses, setActiveCourses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [viewScope, setViewScope] = useState<'my_roster' | 'global'>('my_roster');
 
   useEffect(() => {
     fetchDashboardData();
@@ -63,25 +69,41 @@ export default function TeacherDashboard() {
   async function fetchDashboardData() {
     setLoading(true);
     try {
-      const [studentsRes, guardiansRes, coursesRes] = await Promise.all([
+      const sessionData = localStorage.getItem("pioneer_session");
+      if (!sessionData) { router.push("/login"); return; }
+      const localUser = JSON.parse(sessionData);
+      
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
+      if (profile) setCurrentUser(profile);
+
+      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'student').order('display_name', { ascending: true }),
         supabase.from('profiles').select('id, display_name, metadata').in('role', ['guardian', 'admin']),
-        supabase.from('courses').select('*') 
+        supabase.from('courses').select('*').eq('is_published', true).order('order_index', { ascending: true }),
+        // FIX: Safely select all courses fields to prevent missing column errors
+        supabase.from('enrollments').select('*, courses(*)')
       ]);
 
       if (studentsRes.error) throw studentsRes.error;
       if (guardiansRes.error) throw guardiansRes.error;
+      if (enrollmentsRes.error) console.error("Enrollments fetch error:", enrollmentsRes.error.message);
 
       if (coursesRes.data) {
-        const activeCourses = coursesRes.data
-          .filter((c: any) => {
-             const status = (c.status || '').toLowerCase();
-             return status === 'published' || status === 'private' || c.is_published === true || (!c.status && c.is_published === undefined);
-          })
-          .map((c: any) => c.title || c.name) 
-          .filter(Boolean);
-        
-        setAvailableCourses(activeCourses.length > 0 ? activeCourses : AVAILABLE_COURSES);
+        setActiveCourses(coursesRes.data);
+      }
+
+      // Build a map of Student ID -> Enrolled Course Title
+      const enrollmentsMap = new Map();
+      if (enrollmentsRes.data) {
+         enrollmentsRes.data.forEach((enr: any) => {
+             // Prioritize 'active' status enrollments
+             if (enr.status === 'active' || !enrollmentsMap.has(enr.student_id)) {
+                 const c = Array.isArray(enr.courses) ? enr.courses[0] : enr.courses;
+                 if (c && c.title) {
+                     enrollmentsMap.set(enr.student_id, c.title);
+                 }
+             }
+         });
       }
 
       const guardiansMap = new Map(guardiansRes.data.map(g => [g.id, g]));
@@ -98,9 +120,8 @@ export default function TeacherDashboard() {
           age = Math.abs(ageDt.getUTCFullYear() - 1970);
         }
 
-        const course = (studentMeta.interested_programs && studentMeta.interested_programs.length > 0) 
-          ? studentMeta.interested_programs[0] 
-          : "Unassigned";
+        // Securely derive assigned course from the Enrollments table mapping
+        const course = enrollmentsMap.get(s.id) || "Unassigned";
 
         return {
           id: s.id,
@@ -108,7 +129,7 @@ export default function TeacherDashboard() {
           name: s.display_name || "Unknown Pioneer",
           age: age,
           course: course,
-          delivery_method: studentMeta.delivery_method || "In-person",
+          delivery_method: studentMeta.learning_mode || "In-person",
           schedule: studentMeta.schedule || [], 
           attendance: s.current_streak > 0 ? `${s.current_streak} Day Streak` : "No Recent Logins",
           skillLevel: (s.xp || 0) > 1000 ? "Advanced" : (s.xp || 0) > 500 ? "Intermediate" : "Beginner",
@@ -124,6 +145,7 @@ export default function TeacherDashboard() {
             relation: guardianMeta.relation || "Guardian",
             vip: studentMeta.account_tier === 'full'
           },
+          teacherId: studentMeta.teacher?.id || null,
           recentNote: studentMeta.admin_notes || "No instructional notes on file."
         };
       });
@@ -137,66 +159,18 @@ export default function TeacherDashboard() {
     }
   }
 
-  // --- CORE METADATA UPDATE ENGINE ---
-  const updateStudentMetadata = async (studentId: string, updates: Record<string, any>) => {
-    try {
-      const { data: profile, error: fetchErr } = await supabase.from('profiles').select('metadata').eq('id', studentId).single();
-      if (fetchErr) throw fetchErr;
-
-      const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
-      const newMeta = { ...meta, ...updates };
-
-      const { error: updateErr } = await supabase.from('profiles').update({ metadata: newMeta }).eq('id', studentId);
-      if (updateErr) throw updateErr;
-
-      setStudents((prev: any[]) => prev.map(s => s.id === studentId ? { ...s, ...updates, course: updates.interested_programs ? updates.interested_programs[0] : s.course } : s));
-      
-      if (activeStudent && activeStudent.id === studentId) {
-        setActiveStudent((prev: any) => ({ ...prev, ...updates, course: updates.interested_programs ? updates.interested_programs[0] : prev.course }));
-      }
-    } catch (err: any) {
-      alert("Failed to update profile: " + err.message);
-      throw err;
-    }
+  const handleLogout = async () => {
+    localStorage.removeItem("pioneer_session");
+    await supabase.auth.signOut();
+    router.push("/login");
   };
 
-  const handleAssignCourse = async (studentId: string, newCourse: string, newDelivery: string) => {
-    await updateStudentMetadata(studentId, { 
-      interested_programs: [newCourse],
-      delivery_method: newDelivery 
-    });
-  };
+  const scopedStudents = useMemo(() => {
+    if (viewScope === 'global' || !currentUser) return students;
+    return students.filter(s => s.teacherId === currentUser.id);
+  }, [students, viewScope, currentUser]);
 
-  // --- NEW: MULTI-STUDENT SCHEDULING ---
-  const handleScheduleLesson = async (primaryStudentId: string, additionalStudentIds: string[], newLesson: any) => {
-    try {
-      const allIds = [primaryStudentId, ...additionalStudentIds];
-      
-      await Promise.all(allIds.map(async (id) => {
-        const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', id).single();
-        if (profile) {
-          const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
-          const currentSchedule = meta.schedule || [];
-          meta.schedule = [...currentSchedule, { id: Math.random().toString(36).substring(7), ...newLesson }];
-          await supabase.from('profiles').update({ metadata: meta }).eq('id', id);
-        }
-      }));
-
-      await fetchDashboardData();
-    } catch (err) {
-      console.error("Failed to schedule lesson:", err);
-      alert("An error occurred while scheduling.");
-    }
-  };
-
-  const handleDeleteLesson = async (studentId: string, currentSchedule: any[], lessonIdToDelete: string) => {
-    await updateStudentMetadata(studentId, { 
-      schedule: currentSchedule.filter(l => l.id !== lessonIdToDelete) 
-    });
-  };
-
-  // --- BATCH EDIT LESSON GROUP ---
-  const handleSaveLessonEdits = async (lessonGroup: any, finalAttendees: any[], newDateISO: string) => {
+  const handleSaveLessonEdits = async (lessonGroup: any, finalAttendees: any[], newDateISO: string, newDelivery: string, newLogistics: string) => {
     try {
       const originalAttendees = lessonGroup.attendees || [];
       const originalIds = originalAttendees.map((a: any) => a.studentId);
@@ -205,6 +179,8 @@ export default function TeacherDashboard() {
       const removedIds = originalIds.filter((id: string) => !finalIds.includes(id));
       const keptIds = originalIds.filter((id: string) => finalIds.includes(id));
       const addedIds = finalIds.filter((id: string) => !originalIds.includes(id));
+
+      const isLink = newDelivery === 'online';
 
       const updateStudentScheduleOnly = async (studentId: string, mutator: (sched: any[]) => any[]) => {
          const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', studentId).single();
@@ -216,24 +192,29 @@ export default function TeacherDashboard() {
       };
 
       await Promise.all([
-        // 1. Remove dropped students
         ...removedIds.map((id: string) => {
           const origAtt = originalAttendees.find((a: any) => a.studentId === id);
           return updateStudentScheduleOnly(id, sched => sched.filter(l => l.id !== origAtt?.lessonId));
         }),
-        // 2. Update date for kept students
         ...keptIds.map((id: string) => {
           const origAtt = originalAttendees.find((a: any) => a.studentId === id);
-          return updateStudentScheduleOnly(id, sched => sched.map(l => (l.id === origAtt?.lessonId ? { ...l, date: newDateISO } : l)));
+          return updateStudentScheduleOnly(id, sched => sched.map(l => (l.id === origAtt?.lessonId ? { 
+              ...l, 
+              date: newDateISO,
+              delivery: newDelivery,
+              link: isLink ? newLogistics : null,
+              location: !isLink ? newLogistics : null
+          } : l)));
         }),
-        // 3. Create new lesson instance for added students
         ...addedIds.map((id: string) => {
           const newLesson = {
             id: Math.random().toString(36).substring(7),
             date: newDateISO,
             topic: lessonGroup.topic,
             course: lessonGroup.course,
-            delivery: lessonGroup.delivery,
+            delivery: newDelivery,
+            link: isLink ? newLogistics : null,
+            location: !isLink ? newLogistics : null,
             reminders: { parents: true, teacher: true }
           };
           return updateStudentScheduleOnly(id, sched => [...sched, newLesson]);
@@ -247,18 +228,24 @@ export default function TeacherDashboard() {
     }
   };
 
-  // --- BULK SCHEDULER ENGINE ---
+  // --- DYNAMIC DB SYLLABUS RESOLVER ---
   const handleBulkSchedule = async (params: { studentIds: string[], course: string, delivery: string, startDate: string, startTopic: string, weeks: number, reminders: any }) => {
-    const syllabus = getSyllabusForCourse(params.course);
-    const startIdx = Math.max(0, syllabus.findIndex(l => `Week ${l.week}: ${l.title}` === params.startTopic));
+    
+    // Find the DB course to see if it has a custom syllabus, otherwise fallback to generic
+    const dbCourse = activeCourses.find(c => c.title === params.course);
+    const customSyllabus = dbCourse?.syllabus || dbCourse?.metadata?.syllabus;
+    const syllabus = (customSyllabus && Array.isArray(customSyllabus) && customSyllabus.length > 0) 
+      ? customSyllabus 
+      : Array.from({ length: 8 }).map((_, i) => ({ week: i + 1, title: `Standard Module ${i + 1}` }));
+
+    const startIdx = Math.max(0, syllabus.findIndex((l: any) => `Week ${l.week}: ${l.title}` === params.startTopic));
     const startDt = new Date(params.startDate);
 
     const lessonsToCreate: any[] = [];
 
-    // Auto-advancing recurring logic
     for (let i = 0; i < params.weeks; i++) {
       const lessonDate = new Date(startDt);
-      lessonDate.setDate(lessonDate.getDate() + (i * 7)); // Add i weeks
+      lessonDate.setDate(lessonDate.getDate() + (i * 7)); 
 
       const topicObj = syllabus[startIdx + i];
       const topicStr = topicObj ? `Week ${topicObj.week}: ${topicObj.title}` : "TBD / Open Session";
@@ -273,14 +260,12 @@ export default function TeacherDashboard() {
       });
     }
 
-    // Process updates in parallel
     await Promise.all(params.studentIds.map(async (id) => {
       const student = students.find(s => s.id === id);
       if(!student) return;
 
       const currentSchedule = student.schedule || [];
       
-      // CONFLICT RESOLUTION: PREVENT DUPLICATES
       const filteredLessonsToCreate = lessonsToCreate.filter(newLesson => {
          const newLessonDateString = new Date(newLesson.date).toLocaleDateString();
          const isDuplicate = currentSchedule.some((existingLesson: any) => {
@@ -298,7 +283,7 @@ export default function TeacherDashboard() {
       if (!fetchErr) {
         const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
         meta.schedule = newSchedule;
-        meta.delivery_method = params.delivery; 
+        meta.learning_mode = params.delivery; 
         if (!meta.interested_programs || meta.interested_programs[0] !== params.course) {
           meta.interested_programs = [params.course];
         }
@@ -315,7 +300,7 @@ export default function TeacherDashboard() {
     const todayEnd = todayStart + 24 * 60 * 60 * 1000;
     
     const uniqueClasses = new Set<string>();
-    students.forEach(s => {
+    scopedStudents.forEach(s => {
       if (s.schedule) {
         s.schedule.forEach((lesson: any) => {
           const t = new Date(lesson.date).getTime();
@@ -328,13 +313,13 @@ export default function TeacherDashboard() {
       }
     });
     return uniqueClasses.size;
-  }, [students]);
+  }, [scopedStudents]);
 
   const metrics = {
-    totalStudents: students.length,
-    activeStreaks: students.filter(s => s.attendance.includes('Streak')).length,
+    totalStudents: scopedStudents.length,
+    activeStreaks: scopedStudents.filter(s => s.attendance.includes('Streak')).length,
     upcomingClasses: todayClassesCount, 
-    activeAlerts: students.filter(s => s.alerts.length > 0).length
+    activeAlerts: scopedStudents.filter(s => s.alerts.length > 0).length
   };
 
   if (loading) {
@@ -360,58 +345,71 @@ export default function TeacherDashboard() {
             <h1 className="text-5xl md:text-6xl font-black tracking-tighter uppercase italic leading-none">
               Educator_<span className="text-purple-500">Portal</span>
             </h1>
-            <p className="text-slate-400 font-medium mt-2">Welcome back. You have {metrics.upcomingClasses} unique class sessions scheduled today.</p>
+            <p className="text-slate-400 font-medium mt-2">Welcome back, {currentUser?.display_name || 'Coach'}. You have {metrics.upcomingClasses} class sessions scheduled today.</p>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
+             <div className="flex bg-[#0f172a] border border-white/10 rounded-2xl p-1 shadow-inner">
+               <button 
+                 onClick={() => setViewScope('my_roster')}
+                 className={`flex items-center gap-2 px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${viewScope === 'my_roster' ? 'bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)]' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+               >
+                 <User size={14} /> My Roster
+               </button>
+               <button 
+                 onClick={() => setViewScope('global')}
+                 className={`flex items-center gap-2 px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${viewScope === 'global' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.3)]' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+               >
+                 <Globe size={14} /> Global View
+               </button>
+             </div>
+
             <button 
               onClick={() => setIsBulkScheduleOpen(true)}
               className="flex items-center gap-2 px-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all text-slate-300"
             >
               <CalendarDays size={14}/> Bulk Schedule
             </button>
-            <button className="flex items-center gap-2 px-6 py-3 bg-purple-600 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-purple-500 transition-all shadow-xl shadow-purple-900/20">
-              <CheckCircle2 size={14}/> Log Attendance
+            <div className="w-px h-10 bg-white/10 mx-1 hidden sm:block" />
+            <button 
+              onClick={handleLogout} 
+              className="p-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-xl transition-all"
+              title="Log Out"
+            >
+              <LogOut size={16} />
             </button>
           </div>
         </header>
 
         {/* HERO METRICS */}
-        <HeroMetrics metrics={metrics} onDrilldown={setMetricDrilldown} />
+        <HeroMetrics metrics={metrics} onDrilldown={setMetricDrilldown} scope={viewScope} />
+
+        {/* 7-DAY TRACKER */}
+        <NextDaysTracker students={scopedStudents} onEditLesson={setEditingLessonGroup} />
 
         {/* WORKSPACE AREA */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-6">
           <div className="lg:col-span-2">
-             <StudentIntelligence students={students} onSelectStudent={setActiveStudent} />
+             <StudentIntelligence students={scopedStudents} />
           </div>
           <div className="lg:col-span-1">
-             <ItinerarySidebar students={students} onEditLesson={setEditingLessonGroup} />
+             <ItinerarySidebar students={scopedStudents} onEditLesson={setEditingLessonGroup} />
           </div>
         </div>
       </div>
 
       {/* MODALS */}
-      <MetricDrilldownModal metric={metricDrilldown} students={students} onClose={() => setMetricDrilldown(null)} onSelectStudent={setActiveStudent} />
-      
-      <StudentDossier 
-        student={activeStudent} 
-        students={students}
-        onClose={() => setActiveStudent(null)} 
-        onAssignCourse={handleAssignCourse} 
-        onScheduleLesson={handleScheduleLesson} 
-        onDeleteLesson={handleDeleteLesson}
-        availableCourses={availableCourses}
-      />
+      <MetricDrilldownModal metric={metricDrilldown} students={scopedStudents} onClose={() => setMetricDrilldown(null)} />
 
       <BulkScheduleModal
         isOpen={isBulkScheduleOpen} onClose={() => setIsBulkScheduleOpen(false)}
-        students={students} availableCourses={availableCourses} onSchedule={handleBulkSchedule}
+        students={scopedStudents} activeCourses={activeCourses} onSchedule={handleBulkSchedule}
       />
 
       <EditLessonModal 
         isOpen={!!editingLessonGroup}
         lessonGroup={editingLessonGroup}
-        students={students}
+        students={scopedStudents}
         onClose={() => setEditingLessonGroup(null)}
         onSave={handleSaveLessonEdits}
       />
@@ -420,17 +418,16 @@ export default function TeacherDashboard() {
   );
 }
 
-
 // ==========================================
 // SUB-COMPONENTS
 // ==========================================
 
-function HeroMetrics({ metrics, onDrilldown }: { metrics: any, onDrilldown: (metric: string) => void }) {
+function HeroMetrics({ metrics, onDrilldown, scope }: { metrics: any, onDrilldown: (metric: string) => void, scope: string }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
       <div onClick={() => onDrilldown('all')} className="bg-gradient-to-br from-purple-500/10 to-[#020617] border border-purple-500/20 rounded-[24px] p-6 shadow-xl relative overflow-hidden cursor-pointer hover:border-purple-500/50 hover:scale-[1.02] transition-all group">
         <Users className="absolute -right-4 -bottom-4 text-purple-500/10 group-hover:text-purple-500/20 transition-colors" size={80} />
-        <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-1">Active Roster</p>
+        <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-1">{scope === 'global' ? 'Global' : 'My'} Roster</p>
         <p className="text-4xl font-black text-white tracking-tighter">{metrics.totalStudents}</p>
       </div>
       <div onClick={() => onDrilldown('streaks')} className="bg-white/[0.02] border border-white/10 rounded-[24px] p-6 shadow-xl relative overflow-hidden cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-500/5 hover:scale-[1.02] transition-all group">
@@ -452,7 +449,9 @@ function HeroMetrics({ metrics, onDrilldown }: { metrics: any, onDrilldown: (met
   );
 }
 
-function MetricDrilldownModal({ metric, students, onClose, onSelectStudent }: { metric: string | null, students: any[], onClose: () => void, onSelectStudent: (s: any) => void }) {
+function MetricDrilldownModal({ metric, students, onClose }: { metric: string | null, students: any[], onClose: () => void }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [cachedMetric, setCachedMetric] = useState<string | null>(null);
 
   useEffect(() => {
@@ -486,9 +485,11 @@ function MetricDrilldownModal({ metric, students, onClose, onSelectStudent }: { 
     filtered = students.filter(s => s.alerts.length > 0);
     icon = <AlertTriangle size={24} className="text-rose-400"/>;
   } else if (displayMetric === 'all') {
-    title = "Full Active Roster";
+    title = "Active Roster";
     icon = <Users size={24} className="text-purple-400"/>;
   }
+
+  const basePath = pathname.includes('/admin') ? '/admin/student' : '/teacher/student';
 
   return (
     <AnimatePresence>
@@ -523,7 +524,7 @@ function MetricDrilldownModal({ metric, students, onClose, onSelectStudent }: { 
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {filtered.map((s: any) => (
-                        <tr key={s.id} onClick={() => { onClose(); onSelectStudent(s); }} className="hover:bg-white/5 cursor-pointer transition-colors group">
+                        <tr key={s.id} onClick={() => { onClose(); router.push(`${basePath}/${s.id}`); }} className="hover:bg-white/5 cursor-pointer transition-colors group">
                           <td className="px-6 py-4 font-bold text-sm text-white group-hover:text-purple-400 transition-colors flex items-center gap-2">{s.name}</td>
                           <td className="px-6 py-4 text-xs text-slate-400">{s.course}</td>
                           <td className="px-6 py-4 text-xs font-bold text-emerald-400">{s.attendance}</td>
@@ -546,7 +547,138 @@ function MetricDrilldownModal({ metric, students, onClose, onSelectStudent }: { 
   );
 }
 
-function StudentIntelligence({ students, onSelectStudent }: { students: any[], onSelectStudent: (student: any) => void }) {
+function NextDaysTracker({ students, onEditLesson }: { students: any[], onEditLesson: (lessonGroup: any) => void }) {
+  const scheduleDays = useMemo(() => {
+    const rawLessons = students.flatMap(student =>
+      (student.schedule || []).map((lesson: any) => {
+         const lessonDate = new Date(lesson.date);
+         return {
+            lessonId: lesson.id,
+            dateObj: lessonDate,
+            dateTs: lessonDate.getTime(),
+            topic: lesson.topic,
+            studentId: student.id,
+            studentName: student.name,
+            course: lesson.course || student.course,
+            delivery: lesson.delivery || student.delivery_method || 'in-person',
+            location: lesson.location || '',
+            link: lesson.link || null
+         };
+      })
+    );
+
+    const groupedMap = new Map<string, any>();
+    rawLessons.forEach(lesson => {
+      const key = `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
+      if (!groupedMap.has(key)) {
+        groupedMap.set(key, { 
+          ...lesson, 
+          key: key, 
+          attendees: [{ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId }] 
+        });
+      } else {
+        groupedMap.get(key).attendees.push({ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId });
+      }
+    });
+
+    const groupedLessons = Array.from(groupedMap.values());
+    groupedLessons.sort((a, b) => a.dateTs - b.dateTs);
+
+    const now = new Date();
+    now.setHours(0,0,0,0);
+
+    return Array.from({ length: 7 }).map((_, i) => {
+       const d = new Date(now);
+       d.setDate(d.getDate() + i);
+       const start = d.getTime();
+       const end = start + 24 * 60 * 60 * 1000;
+       
+       let label = d.toLocaleDateString('en-US', { weekday: 'short' });
+       if (i === 0) label = 'Today';
+       if (i === 1) label = 'Tomorrow';
+
+       return {
+          dateObj: d,
+          label,
+          dateStr: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          lessons: groupedLessons.filter(l => l.dateTs >= start && l.dateTs < end)
+       };
+    });
+  }, [students]);
+
+  return (
+    <div className="pt-6 pb-2">
+      <div className="flex items-center gap-2 mb-4">
+        <CalendarDays size={18} className="text-purple-500" />
+        <h2 className="text-lg font-black uppercase italic tracking-widest text-white">7-Day Horizon</h2>
+      </div>
+      
+      <div className="flex gap-3 overflow-x-auto pb-4 snap-x snap-mandatory scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        {scheduleDays.map((day, idx) => (
+          <div key={idx} className="bg-[#0f172a]/80 backdrop-blur-md border border-white/5 rounded-3xl p-4 min-w-[150px] lg:min-w-0 flex-1 flex flex-col snap-start shrink-0 shadow-lg">
+             <div className="flex flex-col 2xl:flex-row 2xl:items-baseline justify-between mb-3 border-b border-white/5 pb-2 gap-1">
+               <h3 className={`text-sm font-black uppercase tracking-widest ${idx === 0 ? 'text-blue-400' : 'text-slate-300'}`}>{day.label}</h3>
+               <span className="text-[9px] font-bold text-slate-500">{day.dateStr}</span>
+             </div>
+             
+             <div className="flex-1 space-y-2">
+                {day.lessons.length === 0 ? (
+                  <p className="text-[10px] font-bold text-slate-600 italic text-center py-4">No lessons scheduled</p>
+                ) : (
+                  day.lessons.map((lesson: any, lessonIdx: number) => {
+                    const isOnline = lesson.delivery === 'online';
+                    const isMissingLogistics = (isOnline && !lesson.link) || (!isOnline && !lesson.location);
+                    
+                    const displayText = !isOnline 
+                      ? lesson.location 
+                      : lesson.attendees.map((a:any) => a.studentName).join(', ');
+
+                    return (
+                      <div 
+                        key={lesson.key || `${lesson.dateTs}-${lessonIdx}`} 
+                        onClick={() => onEditLesson(lesson)}
+                        className="bg-[#020617] border border-white/5 rounded-2xl p-3 flex flex-col gap-1.5 group hover:border-blue-500/50 transition-colors cursor-pointer relative"
+                      >
+                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-white transition-opacity">
+                          <Edit2 size={12}/>
+                        </div>
+
+                        <p className={`text-xs font-black pr-5 ${isOnline ? 'text-purple-400' : 'text-emerald-400'}`}>
+                          {new Date(lesson.dateTs).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </p>
+                        
+                        <div className="flex items-start gap-1.5">
+                          {isOnline ? <Video size={12} className="text-purple-500 shrink-0 mt-0.5"/> : <MapPin size={12} className={`shrink-0 mt-0.5 ${lesson.location ? 'text-emerald-500' : 'text-amber-500'}`}/>}
+                          
+                          {isMissingLogistics ? (
+                             <span className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                               + Add {isOnline ? 'Link' : 'Venue'}
+                             </span>
+                          ) : (
+                             <p className="text-[10px] font-bold text-white leading-tight line-clamp-2">
+                               {displayText}
+                             </p>
+                          )}
+                        </div>
+
+                        <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 truncate mt-0.5">
+                          {lesson.topic}
+                        </p>
+                      </div>
+                    )
+                  })
+                )}
+             </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StudentIntelligence({ students }: { students: any[] }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [searchQuery, setSearchQuery] = useState("");
   const [courseFilter, setCourseFilter] = useState("All Courses");
   const [scheduledTodayFilter, setScheduledTodayFilter] = useState(false);
@@ -587,6 +719,8 @@ function StudentIntelligence({ students, onSelectStudent }: { students: any[], o
   const paginatedStudents = filteredStudents.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
   const startIdx = (currentPage - 1) * itemsPerPage + 1;
   const endIdx = Math.min(currentPage * itemsPerPage, filteredStudents.length);
+
+  const basePath = pathname.includes('/admin') ? '/admin/student' : '/teacher/student';
 
   return (
     <div className="space-y-6">
@@ -635,7 +769,7 @@ function StudentIntelligence({ students, onSelectStudent }: { students: any[], o
           {paginatedStudents.map((student) => (
             <div 
               key={student.id} 
-              onClick={() => onSelectStudent(student)}
+              onClick={() => router.push(`${basePath}/${student.id}`)}
               className="p-6 hover:bg-white/[0.04] transition-all cursor-pointer group flex flex-col sm:flex-row sm:items-center justify-between gap-6"
             >
               <div className="flex items-center gap-4">
@@ -646,7 +780,13 @@ function StudentIntelligence({ students, onSelectStudent }: { students: any[], o
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-black text-white group-hover:text-purple-400 transition-colors leading-none">{student.name}</h3>
                     {student.alerts.length > 0 && <AlertTriangle size={14} className="text-rose-500 animate-pulse"/>}
-                    {student.delivery_method === "Online" && <Video size={12} className="text-blue-400"/>}
+                    
+                    {student.delivery_method?.toLowerCase() === "online" && (
+                      <span title="Online Lesson">
+                         <Video size={12} className="text-blue-400" />
+                      </span>
+                    )}
+                    
                     {student._isScheduledToday && <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-blue-500/20 text-blue-400 border border-blue-500/30">Today</span>}
                   </div>
                   <p className="text-xs font-bold text-slate-500 mt-1">{student.course}</p>
@@ -708,15 +848,16 @@ function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditL
             topic: lesson.topic,
             studentId: student.id,
             studentName: student.name,
-            course: lesson.course || student.course, // prioritize lesson-specific course if set
-            delivery: lesson.delivery || student.delivery_method || 'In-person'
+            course: lesson.course || student.course, 
+            delivery: lesson.delivery || student.delivery_method || 'in-person',
+            location: lesson.location || '',
+            link: lesson.link || null 
          };
       })
     );
 
     const groupedMap = new Map<string, any>();
     rawLessons.forEach(lesson => {
-      // Group exact same timeslot + topic + delivery mode
       const key = `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
       if (!groupedMap.has(key)) {
         groupedMap.set(key, {
@@ -726,6 +867,8 @@ function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditL
           course: lesson.course,
           topic: lesson.topic,
           delivery: lesson.delivery,
+          location: lesson.location,
+          link: lesson.link, 
           attendees: [{ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId }]
         });
       } else {
@@ -775,18 +918,19 @@ function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditL
             </div>
           ) : (
             displayLessons.map((lessonGroup, idx) => {
-              const isOnline = lessonGroup.delivery === 'Online';
+              const isOnline = lessonGroup.delivery?.toLowerCase() === 'online';
               const timeString = lessonGroup.dateObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
               const dateString = viewMode === 'next5' ? lessonGroup.dateObj.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'}) + " • " : "";
+              const isMissingLogistics = (isOnline && !lessonGroup.link) || (!isOnline && !lessonGroup.location);
 
               return (
                 <div key={`${lessonGroup.key}-${idx}`} className="relative flex gap-4 items-start group">
-                  <div className={`w-6 h-6 rounded-full ${isOnline ? 'bg-purple-500/20' : 'bg-blue-500/20'} border-2 border-[#0f172a] flex items-center justify-center z-10 shrink-0 mt-0.5`}>
-                    <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-purple-400' : 'bg-blue-400'}`}/>
+                  <div className={`w-6 h-6 rounded-full ${isOnline ? 'bg-blue-500/20' : 'bg-emerald-500/20'} border-2 border-[#0f172a] flex items-center justify-center z-10 shrink-0 mt-0.5`}>
+                    <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-blue-400' : 'bg-emerald-400'}`}/>
                   </div>
                   <div className="flex-1 bg-[#020617] p-4 rounded-2xl border border-white/5 group-hover:border-white/10 transition-colors shadow-sm mt-[-8px]">
                     <div className="flex justify-between items-start mb-2">
-                      <p className={`text-xs font-black ${isOnline ? 'text-purple-400' : 'text-blue-400'}`}>
+                      <p className={`text-xs font-black ${isOnline ? 'text-blue-400' : 'text-emerald-400'}`}>
                         {dateString}{timeString}
                       </p>
                       <div className="flex items-center gap-2">
@@ -800,7 +944,29 @@ function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditL
                         <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 bg-white/5 px-2 py-0.5 rounded border border-white/5">
                           {lessonGroup.attendees.length} {lessonGroup.attendees.length === 1 ? 'Student' : 'Students'}
                         </span>
-                        {isOnline ? <Video size={12} className="text-purple-500/50" /> : <MapPin size={12} className="text-blue-500/50" />}
+                        
+                        {/* CLICKABLE LOGISTICS ICONS */}
+                        {isOnline ? (
+                          lessonGroup.link ? (
+                            <a href={lessonGroup.link} target="_blank" rel="noopener noreferrer" className="p-1 -m-1 hover:bg-blue-500/20 rounded transition-colors" title="Join Meeting">
+                              <Video size={12} className="text-blue-400 hover:text-blue-300" />
+                            </a>
+                          ) : (
+                            <button onClick={() => onEditLesson(lessonGroup)} className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500/20 transition-colors">
+                              + Add Link
+                            </button>
+                          )
+                        ) : (
+                          lessonGroup.location ? (
+                            <span title={`In-Person: ${lessonGroup.location}`} className="p-1 -m-1">
+                               <MapPin size={12} className="text-emerald-500/50" />
+                            </span>
+                          ) : (
+                            <button onClick={() => onEditLesson(lessonGroup)} className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500/20 transition-colors">
+                              + Add Venue
+                            </button>
+                          )
+                        )}
                       </div>
                     </div>
                     <p className="text-sm font-bold text-white leading-tight">{lessonGroup.course}</p>
@@ -815,263 +981,18 @@ function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditL
           )}
         </div>
       </div>
-
-      <div className="bg-rose-500/5 border border-rose-500/20 rounded-[32px] p-8 shadow-xl">
-        <h3 className="text-sm font-black uppercase tracking-widest text-rose-400 flex items-center gap-2 mb-4">
-          <AlertTriangle size={16}/> Active Alerts
-        </h3>
-        <div className="space-y-3">
-          <div className="p-4 text-center text-xs text-slate-500 italic">
-            No medical or pickup alerts for today's classes.
-          </div>
-        </div>
-      </div>
-   </div>
-  );
-}
-
-function StudentDossier({ student, students, onClose, onAssignCourse, onScheduleLesson, onDeleteLesson, availableCourses }: any) {
-  const [cachedStudent, setCachedStudent] = useState<any>(null);
-  
-  const [isEditingCourse, setIsEditingCourse] = useState(false);
-  const [selectedCourse, setSelectedCourse] = useState("");
-  const [selectedDelivery, setSelectedDelivery] = useState("In-person");
-  const [isSaving, setIsSaving] = useState(false);
-
-  const [isScheduling, setIsScheduling] = useState(false);
-  const [newLessonDate, setNewLessonDate] = useState("");
-  const [newLessonTopic, setNewLessonTopic] = useState("");
-  const [newLessonDelivery, setNewLessonDelivery] = useState("In-person");
-  const [additionalStudents, setAdditionalStudents] = useState<string[]>([]);
-  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
-
-  useEffect(() => {
-    if (student) {
-      setCachedStudent(student);
-      setSelectedCourse(student.course);
-      setSelectedDelivery(student.delivery_method || "In-person");
-      setIsEditingCourse(false);
-      setIsScheduling(false);
-      setNewLessonDelivery(student.delivery_method || "In-person");
-      setAdditionalStudents([]);
-    }
-  }, [student]);
-
-  const displayStudent = student || cachedStudent;
-
-  const handleSaveCourse = async () => {
-    if (!displayStudent) return;
-    setIsSaving(true);
-    await onAssignCourse(displayStudent.id, selectedCourse, selectedDelivery);
-    setIsSaving(false);
-    setIsEditingCourse(false);
-  };
-
-  const handleSaveLesson = async () => {
-    if (!displayStudent || !newLessonDate || !newLessonTopic) return;
-    setIsSavingSchedule(true);
-    
-    // Pass the primary student ID and any piggybacked additional students
-    await onScheduleLesson(displayStudent.id, additionalStudents, {
-      date: newLessonDate,
-      topic: newLessonTopic,
-      course: displayStudent.course, // Force the lesson to inherit the primary student's course
-      delivery: newLessonDelivery,
-      reminders: { parents: true, teacher: true }
-    });
-    
-    setIsSavingSchedule(false);
-    setIsScheduling(false);
-    setNewLessonDate("");
-    setNewLessonTopic("");
-    setAdditionalStudents([]);
-  };
-
-  if (!displayStudent) return null;
-
-  const syllabus = getSyllabusForCourse(displayStudent.course);
-  const schedule = displayStudent.schedule || [];
-
-  return (
-    <AnimatePresence>
-      {student && (
-        <div className="fixed inset-0 z-[120] flex justify-end">
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
-          <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 30 }} className="relative w-full max-w-2xl bg-[#020617] border-l border-white/10 h-full shadow-2xl flex flex-col overflow-y-auto custom-scrollbar">
-            
-            <div className="p-8 md:p-10 border-b border-white/5 bg-[#0f172a]/50 relative shrink-0">
-              <button onClick={onClose} className="absolute top-8 right-8 p-3 bg-white/5 rounded-full hover:bg-white/10 transition-all text-slate-400 hover:text-white"><X size={20}/></button>
-              
-              <div className="flex items-center gap-6">
-                <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center text-3xl font-black text-white shadow-lg shadow-purple-500/20 shrink-0">
-                  {displayStudent.name.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <h2 className="text-3xl font-black uppercase italic tracking-tight text-white leading-none">{displayStudent.name}</h2>
-                  <p className="text-xs font-bold text-purple-400 uppercase tracking-[0.2em] mt-2">{displayStudent.student_identifier || displayStudent.id.substring(0,8)} &bull; Age {displayStudent.age}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-8 md:p-10 space-y-8 flex-1">
-              {/* CURRENT PROGRAM WIDGET */}
-              <div className="bg-white/5 p-6 rounded-3xl border border-white/10 shadow-inner">
-                <div className="flex justify-between items-center mb-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Current Assignment</p>
-                  {!isEditingCourse && (
-                    <button onClick={() => setIsEditingCourse(true)} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-purple-400 hover:text-white transition-colors" title="Edit Assignment">
-                      <Edit2 size={12} /> Edit Profile
-                    </button>
-                  )}
-                </div>
-
-                {isEditingCourse ? (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Syllabus / Course</label>
-                        <select value={selectedCourse} onChange={e => setSelectedCourse(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none focus:border-purple-500 appearance-none">
-                          {availableCourses.map((c: string) => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Delivery Method</label>
-                        <select value={selectedDelivery} onChange={e => setSelectedDelivery(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none focus:border-purple-500 appearance-none">
-                          <option value="In-person">In-person</option>
-                          <option value="Online">Online</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2 pt-2 border-t border-white/5">
-                      <button onClick={() => { setIsEditingCourse(false); setSelectedCourse(displayStudent.course); setSelectedDelivery(displayStudent.delivery_method); }} className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancel</button>
-                      <button onClick={handleSaveCourse} disabled={isSaving} className="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors disabled:opacity-50 flex items-center gap-2">
-                        {isSaving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} Save Updates
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div>
-                      <p className="font-bold text-lg text-white leading-none">{displayStudent.course}</p>
-                      <div className="flex items-center gap-2 mt-2">
-                        {displayStudent.delivery_method === 'Online' ? (
-                          <span className="px-2 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[9px] font-black uppercase tracking-widest flex items-center gap-1"><Video size={10}/> Online Class</span>
-                        ) : (
-                          <span className="px-2 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[9px] font-black uppercase tracking-widest flex items-center gap-1"><MapPin size={10}/> In-Person</span>
-                        )}
-                        <span className="px-2 py-1 bg-white/5 text-slate-400 border border-white/10 rounded text-[9px] font-black uppercase tracking-widest">
-                          {displayStudent.attendance}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* TERM SCHEDULER WIDGET */}
-              <div className="bg-[#0f172a] border border-white/5 rounded-3xl p-6 shadow-2xl">
-                 <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
-                   <h3 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2"><Calendar size={16} className="text-blue-500"/> Term Schedule</h3>
-                   {!isScheduling && (
-                     <button onClick={() => setIsScheduling(true)} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-blue-400 hover:text-white transition-colors">
-                       <Plus size={12}/> Single Booking
-                     </button>
-                   )}
-                 </div>
-
-                 {isScheduling && (
-                   <div className="bg-[#020617] border border-blue-500/30 p-5 rounded-2xl mb-6 space-y-4">
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                       <div className="space-y-1">
-                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Lesson Date & Time</label>
-                         <input type="datetime-local" value={newLessonDate} onChange={e => setNewLessonDate(e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
-                       </div>
-                       <div className="space-y-1">
-                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Delivery Mode</label>
-                         <select value={newLessonDelivery} onChange={e => setNewLessonDelivery(e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none">
-                           <option value="In-person">In-person</option>
-                           <option value="Online">Online</option>
-                         </select>
-                       </div>
-                     </div>
-                     <div className="space-y-1">
-                       <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Syllabus Topic</label>
-                       <select value={newLessonTopic} onChange={e => setNewLessonTopic(e.target.value)} className="w-full bg-[#0f172a] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none">
-                         <option value="" disabled>Select Lesson Topic...</option>
-                         {syllabus.map(lesson => <option key={lesson.week} value={`Week ${lesson.week}: ${lesson.title}`}>Week {lesson.week} - {lesson.title}</option>)}
-                       </select>
-                     </div>
-                     
-                     {newLessonDelivery === "In-person" && (
-                        <div className="space-y-2 pt-2 border-t border-white/5">
-                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Add Other Students (Group Lesson)</label>
-                          <div className="max-h-32 overflow-y-auto custom-scrollbar bg-[#0f172a] rounded-xl border border-white/5 p-2">
-                             {students.filter((s: any) => s.id !== displayStudent.id).map((s: any) => (
-                                <label key={s.id} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
-                                   <input 
-                                      type="checkbox" 
-                                      checked={additionalStudents.includes(s.id)}
-                                      onChange={(e) => {
-                                         if (e.target.checked) setAdditionalStudents(prev => [...prev, s.id]);
-                                         else setAdditionalStudents(prev => prev.filter(id => id !== s.id));
-                                      }}
-                                      className="w-4 h-4 rounded bg-black/50 border-white/10 text-blue-500 focus:ring-0 focus:ring-offset-0"
-                                   />
-                                   <span className="text-sm font-bold text-slate-300">{s.name}</span>
-                                </label>
-                             ))}
-                          </div>
-                        </div>
-                     )}
-
-                     <div className="flex justify-end gap-2 pt-2">
-                        <button onClick={() => setIsScheduling(false)} className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancel</button>
-                        <button onClick={handleSaveLesson} disabled={isSavingSchedule || !newLessonDate || !newLessonTopic} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors disabled:opacity-50 flex items-center gap-2">
-                          {isSavingSchedule ? <Loader2 size={14} className="animate-spin"/> : <CalendarPlus size={14}/>} Confirm Booking
-                        </button>
-                     </div>
-                   </div>
-                 )}
-
-                 <div className="space-y-3">
-                   {schedule.length === 0 ? (
-                     <div className="p-6 text-center border border-dashed border-white/10 rounded-2xl">
-                       <p className="text-xs font-bold text-slate-500 italic">No upcoming lessons scheduled for this term.</p>
-                     </div>
-                   ) : (
-                     schedule.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((lesson: any) => (
-                       <div key={lesson.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-[#020617] border border-white/5 rounded-2xl hover:border-blue-500/30 transition-colors group">
-                         <div className="flex items-start gap-4">
-                           <div className="bg-blue-500/10 p-2.5 rounded-xl text-blue-400 shrink-0 border border-blue-500/20">
-                             <Clock size={16} />
-                           </div>
-                           <div>
-                             <p className="text-sm font-bold text-white leading-tight">{lesson.topic}</p>
-                             <p className="text-xs font-bold text-slate-500 mt-1">{new Date(lesson.date).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-                           </div>
-                         </div>
-                         <button onClick={() => onDeleteLesson(displayStudent.id, schedule, lesson.id)} className="text-[10px] font-black uppercase tracking-widest text-rose-500/50 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-all shrink-0">
-                           Remove
-                         </button>
-                       </div>
-                     ))
-                   )}
-                 </div>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
+    </div>
   );
 }
 
 // ---------------------------------------------------------
 // BULK SCHEDULING MODAL
 // ---------------------------------------------------------
-function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSchedule }: any) {
-  const [course, setCourse] = useState(availableCourses[0] || "");
-  const [delivery, setDelivery] = useState("In-person");
+function BulkScheduleModal({ isOpen, onClose, students, activeCourses, onSchedule }: any) {
+  
+  const courseTitles = activeCourses.map((c: any) => c.title).concat("Unassigned");
+  const [course, setCourse] = useState(courseTitles[0] || "");
+  const [delivery, setDelivery] = useState("in-person");
   const [startDate, setStartDate] = useState("");
   const [startTopic, setStartTopic] = useState("");
   
@@ -1082,12 +1003,10 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [isSaving, setIsSaving] = useState(false);
 
-  // Derive eligible students based on the selected course
   const eligibleStudents = useMemo(() => {
     return students.filter((s: any) => s.course === course || s.course === "Unassigned");
   }, [students, course]);
 
-  // Auto-select eligible students when course changes
   useEffect(() => {
     if (isOpen) {
       setSelectedStudentIds(new Set(eligibleStudents.map((s: any) => s.id)));
@@ -1095,7 +1014,15 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
     }
   }, [course, isOpen]);
 
-  const syllabus = getSyllabusForCourse(course);
+  const syllabus = useMemo(() => {
+    if (course === "Unassigned") return Array.from({ length: 8 }).map((_, i) => ({ week: i + 1, title: `Standard Module ${i + 1}` }));
+    const c = activeCourses.find((x: any) => x.title === course);
+    const loadedSyllabus = c?.syllabus || c?.metadata?.syllabus;
+    if (loadedSyllabus && Array.isArray(loadedSyllabus) && loadedSyllabus.length > 0) {
+       return loadedSyllabus;
+    }
+    return Array.from({ length: 8 }).map((_, i) => ({ week: i + 1, title: `Standard Module ${i + 1}` }));
+  }, [course, activeCourses]);
 
   const handleToggleStudent = (id: string) => {
     const next = new Set(selectedStudentIds);
@@ -1149,28 +1076,23 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
         </div>
 
         <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
-          
-          {/* LEFT COLUMN: CONFIGURATION */}
           <div className="lg:w-1/2 p-8 overflow-y-auto custom-scrollbar border-r border-white/5 space-y-8">
-            
-            {/* Context */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Target Course</label>
                 <select value={course} onChange={e => setCourse(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none">
-                  {availableCourses.map((c: string) => <option key={c} value={c}>{c}</option>)}
+                  {courseTitles.map((c: string) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Delivery Mode</label>
                 <select value={delivery} onChange={e => setDelivery(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none">
-                  <option value="In-person">In-person</option>
-                  <option value="Online">Online</option>
+                  <option value="in-person">In-person</option>
+                  <option value="online">Online</option>
                 </select>
               </div>
             </div>
 
-            {/* Time & Topic */}
             <div className="bg-white/5 p-6 rounded-3xl border border-white/10 space-y-6 shadow-inner">
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase tracking-widest text-blue-400 ml-2">Starting Date & Time</label>
@@ -1185,7 +1107,6 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
               </div>
             </div>
 
-            {/* Automation Options */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className={`p-5 rounded-3xl border transition-colors cursor-pointer ${isRecurring ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10 hover:border-white/20'}`} onClick={() => setIsRecurring(!isRecurring)}>
                 <div className="flex items-center justify-between mb-4">
@@ -1228,10 +1149,8 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
                  </div>
               </div>
             </div>
-
           </div>
 
-          {/* RIGHT COLUMN: STUDENTS */}
           <div className="lg:w-1/2 flex flex-col bg-[#020617]">
             <div className="p-6 border-b border-white/5 flex items-center justify-between shrink-0">
               <div>
@@ -1281,7 +1200,6 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
                </button>
             </div>
           </div>
-
         </div>
       </motion.div>
     </div>
@@ -1293,17 +1211,20 @@ function BulkScheduleModal({ isOpen, onClose, students, availableCourses, onSche
 // ---------------------------------------------------------
 function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any) {
   const [dateStr, setDateStr] = useState("");
+  const [delivery, setDelivery] = useState("in-person");
+  const [logistics, setLogistics] = useState("");
   const [attendees, setAttendees] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen && lessonGroup) {
-      // Convert to local time format for datetime-local input
       const d = lessonGroup.dateObj;
       const tzOffset = d.getTimezoneOffset() * 60000; 
       const localISOTime = (new Date(d.getTime() - tzOffset)).toISOString().slice(0,16);
       
       setDateStr(localISOTime);
+      setDelivery(lessonGroup.delivery || "in-person");
+      setLogistics(lessonGroup.link || lessonGroup.location || "");
       setAttendees(lessonGroup.attendees || []);
     }
   }, [isOpen, lessonGroup]);
@@ -1313,7 +1234,7 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
   const handleSave = async () => {
     setIsSaving(true);
     const newDateISO = new Date(dateStr).toISOString();
-    await onSave(lessonGroup, attendees, newDateISO);
+    await onSave(lessonGroup, attendees, newDateISO, delivery, logistics);
     setIsSaving(false);
     onClose();
   };
@@ -1357,6 +1278,36 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
             />
           </div>
 
+          <div className="grid grid-cols-2 gap-4">
+             <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Delivery Mode</label>
+                <div className="relative">
+                    <select 
+                      value={delivery} 
+                      onChange={e => {
+                          setDelivery(e.target.value);
+                          setLogistics(""); 
+                      }} 
+                      className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none"
+                    >
+                      <option value="in-person">In-Person</option>
+                      <option value="online">Online</option>
+                    </select>
+                    <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                </div>
+             </div>
+             <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Venue / Link</label>
+                <input 
+                  type={delivery === 'online' ? 'url' : 'text'}
+                  value={logistics} 
+                  onChange={e => setLogistics(e.target.value)} 
+                  placeholder={delivery === 'online' ? "https://zoom.us/..." : "e.g. Centurion Main Lab"}
+                  className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500" 
+                />
+             </div>
+          </div>
+
           <div className="space-y-4 pt-4 border-t border-white/5">
             <div className="flex justify-between items-center">
               <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Manage Attendees</label>
@@ -1382,7 +1333,7 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
             </div>
 
             {/* ONLY ALLOW ADDING MORE STUDENTS IF IN-PERSON */}
-            {lessonGroup.delivery === 'In-person' && availableToAdd.length > 0 && (
+            {delivery === 'in-person' && availableToAdd.length > 0 && (
                <div className="bg-[#0f172a] border border-blue-500/20 rounded-2xl p-4">
                  <label className="text-[9px] font-black uppercase tracking-widest text-blue-400 mb-2 flex items-center gap-1"><UserPlus size={10}/> Add Student to Group</label>
                  <select 
@@ -1402,15 +1353,30 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
           </div>
         </div>
 
-        <div className="p-6 border-t border-white/5 bg-black/40 flex justify-between items-center gap-4 shrink-0">
-          <button onClick={onClose} className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancel</button>
+        <div className="p-6 border-t border-white/5 bg-black/40 flex flex-wrap justify-between items-center gap-4 shrink-0">
           <button 
-            onClick={handleSave}
-            disabled={isSaving || !dateStr}
-            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-2xl font-black uppercase italic text-xs tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50"
+            onClick={async () => {
+              if(!window.confirm("Are you sure you want to completely delete this session for ALL attendees?")) return;
+              setIsSaving(true);
+              await onSave(lessonGroup, [], new Date(dateStr).toISOString(), delivery, logistics);
+              setIsSaving(false);
+              onClose();
+            }} 
+            className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-colors flex items-center gap-2"
           >
-            {isSaving ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Save Changes
+            <Trash2 size={14} /> Delete Session
           </button>
+          
+          <div className="flex items-center gap-2 flex-1 justify-end">
+            <button onClick={onClose} className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-white transition-colors">Cancel</button>
+            <button 
+              onClick={handleSave}
+              disabled={isSaving || !dateStr}
+              className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-2xl font-black uppercase italic text-xs tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50"
+            >
+              {isSaving ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Save Changes
+            </button>
+          </div>
         </div>
       </motion.div>
     </div>

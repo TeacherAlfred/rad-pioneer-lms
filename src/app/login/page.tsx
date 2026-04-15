@@ -43,13 +43,17 @@ export default function LoginPage() {
 
         if (authError) throw authError;
 
+        // FIX: Fetch the *entire* profile, not just the role, so we can save it to the session
         const { data: userProfile, error: profileError } = await supabase
           .from('profiles')
-          .select('role')
+          .select('*')
           .eq('auth_user_id', authData.user?.id)
           .single();
 
         if (profileError || !userProfile) throw new Error("Profile access denied.");
+
+        // FIX: Save the session to localStorage so the dashboard doesn't kick them out!
+        localStorage.setItem("pioneer_session", JSON.stringify(userProfile));
 
         if (userProfile.role === 'admin') {
           window.location.href = "/admin/dashboard"; 

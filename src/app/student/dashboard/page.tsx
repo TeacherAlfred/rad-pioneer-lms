@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrapper";
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import PioneerXPBar from "@/components/ui/PioneerXPBar";
 import { 
-  Play, Rocket, UserCheck, Loader2, Clock,
-  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle, BookOpen, ChevronRight, ChevronLeft, User
+  Play, Rocket, UserCheck, Loader2, Clock, ArrowUpRight,
+  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle, BookOpen, ChevronRight, ChevronLeft, User, Calendar, MapPin, Video, Mail, MessageCircle, UserCircle, Shield
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -168,6 +168,61 @@ export default function DashboardPage() {
     initializeDashboard();
   }, [router]);
 
+  // Parse Metadata Base
+  const metadata = useMemo(() => {
+    if (!userProfile?.metadata) return {};
+    try {
+      return typeof userProfile.metadata === 'string' ? JSON.parse(userProfile.metadata) : userProfile.metadata;
+    } catch (e) {
+      return {};
+    }
+  }, [userProfile]);
+
+  // --- DYNAMIC SCHEDULE PARSER ---
+  // Unifies array schedule and legacy next_lesson object into a single pipeline
+  const dynamicNextLesson = useMemo(() => {
+    let allLessons: any[] = [];
+
+    // 1. Grab array schedule if it exists
+    if (metadata.schedule && Array.isArray(metadata.schedule)) {
+      allLessons = [...metadata.schedule];
+    }
+
+    // 2. Grab single next_lesson if it exists and push to array for unified sorting
+    if (metadata.next_lesson && metadata.next_lesson.date) {
+      allLessons.push({
+        id: "legacy_next_lesson",
+        date: metadata.next_lesson.date,
+        delivery: metadata.next_lesson.type || metadata.learning_mode,
+        link: metadata.next_lesson.link,
+        location: metadata.next_lesson.location,
+        topic: "Scheduled Session"
+      });
+    }
+
+    if (allLessons.length === 0) return null;
+
+    const now = new Date().getTime();
+    const threshold = now - (2 * 60 * 60 * 1000); // 2 hours grace period for late joins
+
+    const upcoming = allLessons
+      .filter((lesson: any) => new Date(lesson.date).getTime() >= threshold)
+      .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    if (upcoming.length > 0) {
+      const lesson = upcoming[0];
+      return {
+        date: lesson.date,
+        topic: lesson.topic,
+        type: lesson.delivery?.toLowerCase() || metadata.learning_mode?.toLowerCase() || 'online',
+        location: lesson.location || 'Centurion Main Lab',
+        link: lesson.link || ''
+      };
+    }
+    
+    return null;
+  }, [metadata]);
+
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
 
   const currentXP = userProfile?.xp || 0;
@@ -216,11 +271,13 @@ export default function DashboardPage() {
           </header>
 
           {/* =========================================
-              RANK & XP SECTION
+              UNIFIED COMMAND HUD (RANK + LOGISTICS FOOTER)
               ========================================= */}
-          <section className="bg-gradient-to-br from-[#1e293b] to-[#020617] p-6 md:p-10 rounded-[32px] md:rounded-[48px] border border-white/10 relative overflow-hidden shadow-2xl">
-            <Rocket className="absolute -right-4 -bottom-4 md:-right-8 md:-bottom-8 w-32 h-32 md:w-48 md:h-48 text-white/5 -rotate-12 pointer-events-none" />
-            <div className="relative z-10 space-y-6">
+          <section className="bg-gradient-to-br from-[#1e293b] to-[#020617] rounded-[32px] md:rounded-[48px] border border-white/10 relative overflow-hidden shadow-2xl flex flex-col">
+            <Rocket className="absolute -right-4 -bottom-4 md:-right-8 md:-top-8 w-40 h-40 md:w-64 md:h-64 text-white/5 -rotate-12 pointer-events-none" />
+            
+            {/* Top Half: Rank & Progress */}
+            <div className="relative z-10 p-6 md:p-10 pb-0 md:pb-0">
               <PioneerXPBar 
                 xp={currentXP} 
                 todayXP={todayXP} 
@@ -229,13 +286,82 @@ export default function DashboardPage() {
                 ceiling={stats.nextLevel.xpRequired} 
               />
             </div>
+
+            {/* Bottom Half: Sleek Logistics Strip (Only shows if there's data) */}
+            {(metadata?.teacher || dynamicNextLesson) && (
+              <div className="relative z-10 mt-8 bg-black/40 border-t border-white/5 px-6 md:px-10 py-5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 md:gap-10">
+                  
+                  {/* Schedule Block */}
+                  {dynamicNextLesson && (
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 md:gap-6 flex-1">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-400 mb-0.5 flex items-center gap-1.5"><Calendar size={12}/> Next Session</p>
+                        <p className="text-sm md:text-base font-bold text-white">
+                          {new Date(dynamicNextLesson.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} <span className="text-slate-500 mx-1">/</span> {new Date(dynamicNextLesson.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                      
+                      <div className="sm:ml-auto">
+                        {dynamicNextLesson.type === 'in-person' ? (
+                          <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3 py-1.5 rounded-xl">
+                            <MapPin size={12} className="shrink-0" />
+                            <span className="text-[10px] font-black uppercase tracking-widest truncate max-w-[150px]">{dynamicNextLesson.location}</span>
+                          </div>
+                        ) : dynamicNextLesson.link ? (
+                          <a href={dynamicNextLesson.link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-black px-4 py-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-[0_0_15px_rgba(59,130,246,0.3)]">
+                            <Video size={14} className="shrink-0" />
+                            <span className="text-[10px] font-black uppercase tracking-widest">Join Meeting</span>
+                          </a>
+                        ) : (
+                          <div className="inline-flex items-center gap-2 text-slate-500/70 cursor-not-allowed" title="Meeting link will be provided closer to the session">
+                            <Video size={16} className="shrink-0" />
+                            <span className="text-xs font-bold">Link Pending</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Divider on Desktop */}
+                  {metadata.teacher && dynamicNextLesson && (
+                    <div className="hidden md:block w-px h-10 bg-white/10" />
+                  )}
+
+                  {/* Instructor Block */}
+                  {metadata.teacher && (
+                    <div className="flex items-center justify-between gap-6 flex-1 pt-4 border-t border-white/5 md:pt-0 md:border-0">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] text-purple-400 mb-0.5 flex items-center gap-1.5"><Shield size={12}/> Instructor</p>
+                        <p className="text-sm md:text-base font-bold text-white truncate max-w-[150px]">
+                          {metadata.teacher.name}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {metadata.teacher.email && (
+                          <a href={`mailto:${metadata.teacher.email}`} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-slate-300 hover:text-white transition-all">
+                            <Mail size={14} />
+                          </a>
+                        )}
+                        {metadata.teacher.whatsapp && (
+                          <a href={`https://wa.me/${metadata.teacher.whatsapp.replace(/\D/g,'')}`} target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-full bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 flex items-center justify-center text-green-400 transition-all">
+                            <MessageCircle size={14} />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            )}
           </section>
 
           {/* =========================================
               UNIFIED LIBRARY: COURSES + NEXT LESSON
               ========================================= */}
           {allEnrollments.length > 0 && (
-            <section className="space-y-6 md:space-y-8 pt-2 md:pt-4">
+            <section className="space-y-6 md:space-y-8 pt-4 md:pt-6">
               <div className="flex items-center gap-2.5 md:gap-3 px-2 md:px-4 border-b border-white/5 pb-3 md:pb-4">
                 <BookOpen className="w-4 h-4 md:w-5 md:h-5 text-blue-500" />
                 <h3 className="text-sm md:text-base font-black uppercase tracking-widest text-white italic text-left">Your Courses</h3>

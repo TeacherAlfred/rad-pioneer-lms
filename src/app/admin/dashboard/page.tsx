@@ -5,13 +5,15 @@ import {
   Users, UserPlus, BookOpen, Activity, AlertCircle, 
   CheckCircle2, CreditCard, ChevronRight, Loader2, 
   Target, TrendingUp, DollarSign, Clock, X, ArrowUpRight,
-  ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight
+  ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function AdminDashboard() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [selectedStat, setSelectedStat] = useState<null | string>(null);
   const [stats, setStats] = useState({
@@ -67,6 +69,12 @@ export default function AdminDashboard() {
     }
   }
 
+  const handleLogout = async () => {
+    localStorage.removeItem("pioneer_session");
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
+
   const StatCard = ({ label, value, icon: Icon, color, id }: any) => (
     <motion.div 
       whileHover={{ y: -5 }}
@@ -111,13 +119,24 @@ export default function AdminDashboard() {
               Command_<span className="text-blue-500">Center</span>
             </h1>
           </div>
-          <div className="flex gap-3">
+          
+          <div className="flex flex-wrap items-center gap-3">
             <Link href="/admin/leads" className="px-6 py-4 bg-white/5 border border-white/10 hover:bg-white/10 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all">
               Inbox <span className="ml-2 px-2 py-0.5 bg-blue-600 rounded-full text-white">{stats.pendingRequests}</span>
             </Link>
             <Link href="/admin/intake" className="px-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-xl shadow-blue-900/20">
               New Intake
             </Link>
+            
+            {/* LOGOUT BUTTON */}
+            <div className="w-px h-10 bg-white/10 mx-2 hidden md:block" />
+            <button 
+              onClick={handleLogout} 
+              className="p-4 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-2xl transition-all"
+              title="Log Out"
+            >
+              <LogOut size={18} />
+            </button>
           </div>
         </header>
 
