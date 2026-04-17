@@ -5,7 +5,8 @@ import {
   Users, UserPlus, BookOpen, Activity, AlertCircle, 
   CheckCircle2, CreditCard, ChevronRight, Loader2, 
   Target, TrendingUp, DollarSign, Clock, X, ArrowUpRight,
-  ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut
+  ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
+  GraduationCap // <-- New icon imported for Teacher View
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -154,7 +155,7 @@ export default function AdminDashboard() {
             <div>
               <h3 className="text-2xl font-black italic uppercase mb-2">Active_Sectors</h3>
               <p className="text-slate-500 text-sm mb-8">Direct access to core business management modules.</p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
                   { label: 'LMS Academy', icon: BookOpen, path: '/admin/courses', color: 'hover:border-blue-500' },
                   { label: 'Pioneer Ledger', icon: Users, path: '/admin/pioneers', color: 'hover:border-purple-500' },
@@ -163,6 +164,10 @@ export default function AdminDashboard() {
                   { label: 'Growth Plan', icon: LayoutDashboard, path: '/admin/blueprint', color: 'hover:border-fuchsia-500' },
                   { label: 'Comms Center', icon: Activity, path: '/admin/communications', color: 'hover:border-orange-500' },
                   { label: 'Master Data', icon: Briefcase, path: '/admin/contacts', color: 'hover:border-slate-500' },
+                  
+                  // NEW TEACHER PORTAL BUTTON
+                  { label: 'Teacher Portal', icon: GraduationCap, path: '/teacher/dashboard', color: 'hover:border-cyan-500' },
+                  
                 ].map((item, i) => (
                   <Link key={i} href={item.path} className={`p-6 bg-white/5 border border-transparent rounded-[32px] transition-all flex flex-col gap-4 group ${item.color}`}>
                     <item.icon size={20} className="text-slate-400 group-hover:text-white" />

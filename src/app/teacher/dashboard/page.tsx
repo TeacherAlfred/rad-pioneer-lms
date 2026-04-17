@@ -7,7 +7,7 @@ import {
   ChevronRight, Phone, Mail, Target, BookOpen, 
   MessageSquare, Shield, Clock, Plus, Zap, Laptop,
   CheckCircle2, ChevronLeft, CalendarCheck, Loader2, X, Edit2, Save, MapPin, Video, CalendarPlus,
-  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown
+  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, usePathname } from "next/navigation";
@@ -56,15 +56,23 @@ export default function TeacherDashboard() {
   const [editingLessonGroup, setEditingLessonGroup] = useState<any | null>(null);
   
   const [students, setStudents] = useState<any[]>([]);
-  // Store the raw database courses instead of strings
   const [activeCourses, setActiveCourses] = useState<any[]>([]);
+  const [educators, setEducators] = useState<any[]>([]); 
   const [loading, setLoading] = useState(true);
 
-  const [viewScope, setViewScope] = useState<'my_roster' | 'global'>('my_roster');
+  // ViewScope handles: 'global', 'my_roster', or a specific 'teacher_uuid'
+  const [viewScope, setViewScope] = useState<string>('global');
 
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  // Set the default view based on user role once loaded
+  useEffect(() => {
+    if (currentUser) {
+      setViewScope(currentUser.role === 'admin' ? 'global' : 'my_roster');
+    }
+  }, [currentUser]);
 
   async function fetchDashboardData() {
     setLoading(true);
@@ -76,27 +84,24 @@ export default function TeacherDashboard() {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
       if (profile) setCurrentUser(profile);
 
-      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes] = await Promise.all([
+      // Fetch all required data in parallel
+      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'student').order('display_name', { ascending: true }),
         supabase.from('profiles').select('id, display_name, metadata').in('role', ['guardian', 'admin']),
         supabase.from('courses').select('*').eq('is_published', true).order('order_index', { ascending: true }),
-        // FIX: Safely select all courses fields to prevent missing column errors
-        supabase.from('enrollments').select('*, courses(*)')
+        supabase.from('enrollments').select('*, courses(*)'),
+        supabase.from('profiles').select('id, display_name').eq('role', 'educator').order('display_name', { ascending: true })
       ]);
 
       if (studentsRes.error) throw studentsRes.error;
       if (guardiansRes.error) throw guardiansRes.error;
-      if (enrollmentsRes.error) console.error("Enrollments fetch error:", enrollmentsRes.error.message);
+      
+      if (coursesRes.data) setActiveCourses(coursesRes.data);
+      if (educatorsRes.data) setEducators(educatorsRes.data);
 
-      if (coursesRes.data) {
-        setActiveCourses(coursesRes.data);
-      }
-
-      // Build a map of Student ID -> Enrolled Course Title
       const enrollmentsMap = new Map();
       if (enrollmentsRes.data) {
          enrollmentsRes.data.forEach((enr: any) => {
-             // Prioritize 'active' status enrollments
              if (enr.status === 'active' || !enrollmentsMap.has(enr.student_id)) {
                  const c = Array.isArray(enr.courses) ? enr.courses[0] : enr.courses;
                  if (c && c.title) {
@@ -120,7 +125,6 @@ export default function TeacherDashboard() {
           age = Math.abs(ageDt.getUTCFullYear() - 1970);
         }
 
-        // Securely derive assigned course from the Enrollments table mapping
         const course = enrollmentsMap.get(s.id) || "Unassigned";
 
         return {
@@ -165,10 +169,22 @@ export default function TeacherDashboard() {
     router.push("/login");
   };
 
+  // --- DYNAMIC SCOPE FILTERING ---
   const scopedStudents = useMemo(() => {
-    if (viewScope === 'global' || !currentUser) return students;
-    return students.filter(s => s.teacherId === currentUser.id);
+    if (viewScope === 'global') return students;
+    if (viewScope === 'my_roster') return students.filter(s => s.teacherId === currentUser?.id);
+    
+    // Otherwise, viewScope is an exact teacher ID (Admin View)
+    return students.filter(s => s.teacherId === viewScope);
   }, [students, viewScope, currentUser]);
+
+  // Derived name for the Hero Metrics
+  let scopeName = "Global";
+  if (viewScope === 'my_roster') scopeName = "My";
+  else if (viewScope !== 'global') {
+    const edName = educators.find(e => e.id === viewScope)?.display_name?.split(' ')[0];
+    scopeName = edName ? `${edName}'s` : "Teacher";
+  }
 
   const handleSaveLessonEdits = async (lessonGroup: any, finalAttendees: any[], newDateISO: string, newDelivery: string, newLogistics: string) => {
     try {
@@ -228,10 +244,7 @@ export default function TeacherDashboard() {
     }
   };
 
-  // --- DYNAMIC DB SYLLABUS RESOLVER ---
   const handleBulkSchedule = async (params: { studentIds: string[], course: string, delivery: string, startDate: string, startTopic: string, weeks: number, reminders: any }) => {
-    
-    // Find the DB course to see if it has a custom syllabus, otherwise fallback to generic
     const dbCourse = activeCourses.find(c => c.title === params.course);
     const customSyllabus = dbCourse?.syllabus || dbCourse?.metadata?.syllabus;
     const syllabus = (customSyllabus && Array.isArray(customSyllabus) && customSyllabus.length > 0) 
@@ -333,10 +346,10 @@ export default function TeacherDashboard() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans selection:bg-purple-500/30">
-      <div className="max-w-7xl mx-auto space-y-10">
+      <div className="max-w-7xl mx-auto space-y-6">
         
-        {/* HEADER */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
+        {/* TOP ROW: BRANDING & NAVIGATION */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-6">
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-purple-500">
               <Shield size={14} />
@@ -345,11 +358,53 @@ export default function TeacherDashboard() {
             <h1 className="text-5xl md:text-6xl font-black tracking-tighter uppercase italic leading-none">
               Educator_<span className="text-purple-500">Portal</span>
             </h1>
-            <p className="text-slate-400 font-medium mt-2">Welcome back, {currentUser?.display_name || 'Coach'}. You have {metrics.upcomingClasses} class sessions scheduled today.</p>
+            <p className="text-slate-400 font-medium mt-2">Welcome back, {currentUser?.display_name || 'Admin'}. You have {metrics.upcomingClasses} class sessions scheduled today.</p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
-             <div className="flex bg-[#0f172a] border border-white/10 rounded-2xl p-1 shadow-inner">
+          <div className="flex flex-wrap items-end sm:items-center gap-3">
+            {currentUser?.role === 'admin' && (
+              <button onClick={() => router.push('/admin/dashboard')} className="flex items-center gap-2 px-5 py-2.5 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all text-slate-300">
+                <LayoutDashboard size={14}/> Admin Hub
+              </button>
+            )}
+            <div className="w-px h-8 bg-white/10 mx-1 hidden sm:block" />
+            <button 
+              onClick={handleLogout} 
+              className="p-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-xl transition-all"
+              title="Log Out"
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
+        </header>
+
+        {/* TOOLBAR ROW: FILTERS & ACTIONS (Role-Based View) */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 py-2 pb-6">
+           
+           {/* SCOPE SELECTION (Admin vs Teacher) */}
+           {currentUser?.role === 'admin' ? (
+             // ADMIN VIEW: Scrollable Educator Pills
+             <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 custom-scrollbar">
+               <button
+                 onClick={() => setViewScope('global')}
+                 className={`flex shrink-0 items-center gap-2 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all border ${viewScope === 'global' ? 'bg-blue-600 border-blue-500 text-white shadow-[0_0_15px_rgba(37,99,235,0.3)]' : 'bg-[#0f172a] text-slate-400 border-white/5 hover:text-white hover:bg-white/5'}`}
+               >
+                 <Globe size={14} /> Global View
+               </button>
+
+               {educators.map(ed => (
+                 <button
+                   key={ed.id}
+                   onClick={() => setViewScope(ed.id)}
+                   className={`flex shrink-0 items-center gap-2 px-4 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all border ${viewScope === ed.id ? 'bg-purple-600 border-purple-500 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)]' : 'bg-[#0f172a] text-slate-400 border-white/5 hover:text-white hover:bg-white/5'}`}
+                 >
+                   <User size={14} /> {ed.display_name.split(' ')[0]}
+                 </button>
+               ))}
+             </div>
+           ) : (
+             // TEACHER VIEW: Simple Roster Toggle
+             <div className="flex bg-[#0f172a] border border-white/10 rounded-2xl p-1 shadow-inner shrink-0">
                <button 
                  onClick={() => setViewScope('my_roster')}
                  className={`flex items-center gap-2 px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${viewScope === 'my_roster' ? 'bg-purple-600 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)]' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
@@ -363,26 +418,19 @@ export default function TeacherDashboard() {
                  <Globe size={14} /> Global View
                </button>
              </div>
+           )}
 
-            <button 
-              onClick={() => setIsBulkScheduleOpen(true)}
-              className="flex items-center gap-2 px-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all text-slate-300"
-            >
-              <CalendarDays size={14}/> Bulk Schedule
-            </button>
-            <div className="w-px h-10 bg-white/10 mx-1 hidden sm:block" />
-            <button 
-              onClick={handleLogout} 
-              className="p-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-xl transition-all"
-              title="Log Out"
-            >
-              <LogOut size={16} />
-            </button>
-          </div>
-        </header>
+           {/* BULK ACTIONS */}
+           <button 
+             onClick={() => setIsBulkScheduleOpen(true)}
+             className="shrink-0 w-full md:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-white text-black rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg"
+           >
+             <CalendarDays size={14}/> Bulk Schedule
+           </button>
+        </div>
 
         {/* HERO METRICS */}
-        <HeroMetrics metrics={metrics} onDrilldown={setMetricDrilldown} scope={viewScope} />
+        <HeroMetrics metrics={metrics} onDrilldown={setMetricDrilldown} scopeName={scopeName} />
 
         {/* 7-DAY TRACKER */}
         <NextDaysTracker students={scopedStudents} onEditLesson={setEditingLessonGroup} />
@@ -422,12 +470,12 @@ export default function TeacherDashboard() {
 // SUB-COMPONENTS
 // ==========================================
 
-function HeroMetrics({ metrics, onDrilldown, scope }: { metrics: any, onDrilldown: (metric: string) => void, scope: string }) {
+function HeroMetrics({ metrics, onDrilldown, scopeName }: { metrics: any, onDrilldown: (metric: string) => void, scopeName: string }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
       <div onClick={() => onDrilldown('all')} className="bg-gradient-to-br from-purple-500/10 to-[#020617] border border-purple-500/20 rounded-[24px] p-6 shadow-xl relative overflow-hidden cursor-pointer hover:border-purple-500/50 hover:scale-[1.02] transition-all group">
         <Users className="absolute -right-4 -bottom-4 text-purple-500/10 group-hover:text-purple-500/20 transition-colors" size={80} />
-        <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-1">{scope === 'global' ? 'Global' : 'My'} Roster</p>
+        <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-1">{scopeName} Roster</p>
         <p className="text-4xl font-black text-white tracking-tighter">{metrics.totalStudents}</p>
       </div>
       <div onClick={() => onDrilldown('streaks')} className="bg-white/[0.02] border border-white/10 rounded-[24px] p-6 shadow-xl relative overflow-hidden cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-500/5 hover:scale-[1.02] transition-all group">

@@ -1208,10 +1208,10 @@ export default function LessonPlayerPage() {
                       
                       {/* GATEKEEPER BUTTON */}
                       <button 
-                        disabled={!parsedConfig.makecode_project_id && !stepVerified}
-                        onClick={() => window.open(parsedConfig.makecode_project_id ? `https://makecode.microbit.org/#pub:${parsedConfig.makecode_project_id}` : "https://makecode.microbit.org/", "_blank")}
+                        disabled={!currentStepData.makecode_project_id && !stepVerified}
+                        onClick={() => window.open(currentStepData.makecode_project_id && currentStepData.makecode_project_id !== 'empty' ? `https://makecode.microbit.org/#pub:${currentStepData.makecode_project_id}` : "https://makecode.microbit.org/", "_blank")}
                         className={`flex items-center gap-1.5 md:gap-2 px-3 py-1 md:px-4 md:py-1.5 rounded-lg md:rounded-xl text-[8px] md:text-[9px] font-black uppercase transition-all shrink-0 ${
-                          (parsedConfig.makecode_project_id || stepVerified) 
+                          (currentStepData.makecode_project_id || stepVerified) 
                           ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg' 
                           : 'bg-white/5 text-slate-700 border border-white/5 cursor-not-allowed grayscale'
                         }`}
@@ -1223,11 +1223,11 @@ export default function LessonPlayerPage() {
                     {/* DYNAMIC SANDBOX CONTENT */}
                     <div className="absolute inset-0 pt-12 md:pt-14">
                       {/* MakeCode Iframe or Custom Renderer */}
-                      {parsedConfig.makecode_project_id ? (
+                      {currentStepData.makecode_project_id && currentStepData.makecode_project_id !== 'empty' ? (
                         <iframe 
-                           className="w-full h-full border-none"
-                           src={`https://makecode.microbit.org/#pub:${parsedConfig.makecode_project_id}`}
-                           sandbox="allow-popups allow-forms allow-scripts allow-same-origin"
+                          className="w-full h-full border-none"
+                          src={`https://makecode.microbit.org/#pub:${currentStepData.makecode_project_id}`}
+                          sandbox="allow-popups allow-forms allow-scripts allow-same-origin"
                         />
                       ) : mission.sandbox_type === 'makecode' && stepVerified ? (
                         <div className="absolute inset-0 z-10 bg-[#020617]">

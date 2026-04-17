@@ -113,7 +113,6 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
 
   return (
     <>
-      {/* Changed to h-full to flex perfectly inside the 65vh parent constraint */}
       <div className="w-full h-full max-w-5xl mx-auto bg-gradient-to-b from-[#0f172a] to-[#020617] rounded-[48px] border border-white/10 overflow-hidden shadow-2xl flex flex-col relative">
         
         {/* --- HEADER & PROGRESS BAR --- */}
@@ -140,11 +139,10 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
           </div>
         </div>
 
-        {/* --- DYNAMIC CARD CONTENT AREA (WITH FLOATING ARROWS) --- */}
-        {/* Adjusted padding: pb-24 md:pb-28 to leave space for the bottom buttons */}
+        {/* --- DYNAMIC CARD CONTENT AREA --- */}
         <div className="flex-1 relative overflow-hidden px-8 md:px-16 pt-6 md:pt-8 pb-24 md:pb-28 flex flex-col justify-center">
           
-          {/* FLOATING LEFT ARROW - Anchored to Bottom Left */}
+          {/* FLOATING LEFT ARROW */}
           <AnimatePresence>
             {!isFirstCard && (
               <motion.button
@@ -159,7 +157,7 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
             )}
           </AnimatePresence>
 
-          {/* FLOATING RIGHT ARROW / COMPLETE BUTTON - Anchored to Bottom Right */}
+          {/* FLOATING RIGHT ARROW / COMPLETE BUTTON */}
           <motion.button
             key={isLastCard ? 'complete' : 'next'}
             initial={{ opacity: 0, x: -10 }}
@@ -238,19 +236,19 @@ export default function SequenceViewer({ cards, onComplete, formatText, onCardCh
               animate={{ scale: 1, opacity: 1, y: 0 }} 
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="relative w-full max-w-6xl h-auto max-h-[85vh] flex flex-col items-center justify-center pointer-events-none"
+              className="relative w-full h-full max-w-7xl flex flex-col items-center justify-center pointer-events-none"
             >
-              {/* max-h-full forces the 1080x1080 image to scale down to fit the laptop screen! */}
+              {/* Changed to w-full h-full to force the image to scale to fill the modal bounds */}
               <img 
                 src={expandedImage} 
                 alt="Expanded View" 
-                className="max-w-full max-h-full object-contain drop-shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto rounded-3xl"
+                className="w-full h-full object-contain drop-shadow-[0_0_50px_rgba(0,0,0,0.8)] pointer-events-auto rounded-3xl"
                 onClick={(e) => e.stopPropagation()} 
               />
               
               <button 
                 onClick={() => setExpandedImage(null)}
-                className="absolute -top-6 -right-2 md:-top-4 md:-right-8 p-3 bg-white/10 hover:bg-rose-500 text-white rounded-full backdrop-blur-md border border-white/20 transition-colors pointer-events-auto"
+                className="absolute top-4 right-4 md:top-0 md:-right-12 p-3 bg-white/10 hover:bg-rose-500 text-white rounded-full backdrop-blur-md border border-white/20 transition-colors pointer-events-auto"
               >
                 <X size={24} />
               </button>
