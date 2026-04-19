@@ -7,7 +7,7 @@ import {
   ChevronRight, Phone, Mail, Target, BookOpen, 
   MessageSquare, Shield, Clock, Plus, Zap, Laptop,
   CheckCircle2, ChevronLeft, CalendarCheck, Loader2, X, Edit2, Save, MapPin, Video, CalendarPlus,
-  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard
+  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard, TrendingUp, Trophy, FileText, Check, XCircle, CalendarRange, Bell
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, usePathname } from "next/navigation";
@@ -21,7 +21,6 @@ const AVAILABLE_COURSES = [
   "Unassigned"
 ];
 
-// DYNAMIC SYLLABUS MAP
 const COURSE_SYLLABUS: Record<string, { week: number, title: string }[]> = {
   "Robotics Pioneer Bootcamp": [
     { week: 1, title: "Intro to Microcontrollers & Safety" },
@@ -44,12 +43,15 @@ const getSyllabusForCourse = (courseName: string) => {
   return Array.from({ length: 8 }).map((_, i) => ({ week: i + 1, title: `Standard Module ${i + 1}` }));
 };
 
-// ==========================================
-// MAIN PAGE COMPONENT
-// ==========================================
+
 export default function TeacherDashboard() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<any>(null);
+  
+  // --- NOTIFICATION STATE ---
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadStudentIds, setUnreadStudentIds] = useState<Set<string>>(new Set());
+  const [unreadOnlyFilter, setUnreadOnlyFilter] = useState(false);
   
   const [metricDrilldown, setMetricDrilldown] = useState<string | null>(null);
   const [isBulkScheduleOpen, setIsBulkScheduleOpen] = useState(false);
@@ -60,18 +62,52 @@ export default function TeacherDashboard() {
   const [educators, setEducators] = useState<any[]>([]); 
   const [loading, setLoading] = useState(true);
 
-  // ViewScope handles: 'global', 'my_roster', or a specific 'teacher_uuid'
   const [viewScope, setViewScope] = useState<string>('global');
 
   useEffect(() => {
     fetchDashboardData();
   }, []);
 
-  // Set the default view based on user role once loaded
   useEffect(() => {
     if (currentUser) {
       setViewScope(currentUser.role === 'admin' ? 'global' : 'my_roster');
     }
+  }, [currentUser]);
+
+  // Real-time Notification Listener (Grouped by Student)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const fetchUnread = async () => {
+      const { data } = await supabase
+        .from('coach_messages')
+        .select('student_id')
+        .eq('coach_id', currentUser.id)
+        .eq('is_read', false)
+        .neq('sender_id', currentUser.id);
+        
+      if (data) {
+        setUnreadCount(data.length);
+        setUnreadStudentIds(new Set(data.map(msg => msg.student_id)));
+        if (data.length === 0) setUnreadOnlyFilter(false);
+      }
+    };
+
+    fetchUnread();
+
+    const channel = supabase.channel('teacher_notifications')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'coach_messages', filter: `coach_id=eq.${currentUser.id}` }, () => {
+         fetchUnread(); 
+      }).subscribe();
+
+    // ADD THESE 3 LINES: Listen for the manual clear event
+    const handleClear = () => fetchUnread(); // For teachers, we re-fetch to see if other students still have messages
+    window.addEventListener('messagesRead', handleClear);
+
+    return () => { 
+      supabase.removeChannel(channel); 
+      window.removeEventListener('messagesRead', handleClear);
+    };
   }, [currentUser]);
 
   async function fetchDashboardData() {
@@ -84,7 +120,6 @@ export default function TeacherDashboard() {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
       if (profile) setCurrentUser(profile);
 
-      // Fetch all required data in parallel
       const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'student').order('display_name', { ascending: true }),
         supabase.from('profiles').select('id, display_name, metadata').in('role', ['guardian', 'admin']),
@@ -103,7 +138,8 @@ export default function TeacherDashboard() {
       if (enrollmentsRes.data) {
          enrollmentsRes.data.forEach((enr: any) => {
              if (enr.status === 'active' || !enrollmentsMap.has(enr.student_id)) {
-                 const c = Array.isArray(enr.courses) ? enr.courses[0] : enr.courses;
+                 const cObj: any = enr.courses;
+                 const c = Array.isArray(cObj) ? cObj[0] : cObj;
                  if (c && c.title) {
                      enrollmentsMap.set(enr.student_id, c.title);
                  }
@@ -135,7 +171,7 @@ export default function TeacherDashboard() {
           course: course,
           delivery_method: studentMeta.learning_mode || "In-person",
           schedule: studentMeta.schedule || [], 
-          attendance: s.current_streak > 0 ? `${s.current_streak} Day Streak` : "No Recent Logins",
+          attendance: studentMeta.current_streak > 0 ? `${studentMeta.current_streak} Day Streak` : "No Recent Logins",
           skillLevel: (s.xp || 0) > 1000 ? "Advanced" : (s.xp || 0) > 500 ? "Intermediate" : "Beginner",
           lastSeen: s.last_active_date ? new Date(s.last_active_date).toLocaleDateString() : "Never",
           scheduledToday: false, 
@@ -169,16 +205,12 @@ export default function TeacherDashboard() {
     router.push("/login");
   };
 
-  // --- DYNAMIC SCOPE FILTERING ---
   const scopedStudents = useMemo(() => {
     if (viewScope === 'global') return students;
     if (viewScope === 'my_roster') return students.filter(s => s.teacherId === currentUser?.id);
-    
-    // Otherwise, viewScope is an exact teacher ID (Admin View)
     return students.filter(s => s.teacherId === viewScope);
   }, [students, viewScope, currentUser]);
 
-  // Derived name for the Hero Metrics
   let scopeName = "Global";
   if (viewScope === 'my_roster') scopeName = "My";
   else if (viewScope !== 'global') {
@@ -186,8 +218,16 @@ export default function TeacherDashboard() {
     scopeName = edName ? `${edName}'s` : "Teacher";
   }
 
-  const handleSaveLessonEdits = async (lessonGroup: any, finalAttendees: any[], newDateISO: string, newDelivery: string, newLogistics: string) => {
+  const handleSaveLessonEdits = async (
+    lessonGroup: any, 
+    finalAttendees: any[], 
+    newDateISO: string, 
+    newDelivery: string, 
+    newLogistics: string,
+    wrapUpData: { attendance: Record<string, string>, xp: number, note: string }
+  ) => {
     try {
+      // 1. UPDATE SCHEDULES & LOGISTICS
       const originalAttendees = lessonGroup.attendees || [];
       const originalIds = originalAttendees.map((a: any) => a.studentId);
       const finalIds = finalAttendees.map((a: any) => a.studentId);
@@ -236,6 +276,34 @@ export default function TeacherDashboard() {
           return updateStudentScheduleOnly(id, sched => [...sched, newLesson]);
         })
       ]);
+
+      // 2. PROCESS ATTENDANCE & XP (WRAP-UP)
+      if (wrapUpData && Object.keys(wrapUpData.attendance).length > 0) {
+        await Promise.all(Object.entries(wrapUpData.attendance).map(async ([studentId, status]) => {
+          const { data: profile } = await supabase.from('profiles').select('xp, metadata').eq('id', studentId).single();
+          if (profile) {
+            let newXp = profile.xp || 0;
+            const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+
+            meta.lessons_scheduled = (meta.lessons_scheduled || 0) + 1;
+
+            if (status === 'present' || status === 'late') {
+              newXp += wrapUpData.xp || 0;
+              meta.lessons_attended = (meta.lessons_attended || 0) + 1;
+              meta.current_streak = (meta.current_streak || 0) + 1;
+            } else if (status === 'absent') {
+              meta.current_streak = 0; // Break streak
+            }
+
+            if (wrapUpData.note) {
+              const noteDate = new Date().toLocaleDateString('en-ZA');
+              meta.admin_notes = `[${noteDate} - ${status.toUpperCase()}] ${wrapUpData.note}\n\n` + (meta.admin_notes || "");
+            }
+
+            await supabase.from('profiles').update({ xp: newXp, metadata: meta }).eq('id', studentId);
+          }
+        }));
+      }
 
       await fetchDashboardData();
     } catch (err) {
@@ -367,6 +435,31 @@ export default function TeacherDashboard() {
                 <LayoutDashboard size={14}/> Admin Hub
               </button>
             )}
+            
+            {/* NOTIFICATION BELL TOGGLE */}
+            <div 
+              onClick={() => {
+                if (unreadCount > 0) {
+                  setUnreadOnlyFilter(!unreadOnlyFilter);
+                }
+              }}
+              className={`relative p-2.5 rounded-xl border transition-all shadow-sm ${
+                unreadOnlyFilter 
+                  ? 'bg-purple-500/20 border-purple-500/30 text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.3)]' 
+                  : unreadCount > 0 
+                    ? 'bg-white/5 border-purple-500/30 text-purple-300 cursor-pointer hover:bg-white/10 animate-pulse'
+                    : 'bg-white/5 border-white/5 text-slate-500 cursor-not-allowed'
+              }`}
+              title={unreadCount > 0 ? "Toggle Unread Messages" : "No unread messages"}
+            >
+              <Bell size={16} />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-purple-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full border border-[#0f172a] shadow-lg">
+                  {unreadCount}
+                </span>
+              )}
+            </div>
+
             <div className="w-px h-8 bg-white/10 mx-1 hidden sm:block" />
             <button 
               onClick={handleLogout} 
@@ -380,10 +473,9 @@ export default function TeacherDashboard() {
 
         {/* TOOLBAR ROW: FILTERS & ACTIONS (Role-Based View) */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 py-2 pb-6">
-           
+            
            {/* SCOPE SELECTION (Admin vs Teacher) */}
            {currentUser?.role === 'admin' ? (
-             // ADMIN VIEW: Scrollable Educator Pills
              <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 custom-scrollbar">
                <button
                  onClick={() => setViewScope('global')}
@@ -403,7 +495,6 @@ export default function TeacherDashboard() {
                ))}
              </div>
            ) : (
-             // TEACHER VIEW: Simple Roster Toggle
              <div className="flex bg-[#0f172a] border border-white/10 rounded-2xl p-1 shadow-inner shrink-0">
                <button 
                  onClick={() => setViewScope('my_roster')}
@@ -420,13 +511,21 @@ export default function TeacherDashboard() {
              </div>
            )}
 
-           {/* BULK ACTIONS */}
-           <button 
-             onClick={() => setIsBulkScheduleOpen(true)}
-             className="shrink-0 w-full md:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-white text-black rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg"
-           >
-             <CalendarDays size={14}/> Bulk Schedule
-           </button>
+           {/* ACTION BUTTONS */}
+           <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto shrink-0">
+             <button 
+               onClick={() => router.push('/teacher/progress')}
+               className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-purple-500/20 transition-all shadow-lg"
+             >
+               <TrendingUp size={14}/> Progress Matrix
+             </button>
+             <button 
+               onClick={() => setIsBulkScheduleOpen(true)}
+               className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-white text-black rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg"
+             >
+               <CalendarDays size={14}/> Bulk Schedule
+             </button>
+           </div>
         </div>
 
         {/* HERO METRICS */}
@@ -438,7 +537,11 @@ export default function TeacherDashboard() {
         {/* WORKSPACE AREA */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-6">
           <div className="lg:col-span-2">
-             <StudentIntelligence students={scopedStudents} />
+             <StudentIntelligence 
+               students={scopedStudents} 
+               unreadStudentIds={unreadStudentIds} 
+               unreadOnlyFilter={unreadOnlyFilter} 
+             />
           </div>
           <div className="lg:col-span-1">
              <ItinerarySidebar students={scopedStudents} onEditLesson={setEditingLessonGroup} />
@@ -685,7 +788,7 @@ function NextDaysTracker({ students, onEditLesson }: { students: any[], onEditLe
                       <div 
                         key={lesson.key || `${lesson.dateTs}-${lessonIdx}`} 
                         onClick={() => onEditLesson(lesson)}
-                        className="bg-[#020617] border border-white/5 rounded-2xl p-3 flex flex-col gap-1.5 group hover:border-blue-500/50 transition-colors cursor-pointer relative"
+                        className="bg-[#020617] border border-white/5 rounded-2xl p-3 flex flex-col gap-1.5 group hover:border-purple-500/50 transition-colors cursor-pointer relative"
                       >
                         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-white transition-opacity">
                           <Edit2 size={12}/>
@@ -724,7 +827,8 @@ function NextDaysTracker({ students, onEditLesson }: { students: any[], onEditLe
   );
 }
 
-function StudentIntelligence({ students }: { students: any[] }) {
+// INTEGRATING UNREAD STATE INTO STUDENT INTELLIGENCE
+function StudentIntelligence({ students, unreadStudentIds, unreadOnlyFilter }: { students: any[], unreadStudentIds: Set<string>, unreadOnlyFilter: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const [searchQuery, setSearchQuery] = useState("");
@@ -740,6 +844,9 @@ function StudentIntelligence({ students }: { students: any[] }) {
 
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
+      // 1. If unread filter is ON, drop anyone without a message instantly
+      if (unreadOnlyFilter && !unreadStudentIds.has(s.id)) return false;
+
       const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCourse = courseFilter === "All Courses" || s.course === courseFilter;
       
@@ -759,9 +866,9 @@ function StudentIntelligence({ students }: { students: any[] }) {
 
       return matchesSearch && matchesCourse && matchesSchedule;
     });
-  }, [students, searchQuery, courseFilter, scheduledTodayFilter]);
+  }, [students, searchQuery, courseFilter, scheduledTodayFilter, unreadOnlyFilter, unreadStudentIds]);
 
-  useMemo(() => { setCurrentPage(1); }, [searchQuery, courseFilter, scheduledTodayFilter]);
+  useMemo(() => { setCurrentPage(1); }, [searchQuery, courseFilter, scheduledTodayFilter, unreadOnlyFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredStudents.length / itemsPerPage));
   const paginatedStudents = filteredStudents.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -814,47 +921,69 @@ function StudentIntelligence({ students }: { students: any[] }) {
 
       <div className="bg-white/[0.02] border border-white/5 rounded-[32px] overflow-hidden shadow-2xl flex flex-col">
         <div className="divide-y divide-white/5 flex-1">
-          {paginatedStudents.map((student) => (
-            <div 
-              key={student.id} 
-              onClick={() => router.push(`${basePath}/${student.id}`)}
-              className="p-6 hover:bg-white/[0.04] transition-all cursor-pointer group flex flex-col sm:flex-row sm:items-center justify-between gap-6"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 border border-white/10 flex items-center justify-center text-lg font-black text-white shadow-inner shrink-0">
-                  {student.name.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-black text-white group-hover:text-purple-400 transition-colors leading-none">{student.name}</h3>
-                    {student.alerts.length > 0 && <AlertTriangle size={14} className="text-rose-500 animate-pulse"/>}
-                    
-                    {student.delivery_method?.toLowerCase() === "online" && (
-                      <span title="Online Lesson">
-                         <Video size={12} className="text-blue-400" />
-                      </span>
-                    )}
-                    
-                    {student._isScheduledToday && <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-blue-500/20 text-blue-400 border border-blue-500/30">Today</span>}
+          {paginatedStudents.map((student) => {
+            const hasUnread = unreadStudentIds.has(student.id);
+
+            return (
+              <div 
+                key={student.id} 
+                onClick={() => router.push(`${basePath}/${student.id}`)}
+                className={`p-6 transition-all cursor-pointer group flex flex-col sm:flex-row sm:items-center justify-between gap-6 ${
+                  hasUnread 
+                    ? 'bg-purple-500/5 border-l-4 border-l-purple-500 hover:bg-purple-500/10' 
+                    : 'border-l-4 border-transparent hover:bg-white/[0.04]'
+                }`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-full border flex items-center justify-center text-lg font-black text-white shadow-inner shrink-0 ${
+                    hasUnread ? 'bg-purple-600 border-purple-400 shadow-[0_0_15px_rgba(147,51,234,0.5)]' : 'bg-gradient-to-br from-purple-500/20 to-blue-500/20 border-white/10'
+                  }`}>
+                    {student.name.charAt(0).toUpperCase()}
                   </div>
-                  <p className="text-xs font-bold text-slate-500 mt-1">{student.course}</p>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className={`text-lg font-black transition-colors leading-none ${hasUnread ? 'text-purple-300' : 'text-white group-hover:text-purple-400'}`}>
+                        {student.name}
+                      </h3>
+                      
+                      {/* INLINE UNREAD BADGE */}
+                      {hasUnread && (
+                        <span className="flex items-center gap-1 bg-purple-500 text-white px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest shadow-lg animate-pulse">
+                          <Bell size={10} /> New Message
+                        </span>
+                      )}
+
+                      {student.alerts.length > 0 && <AlertTriangle size={14} className="text-rose-500 animate-pulse"/>}
+                      
+                      {student.delivery_method?.toLowerCase() === "online" && (
+                        <span title="Online Lesson">
+                           <Video size={12} className="text-blue-400" />
+                        </span>
+                      )}
+                      
+                      {student._isScheduledToday && <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-blue-500/20 text-blue-400 border border-blue-500/30">Today</span>}
+                    </div>
+                    <p className="text-xs font-bold text-slate-500 mt-1">{student.course}</p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-8 sm:gap-12 mt-2 sm:mt-0">
+                  <div className="hidden xl:block">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Skill Level</p>
+                    <p className="text-sm font-bold text-purple-400 flex items-center gap-1 mt-0.5"><Target size={12}/> {student.skillLevel}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Attendance / Streak</p>
+                    <p className="text-sm font-bold text-emerald-400 mt-0.5">{student.attendance}</p>
+                  </div>
+                  <ChevronRight className={`${hasUnread ? 'text-purple-400' : 'text-slate-600 group-hover:text-white'} transition-colors`} />
                 </div>
               </div>
-              <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-8 sm:gap-12 mt-2 sm:mt-0">
-                <div className="hidden xl:block">
-                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Skill Level</p>
-                  <p className="text-sm font-bold text-purple-400 flex items-center gap-1 mt-0.5"><Target size={12}/> {student.skillLevel}</p>
-                </div>
-                <div>
-                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Attendance / Streak</p>
-                  <p className="text-sm font-bold text-emerald-400 mt-0.5">{student.attendance}</p>
-                </div>
-                <ChevronRight className="text-slate-600 group-hover:text-white transition-colors" />
-              </div>
-            </div>
-          ))}
+            )
+          })}
           {filteredStudents.length === 0 && (
-            <div className="p-12 text-center text-slate-500 italic text-sm">No students found matching your filters.</div>
+            <div className="p-12 text-center text-slate-500 italic text-sm">
+              {unreadOnlyFilter ? "No unread messages found." : "No students found matching your filters."}
+            </div>
           )}
         </div>
 
@@ -1255,13 +1384,22 @@ function BulkScheduleModal({ isOpen, onClose, students, activeCourses, onSchedul
 }
 
 // ---------------------------------------------------------
-// NEW: EDIT LESSON MODAL
+// UPDATED: DUAL-TAB SESSION MANAGER MODAL
 // ---------------------------------------------------------
 function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any) {
+  const [activeTab, setActiveTab] = useState<'details' | 'wrapup'>('details');
+  
+  // Details State
   const [dateStr, setDateStr] = useState("");
   const [delivery, setDelivery] = useState("in-person");
   const [logistics, setLogistics] = useState("");
   const [attendees, setAttendees] = useState<any[]>([]);
+  
+  // Wrap-up State
+  const [attendance, setAttendance] = useState<Record<string, string>>({});
+  const [sessionXp, setSessionXp] = useState<number>(50);
+  const [sessionNote, setSessionNote] = useState<string>("");
+  
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -1274,6 +1412,12 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
       setDelivery(lessonGroup.delivery || "in-person");
       setLogistics(lessonGroup.link || lessonGroup.location || "");
       setAttendees(lessonGroup.attendees || []);
+      
+      // Reset Wrap-up state when opened
+      setActiveTab('details');
+      setAttendance({});
+      setSessionXp(50);
+      setSessionNote("");
     }
   }, [isOpen, lessonGroup]);
 
@@ -1282,7 +1426,15 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
   const handleSave = async () => {
     setIsSaving(true);
     const newDateISO = new Date(dateStr).toISOString();
-    await onSave(lessonGroup, attendees, newDateISO, delivery, logistics);
+    
+    // Package the wrapup data
+    const wrapUpData = {
+      attendance,
+      xp: sessionXp,
+      note: sessionNote
+    };
+
+    await onSave(lessonGroup, attendees, newDateISO, delivery, logistics, wrapUpData);
     setIsSaving(false);
     onClose();
   };
@@ -1293,6 +1445,10 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
     if (student && !attendees.find(a => a.studentId === student.id)) {
        setAttendees(prev => [...prev, { studentId: student.id, studentName: student.name }]);
     }
+  };
+
+  const setStudentStatus = (studentId: string, status: string) => {
+    setAttendance(prev => ({ ...prev, [studentId]: status }));
   };
 
   const availableToAdd = students.filter((s: any) => !attendees.find(a => a.studentId === s.id));
@@ -1306,99 +1462,200 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
       >
         <div className="p-6 border-b border-white/5 flex justify-between items-center bg-white/[0.02] shrink-0">
           <div className="flex items-center gap-4">
-            <div className="p-3 bg-blue-500/20 text-blue-400 rounded-2xl border border-blue-500/30"><Edit2 size={20} /></div>
+            <div className="p-3 bg-purple-500/20 text-purple-400 rounded-2xl border border-purple-500/30"><LayoutDashboard size={20} /></div>
             <div>
-                <h2 className="text-xl font-black uppercase italic tracking-tighter text-white leading-none">Edit Session</h2>
+                <h2 className="text-xl font-black uppercase italic tracking-tighter text-white leading-none">Session Manager</h2>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1 line-clamp-1">{lessonGroup.topic}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-2 bg-white/5 hover:bg-white/10 rounded-full"><X size={20} /></button>
         </div>
 
-        <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
-          <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase tracking-widest text-blue-400 ml-2">Date & Time</label>
-            <input 
-              type="datetime-local" 
-              value={dateStr} 
-              onChange={e => setDateStr(e.target.value)} 
-              className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500 cursor-pointer" 
-            />
-          </div>
+        {/* TAB NAVIGATION */}
+        <div className="flex p-2 bg-[#020617] border-b border-white/5 shrink-0 gap-2">
+          <button 
+            onClick={() => setActiveTab('details')}
+            className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'details' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+            }`}
+          >
+            <CalendarRange size={14}/> Logistics
+          </button>
+          <button 
+            onClick={() => setActiveTab('wrapup')}
+            className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+              activeTab === 'wrapup' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
+            }`}
+          >
+            <CheckCircle2 size={14}/> Log Attendance
+          </button>
+        </div>
 
-          <div className="grid grid-cols-2 gap-4">
-             <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Delivery Mode</label>
-                <div className="relative">
-                    <select 
-                      value={delivery} 
-                      onChange={e => {
-                          setDelivery(e.target.value);
-                          setLogistics(""); 
-                      }} 
-                      className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none"
-                    >
-                      <option value="in-person">In-Person</option>
-                      <option value="online">Online</option>
-                    </select>
-                    <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <AnimatePresence mode="wait">
+            {activeTab === 'details' ? (
+              <motion.div key="details" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className="p-6 space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-blue-400 ml-2">Date & Time</label>
+                  <input 
+                    type="datetime-local" 
+                    value={dateStr} 
+                    onChange={e => setDateStr(e.target.value)} 
+                    className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500 cursor-pointer" 
+                  />
                 </div>
-             </div>
-             <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Venue / Link</label>
-                <input 
-                  type={delivery === 'online' ? 'url' : 'text'}
-                  value={logistics} 
-                  onChange={e => setLogistics(e.target.value)} 
-                  placeholder={delivery === 'online' ? "https://zoom.us/..." : "e.g. Centurion Main Lab"}
-                  className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500" 
-                />
-             </div>
-          </div>
 
-          <div className="space-y-4 pt-4 border-t border-white/5">
-            <div className="flex justify-between items-center">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Manage Attendees</label>
-              <span className="text-[9px] font-black bg-white/5 px-2 py-1 rounded text-slate-400">{attendees.length} Students</span>
-            </div>
-            
-            <div className="bg-[#020617] border border-white/5 rounded-2xl p-2 max-h-48 overflow-y-auto custom-scrollbar">
-              {attendees.length === 0 ? (
-                <div className="p-4 text-center text-xs text-rose-400 italic font-bold">This session will be completely deleted.</div>
-              ) : (
-                attendees.map((a: any) => (
-                  <div key={a.studentId} className="flex justify-between items-center p-3 hover:bg-white/5 rounded-xl transition-colors group">
-                    <span className="text-sm font-bold text-white">{a.studentName}</span>
-                    <button 
-                      onClick={() => setAttendees(prev => prev.filter(att => att.studentId !== a.studentId))}
-                      className="text-xs font-bold text-rose-500/50 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
-                    >
-                      <X size={14}/> Remove
-                    </button>
+                <div className="grid grid-cols-2 gap-4">
+                   <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Delivery Mode</label>
+                      <div className="relative">
+                          <select 
+                            value={delivery} 
+                            onChange={e => {
+                                setDelivery(e.target.value);
+                                setLogistics(""); 
+                            }} 
+                            className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none"
+                          >
+                            <option value="in-person">In-Person</option>
+                            <option value="online">Online</option>
+                          </select>
+                          <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                      </div>
+                   </div>
+                   <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Venue / Link</label>
+                      <input 
+                        type={delivery === 'online' ? 'url' : 'text'}
+                        value={logistics} 
+                        onChange={e => setLogistics(e.target.value)} 
+                        placeholder={delivery === 'online' ? "https://zoom.us/..." : "e.g. Centurion Main Lab"}
+                        className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500" 
+                      />
+                   </div>
+                </div>
+
+                <div className="space-y-4 pt-4 border-t border-white/5">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Manage Attendees</label>
+                    <span className="text-[9px] font-black bg-white/5 px-2 py-1 rounded text-slate-400">{attendees.length} Students</span>
                   </div>
-                ))
-              )}
-            </div>
+                  
+                  <div className="bg-[#020617] border border-white/5 rounded-2xl p-2 max-h-48 overflow-y-auto custom-scrollbar">
+                    {attendees.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-rose-400 italic font-bold">This session will be completely deleted.</div>
+                    ) : (
+                      attendees.map((a: any) => (
+                        <div key={a.studentId} className="flex justify-between items-center p-3 hover:bg-white/5 rounded-xl transition-colors group">
+                          <span className="text-sm font-bold text-white">{a.studentName}</span>
+                          <button 
+                            onClick={() => setAttendees(prev => prev.filter(att => att.studentId !== a.studentId))}
+                            className="text-xs font-bold text-rose-500/50 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
+                          >
+                            <X size={14}/> Remove
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
 
-            {/* ONLY ALLOW ADDING MORE STUDENTS IF IN-PERSON */}
-            {delivery === 'in-person' && availableToAdd.length > 0 && (
-               <div className="bg-[#0f172a] border border-blue-500/20 rounded-2xl p-4">
-                 <label className="text-[9px] font-black uppercase tracking-widest text-blue-400 mb-2 flex items-center gap-1"><UserPlus size={10}/> Add Student to Group</label>
-                 <select 
-                    value="" 
-                    onChange={e => handleAddStudent(e.target.value)} 
-                    className="w-full bg-[#020617] border border-white/10 rounded-xl px-3 py-3 text-sm font-bold text-slate-300 outline-none focus:border-blue-500 appearance-none"
-                 >
-                    <option value="" disabled>Select a student to add...</option>
-                    {availableToAdd.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                 </select>
-               </div>
-            )}
+                  {delivery === 'in-person' && availableToAdd.length > 0 && (
+                     <div className="bg-[#0f172a] border border-blue-500/20 rounded-2xl p-4">
+                       <label className="text-[9px] font-black uppercase tracking-widest text-blue-400 mb-2 flex items-center gap-1"><UserPlus size={10}/> Add Student to Group</label>
+                       <select 
+                          value="" 
+                          onChange={e => handleAddStudent(e.target.value)} 
+                          className="w-full bg-[#020617] border border-white/10 rounded-xl px-3 py-3 text-sm font-bold text-slate-300 outline-none focus:border-blue-500 appearance-none"
+                       >
+                          <option value="" disabled>Select a student to add...</option>
+                          {availableToAdd.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                       </select>
+                     </div>
+                  )}
+                  {attendees.length < lessonGroup.attendees?.length && (
+                    <p className="text-[9px] text-rose-400 italic px-2 font-bold mt-2">Removing a student completely un-enrolls them from this specific timeslot.</p>
+                  )}
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div key="wrapup" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} className="p-6 space-y-8">
+                
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center mb-4">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2 flex items-center gap-2"><CheckCircle2 size={14} className="text-emerald-500"/> Roster Roll-Call</label>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {attendees.length === 0 ? (
+                      <p className="text-center text-slate-500 italic text-xs p-4">No students to mark.</p>
+                    ) : (
+                      attendees.map((a: any) => {
+                        const currentStatus = attendance[a.studentId];
+                        return (
+                          <div key={a.studentId} className="bg-[#020617] border border-white/5 rounded-2xl p-4 flex flex-col gap-3 shadow-inner">
+                            <span className="text-sm font-black text-white">{a.studentName}</span>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              <button 
+                                onClick={() => setStudentStatus(a.studentId, 'present')}
+                                className={`py-2 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex justify-center items-center gap-1 ${currentStatus === 'present' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-white/5 text-slate-500 border-transparent hover:bg-white/10'}`}
+                              >
+                                {currentStatus === 'present' && <Check size={10}/>} Present
+                              </button>
+                              <button 
+                                onClick={() => setStudentStatus(a.studentId, 'absent')}
+                                className={`py-2 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex justify-center items-center gap-1 ${currentStatus === 'absent' ? 'bg-rose-500/20 text-rose-400 border-rose-500/40' : 'bg-white/5 text-slate-500 border-transparent hover:bg-white/10'}`}
+                              >
+                                {currentStatus === 'absent' && <XCircle size={10}/>} Absent
+                              </button>
+                              <button 
+                                onClick={() => setStudentStatus(a.studentId, 'late')}
+                                title="Arrived 10+ minutes after start time"
+                                className={`py-2 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex justify-center items-center gap-1 ${currentStatus === 'late' ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' : 'bg-white/5 text-slate-500 border-transparent hover:bg-white/10'}`}
+                              >
+                                {currentStatus === 'late' && <Clock size={10}/>} Late
+                              </button>
+                              <button 
+                                onClick={() => setStudentStatus(a.studentId, 'rescheduled')}
+                                className={`py-2 rounded-lg text-[9px] font-black uppercase tracking-widest border transition-all flex justify-center items-center gap-1 ${currentStatus === 'rescheduled' ? 'bg-blue-500/20 text-blue-400 border-blue-500/40' : 'bg-white/5 text-slate-500 border-transparent hover:bg-white/10'}`}
+                              >
+                                {currentStatus === 'rescheduled' && <Repeat size={10}/>} Resched
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
 
-            {attendees.length < lessonGroup.attendees?.length && (
-              <p className="text-[9px] text-rose-400 italic px-2 font-bold mt-2">Removing a student completely un-enrolls them from this specific timeslot.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-purple-400 ml-2 flex items-center gap-1"><Trophy size={10}/> Award Session XP</label>
+                    <div className="relative">
+                      <input 
+                        type="number" 
+                        value={sessionXp} 
+                        onChange={e => setSessionXp(Number(e.target.value))} 
+                        className="w-full bg-[#020617] border border-purple-500/30 rounded-2xl px-4 py-3 pl-12 text-sm font-bold text-white outline-none focus:border-purple-500" 
+                      />
+                      <Zap size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-purple-500 pointer-events-none" />
+                    </div>
+                    <p className="text-[8px] text-slate-500 italic ml-2">Awarded to Present/Late students.</p>
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2 flex items-center gap-1"><FileText size={10}/> Admin / Class Notes</label>
+                    <textarea 
+                      value={sessionNote}
+                      onChange={e => setSessionNote(e.target.value)}
+                      placeholder="e.g. John struggled with loops today, but Sarah nailed it."
+                      className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-medium text-white outline-none focus:border-purple-500 custom-scrollbar min-h-[80px]"
+                    />
+                  </div>
+                </div>
+
+              </motion.div>
             )}
-          </div>
+          </AnimatePresence>
         </div>
 
         <div className="p-6 border-t border-white/5 bg-black/40 flex flex-wrap justify-between items-center gap-4 shrink-0">
@@ -1406,13 +1663,13 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
             onClick={async () => {
               if(!window.confirm("Are you sure you want to completely delete this session for ALL attendees?")) return;
               setIsSaving(true);
-              await onSave(lessonGroup, [], new Date(dateStr).toISOString(), delivery, logistics);
+              await onSave(lessonGroup, [], new Date(dateStr).toISOString(), delivery, logistics, { attendance: {}, xp: 0, note: '' });
               setIsSaving(false);
               onClose();
             }} 
             className="px-4 py-3 text-[10px] font-black uppercase tracking-widest text-rose-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-colors flex items-center gap-2"
           >
-            <Trash2 size={14} /> Delete Session
+            <Trash2 size={14} /> Delete
           </button>
           
           <div className="flex items-center gap-2 flex-1 justify-end">
@@ -1420,9 +1677,9 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any
             <button 
               onClick={handleSave}
               disabled={isSaving || !dateStr}
-              className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-2xl font-black uppercase italic text-xs tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50"
+              className="bg-purple-600 hover:bg-purple-500 text-white px-8 py-3 rounded-2xl font-black uppercase italic text-xs tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-900/20 disabled:opacity-50"
             >
-              {isSaving ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Save Changes
+              {isSaving ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Save Update
             </button>
           </div>
         </div>

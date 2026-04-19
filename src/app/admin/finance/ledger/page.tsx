@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, Fragment } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, Search, Filter, TrendingUp, Wallet, Receipt, 
   Clock, AlertTriangle, CheckCircle2, ChevronRight, BarChart3,
   Users, Activity, ArrowDownToLine, ArrowUpRight, DollarSign, LayoutDashboard,
-  Loader2, Target // <-- Added missing imports
+  Loader2, Target, ChevronDown, ChevronUp, Save, Settings
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+import confetti from "canvas-confetti";
 
 export default function FinanceLedgerPage() {
   const router = useRouter();
@@ -21,6 +22,14 @@ export default function FinanceLedgerPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [planFilter, setPlanFilter] = useState<'all' | 'term' | 'bootcamp'>('all');
   const [sortConfig, setSortConfig] = useState<'balance' | 'next_inv' | 'name'>('balance');
+
+  // Expanded Row State
+  const [expandedClientId, setExpandedClient] = useState<string | null>(null);
+  const [savingConfigId, setSavingConfigId] = useState<string | null>(null);
+
+  // Editable Config State (Local to the expanded row)
+  const [editFrequency, setEditFrequency] = useState<string>("monthly");
+  const [editNextDate, setEditNextDate] = useState<string>("");
 
   // Processed Data
   const [clients, setClients] = useState<any[]>([]);
@@ -53,7 +62,9 @@ export default function FinanceLedgerPage() {
       const students = profiles.filter(p => p.role === 'student');
 
       const now = new Date();
+      const currentYear = now.getFullYear();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
       
       let totalExpected = 0;
       let totalInvoiced = 0;
@@ -72,12 +83,15 @@ export default function FinanceLedgerPage() {
         const myKids = students.filter(s => s.linked_parent_id === guardian.id);
         if (myKids.length === 0) return null;
 
+        // Parse Guardian Metadata for Custom Billing Schedule
+        const gMeta = typeof guardian.metadata === 'string' ? JSON.parse(guardian.metadata) : (guardian.metadata || {});
+        const billingSchedule = gMeta.billing_schedule || {};
+
         // Determine Plan Type (If any kid is in a non-bootcamp course, they are 'Term')
         let isTerm = false;
         myKids.forEach(kid => {
           const myEnrollments = enrollments.filter(e => e.student_id === kid.id);
           myEnrollments.forEach(enr => {
-            // FIX: Cast to any to prevent TypeScript "never" error on Supabase relational joins
             const courses: any = enr.courses;
             const courseTitle = Array.isArray(courses) ? courses[0]?.title : courses?.title;
             if (courseTitle && !courseTitle.toLowerCase().includes('bootcamp')) {
@@ -85,7 +99,11 @@ export default function FinanceLedgerPage() {
             }
           });
         });
-        const plan = isTerm ? 'Term' : 'Bootcamp';
+        
+        // If the profile explicitly states frequency, use it to override the inferred plan
+        const plan = billingSchedule.frequency === 'termly' ? 'Term (Upfront)' 
+                   : billingSchedule.frequency === 'monthly' ? 'Term (Monthly)' 
+                   : isTerm ? 'Term' : 'Bootcamp';
 
         // Financials
         const myInvoices = invoices.filter(i => i.guardian_id === guardian.id);
@@ -94,32 +112,53 @@ export default function FinanceLedgerPage() {
         let accBalance = 0;
         myInvoices.forEach(inv => {
           const amt = Number(inv.total_amount) || 0;
-          if (inv.status === 'pending' || inv.status === 'overdue') {
-            accBalance += amt;
+          if (inv.status === 'pending' || inv.status === 'overdue' || inv.status === 'partially_paid') {
+            accBalance += Math.max(0, amt - Number(inv.amount_paid || 0));
           }
         });
 
-        // Projections
-        let nextInvDate = "-";
-        let nextInvAmount = 0;
+        // --- NEW PROJECTION LOGIC (Profile Driven) ---
+        let nextInvDate = "Not Set";
+        let nextInvDateObj: Date | null = null;
         let expectedTermRev = 0;
         const lastAmount = lastInv ? Number(lastInv.total_amount) : 0;
+        const rawNextDateStr = billingSchedule.next_invoice_date || "";
 
-        if (plan === 'Term') {
-          if (lastInv) {
-            const d = new Date(lastInv.created_at);
-            d.setMonth(d.getMonth() + 1);
-            nextInvDate = d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
-            nextInvAmount = lastAmount; // Assuming recurring flat rate
+        // 1. Get the exact date from the Guardian Profile
+        if (billingSchedule.next_invoice_date) {
+          nextInvDateObj = new Date(billingSchedule.next_invoice_date);
+          nextInvDate = nextInvDateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+        } else if (plan.includes('Term') && lastInv) {
+          // Fallback if they haven't been configured yet, but we know they are a recurring client
+          const fallbackDate = new Date(lastInv.created_at);
+          fallbackDate.setMonth(fallbackDate.getMonth() + 1);
+          nextInvDateObj = fallbackDate;
+          nextInvDate = fallbackDate.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) + " (Est)";
+        } else if (plan === 'Bootcamp') {
+          nextInvDate = "-";
+        }
+
+        // 2. Calculate Expected Monthly Revenue (Target)
+        if (plan.includes('Term')) {
+          // Check if they were ALREADY invoiced this month
+          const invoicedThisMonth = lastInv && new Date(lastInv.created_at) >= startOfMonth && new Date(lastInv.created_at) <= endOfMonth;
+          
+          if (invoicedThisMonth) {
+            // They were already billed this month, so this amount is part of our monthly target baseline
+            totalExpected += lastAmount;
+          } else if (nextInvDateObj && nextInvDateObj >= startOfMonth && nextInvDateObj <= endOfMonth) {
+             // They haven't been billed yet, but their custom schedule says they will be billed this month
+             totalExpected += lastAmount; 
           }
-          // Approx 3 months left in term for projection
-          expectedTermRev = nextInvAmount * 3;
-          totalExpected += nextInvAmount; // Add to monthly MRR expected
+          
+          // Approx remaining term projection
+          expectedTermRev = lastAmount * (billingSchedule.frequency === 'termly' ? 1 : 3); 
         } else {
           // Bootcamp logic (One-off)
-          expectedTermRev = lastAmount; // Just the flat fee
-          if (lastInv && new Date(lastInv.created_at) >= startOfMonth) {
-            totalExpected += lastAmount; // Only expected if generated this month
+          expectedTermRev = lastAmount; 
+          // For one-offs, we only "expect" them in the month they actually occur
+          if (lastInv && new Date(lastInv.created_at) >= startOfMonth && new Date(lastInv.created_at) <= endOfMonth) {
+            totalExpected += lastAmount; 
           }
         }
 
@@ -128,7 +167,7 @@ export default function FinanceLedgerPage() {
           const invDate = new Date(inv.created_at);
           const amt = Number(inv.total_amount) || 0;
           
-          if (invDate >= startOfMonth) {
+          if (invDate >= startOfMonth && invDate <= endOfMonth) {
             totalInvoiced += amt;
             if (inv.status === 'paid' || inv.status === 'settled') totalCollected += amt;
             else totalOutstanding += amt;
@@ -138,7 +177,6 @@ export default function FinanceLedgerPage() {
           if (amt > 0) {
             totalAssessedInvoices++;
             if (inv.status === 'paid' || inv.status === 'settled') {
-              // Approximate payment delay based on updated_at vs created_at
               const created = new Date(inv.created_at).getTime();
               const updated = new Date(inv.updated_at || inv.created_at).getTime();
               const daysToPay = (updated - created) / (1000 * 60 * 60 * 24);
@@ -152,22 +190,40 @@ export default function FinanceLedgerPage() {
           }
         });
 
+        // 3. Compile Current Year History for the Dropdown
+        const currentYearHistory = myInvoices
+          .filter(inv => new Date(inv.created_at).getFullYear() === currentYear)
+          .map(inv => ({
+            id: inv.id,
+            ref: `INV-${inv.invoice_number}`,
+            amount: Number(inv.total_amount),
+            paid: Number(inv.amount_paid || 0),
+            status: inv.status,
+            date: new Date(inv.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }),
+            dueDate: inv.expires_at ? new Date(inv.expires_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-',
+            paidDate: (inv.status === 'paid' || inv.status === 'settled') ? new Date(inv.updated_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-'
+          }));
+
         return {
           id: guardian.id,
           name: guardian.display_name,
           kids: myKids.length,
           plan,
+          billingFrequency: billingSchedule.frequency || "monthly",
+          rawNextDateStr,
           balance: accBalance,
+          history: currentYearHistory,
           lastInv: lastInv ? {
             date: new Date(lastInv.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }),
             amount: lastAmount,
             status: lastInv.status
           } : null,
           nextInvDate,
-          nextInvAmount,
+          nextInvDateObj, // Used for sorting
+          nextInvAmount: lastAmount,
           expectedTermRev
         };
-      }).filter(Boolean);
+      }).filter(Boolean); 
 
       setClients(processedClients);
 
@@ -191,13 +247,59 @@ export default function FinanceLedgerPage() {
     }
   }
 
+  const handleUpdateBillingConfig = async (clientId: string) => {
+    if (!editNextDate) {
+      alert("Please select a valid Next Invoice Date.");
+      return;
+    }
+
+    setSavingConfigId(clientId);
+    try {
+      const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', clientId).single();
+      if (!profile) throw new Error("Profile not found");
+
+      const currentMeta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+      const newMeta = {
+        ...currentMeta,
+        billing_schedule: {
+          frequency: editFrequency,
+          next_invoice_date: editNextDate
+        }
+      };
+
+      const { error } = await supabase.from('profiles').update({ metadata: newMeta }).eq('id', clientId);
+      if (error) throw error;
+
+      confetti({ particleCount: 50, spread: 60, origin: { y: 0.8 }, colors: ['#3b82f6', '#60a5fa'] });
+      
+      // Refresh local data to show new dates
+      await fetchLedgerData();
+      
+    } catch (err: any) {
+      alert("Failed to update billing config: " + err.message);
+    } finally {
+      setSavingConfigId(null);
+    }
+  };
+
+  const handleExpandRow = (client: any) => {
+    if (expandedClientId === client.id) {
+      setExpandedClient(null);
+    } else {
+      setExpandedClient(client.id);
+      setEditFrequency(client.billingFrequency);
+      setEditNextDate(client.rawNextDateStr);
+    }
+  };
+
   // --- Filtering & Sorting ---
   const displayedClients = useMemo(() => {
     let result = [...clients];
 
     // Filter Plan
     if (planFilter !== 'all') {
-      result = result.filter(c => c.plan.toLowerCase() === planFilter);
+      if (planFilter === 'term') result = result.filter(c => c.plan.includes('Term'));
+      if (planFilter === 'bootcamp') result = result.filter(c => c.plan === 'Bootcamp');
     }
 
     // Search
@@ -210,6 +312,11 @@ export default function FinanceLedgerPage() {
     result.sort((a, b) => {
       if (sortConfig === 'balance') return b.balance - a.balance; // Highest debt first
       if (sortConfig === 'name') return a.name.localeCompare(b.name);
+      if (sortConfig === 'next_inv') {
+         if (!a.nextInvDateObj) return 1;
+         if (!b.nextInvDateObj) return -1;
+         return a.nextInvDateObj.getTime() - b.nextInvDateObj.getTime(); // Earliest date first
+      }
       return 0; // Default
     });
 
@@ -292,7 +399,7 @@ export default function FinanceLedgerPage() {
                     className="bg-white border border-slate-200 text-slate-700 font-bold text-xs uppercase tracking-widest rounded-2xl px-4 py-3 outline-none focus:border-blue-500 shadow-sm cursor-pointer flex-1 md:flex-none"
                   >
                     <option value="all">All Plans</option>
-                    <option value="term">Term Only</option>
+                    <option value="term">Term Clients Only</option>
                     <option value="bootcamp">Bootcamps Only</option>
                   </select>
                   <select 
@@ -301,6 +408,7 @@ export default function FinanceLedgerPage() {
                     className="bg-white border border-slate-200 text-slate-700 font-bold text-xs uppercase tracking-widest rounded-2xl px-4 py-3 outline-none focus:border-blue-500 shadow-sm cursor-pointer flex-1 md:flex-none"
                   >
                     <option value="balance">Sort: Highest Debt</option>
+                    <option value="next_inv">Sort: Next Invoice</option>
                     <option value="name">Sort: A-Z</option>
                   </select>
                 </div>
@@ -325,59 +433,166 @@ export default function FinanceLedgerPage() {
                         <tr><td colSpan={6} className="p-12 text-center text-slate-400 font-bold italic">No clients match your filter criteria.</td></tr>
                       ) : (
                         displayedClients.map((client) => (
-                          <tr key={client.id} className="hover:bg-slate-50/80 transition-colors group">
-                            <td className="px-8 py-6">
-                              <div className="flex items-center gap-4">
-                                <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-black text-sm border border-blue-100 shrink-0 group-hover:scale-110 transition-transform">
-                                  {client.name.charAt(0).toUpperCase()}
+                          <Fragment key={client.id}>
+                            <tr 
+                              onClick={() => handleExpandRow(client)} 
+                              className={`transition-colors group cursor-pointer ${expandedClientId === client.id ? 'bg-blue-50/50' : 'hover:bg-slate-50/80'}`}
+                            >
+                              <td className="px-8 py-6">
+                                <div className="flex items-center gap-4">
+                                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm border shrink-0 transition-transform ${
+                                    expandedClientId === client.id ? 'bg-blue-600 text-white border-blue-700 shadow-lg scale-110' : 'bg-blue-50 text-blue-600 border-blue-100 group-hover:scale-110'
+                                  }`}>
+                                    {client.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <p className="font-black text-slate-900 text-sm group-hover:text-blue-600 transition-colors flex items-center gap-2">
+                                      {client.name} 
+                                      {expandedClientId === client.id ? <ChevronUp size={14} className="text-blue-500" /> : <ChevronDown size={14} className="text-slate-400 opacity-50 group-hover:opacity-100 transition-opacity" />}
+                                    </p>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{client.kids} Active {client.kids === 1 ? 'Pioneer' : 'Pioneers'}</p>
+                                  </div>
                                 </div>
-                                <div>
-                                  <p className="font-black text-slate-900 text-sm group-hover:text-blue-600 transition-colors">{client.name}</p>
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{client.kids} Active {client.kids === 1 ? 'Pioneer' : 'Pioneers'}</p>
+                              </td>
+                              <td className="px-6 py-6">
+                                <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+                                  client.plan.includes('Term') ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-slate-100 text-slate-600 border-slate-200'
+                                }`}>
+                                  {client.plan}
+                                </span>
+                              </td>
+                              <td className="px-6 py-6">
+                                <div className={`text-sm font-black flex items-center gap-1.5 ${client.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                  R {client.balance.toLocaleString()}
+                                  {client.balance > 0 && <AlertTriangle size={14} className="animate-pulse" />}
                                 </div>
-                              </div>
-                            </td>
-                            <td className="px-6 py-6">
-                              <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
-                                client.plan === 'Term' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-slate-100 text-slate-600 border-slate-200'
-                              }`}>
-                                {client.plan}
-                              </span>
-                            </td>
-                            <td className="px-6 py-6">
-                              <div className={`text-sm font-black flex items-center gap-1.5 ${client.balance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                R {client.balance.toLocaleString()}
-                                {client.balance > 0 && <AlertTriangle size={14} className="animate-pulse" />}
-                              </div>
-                            </td>
-                            <td className="px-6 py-6">
-                              {client.lastInv ? (
-                                <div>
-                                  <p className="text-sm font-bold text-slate-700">R {client.lastInv.amount.toLocaleString()}</p>
-                                  <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest flex items-center gap-1">
-                                    {client.lastInv.date} • <span className={client.lastInv.status === 'paid' ? 'text-emerald-500' : 'text-rose-500'}>{client.lastInv.status}</span>
-                                  </p>
-                                </div>
-                              ) : (
-                                <span className="text-slate-400 italic text-xs">No records</span>
+                              </td>
+                              <td className="px-6 py-6">
+                                {client.lastInv ? (
+                                  <div>
+                                    <p className="text-sm font-bold text-slate-700">R {client.lastInv.amount.toLocaleString()}</p>
+                                    <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest flex items-center gap-1">
+                                      {client.lastInv.date} • <span className={client.lastInv.status === 'paid' ? 'text-emerald-500' : 'text-rose-500'}>{client.lastInv.status}</span>
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 italic text-xs">No records</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-6">
+                                {client.plan.includes('Term') ? (
+                                  <div>
+                                    <p className={`text-[10px] font-black mt-1 uppercase tracking-widest flex items-center gap-1 ${client.nextInvDate === 'Not Set' ? 'text-amber-500 bg-amber-50 px-2 py-1 rounded w-fit border border-amber-200' : 'text-blue-500'}`}>
+                                      <Clock size={10}/> {client.nextInvDate === 'Not Set' ? 'Config Required' : `Due: ${client.nextInvDate}`}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-300 font-bold text-xs">- One Off -</span>
+                                )}
+                              </td>
+                              <td className="px-8 py-6 text-right">
+                                <p className="text-sm font-black text-slate-900">R {client.expectedTermRev.toLocaleString()}</p>
+                              </td>
+                            </tr>
+                            
+                            {/* EXPANDABLE DRAWER */}
+                            <AnimatePresence>
+                              {expandedClientId === client.id && (
+                                <tr>
+                                  <td colSpan={6} className="p-0 border-b border-blue-100 bg-slate-50 shadow-inner">
+                                    <motion.div 
+                                      initial={{ height: 0, opacity: 0 }} 
+                                      animate={{ height: 'auto', opacity: 1 }} 
+                                      exit={{ height: 0, opacity: 0 }}
+                                      className="overflow-hidden"
+                                    >
+                                      <div className="p-8 grid grid-cols-1 xl:grid-cols-3 gap-8">
+                                        
+                                        {/* LEFT: Billing Config */}
+                                        <div className="xl:col-span-1 bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm h-fit">
+                                          <h4 className="text-xs font-black uppercase tracking-widest text-slate-900 mb-6 flex items-center gap-2 border-b border-slate-100 pb-3">
+                                            <Settings size={14} className="text-blue-500" /> Billing Settings
+                                          </h4>
+                                          <div className="space-y-4">
+                                            <div>
+                                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5 block ml-1">Frequency</label>
+                                              <select 
+                                                value={editFrequency}
+                                                onChange={e => setEditFrequency(e.target.value)}
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold text-slate-700 outline-none focus:border-blue-500"
+                                              >
+                                                <option value="monthly">Monthly Recurring</option>
+                                                <option value="termly">Termly (Upfront)</option>
+                                              </select>
+                                            </div>
+                                            <div>
+                                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5 block ml-1">Next Invoice Target Date</label>
+                                              <input 
+                                                type="date" 
+                                                value={editNextDate}
+                                                onChange={e => setEditNextDate(e.target.value)}
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold text-slate-700 outline-none focus:border-blue-500 cursor-pointer"
+                                              />
+                                            </div>
+                                            <button 
+                                              onClick={() => handleUpdateBillingConfig(client.id)}
+                                              disabled={savingConfigId === client.id}
+                                              className="w-full bg-blue-600 text-white rounded-xl py-3 text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 flex items-center justify-center gap-2 transition-all disabled:opacity-50 mt-2 shadow-md shadow-blue-600/20"
+                                            >
+                                              {savingConfigId === client.id ? <Loader2 size={14} className="animate-spin" /> : <Save size={14}/>} Update Terms
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {/* RIGHT: Financial History Log */}
+                                        <div className="xl:col-span-2 bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm">
+                                          <h4 className="text-xs font-black uppercase tracking-widest text-slate-900 mb-6 flex items-center justify-between border-b border-slate-100 pb-3">
+                                            <span className="flex items-center gap-2"><Receipt size={14} className="text-emerald-500" /> Account History</span>
+                                            <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">Current Year</span>
+                                          </h4>
+                                          <div className="max-h-[300px] overflow-y-auto custom-scrollbar pr-2 space-y-2">
+                                            {client.history.length === 0 ? (
+                                              <p className="text-slate-400 text-xs italic text-center py-8">No invoices generated for this year.</p>
+                                            ) : (
+                                              client.history.map((hist: any) => (
+                                                <div key={hist.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-slate-100 hover:border-blue-200 hover:bg-slate-50 transition-colors">
+                                                  <div className="flex items-center gap-3">
+                                                    <div className={`p-2 rounded-lg ${hist.status === 'paid' ? 'bg-emerald-50 text-emerald-600' : hist.status === 'pending' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'}`}>
+                                                      <Receipt size={16}/>
+                                                    </div>
+                                                    <div>
+                                                      <p className="text-sm font-bold text-slate-900">{hist.ref}</p>
+                                                      <div className="flex items-center gap-2 mt-1">
+                                                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Issued: {hist.date}</span>
+                                                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Due: {hist.dueDate}</span>
+                                                      </div>
+                                                    </div>
+                                                  </div>
+                                                  <div className="flex items-center justify-between sm:justify-end gap-6 sm:w-auto">
+                                                    <div className="text-right">
+                                                      <p className="text-sm font-black text-slate-900">R {hist.amount.toLocaleString()}</p>
+                                                      <p className={`text-[9px] font-black uppercase tracking-widest mt-1 ${hist.status === 'paid' ? 'text-emerald-500' : hist.status === 'pending' ? 'text-blue-500' : 'text-rose-500'}`}>
+                                                        {hist.status}
+                                                      </p>
+                                                    </div>
+                                                    <div className="text-right w-24">
+                                                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-0.5">Clearance</p>
+                                                      <p className="text-xs font-bold text-slate-700">{hist.paidDate}</p>
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              ))
+                                            )}
+                                          </div>
+                                        </div>
+
+                                      </div>
+                                    </motion.div>
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                            <td className="px-6 py-6">
-                              {client.plan === 'Term' && client.nextInvDate !== '-' ? (
-                                <div>
-                                  <p className="text-sm font-bold text-slate-700">R {client.nextInvAmount.toLocaleString()}</p>
-                                  <p className="text-[10px] font-bold text-blue-500 mt-1 uppercase tracking-widest flex items-center gap-1">
-                                    <Clock size={10}/> Due {client.nextInvDate}
-                                  </p>
-                                </div>
-                              ) : (
-                                <span className="text-slate-400 font-bold">-</span>
-                              )}
-                            </td>
-                            <td className="px-8 py-6 text-right">
-                              <p className="text-sm font-black text-slate-900">R {client.expectedTermRev.toLocaleString()}</p>
-                            </td>
-                          </tr>
+                            </AnimatePresence>
+                          </Fragment>
                         ))
                       )}
                     </tbody>

@@ -5,14 +5,15 @@ import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrappe
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import PioneerXPBar from "@/components/ui/PioneerXPBar";
 import { 
-  Play, Rocket, UserCheck, Loader2, Clock, ArrowUpRight,
-  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle, BookOpen, ChevronRight, ChevronLeft, User, Calendar, MapPin, Video, Mail, MessageCircle, UserCircle, Shield
+  Play, Rocket, UserCheck, Loader2, ArrowUpRight,
+  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle, BookOpen, ChevronRight, ChevronLeft, User, Calendar, MapPin, Video, Mail, MessageCircle, Shield, Gift, BatteryCharging, Check
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import confetti from "canvas-confetti";
 
 interface ActiveTaskData {
   type: 'mission' | 'checkpoint';
@@ -31,8 +32,22 @@ export default function DashboardPage() {
   // Course & Task States
   const [allEnrollments, setAllEnrollments] = useState<any[]>([]); 
   
+  // Header Stats (Macro)
   const [completionStats, setCompletionStats] = useState({ completed: 0, total: 0 });
   const [todayXP, setTodayXP] = useState(0); 
+
+  // Course Card Stats (Micro/ABA Goal-Gradient)
+  const [progressStats, setProgressStats] = useState({
+    courseTotalModules: 0,
+    courseCompletedModules: 0,
+    currentModuleTitle: "",
+    moduleTotalMissions: 0,
+    moduleCompletedMissions: 0
+  });
+  
+  // ABA: Behavioral Momentum State
+  const [dailyClaimed, setDailyClaimed] = useState(false);
+  const [isClaiming, setIsClaiming] = useState(false);
   
   // Modal & Sidebar States
   const [showGuideModal, setShowGuideModal] = useState(false);
@@ -54,6 +69,30 @@ export default function DashboardPage() {
     }
   };
 
+  // ABA: High-P Request (Daily Bonus Claim)
+  const handleClaimDaily = async () => {
+    if (dailyClaimed || isClaiming || !userProfile) return;
+    setIsClaiming(true);
+    
+    try {
+      const newXp = (userProfile.xp || 0) + 10;
+      await supabase.from('profiles').update({ xp: newXp }).eq('id', userProfile.id);
+      
+      const todayStr = new Date().toDateString();
+      localStorage.setItem(`daily_claim_${userProfile.id}_${todayStr}`, "true");
+      
+      confetti({ particleCount: 100, spread: 70, origin: { y: 0.3 } });
+      
+      setTodayXP(prev => prev + 10);
+      setUserProfile({ ...userProfile, xp: newXp });
+      setDailyClaimed(true);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsClaiming(false);
+    }
+  };
+
   useEffect(() => {
     async function initializeDashboard() {
       const sessionData = localStorage.getItem("pioneer_session");
@@ -63,8 +102,12 @@ export default function DashboardPage() {
 
       try {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', userId).single();
-        if (profile) {
-          setUserProfile(profile);
+        if (profile) setUserProfile(profile);
+        
+        // Check High-P Sequence status
+        const todayStr = new Date().toDateString();
+        if (localStorage.getItem(`daily_claim_${userId}_${todayStr}`)) {
+          setDailyClaimed(true);
         }
         
         // --- Fetch XP earned today ---
@@ -114,49 +157,76 @@ export default function DashboardPage() {
         .order('order_index', { ascending: true });
 
       let calculatedTask: ActiveTaskData | null = null;
+      
+      // Top Header Stats (Macro)
       let totalMissions = 0;
       let totalCompleted = 0;
+
+      // Course Card Stats (Micro)
+      let totalModulesCount = modules?.length || 0;
+      let completedModulesCount = passedModuleIds.length;
+      let activeModTitle = "";
+      let activeModTotalMissions = 0;
+      let activeModCompletedMissions = 0;
 
       if (modules) {
         for (const mod of modules) {
           const sortedMissions = (mod.missions || []).sort((a: any, b: any) => a.order_index - b.order_index);
+          const isModComplete = passedModuleIds.includes(mod.id);
+
+          // Mark active module details for the UI
+          if (!isModComplete && !calculatedTask) {
+             activeModTitle = mod.title;
+             activeModTotalMissions = sortedMissions.length;
+          }
 
           for (const m of sortedMissions) {
             totalMissions++;
             const isDone = completedMissionIds.includes(m.id);
             if (isDone) totalCompleted++;
 
-            if (!isDone && !calculatedTask) {
-              calculatedTask = {
-                type: 'mission',
-                id: m.id,
-                title: m.title,
-                moduleTitle: mod.title,
-                moduleDesc: m.description || mod.description, 
-                moduleVideo: m.video_url || mod.video_url 
-              };
+            // If this is the active module, count its specific progress
+            if (!isModComplete && !calculatedTask) {
+               if (isDone) activeModCompletedMissions++;
+
+               if (!isDone) {
+                 calculatedTask = {
+                   type: 'mission',
+                   id: m.id,
+                   title: m.title,
+                   moduleTitle: mod.title,
+                   moduleDesc: m.description || mod.description, 
+                   moduleVideo: m.video_url || mod.video_url 
+                 };
+               }
             }
           }
 
-          if (!passedModuleIds.includes(mod.id) && !calculatedTask) {
-            calculatedTask = {
-              type: 'checkpoint',
-              id: mod.id,
-              title: 'Module Checkpoint',
-              moduleTitle: mod.title,
-              moduleDesc: mod.description || "Master the concepts of this sector to advance!",
-              moduleVideo: mod.video_url
-            };
+          if (!isModComplete && !calculatedTask) {
+             calculatedTask = {
+               type: 'checkpoint',
+               id: mod.id,
+               title: 'Module Checkpoint',
+               moduleTitle: mod.title,
+               moduleDesc: mod.description || "Master the concepts of this sector to advance!",
+               moduleVideo: mod.video_url
+             };
           }
         }
       }
 
       setCompletionStats({ completed: totalCompleted, total: totalMissions });
+      setProgressStats({
+        courseTotalModules: totalModulesCount,
+        courseCompletedModules: completedModulesCount,
+        currentModuleTitle: activeModTitle,
+        moduleTotalMissions: activeModTotalMissions,
+        moduleCompletedMissions: activeModCompletedMissions
+      });
 
       if (calculatedTask) {
         if (!currentPointer || JSON.stringify(currentPointer) !== JSON.stringify(calculatedTask)) {
           await supabase.from('enrollments').update({ active_task: calculatedTask }).eq('student_id', userId).eq('course_id', courseId);
-          // Update local state to reflect the new task immediately
           setAllEnrollments(prev => prev.map(e => e.course_id === courseId ? { ...e, active_task: calculatedTask } : e));
         }
       } else if (!calculatedTask && currentPointer) {
@@ -168,7 +238,6 @@ export default function DashboardPage() {
     initializeDashboard();
   }, [router]);
 
-  // Parse Metadata Base
   const metadata = useMemo(() => {
     if (!userProfile?.metadata) return {};
     try {
@@ -178,17 +247,13 @@ export default function DashboardPage() {
     }
   }, [userProfile]);
 
-  // --- DYNAMIC SCHEDULE PARSER ---
-  // Unifies array schedule and legacy next_lesson object into a single pipeline
   const dynamicNextLesson = useMemo(() => {
     let allLessons: any[] = [];
 
-    // 1. Grab array schedule if it exists
     if (metadata.schedule && Array.isArray(metadata.schedule)) {
       allLessons = [...metadata.schedule];
     }
 
-    // 2. Grab single next_lesson if it exists and push to array for unified sorting
     if (metadata.next_lesson && metadata.next_lesson.date) {
       allLessons.push({
         id: "legacy_next_lesson",
@@ -203,7 +268,7 @@ export default function DashboardPage() {
     if (allLessons.length === 0) return null;
 
     const now = new Date().getTime();
-    const threshold = now - (2 * 60 * 60 * 1000); // 2 hours grace period for late joins
+    const threshold = now - (2 * 60 * 60 * 1000); 
 
     const upcoming = allLessons
       .filter((lesson: any) => new Date(lesson.date).getTime() >= threshold)
@@ -238,14 +303,40 @@ export default function DashboardPage() {
               HEADER SECTION
               ========================================= */}
           <header className="flex flex-col md:flex-row md:items-center justify-between gap-5 md:gap-6 border-b border-white/5 pb-6 md:pb-8">
-            <div className="space-y-1 md:space-y-2 text-left">
+            <div className="space-y-2 md:space-y-3 text-left">
               <div className="flex items-center gap-2 text-[#45a79a]">
                 <UserCheck size={14} /><span className="text-[10px] font-black uppercase tracking-[0.2em]">Pioneer_Online</span>
               </div>
               <h1 className="text-4xl md:text-5xl font-black tracking-tighter text-white uppercase italic leading-[0.9] md:leading-none break-words">
-                Hello, <br className="md:hidden" />
-                <span className="text-blue-400">{userProfile?.display_name || "Pioneer"}</span>
+                Welcome back, <br className="md:hidden" />
+                <span className="text-blue-400">{userProfile?.display_name?.split(' ')[0] || "Pioneer"}!</span>
               </h1>
+              
+              {/* ABA: Behavioral Momentum - The Easy Win */}
+              <div className="pt-2">
+                {!dailyClaimed ? (
+                  <motion.button 
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    animate={{ y: [0, -4, 0] }}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                    onClick={handleClaimDaily}
+                    disabled={isClaiming}
+                    className="flex items-center gap-2 bg-gradient-to-r from-yellow-500 to-amber-500 text-black px-4 py-2 rounded-xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-[0_0_20px_rgba(245,158,11,0.4)] border border-yellow-300"
+                  >
+                    {isClaiming ? <Loader2 size={16} className="animate-spin" /> : <Gift size={16} />}
+                    Claim Daily +10 XP!
+                  </motion.button>
+                ) : (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 text-green-400 px-4 py-2 rounded-xl font-black uppercase tracking-widest text-[10px] md:text-xs"
+                  >
+                    <Check size={16} /> Daily XP Secured
+                  </motion.div>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-3 w-full md:w-auto">
@@ -260,7 +351,7 @@ export default function DashboardPage() {
               </div>
               <div className="flex-1 md:flex-none bg-white/5 p-4 md:px-6 md:py-4 rounded-[20px] md:rounded-3xl border border-white/10 flex items-center justify-between md:justify-start md:gap-4 shadow-xl">
                 <div className="text-left md:text-right">
-                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Tasks</p>
+                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Missions</p>
                   <p className="text-xl md:text-2xl font-black text-white italic leading-none">{completionStats.completed}/{completionStats.total}</p>
                 </div>
                 <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl md:rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20 shrink-0">
@@ -276,7 +367,6 @@ export default function DashboardPage() {
           <section className="bg-gradient-to-br from-[#1e293b] to-[#020617] rounded-[32px] md:rounded-[48px] border border-white/10 relative overflow-hidden shadow-2xl flex flex-col">
             <Rocket className="absolute -right-4 -bottom-4 md:-right-8 md:-top-8 w-40 h-40 md:w-64 md:h-64 text-white/5 -rotate-12 pointer-events-none" />
             
-            {/* Top Half: Rank & Progress */}
             <div className="relative z-10 p-6 md:p-10 pb-0 md:pb-0">
               <PioneerXPBar 
                 xp={currentXP} 
@@ -287,16 +377,14 @@ export default function DashboardPage() {
               />
             </div>
 
-            {/* Bottom Half: Sleek Logistics Strip (Only shows if there's data) */}
             {(metadata?.teacher || dynamicNextLesson) && (
               <div className="relative z-10 mt-8 bg-black/40 border-t border-white/5 px-6 md:px-10 py-5">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 md:gap-10">
                   
-                  {/* Schedule Block */}
                   {dynamicNextLesson && (
                     <div className="flex flex-col sm:flex-row sm:items-center gap-3 md:gap-6 flex-1">
                       <div>
-                        <p className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-400 mb-0.5 flex items-center gap-1.5"><Calendar size={12}/> Next Session</p>
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-400 mb-0.5 flex items-center gap-1.5"><Calendar size={12}/> Next Live Session</p>
                         <p className="text-sm md:text-base font-bold text-white">
                           {new Date(dynamicNextLesson.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} <span className="text-slate-500 mx-1">/</span> {new Date(dynamicNextLesson.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                         </p>
@@ -323,16 +411,14 @@ export default function DashboardPage() {
                     </div>
                   )}
 
-                  {/* Divider on Desktop */}
                   {metadata.teacher && dynamicNextLesson && (
                     <div className="hidden md:block w-px h-10 bg-white/10" />
                   )}
 
-                  {/* Instructor Block */}
                   {metadata.teacher && (
                     <div className="flex items-center justify-between gap-6 flex-1 pt-4 border-t border-white/5 md:pt-0 md:border-0">
                       <div>
-                        <p className="text-[9px] font-black uppercase tracking-[0.2em] text-purple-400 mb-0.5 flex items-center gap-1.5"><Shield size={12}/> Instructor</p>
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] text-purple-400 mb-0.5 flex items-center gap-1.5"><Shield size={12}/> Your Coach</p>
                         <p className="text-sm md:text-base font-bold text-white truncate max-w-[150px]">
                           {metadata.teacher.name}
                         </p>
@@ -364,7 +450,7 @@ export default function DashboardPage() {
             <section className="space-y-6 md:space-y-8 pt-4 md:pt-6">
               <div className="flex items-center gap-2.5 md:gap-3 px-2 md:px-4 border-b border-white/5 pb-3 md:pb-4">
                 <BookOpen className="w-4 h-4 md:w-5 md:h-5 text-blue-500" />
-                <h3 className="text-sm md:text-base font-black uppercase tracking-widest text-white italic text-left">Your Courses</h3>
+                <h3 className="text-sm md:text-base font-black uppercase tracking-widest text-white italic text-left">Your Current Course</h3>
               </div>
               
               <div className="space-y-6 md:space-y-8">
@@ -377,115 +463,182 @@ export default function DashboardPage() {
                   return (
                     <div 
                       key={enrollment.course_id} 
-                      className="relative bg-white/[0.02] border border-white/5 rounded-[32px] md:rounded-[48px] overflow-hidden flex flex-col md:flex-row shadow-2xl group"
+                      className="relative bg-[#0f172a] border border-blue-500/30 rounded-[32px] md:rounded-[48px] overflow-hidden flex flex-col md:flex-row shadow-[0_0_40px_rgba(59,130,246,0.1)] group"
                     >
                       {/* --- LEFT SIDE: COURSE PRECEDENCE --- */}
-                      <div className="p-6 md:p-10 md:w-[55%] flex flex-col justify-between relative z-10 border-b md:border-b-0 md:border-r border-white/5 bg-[#020617]/40">
-                        <div className="space-y-4 md:space-y-6">
-                          <div>
-                            <span className={`px-2.5 py-1 rounded-md border text-[8px] font-black uppercase tracking-widest ${
-                              enrollment.status === 'active' 
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                                : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
-                            }`}>
-                              {enrollment.status === 'active' ? 'Registered' : 'Not Registered'}
-                            </span>
-                          </div>
-                          
+                      <div className="p-6 md:p-10 md:w-[55%] flex flex-col justify-between relative z-10 border-b md:border-b-0 md:border-r border-white/5 bg-[#020617]/60">
+                        
+                        <div className="space-y-6 md:space-y-8 w-full pr-4">
                           <div>
                             <h2 className="text-3xl md:text-5xl font-black text-white uppercase italic tracking-tighter leading-[0.9] drop-shadow-sm">
                               {courseData.title}
                             </h2>
-                            <p className="text-sm text-slate-400 mt-4 leading-relaxed font-medium">
-                              {courseData.description}
-                            </p>
+                          </div>
+
+                          {/* ==============================================
+                              DUAL PROGRESS METER (ABA Goal-Gradient UX)
+                              ============================================== */}
+                          <div className="bg-black/40 border border-white/5 rounded-2xl p-5 md:p-6 space-y-6 shadow-inner">
+                            
+                            {/* 1. MACRO: Course Progress (Continuous Bar) */}
+                            <div>
+                              <div className="flex justify-between items-end mb-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
+                                  <Map size={12} className="text-blue-500" /> Overall Course Mastery
+                                </span>
+                                <span className="text-xs font-black text-blue-400">
+                                  {progressStats.courseCompletedModules} / {progressStats.courseTotalModules} Sectors
+                                </span>
+                              </div>
+                              <div className="h-3 w-full bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
+                                <motion.div 
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${(progressStats.courseCompletedModules / Math.max(1, progressStats.courseTotalModules)) * 100}%` }}
+                                  transition={{ duration: 1, ease: "easeOut" }}
+                                  className="h-full bg-gradient-to-r from-blue-600 to-blue-400 relative"
+                                >
+                                  <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.2)_50%,transparent_75%)] bg-[length:10px_10px] animate-[shimmer_1s_linear_infinite]" />
+                                </motion.div>
+                              </div>
+                            </div>
+
+                            {/* 2. MICRO: Module Progress (Discrete Energy Cells) */}
+                            <div className="pt-5 border-t border-white/5">
+                              {/* Layout fix: added gap-3, min-w-0 for truncation, and shrink-0 for the counter */}
+                              <div className="flex justify-between items-center mb-3 gap-3">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <Zap size={12} className="text-emerald-500 shrink-0" /> 
+                                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 truncate">
+                                    {progressStats.currentModuleTitle || "System Initialization"}
+                                  </span>
+                                </div>
+                                <span className="text-xs font-black text-emerald-400 shrink-0 whitespace-nowrap">
+                                  {progressStats.moduleCompletedMissions} / {progressStats.moduleTotalMissions} Core
+                                </span>
+                              </div>
+                              
+                              <div className="flex items-center gap-1.5 md:gap-2">
+                                {/* Map through total missions and render discrete glowing nodes */}
+                                {Array.from({ length: progressStats.moduleTotalMissions }).map((_, i) => {
+                                  const isComplete = i < progressStats.moduleCompletedMissions;
+                                  const isActive = i === progressStats.moduleCompletedMissions;
+                                  
+                                  return (
+                                    <div 
+                                      key={i} 
+                                      className={`h-4 md:h-5 flex-1 rounded-sm border transition-all duration-500 ${
+                                        isComplete 
+                                          ? 'bg-emerald-500 border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.4)]' 
+                                          : isActive
+                                            ? 'bg-blue-500/20 border-blue-400/50 animate-pulse shadow-[0_0_10px_rgba(59,130,246,0.2)]'
+                                            : 'bg-slate-800/50 border-slate-700/50'
+                                      }`}
+                                    />
+                                  );
+                                })}
+                                {/* Boss Level / Checkpoint Node at the end */}
+                                <div 
+                                  className={`h-5 md:h-6 w-8 flex items-center justify-center rounded-md border transition-all duration-500 ml-1 ${
+                                    progressStats.moduleCompletedMissions === progressStats.moduleTotalMissions
+                                      ? 'bg-yellow-500 border-yellow-400 shadow-[0_0_15px_rgba(234,179,8,0.5)] animate-pulse'
+                                      : 'bg-slate-800/50 border-slate-700/50'
+                                  }`}
+                                >
+                                  <ShieldCheck size={12} className={progressStats.moduleCompletedMissions === progressStats.moduleTotalMissions ? 'text-black' : 'text-slate-600'} />
+                                </div>
+                              </div>
+                              
+                              {/* Encouragement Text (ABA Reinforcement) */}
+                              <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-3 text-center">
+                                {progressStats.moduleCompletedMissions === progressStats.moduleTotalMissions 
+                                  ? "Energy cells full! Ready for Boss Level!" 
+                                  : `Charge ${progressStats.moduleTotalMissions - progressStats.moduleCompletedMissions} more cells to unlock the Boss Level!`}
+                              </p>
+                            </div>
+
                           </div>
                         </div>
 
-                        <Link href="/student/courses" className="mt-8 pt-4 border-t border-white/5 flex items-center justify-between text-slate-500 hover:text-white transition-colors group/link w-full">
-                          <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
-                            <Map size={14} className="text-slate-600 group-hover/link:text-blue-400 transition-colors" /> View Course Roadmap
+                        {/* ABA: Errorless Learning - Subdue the alternative option */}
+                        <Link href="/student/courses" className="mt-8 pt-4 border-t border-white/5 flex items-center justify-between text-slate-600 hover:text-slate-300 transition-colors group/link w-full">
+                          <span className="text-[9px] font-bold uppercase tracking-widest flex items-center gap-2">
+                            <Map size={14} /> See full course map
                           </span>
                           <ChevronRight size={16} className="group-hover/link:translate-x-1 transition-transform" />
                         </Link>
                       </div>
 
-                      {/* --- RIGHT SIDE: NEXT LESSON SUPPORT --- */}
+                      {/* --- RIGHT SIDE: THE MAIN CTA (ERRORLESS LEARNING) --- */}
                       <div className="md:w-[45%] relative bg-[#020617] flex flex-col overflow-hidden min-h-[260px] md:min-h-0">
                         {activeTask ? (
                           <>
-                            {/* Cinematic Background with Darker Fade for CTA Contrast */}
                             <div className="absolute inset-0 z-0">
                               {activeTask.moduleVideo ? (
                                 <video 
                                   src={activeTask.moduleVideo}
                                   autoPlay loop muted playsInline 
-                                  className="w-full h-full object-cover opacity-20 md:opacity-30" 
+                                  className="w-full h-full object-cover opacity-30 md:opacity-40" 
                                 />
                               ) : (
-                                <div className="w-full h-full bg-gradient-to-br from-blue-900/20 to-purple-900/20" />
+                                <div className="w-full h-full bg-gradient-to-br from-blue-900/30 to-purple-900/30" />
                               )}
-                              <div className="absolute inset-0 bg-gradient-to-t from-[#020617] via-[#020617]/80 to-transparent" />
+                              <div className="absolute inset-0 bg-gradient-to-t from-[#020617] via-[#020617]/60 to-transparent" />
                             </div>
 
-                            <div className="relative z-10 p-6 md:p-8 flex flex-col h-full">
+                            <div className="relative z-10 p-6 md:p-8 flex flex-col h-full items-center justify-center text-center">
                               
-                              <div className="flex items-center justify-between mb-auto">
-                                <span className="text-[9px] font-black uppercase tracking-widest text-blue-400 flex items-center gap-1.5">
-                                  <Sparkles size={12} /> Your Next Lesson
+                              <div className="mb-4">
+                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
+                                  Current Mission
                                 </span>
                               </div>
 
-                              <div className="flex flex-col gap-5 my-6">
-                                <div>
-                                  <h3 className="text-2xl md:text-3xl font-black text-white italic uppercase tracking-tighter leading-tight drop-shadow-md">
-                                    {activeTask.title}
-                                  </h3>
-                                </div>
+                              <h3 className="text-2xl md:text-3xl font-black text-white italic uppercase tracking-tighter leading-tight drop-shadow-md mb-8">
+                                {activeTask.title}
+                              </h3>
 
-                                {/* MASSIVE CTA BUTTON */}
-                                <Link 
-                                  href={activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`} 
-                                  className={`w-full py-4 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl ${
-                                    activeTask.type === 'checkpoint' 
-                                      ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black hover:shadow-[0_0_30px_rgba(245,158,11,0.4)]' 
-                                      : 'bg-gradient-to-r from-blue-600 to-indigo-500 text-white hover:shadow-[0_0_30px_rgba(59,130,246,0.4)]'
-                                  }`}
-                                >
-                                  {/* Glossy Top Highlight */}
-                                  <div className="absolute top-0 inset-x-0 h-1/2 bg-white/20 rounded-t-2xl pointer-events-none" />
-                                  
-                                  {activeTask.type === 'checkpoint' ? (
-                                    <>
-                                      <ShieldCheck className="w-5 h-5 md:w-6 md:h-6 animate-pulse" />
-                                      <span className="font-black uppercase tracking-widest text-xs md:text-sm italic">Start Final Review</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <div className="w-6 h-6 md:w-8 md:h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                        <Play fill="currentColor" className="w-3 h-3 md:w-4 md:h-4 ml-0.5" />
-                                      </div>
-                                      <span className="font-black uppercase tracking-widest text-xs md:text-sm italic">Begin Lesson</span>
-                                    </>
-                                  )}
-                                </Link>
-                              </div>
-
-                              {/* Footer: Module/Week Badge */}
-                              <div className="mt-auto pt-4 border-t border-white/10">
-                                <p className="text-[8px] md:text-[9px] font-black uppercase tracking-widest text-slate-400 truncate">
-                                  {activeTask.moduleTitle}
-                                </p>
-                              </div>
-
+                              {/* ABA: Errorless Learning - MASSIVE, pulsing, unmissable button */}
+                              <Link 
+                                href={activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`} 
+                                className={`w-full py-5 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl ${
+                                  activeTask.type === 'checkpoint' 
+                                    ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black hover:shadow-[0_0_40px_rgba(245,158,11,0.6)]' 
+                                    : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:shadow-[0_0_40px_rgba(59,130,246,0.6)]'
+                                }`}
+                              >
+                                {/* Light sweep animation */}
+                                <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12" />
+                                
+                                {activeTask.type === 'checkpoint' ? (
+                                  <>
+                                    <ShieldCheck className="w-6 h-6 animate-pulse" />
+                                    <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Boss Level</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                      <Play fill="currentColor" className="w-4 h-4 ml-1" />
+                                    </div>
+                                    <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Mission</span>
+                                  </>
+                                )}
+                              </Link>
                             </div>
                           </>
                         ) : (
-                          /* Empty/Locked State for Right Panel */
-                          <div className="relative z-10 p-6 md:p-8 flex flex-col items-center justify-center h-full text-center bg-black/20">
-                            <Clock className="w-8 h-8 text-slate-600 mb-3" />
-                            <span className="text-xs font-black uppercase text-slate-500">Sector Clear</span>
-                            <span className="text-[10px] text-slate-600 mt-1 uppercase font-bold tracking-widest">Awaiting Command Initialization</span>
+                          /* ABA: Tolerance Training (Reframing the wait) */
+                          <div className="relative z-10 p-6 md:p-8 flex flex-col items-center justify-center h-full text-center bg-black/40">
+                            <motion.div 
+                              animate={{ opacity: [0.5, 1, 0.5] }}
+                              transition={{ repeat: Infinity, duration: 2 }}
+                              className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 mb-4"
+                            >
+                              <BatteryCharging className="w-8 h-8 text-emerald-400" />
+                            </motion.div>
+                            <span className="text-sm font-black uppercase text-emerald-400 tracking-widest">Hyper-Sleep Active</span>
+                            <span className="text-[10px] text-slate-400 mt-2 uppercase font-bold tracking-widest max-w-[200px]">
+                              You have cleared all sectors! Rest and recharge your robot for the next drop.
+                            </span>
                           </div>
                         )}
                       </div>
@@ -584,12 +737,12 @@ export default function DashboardPage() {
         )}
       </AnimatePresence>
 
-      {/* --- DESKTOP SIDEBAR (ALWAYS VISIBLE ON LARGE SCREENS) --- */}
+      {/* --- DESKTOP SIDEBAR --- */}
       <div className="hidden lg:block">
         <ProfileSidebar />
       </div>
 
-      {/* --- MOBILE SIDE TAB (FLOATING HANDLE) --- */}
+      {/* --- MOBILE SIDE TAB --- */}
       {!isMobileSidebarOpen && (
         <div className="lg:hidden fixed top-1/2 right-0 -translate-y-1/2 z-40">
           <button
@@ -604,7 +757,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* --- MOBILE SIDEBAR DRAWER (SLIDES IN ON SMALL SCREENS) --- */}
+      {/* --- MOBILE SIDEBAR DRAWER --- */}
       <AnimatePresence>
         {isMobileSidebarOpen && (
           <>
@@ -636,6 +789,12 @@ export default function DashboardPage() {
         )}
       </AnimatePresence>
 
+      <style>{`
+        @keyframes shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(200%); }
+        }
+      `}</style>
     </DashboardClientWrapper>
   );
 }

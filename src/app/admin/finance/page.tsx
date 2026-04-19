@@ -730,10 +730,20 @@ export default function FinancePortal() {
              </div>
            </div>
 
-           <div className="bg-gradient-to-br from-purple-500/10 to-[#020617] border border-purple-500/20 rounded-[32px] p-8 shadow-2xl relative overflow-hidden group">
-             <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform"><FileText size={120} /></div>
+           {/* TOTAL PIPELINE VALUE - NOW CLICKABLE! */}
+           <div 
+             onClick={() => router.push('/admin/finance/pipeline')}
+             className="bg-gradient-to-br from-purple-500/10 to-[#020617] border border-purple-500/20 rounded-[32px] p-8 shadow-2xl relative overflow-hidden group cursor-pointer hover:border-purple-500/50 hover:shadow-[0_0_50px_rgba(168,85,247,0.2)] transition-all"
+           >
+             <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 group-hover:opacity-20 transition-all"><FileText size={120} /></div>
+             
+             {/* Link indicator */}
+             <div className="absolute top-8 right-8 p-3 bg-purple-500/20 rounded-full text-purple-400 opacity-0 group-hover:opacity-100 transition-opacity">
+               <ArrowUpRight size={24} />
+             </div>
+
              <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-2 relative z-10">Total Pipeline Value</p>
-             <p className="text-5xl font-black tracking-tighter text-white relative z-10 mb-4">R {analytics.conversion.quotesValue.toLocaleString()}</p>
+             <p className="text-5xl font-black tracking-tighter text-white relative z-10 mb-4 group-hover:text-purple-300 transition-colors">R {analytics.conversion.quotesValue.toLocaleString()}</p>
              
              <div className="flex gap-4 relative z-10 border-t border-white/5 pt-4">
                <div>

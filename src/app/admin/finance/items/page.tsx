@@ -26,10 +26,12 @@ export default function ItemsPortal() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [newAlias, setNewAlias] = useState("");
   
   const [formData, setFormData] = useState({
     name: "", price: "", internal_notes: "", category: "Tuition",
-    cost_breakdown: [] as { id: string, name: string, amount: number, supplier_id: string, url: string }[]
+    cost_breakdown: [] as { id: string, name: string, amount: number, supplier_id: string, url: string }[],
+    aliases: [] as string[]
   });
 
   const [supplierModalTarget, setSupplierModalTarget] = useState<string | null>(null);
@@ -229,6 +231,17 @@ export default function ItemsPortal() {
     });
   };
 
+  const addAlias = () => {
+    if (newAlias.trim() && !formData.aliases.includes(newAlias.trim())) {
+      setFormData(prev => ({ ...prev, aliases: [...prev.aliases, newAlias.trim()] }));
+      setNewAlias("");
+    }
+  };
+
+  const removeAlias = (idx: number) => {
+    setFormData(prev => ({ ...prev, aliases: prev.aliases.filter((_, i) => i !== idx) }));
+  };
+
   const handleSaveSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSupplier.name.trim()) return;
@@ -246,15 +259,17 @@ export default function ItemsPortal() {
 
   const handleOpenNew = () => {
     setEditingId(null);
-    setFormData({ name: "", price: "", internal_notes: "", category: "Tuition", cost_breakdown: [] });
+    setNewAlias("");
+    setFormData({ name: "", price: "", internal_notes: "", category: "Tuition", cost_breakdown: [], aliases: [] });
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (item: any) => {
     setEditingId(item.id);
+    setNewAlias("");
     setFormData({
       name: item.name, price: item.price.toString(), internal_notes: item.internal_notes || "",
-      category: item.category, cost_breakdown: item.cost_breakdown || []
+      category: item.category, cost_breakdown: item.cost_breakdown || [], aliases: item.aliases || []
     });
     setIsModalOpen(true);
   };
@@ -268,7 +283,8 @@ export default function ItemsPortal() {
     try {
       const payload = {
         name: formData.name, price: parseFloat(formData.price), cost: finalTotalCost, 
-        cost_breakdown: cleanBreakdown, internal_notes: formData.internal_notes, category: formData.category, is_active: true
+        cost_breakdown: cleanBreakdown, internal_notes: formData.internal_notes, 
+        category: formData.category, is_active: true, aliases: formData.aliases
       };
       if (editingId) {
         const { error } = await supabase.from('billing_items').update(payload).eq('id', editingId);
@@ -277,7 +293,7 @@ export default function ItemsPortal() {
         const { error } = await supabase.from('billing_items').insert([payload]);
         if (error) throw error;
       }
-      setFormData({ name: "", price: "", internal_notes: "", category: "Tuition", cost_breakdown: [] });
+      setFormData({ name: "", price: "", internal_notes: "", category: "Tuition", cost_breakdown: [], aliases: [] });
       setEditingId(null);
       setIsModalOpen(false);
       await fetchData();
@@ -663,7 +679,7 @@ export default function ItemsPortal() {
                        </div>
                        <div>
                          <p className="text-[9px] uppercase tracking-widest text-slate-500">Paid</p>
-                         <button onClick={() => setDrilldown({ metric: 'Total Paid', item: economics.bestMargin.name, invoices: economics.bestMargin.paidInvoices })} className="text-sm text-emerald-400 hover:text-purple-300 transition-colors underline decoration-emerald-500/30 decoration-dashed underline-offset-4">R {Math.round(economics.bestMargin.paidRev).toLocaleString()}</button>
+                         <button onClick={() => setDrilldown({ metric: 'Total Paid', item: economics.bestMargin.name, invoices: economics.bestMargin.paidInvoices })} className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors underline decoration-emerald-500/30 decoration-dashed underline-offset-4">R {Math.round(economics.bestMargin.paidRev).toLocaleString()}</button>
                        </div>
                        <div>
                          <p className="text-[9px] uppercase tracking-widest text-slate-500">Unpaid</p>
@@ -812,8 +828,18 @@ export default function ItemsPortal() {
                         <div>
                           <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{formatSKU(item.id)}</p>
                           <h3 className="text-xl font-black italic uppercase leading-tight mt-1 pr-4 break-words whitespace-normal">{item.name}</h3>
+                          
                           {item.aliases && item.aliases.length > 0 && (
-                            <p className="text-[9px] text-slate-500 font-bold uppercase mt-2 tracking-widest flex items-center gap-1"><LinkIcon size={10}/> Linked to {item.aliases.length} historical aliases</p>
+                            <div className="mt-3">
+                              <p className="text-[8px] text-slate-500 font-black uppercase tracking-widest mb-1.5 flex items-center gap-1"><LinkIcon size={10}/> Linked Aliases</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {item.aliases.map((alias: string, i: number) => (
+                                  <span key={i} className="px-1.5 py-0.5 bg-white/5 border border-white/10 text-slate-400 rounded text-[8px] font-bold uppercase tracking-widest">
+                                    {alias}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
                           )}
                         </div>
                         
@@ -1097,6 +1123,32 @@ export default function ItemsPortal() {
                            {dynamicCategories.map(cat => <option key={cat} value={cat} />)}
                         </datalist>
                       </div>
+                    </div>
+
+                    {/* ALIASES */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2 flex items-center gap-1"><LinkIcon size={10}/> Historical Aliases</label>
+                      <div className="flex gap-2">
+                        <input 
+                          value={newAlias} 
+                          onChange={e => setNewAlias(e.target.value)} 
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addAlias(); } }}
+                          className="flex-1 bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-bold outline-none focus:border-emerald-500 placeholder:text-slate-600" 
+                          placeholder="e.g. Robotics Kit (Old Pricing)" 
+                        />
+                        <button type="button" onClick={addAlias} className="px-6 bg-white/10 hover:bg-white/20 text-white rounded-xl font-black uppercase text-[10px] tracking-widest transition-colors">Add</button>
+                      </div>
+                      {formData.aliases.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {formData.aliases.map((alias, idx) => (
+                            <div key={idx} className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest">
+                              {alias}
+                              <button type="button" onClick={() => removeAlias(idx)} className="hover:text-white ml-1"><X size={12}/></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[9px] text-slate-500 italic ml-2 mt-1">Map slightly different invoice descriptions to this master item to fix anomaly metrics.</p>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

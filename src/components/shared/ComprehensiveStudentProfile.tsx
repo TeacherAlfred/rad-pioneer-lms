@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, User, Map, Zap, Calendar, MapPin, Video, 
   Clock, Shield, BookOpen, CheckSquare, Square, 
   Activity, Award, Loader2, Link as LinkIcon, CheckCircle2,
-  Trash2, Edit2, Save, Phone, Mail, FileText, Users, Settings, ChevronDown, LayoutGrid
+  Trash2, Edit2, Save, Phone, Mail, FileText, Users, Settings, 
+  ChevronDown, LayoutGrid, Key, Copy, CalendarCheck, X, 
+  MessageSquare, Send 
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -50,12 +52,30 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
     teacherId: ''
   });
 
+  // Credentials State
+  const [isEditingCredentials, setIsEditingCredentials] = useState(false);
+  const [credUsername, setCredUsername] = useState("");
+  const [credPin, setCredPin] = useState("");
+  const [isSavingCredentials, setIsSavingCredentials] = useState(false);
+
+  // Attendance Adjustment State
+  const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+  const [editableSchedule, setEditableSchedule] = useState<any[]>([]);
+  const [isSavingAttendance, setIsSavingAttendance] = useState(false);
+
+  // Guardian Chat State
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isSendingChat, setIsSendingChat] = useState(false);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
   // Scroll Tracking State
   const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 150); // Adjust this value if you want it to trigger sooner/later
+      setIsScrolled(window.scrollY > 150);
     };
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
@@ -82,9 +102,111 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
     if (studentId) fetchStudentData();
   }, [studentId]);
 
+  // Fetch Chat & Current User
+  useEffect(() => {
+    async function setupChat() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      
+      const { data: profile } = await supabase.from('profiles').select('id').eq('auth_user_id', session.user.id).single();
+      if (profile) setCurrentUserId(profile.id);
+
+      const { data: msgs } = await supabase
+        .from('coach_messages')
+        .select('*')
+        .eq('student_id', studentId)
+        .order('created_at', { ascending: true });
+      
+      if (msgs) setChatMessages(msgs);
+
+      const channel = supabase.channel(`admin_chat_${studentId}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'coach_messages', filter: `student_id=eq.${studentId}` }, 
+          (payload) => {
+            setChatMessages(prev => {
+              if (prev.some(msg => msg.id === payload.new.id)) return prev;
+              return [...prev, payload.new];
+            });
+          }
+        ).subscribe();
+
+        // Auto-mark messages as read when teacher views the profile
+        if (profile?.id) {
+          supabase.from('coach_messages')
+            .update({ is_read: true })
+            .eq('student_id', studentId)
+            .neq('sender_id', profile.id)
+            .eq('is_read', false)
+            .then();
+        }
+
+      return () => { supabase.removeChannel(channel); };
+    }
+    if (studentId) setupChat();
+  }, [studentId]);
+
+  // Auto-scroll chat to the bottom
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
+  const handleSendChatMessage = async () => {
+    if (!chatInput.trim() || !currentUserId || !student?.linked_parent_id) return;
+    
+    const text = chatInput.trim();
+    setChatInput(""); // Instantly clear input
+    setIsSendingChat(true);
+
+    // OPTIMISTIC UI: Create fake local message
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMsg = {
+      id: tempId,
+      student_id: studentId,
+      guardian_id: student.linked_parent_id,
+      coach_id: student.metadata?.teacher?.id || currentUserId,
+      sender_id: currentUserId,
+      message: text,
+      created_at: new Date().toISOString(),
+      is_read: true
+    };
+    
+    setChatMessages(prev => [...prev, optimisticMsg]);
+
+    try {
+      const { data, error } = await supabase.from('coach_messages').insert([{
+        student_id: studentId,
+        guardian_id: student.linked_parent_id,
+        coach_id: student.metadata?.teacher?.id || currentUserId,
+        sender_id: currentUserId,
+        message: text
+      }]).select().single();
+      
+      if (error) throw error;
+      
+      // Swap temp ID with real DB UUID
+      setChatMessages(prev => prev.map(msg => msg.id === tempId ? data : msg));
+    } catch (err) {
+      console.error("Chat error:", err);
+      setChatMessages(prev => prev.filter(msg => msg.id !== tempId));
+      alert("Failed to send message.");
+      setChatInput(text);
+    } finally {
+      setIsSendingChat(false);
+    }
+  };
+
+  // Sync states when student data arrives
+  useEffect(() => {
+    if (student) {
+      setCredUsername(student.metadata?.username || student.student_identifier || "");
+      setCredPin(student.metadata?.pin || "");
+      setEditableSchedule([...(student.metadata?.schedule || [])].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+    }
+  }, [student]);
+
   async function fetchStudentData() {
     try {
-      // 1. Fetch Student Profile
       const { data: profile, error: profileErr } = await supabase
         .from('profiles')
         .select('*')
@@ -106,7 +228,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
         teacherId: meta.teacher?.id || ''
       });
 
-      // 2. Fetch Guardian Profile
       if (profile.linked_parent_id) {
         const { data: gData } = await supabase.from('profiles').select('*').eq('id', profile.linked_parent_id).single();
         if (gData) {
@@ -120,7 +241,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
         }
       }
 
-      // 3. Fetch Enrollments
       const { data: enrollmentsData } = await supabase
         .from('enrollments')
         .select('*, courses(*)')
@@ -128,7 +248,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
         
       if (enrollmentsData) setEnrollments(enrollmentsData);
 
-      // 4. Fetch Educators for Assignment Dropdown (Using your exact Pioneer Dashboard logic)
       const { data: educatorData } = await supabase
         .from('profiles')
         .select('*')
@@ -138,7 +257,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
       if (educatorData) {
         setEducators(educatorData);
       }
-
     } catch (err) {
       console.error("Failed to load student dossier", err);
     } finally {
@@ -189,7 +307,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
     } finally { setIsUpdating(false); }
   };
 
-  // --- GLOBAL QUEUE SAVER (BULK MODE) ---
   const handleBulkSaveAndNext = async () => {
     if (!student) return;
     setIsSavingGlobal(true);
@@ -205,7 +322,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
 
         const oldMeta = student.metadata;
         
-        // 1. Create a Snapshot for Rollbacks
         const historyLog = {
             timestamp: new Date().toISOString(),
             changed_by: 'admin',
@@ -217,19 +333,17 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
             }
         };
 
-        // 2. Build New Payload
         const updatedMeta = {
           ...oldMeta,
           account_tier: configData.tier,
           learning_mode: configData.mode,
           teacher: teacherObj,
           admin_notes: notes,
-          history: [...(oldMeta.history || []), historyLog] // Append snapshot
+          history: [...(oldMeta.history || []), historyLog] 
         };
 
         await supabase.from('profiles').update({ metadata: updatedMeta }).eq('id', student.id);
 
-        // 3. Queue Progression Logic
         const currentIndex = queue.indexOf(student.id);
         if (currentIndex > -1 && currentIndex < queue.length - 1) {
             const nextId = queue[currentIndex + 1];
@@ -245,7 +359,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
     }
   };
 
-  // --- ROLLBACK FUNCTION ---
   const handleUndoLastEdit = async () => {
     if (!student.metadata?.history || student.metadata.history.length === 0) return;
     
@@ -263,12 +376,11 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
            learning_mode: prevState.learning_mode,
            teacher: prevState.teacher,
            admin_notes: prevState.admin_notes,
-           history: student.metadata.history.slice(0, -1) // remove last snapshot
+           history: student.metadata.history.slice(0, -1) 
         };
 
         await supabase.from('profiles').update({ metadata: updatedMeta }).eq('id', student.id);
         
-        // Update Local UI instantly
         setStudent({ ...student, metadata: updatedMeta });
         setConfigData({
             tier: prevState.account_tier || 'trial',
@@ -284,7 +396,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
     }
   };
 
-  // --- STANDARD SAVE HANDLERS ---
   const handleSaveNotes = async () => {
     if (!student) return;
     setIsSavingNotes(true);
@@ -309,6 +420,81 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
     } finally { setIsSavingConfig(false); }
   };
 
+  // --- ATTENDANCE ADJUSTMENT HANDLER ---
+  const handleUpdateLessonStatus = (lessonId: string, newStatus: string) => {
+    setEditableSchedule(prev => prev.map(l => 
+      l.id === lessonId ? { ...l, attendance_status: newStatus } : l
+    ));
+  };
+
+  const handleSaveAttendance = async () => {
+    if (!student) return;
+    setIsSavingAttendance(true);
+    try {
+      // Recalculate based on the entire array
+      let scheduled = 0;
+      let attended = 0;
+      let missed = 0;
+
+      editableSchedule.forEach(lesson => {
+        // Any lesson that has passed or has a resolved status counts as "scheduled"
+        if (lesson.attendance_status === 'attended' || lesson.attendance_status === 'missed' || lesson.attendance_status === 'apology') {
+          scheduled++;
+        }
+        if (lesson.attendance_status === 'attended') attended++;
+        if (lesson.attendance_status === 'missed') missed++;
+      });
+
+      const rate = scheduled > 0 ? Math.round((attended / scheduled) * 100) : 100;
+      
+      const updatedMeta = { 
+        ...student.metadata, 
+        schedule: editableSchedule,
+        lessons_scheduled: scheduled,
+        lessons_attended: attended,
+        missed_classes: missed,
+        attendance_rate: rate
+      };
+
+      await supabase.from('profiles').update({ metadata: updatedMeta }).eq('id', student.id);
+      setStudent({ ...student, metadata: updatedMeta });
+      setSchedule(editableSchedule);
+      setShowAttendanceModal(false);
+    } catch (err) {
+      alert("Failed to update historical attendance.");
+    } finally {
+      setIsSavingAttendance(false);
+    }
+  };
+
+  // --- CREDENTIALS HANDLER ---
+  const handleSaveCredentials = async () => {
+    const confirm = window.confirm("Are you sure you want to change this student's login credentials?");
+    if (!confirm) return;
+
+    setIsSavingCredentials(true);
+    try {
+       const updatedMeta = { 
+         ...student.metadata, 
+         username: credUsername.trim(), 
+         pin: credPin.trim() 
+       };
+
+       const updates: any = { metadata: updatedMeta };
+       if (credUsername.trim() !== student.student_identifier) {
+         updates.student_identifier = credUsername.trim();
+       }
+
+       await supabase.from('profiles').update(updates).eq('id', student.id);
+       
+       setStudent({ ...student, ...updates, metadata: updatedMeta });
+       setIsEditingCredentials(false);
+    } catch (err) {
+       alert("Failed to update credentials. Ensure the username is unique.");
+    } finally {
+       setIsSavingCredentials(false);
+    }
+  };
 
   if (loading || !student) return (
     <div className="h-[100dvh] bg-[#020617] flex flex-col items-center justify-center gap-4">
@@ -324,9 +510,7 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
   return (
     <div className={`min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans selection:bg-blue-500/30 overflow-x-hidden ${isBulkMode ? 'pb-32' : ''}`}>
       
-      {/* =========================================
-          STICKY MINIMALIST HEADER (On Scroll)
-          ========================================= */}
+      {/* STICKY MINIMALIST HEADER */}
       <AnimatePresence>
         {isScrolled && (
           <motion.div
@@ -365,9 +549,7 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
       </AnimatePresence>
 
       <div className="max-w-[1400px] mx-auto space-y-8">        
-        {/* =========================================
-            BULK MODE TOP BAR
-            ========================================= */}
+        
         {isBulkMode && (
           <div className="bg-blue-600 text-white p-4 md:p-6 rounded-[32px] flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shadow-[0_0_30px_rgba(37,99,235,0.3)] relative z-20">
              <div>
@@ -383,9 +565,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
           </div>
         )}
 
-        {/* =========================================
-            HEADER SECTION
-            ========================================= */}
         <header className="flex flex-col md:flex-row justify-between items-start gap-6 border-b border-white/5 pb-8 relative z-10">
           <div className="space-y-4">
             <button onClick={() => router.back()} className={`group flex items-center gap-2 bg-white/5 border border-white/10 hover:border-${accentColor}-500/50 px-4 py-2 rounded-xl transition-all w-fit text-slate-400 hover:text-white`}>
@@ -403,9 +582,16 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
                   {student.display_name}
                 </h1>
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className={`text-[10px] font-black text-${accentColor}-400 uppercase tracking-[0.2em] flex items-center gap-1.5 bg-${accentColor}-500/10 px-3 py-1 rounded-lg border border-${accentColor}-500/20`}>
+                  
+                  <button 
+                    onClick={() => setIsEditingCredentials(true)} 
+                    className={`group text-[10px] font-black text-${accentColor}-400 uppercase tracking-[0.2em] flex items-center gap-1.5 bg-${accentColor}-500/10 px-3 py-1 rounded-lg border border-${accentColor}-500/20 hover:bg-${accentColor}-500/20 transition-all cursor-pointer`}
+                    title="View or Edit Login Credentials"
+                  >
                     <User size={12}/> {student.metadata?.username || student.student_identifier || 'Unregistered'}
-                  </span>
+                    <Edit2 size={10} className="ml-1 opacity-40 group-hover:opacity-100 transition-opacity" />
+                  </button>
+
                   <span className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.2em] flex items-center gap-1.5 bg-emerald-500/10 px-3 py-1 rounded-lg border border-emerald-500/20">
                     <Shield size={12}/> {rank} Rank
                   </span>
@@ -419,19 +605,31 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5 mb-1"><Zap size={12}/> Total XP</p>
                <p className="text-3xl font-black italic">{xp}</p>
              </div>
-             <div className="bg-white/5 p-5 rounded-3xl border border-white/10 flex flex-col justify-center min-w-[140px]">
+             
+             {/* ATTENDANCE WIDGET */}
+             <div className="bg-white/5 p-5 rounded-3xl border border-white/10 flex flex-col justify-center min-w-[140px] relative group">
                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-1.5 mb-1"><Activity size={12}/> Attendance</p>
-               <p className="text-3xl font-black italic text-emerald-400">{student.current_streak > 0 ? `${student.current_streak} Strk` : `${pastLessons.length} Lsns`}</p>
+               <div className="flex items-end gap-2">
+                 <p className="text-3xl font-black italic text-emerald-400">
+                   {student.metadata?.attendance_rate || 100}<span className="text-xl">%</span>
+                 </p>
+                 <span className="text-[10px] font-bold text-slate-500 mb-1">
+                   {student.metadata?.lessons_attended || 0}/{student.metadata?.lessons_scheduled || 0}
+                 </span>
+               </div>
+               <button 
+                 onClick={() => setShowAttendanceModal(true)}
+                 className="absolute top-4 right-4 p-2 bg-[#020617] hover:bg-emerald-600 rounded-xl text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-all border border-white/10"
+                 title="Override Attendance"
+               >
+                 <Edit2 size={12} />
+               </button>
              </div>
           </div>
         </header>
 
-        {/* =========================================
-            DOSSIER INTEL STRIP (Parent & Notes)
-            ========================================= */}
+        {/* DOSSIER INTEL STRIP */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
-          
-          {/* Guardian Card */}
           <div className="lg:col-span-1 bg-[#0f172a]/60 backdrop-blur-xl border border-white/5 rounded-[32px] p-6 shadow-xl flex flex-col justify-center">
             <div className="flex items-center gap-2 text-slate-400 mb-4 border-b border-white/5 pb-3">
               <Users size={16} className={`text-${accentColor}-400`} />
@@ -456,7 +654,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
             )}
           </div>
 
-          {/* Teacher/Admin Notes Card */}
           <div className="lg:col-span-2 bg-[#0f172a]/60 backdrop-blur-xl border border-white/5 rounded-[32px] p-6 shadow-xl flex flex-col">
             <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
               <div className="flex items-center gap-2 text-slate-400">
@@ -491,17 +688,13 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
               </div>
             )}
           </div>
-
         </div>
 
-        {/* =========================================
-            MAIN WORKSPACE
-            ========================================= */}
+        {/* MAIN WORKSPACE */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
           
           <div className="xl:col-span-5 space-y-8">
             
-            {/* PIONEER CONFIGURATION CARD */}
             <div className="bg-[#0f172a] rounded-[40px] border border-white/5 p-8 shadow-2xl relative overflow-hidden">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-black uppercase italic tracking-widest flex items-center gap-2 text-white">
@@ -509,7 +702,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
                 </h2>
                 
                 <div className="flex gap-2">
-                  {/* Rollback Button */}
                   {role === 'admin' && student?.metadata?.history?.length > 0 && !isEditingConfig && (
                     <button onClick={handleUndoLastEdit} disabled={isSavingGlobal} className="text-[10px] font-black uppercase tracking-widest text-rose-400 hover:text-rose-300 transition-colors flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-lg border border-rose-500/20" title="Undo Last Saved Change">
                       <Activity size={12}/> Undo
@@ -569,7 +761,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
                     </div>
                   </div>
 
-                  {/* Hide individual save buttons if in bulk mode */}
                   {!isBulkMode && (
                     <div className="flex items-center gap-3 pt-4">
                       <button onClick={() => setIsEditingConfig(false)} className="px-6 py-4 rounded-2xl bg-white/5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">Cancel</button>
@@ -632,7 +823,6 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
               )}
             </div>
 
-            {/* ACADEMIC RECORD WIDGET */}
             <div className="bg-[#0f172a] rounded-[40px] border border-white/5 p-8 shadow-2xl relative overflow-hidden">
               <BookOpen className="absolute -right-10 -bottom-10 w-48 h-48 text-white/5 pointer-events-none" />
               <div className="relative z-10">
@@ -675,6 +865,73 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
                       )
                     })
                   )}
+                </div>
+              </div>
+            </div>
+
+            {/* GUARDIAN COMM PORTAL */}
+            <div className="bg-[#0f172a] rounded-[40px] border border-white/5 shadow-2xl flex flex-col h-[500px] overflow-hidden mt-8">
+              <div className="p-6 border-b border-white/5 bg-white/[0.02] flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <MessageSquare className="text-blue-500" size={20} />
+                  <h2 className="text-lg font-black uppercase italic tracking-widest text-white">Guardian Comms</h2>
+                </div>
+                <button 
+                  onClick={async () => {
+                    if (!studentId || !currentUserId) return;
+                    const { error } = await supabase.from('coach_messages')
+                      .update({ is_read: true })
+                      .eq('student_id', studentId)
+                      .neq('sender_id', currentUserId)
+                      .eq('is_read', false);
+                      
+                    if (error) console.error("Update Error:", error);
+                  }}
+                  className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-emerald-400 bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-md border border-white/10 transition-colors"
+                >
+                  <CheckCircle2 size={12} /> Mark all messages as read
+                </button>
+              </div>
+              
+              <div className="flex-1 p-6 overflow-y-auto bg-[#020617] flex flex-col gap-4 shadow-inner custom-scrollbar" ref={chatScrollRef}>
+                {chatMessages.length === 0 ? (
+                  <div className="text-center text-slate-500 py-10 italic text-sm font-bold">
+                    No messages yet. Send an update to the guardian!
+                  </div>
+                ) : (
+                  chatMessages.map(msg => {
+                    const isMe = msg.sender_id === currentUserId;
+                    return (
+                      <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[85%] rounded-2xl p-4 ${isMe ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white/5 border border-white/5 text-slate-300 rounded-tl-none'}`}>
+                          <p className="text-sm leading-relaxed">{msg.message}</p>
+                          <p className={`text-[9px] font-black uppercase mt-2 ${isMe ? 'text-blue-300' : 'text-slate-500'}`}>
+                            {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="p-4 bg-white/[0.02] border-t border-white/5 shrink-0">
+                <div className="relative flex items-center">
+                  <input 
+                    type="text" 
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendChatMessage()}
+                    placeholder="Type a secure message to the guardian..."
+                    className="w-full bg-[#020617] border border-white/10 rounded-2xl py-4 pl-4 pr-14 text-sm font-medium text-white focus:outline-none focus:border-blue-500 transition-all placeholder:text-slate-600 shadow-inner"
+                  />
+                  <button 
+                    onClick={handleSendChatMessage}
+                    disabled={!chatInput.trim() || isSendingChat}
+                    className="absolute right-2 p-3 bg-blue-600 text-white rounded-xl disabled:opacity-50 disabled:bg-slate-700 transition-all hover:bg-blue-500 shadow-md"
+                  >
+                    {isSendingChat ? <Loader2 size={16} className="animate-spin"/> : <Send size={16} />}
+                  </button>
                 </div>
               </div>
             </div>
@@ -768,6 +1025,158 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
            </div>
         </div>
       )}
+
+      {/* =========================================
+          MODALS
+          ========================================= */}
+      <AnimatePresence>
+        
+        {/* CREDENTIALS MODAL */}
+        {isEditingCredentials && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{opacity: 0, scale: 0.95}} 
+              animate={{opacity: 1, scale: 1}} 
+              exit={{opacity: 0, scale: 0.95}} 
+              className="bg-[#0f172a] border border-white/10 rounded-[40px] p-8 max-w-md w-full shadow-2xl flex flex-col"
+            >
+               <h2 className="text-2xl font-black uppercase italic tracking-tighter mb-6 flex items-center gap-3 text-white">
+                 <div className={`bg-${accentColor}-500/20 p-2 rounded-xl`}>
+                   <Key className={`text-${accentColor}-500`} size={24} />
+                 </div>
+                 Access Credentials
+               </h2>
+               
+               <div className={`bg-${accentColor}-500/10 border border-${accentColor}-500/20 rounded-2xl p-5 mb-8 relative overflow-hidden`}>
+                 <div className="absolute top-0 left-0 bottom-0 w-1.5 bg-blue-500" />
+                 <div className="flex items-center justify-between mb-3 pl-2">
+                    <p className={`text-[10px] font-black uppercase tracking-widest text-${accentColor}-400`}>Current Access Intel</p>
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(`Username: ${student.metadata?.username || student.student_identifier}\nPIN: ${student.metadata?.pin || 'NONE'}`);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 2000);
+                      }}
+                      className={`p-1.5 bg-${accentColor}-500/20 hover:bg-${accentColor}-500/30 rounded-lg transition-colors text-${accentColor}-400`}
+                      title="Copy to Clipboard"
+                    >
+                      {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+                    </button>
+                 </div>
+                 <div className="pl-2 space-y-2">
+                    <div>
+                      <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Username</p>
+                      <p className="text-lg font-black text-white">{student.metadata?.username || student.student_identifier || 'Unregistered'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Access PIN</p>
+                      <p className="text-2xl font-black tracking-[0.3em] text-white leading-none">{student.metadata?.pin || '----'}</p>
+                    </div>
+                 </div>
+               </div>
+
+               <div className="space-y-5 border-t border-white/5 pt-6">
+                 <div>
+                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5 block">Update Username</label>
+                   <input 
+                     type="text" 
+                     value={credUsername} 
+                     onChange={e => setCredUsername(e.target.value)} 
+                     className="w-full bg-[#020617] border border-white/10 rounded-xl p-3.5 text-sm font-bold text-white outline-none focus:border-blue-500 transition-colors" 
+                   />
+                 </div>
+                 <div>
+                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1.5 block">Update 4-Digit PIN</label>
+                   <input 
+                     type="text" 
+                     maxLength={4} 
+                     value={credPin} 
+                     onChange={e => setCredPin(e.target.value.replace(/\D/g, ''))} 
+                     className="w-full bg-[#020617] border border-white/10 rounded-xl p-3.5 text-lg font-black text-white outline-none focus:border-blue-500 tracking-[0.5em] text-center transition-colors" 
+                     placeholder="e.g. 1234" 
+                   />
+                 </div>
+               </div>
+               
+               <div className="flex items-center gap-3 mt-8 pt-6 border-t border-white/5">
+                 <button onClick={() => setIsEditingCredentials(false)} className="flex-1 py-3.5 rounded-xl bg-white/5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
+                   Close
+                 </button>
+                 <button onClick={handleSaveCredentials} disabled={isSavingCredentials} className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+                   {isSavingCredentials ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Save New
+                 </button>
+               </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* DYNAMIC ATTENDANCE OVERRIDE MODAL */}
+        {showAttendanceModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{opacity: 0, scale: 0.95}} 
+              animate={{opacity: 1, scale: 1}} 
+              exit={{opacity: 0, scale: 0.95}} 
+              className="bg-[#0f172a] border border-white/10 rounded-[40px] p-8 max-w-lg w-full shadow-2xl flex flex-col max-h-[85vh]"
+            >
+               <div className="flex items-center justify-between mb-6 shrink-0">
+                 <div>
+                   <h2 className="text-xl font-black uppercase italic tracking-tighter text-white flex items-center gap-2">
+                     <CalendarCheck className="text-emerald-500" size={24} /> Attendance Editor
+                   </h2>
+                   <p className="text-xs text-slate-400 mt-1">Mark actual attendance for historical records.</p>
+                 </div>
+                 <button onClick={() => setShowAttendanceModal(false)} className="text-slate-400 hover:text-white bg-white/5 p-2 rounded-full"><X size={16}/></button>
+               </div>
+               
+               <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-3">
+                 {editableSchedule.map(lesson => {
+                   const isPast = new Date(lesson.date).getTime() < new Date().getTime();
+                   
+                   return (
+                     <div key={lesson.id} className="p-4 bg-[#020617] border border-white/5 rounded-2xl flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                       <div>
+                         <p className="text-xs font-bold text-white">{lesson.topic}</p>
+                         <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">
+                           {new Date(lesson.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                         </p>
+                       </div>
+                       
+                       <div className="flex gap-2">
+                         <select 
+                           value={lesson.attendance_status || (isPast ? 'attended' : 'pending')}
+                           onChange={(e) => handleUpdateLessonStatus(lesson.id, e.target.value)}
+                           className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest outline-none appearance-none border transition-colors ${
+                             lesson.attendance_status === 'attended' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                             lesson.attendance_status === 'missed' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                             lesson.attendance_status === 'apology' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                             lesson.attendance_status === 'rescheduled' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                             'bg-white/5 text-slate-400 border-white/10'
+                           }`}
+                         >
+                           <option value="pending" className="bg-[#0f172a] text-slate-300">Pending</option>
+                           <option value="attended" className="bg-[#0f172a] text-emerald-400">Attended</option>
+                           <option value="missed" className="bg-[#0f172a] text-rose-400">Missed</option>
+                           <option value="apology" className="bg-[#0f172a] text-amber-400">Apology</option>
+                           <option value="rescheduled" className="bg-[#0f172a] text-blue-400">Rescheduled</option>
+                         </select>
+                       </div>
+                     </div>
+                   )
+                 })}
+                 {editableSchedule.length === 0 && <p className="text-center text-slate-500 italic py-10 font-bold">No schedule data exists to edit.</p>}
+               </div>
+               
+               <div className="mt-6 pt-6 border-t border-white/5 shrink-0">
+                 <button onClick={handleSaveAttendance} disabled={isSavingAttendance || editableSchedule.length === 0} className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all disabled:opacity-50">
+                   {isSavingAttendance ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Save Records & Recalculate
+                 </button>
+               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }

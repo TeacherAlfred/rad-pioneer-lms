@@ -6,7 +6,7 @@ import {
   CheckCircle2, CreditCard, ChevronRight, Loader2, 
   Target, TrendingUp, DollarSign, Clock, X, ArrowUpRight,
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
-  GraduationCap // <-- New icon imported for Teacher View
+  GraduationCap, Eye, Bell
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -16,6 +16,8 @@ import { supabase } from "@/lib/supabase";
 export default function AdminDashboard() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [selectedStat, setSelectedStat] = useState<null | string>(null);
   const [stats, setStats] = useState({
     totalStudents: 0,
@@ -33,9 +35,40 @@ export default function AdminDashboard() {
     fetchHeartbeat();
   }, []);
 
+  // Real-time Notification Listener (Admin Scope)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const fetchUnread = async () => {
+      // Admins want to see ANY unread message where a parent is the sender
+      const { count } = await supabase
+        .from('coach_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_read', false)
+        .neq('sender_id', currentUser.id); // Exclude messages sent by this admin
+      setUnreadCount(count || 0);
+    };
+
+    fetchUnread();
+
+    const channel = supabase.channel('admin_notifications')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'coach_messages' }, () => {
+         fetchUnread(); 
+      }).subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [currentUser]);
+
   async function fetchHeartbeat() {
     setLoading(true);
     try {
+      const sessionData = localStorage.getItem("pioneer_session");
+      if (!sessionData) { router.push("/login"); return; }
+      const localUser = JSON.parse(sessionData);
+      
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
+      if (profile) setCurrentUser(profile);
+
       // 1. Academy Stats
       const { count: studentCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student');
       const { count: requestCount } = await supabase.from('registrations').select('*', { count: 'exact', head: true }).eq('status', 'new');
@@ -49,7 +82,6 @@ export default function AdminDashboard() {
       
       const total = prospectStats?.length || 0;
       const won = prospectStats?.filter(p => p.status === 'Converted (Won)').length || 0;
-      // Actual Conversion Rate Calculation
       const actualConvRate = total > 0 ? Math.round((won / total) * 100) : 0;
 
       setStats(prev => ({
@@ -129,8 +161,18 @@ export default function AdminDashboard() {
               New Intake
             </Link>
             
-            {/* LOGOUT BUTTON */}
             <div className="w-px h-10 bg-white/10 mx-2 hidden md:block" />
+
+            {/* NOTIFICATION BELL */}
+            <Link href="/admin/communications" className="relative p-4 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/5 rounded-2xl transition-all shadow-sm">
+              <Bell size={18} />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full border border-[#0f172a] shadow-lg animate-pulse">
+                  {unreadCount}
+                </span>
+              )}
+            </Link>
+
             <button 
               onClick={handleLogout} 
               className="p-4 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-2xl transition-all"
@@ -164,9 +206,10 @@ export default function AdminDashboard() {
                   { label: 'Growth Plan', icon: LayoutDashboard, path: '/admin/blueprint', color: 'hover:border-fuchsia-500' },
                   { label: 'Comms Center', icon: Activity, path: '/admin/communications', color: 'hover:border-orange-500' },
                   { label: 'Master Data', icon: Briefcase, path: '/admin/contacts', color: 'hover:border-slate-500' },
-                  
-                  // NEW TEACHER PORTAL BUTTON
                   { label: 'Teacher Portal', icon: GraduationCap, path: '/teacher/dashboard', color: 'hover:border-cyan-500' },
+                  
+                  // NEW PARENT PORTAL VIEWER
+                  { label: 'Parent Portals', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' },
                   
                 ].map((item, i) => (
                   <Link key={i} href={item.path} className={`p-6 bg-white/5 border border-transparent rounded-[32px] transition-all flex flex-col gap-4 group ${item.color}`}>

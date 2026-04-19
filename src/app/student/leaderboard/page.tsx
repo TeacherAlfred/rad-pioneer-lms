@@ -38,13 +38,18 @@ export default function LeaderboardPage() {
         let end = new Date();
 
         if (view === 'weekly') {
-          // Calculate Last Monday to Last Sunday
-          const day = now.getDay();
-          const diffToLastMonday = day === 0 ? 13 : day + 6; 
-          start.setDate(now.getDate() - diffToLastMonday);
-          start.setHours(0,0,0,0);
+          // Calculate Last Saturday to Yesterday (Friday)
+          const day = now.getDay(); // 0 is Sunday, 6 is Saturday
           
-          // FIX: Clone the start date so we don't cause month-rollover bugs
+          // If today is Saturday, we want to go back 7 days to the *previous* Saturday.
+          // If today is Sunday (0), we go back 1 day.
+          // If today is Friday (5), we go back 6 days.
+          const diffToLastSaturday = day === 6 ? 7 : (day + 1); 
+          
+          start.setDate(now.getDate() - diffToLastSaturday);
+          start.setHours(0,0,0,0); // Midnight on Saturday
+          
+          // The week ends exactly 6 days later (at 11:59pm on Friday)
           end = new Date(start.getTime());
           end.setDate(end.getDate() + 6);
           end.setHours(23,59,59,999);

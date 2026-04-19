@@ -60,16 +60,34 @@ export default function ModuleCheckpointPage() {
       const baseXP = 100;
       const earnedXP = baseXP * stats.multiplier;
 
-      const { error: qaError } = await supabase.from('quiz_attempts').upsert({
+      // 1. Fetch previous attempts to determine the next attempt_number
+      const { data: existingAttempts, error: fetchErr } = await supabase
+        .from('quiz_attempts')
+        .select('attempt_number')
+        .eq('student_id', user.id)
+        .eq('module_id', moduleId)
+        .order('attempt_number', { ascending: false });
+
+      if (fetchErr) throw new Error(`Quiz Check Error: ${fetchErr.message}`);
+
+      // Calculate the next attempt number (defaults to 1 if no previous attempts exist)
+      const nextAttemptNumber = existingAttempts && existingAttempts.length > 0 
+        ? (existingAttempts[0].attempt_number || existingAttempts.length) + 1 
+        : 1;
+
+      // 2. Insert the new attempt record with the correct attempt_number
+      const { error: qaError } = await supabase.from('quiz_attempts').insert([{
         student_id: user.id,
         module_id: moduleId,
         score: stats.score,
         passed: true,
-        time_taken: stats.timeTaken
-      }, { onConflict: 'student_id,module_id' });
+        time_taken: stats.timeTaken,
+        attempt_number: nextAttemptNumber
+      }]);
 
       if (qaError) throw new Error(`Quiz Save Error: ${qaError.message}`);
 
+      // 3. Update User XP
       const newXp = (user.xp || 0) + earnedXP;
       const { error: profileError } = await supabase.from('profiles').update({ xp: newXp }).eq('id', user.id);
       

@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, Search, Wallet, CheckCircle2, AlertTriangle, 
   Receipt, Loader2, ArrowRight, Coins, RefreshCw, Save,
-  Building2, User
+  Building2, User, Calendar
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -30,6 +30,7 @@ export default function PaymentCapturePage() {
   const [totalReceived, setTotalReceived] = useState<string>("");
   const [allocations, setAllocations] = useState<Record<string, number>>({});
   const [paymentRef, setPaymentRef] = useState<string>("");
+  const [paymentDate, setPaymentDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
     fetchGuardians();
@@ -51,7 +52,6 @@ export default function PaymentCapturePage() {
     }
   }
 
-  // Fetch invoices when a guardian is selected
   useEffect(() => {
     if (!selectedGuardian) {
       setInvoices([]);
@@ -69,17 +69,16 @@ export default function PaymentCapturePage() {
           .eq('guardian_id', selectedGuardian.id)
           .eq('doc_type', 'invoice')
           .in('status', ['pending', 'overdue', 'partially_paid'])
-          .order('created_at', { ascending: true }); // Oldest first for auto-allocation
+          .order('created_at', { ascending: true }); 
 
         if (data) {
-          // Calculate outstanding balance for each invoice
           const enrichedInvoices = data.map(inv => ({
             ...inv,
             outstanding: Math.max(0, Number(inv.total_amount) - Number(inv.amount_paid || 0))
           })).filter(inv => inv.outstanding > 0);
 
           setInvoices(enrichedInvoices);
-          setAllocations({}); // Reset allocations
+          setAllocations({}); 
         }
       } catch (err) {
         console.error(err);
@@ -104,6 +103,10 @@ export default function PaymentCapturePage() {
     return invoices.reduce((sum, inv) => sum + inv.outstanding, 0);
   }, [invoices]);
 
+  const projectedBalance = useMemo(() => {
+    return Math.max(0, totalOutstanding - totalAllocated);
+  }, [totalOutstanding, totalAllocated]);
+
   // --- ENGINE ACTIONS ---
   const handleAutoAllocate = () => {
     let remainingToAllocate = Number(totalReceived) || 0;
@@ -126,7 +129,6 @@ export default function PaymentCapturePage() {
     const numValue = Math.max(0, Number(amount) || 0);
     const invoice = invoices.find(i => i.id === invoiceId);
     
-    // Prevent allocating more than the invoice's outstanding balance
     const cappedValue = Math.min(numValue, invoice?.outstanding || 0);
 
     setAllocations(prev => ({
@@ -139,17 +141,23 @@ export default function PaymentCapturePage() {
     const rcvAmt = Number(totalReceived) || 0;
     if (rcvAmt <= 0) return alert("Please enter a valid received amount.");
     if (unallocatedCredit < 0) return alert("You have allocated more funds than you received. Please check your math.");
+    if (!paymentDate) return alert("Please select a payment date.");
 
     setIsProcessing(true);
     try {
+      // Convert the HTML date input to a clean ISO string
+      const parsedDate = new Date(paymentDate).toISOString();
+
       // 1. Create the Master Payment Record
       const { data: paymentRecord, error: payErr } = await supabase
         .from('payments')
         .insert([{
-          guardian_id: selectedGuardian.id,
-          amount_received: rcvAmt,
-          unallocated_credit: unallocatedCredit,
-          reference_note: paymentRef || 'Manual Capture'
+          parent_id: selectedGuardian.id,
+          amount: rcvAmt,
+          status: 'completed',
+          description: paymentRef ? `Payment Ref: ${paymentRef}${unallocatedCredit > 0 ? ` (Incl. R${unallocatedCredit} Credit)` : ''}` : `Manual Allocation${unallocatedCredit > 0 ? ` (Incl. R${unallocatedCredit} Credit)` : ''}`,
+          paid_at: parsedDate,
+          created_at: parsedDate // Override creation date for accurate historical reporting
         }])
         .select('id')
         .single();
@@ -162,16 +170,16 @@ export default function PaymentCapturePage() {
 
       for (const [invId, allocAmt] of Object.entries(allocations)) {
         if (allocAmt > 0) {
-          // Add to allocations table
+          
           allocationPromises.push(
             supabase.from('payment_allocations').insert([{
               payment_id: paymentRecord.id,
               invoice_id: invId,
-              amount_allocated: allocAmt
+              amount_allocated: allocAmt,
+              created_at: parsedDate
             }])
           );
 
-          // Update billing_records status and amount_paid
           const inv = invoices.find(i => i.id === invId);
           if (inv) {
             const newPaidAmt = Number(inv.amount_paid || 0) + allocAmt;
@@ -192,9 +200,11 @@ export default function PaymentCapturePage() {
       confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#10b981', '#34d399', '#ffffff'] });
       setSuccessMsg(`Successfully processed R ${rcvAmt.toLocaleString()} and updated ledger.`);
       
-      // Reset State
       setTimeout(() => {
         setSelectedGuardian(null);
+        setTotalReceived("");
+        setPaymentRef("");
+        setPaymentDate(new Date().toISOString().split('T')[0]);
         setSuccessMsg(null);
       }, 3000);
 
@@ -216,7 +226,6 @@ export default function PaymentCapturePage() {
     );
   }, [guardians, searchQuery]);
 
-
   if (loading) {
     return (
       <div className="h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
@@ -233,9 +242,9 @@ export default function PaymentCapturePage() {
         {/* HEADER */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-slate-200 pb-8">
           <div className="space-y-4">
-            <Link href="/admin/finance/ledger" className="group flex items-center gap-2 bg-white border border-slate-200 hover:border-blue-400 px-4 py-2 rounded-xl transition-all w-fit shadow-sm">
+            <Link href="/admin/finance" className="group flex items-center gap-2 bg-white border border-slate-200 hover:border-blue-400 px-4 py-2 rounded-xl transition-all w-fit shadow-sm">
               <ArrowLeft size={16} className="text-slate-400 group-hover:text-blue-600" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-slate-900 transition-colors">Client Ledger</span>
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-slate-900 transition-colors">Finance Hub</span>
             </Link>
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-emerald-600">
@@ -310,7 +319,7 @@ export default function PaymentCapturePage() {
                         <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
                           <Coins size={16} className="text-emerald-500"/> 2. Enter Amount Received
                         </h3>
-                        <div className="relative">
+                        <div className="relative mb-6">
                           <span className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 font-black text-2xl">R</span>
                           <input 
                             type="number" 
@@ -320,13 +329,28 @@ export default function PaymentCapturePage() {
                             className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-14 pr-6 py-6 text-4xl font-black text-slate-900 focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all shadow-inner"
                           />
                         </div>
-                        <input 
-                            type="text" 
-                            placeholder="Optional: Payment Reference (e.g. EFT 15 May)"
-                            value={paymentRef}
-                            onChange={(e) => setPaymentRef(e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold text-slate-600 focus:outline-none focus:border-blue-500 mt-4"
-                          />
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2 mb-1 flex items-center gap-1"><Calendar size={10}/> Date Received</label>
+                            <input 
+                              type="date" 
+                              value={paymentDate}
+                              onChange={(e) => setPaymentDate(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500 cursor-pointer shadow-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2 mb-1 block">Payment Reference</label>
+                            <input 
+                              type="text" 
+                              placeholder="e.g. EFT 15 May"
+                              value={paymentRef}
+                              onChange={(e) => setPaymentRef(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-xs font-bold text-slate-700 focus:outline-none focus:border-blue-500 shadow-sm"
+                            />
+                          </div>
+                        </div>
                       </div>
                       
                       <div className="md:w-64 flex flex-col justify-end">
@@ -421,15 +445,29 @@ export default function PaymentCapturePage() {
                       )}
                     </div>
 
-                    <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end">
+                    {/* PROJECTED BALANCE FOOTER */}
+                    <div className="p-6 border-t border-slate-100 bg-slate-50 flex flex-col sm:flex-row justify-between items-center gap-6">
+                      <div className="flex items-center gap-4 w-full sm:w-auto">
+                        <div>
+                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-0.5">Current Balance</p>
+                          <p className="text-sm font-bold text-slate-500 line-through">R {totalOutstanding.toLocaleString()}</p>
+                        </div>
+                        <ArrowRight size={14} className="text-slate-300 shrink-0" />
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-0.5">Projected Balance</p>
+                          <p className="text-2xl font-black text-slate-900">R {projectedBalance.toLocaleString()}</p>
+                        </div>
+                      </div>
+
                       <button 
                         onClick={handleProcessPayment}
                         disabled={isProcessing || Number(totalReceived) <= 0 || unallocatedCredit < 0}
-                        className="px-8 py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase italic tracking-widest text-xs hover:bg-emerald-500 flex items-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-emerald-600/20"
+                        className="w-full sm:w-auto px-8 py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase italic tracking-widest text-xs hover:bg-emerald-500 flex items-center justify-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-emerald-600/20"
                       >
                         {isProcessing ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Process Payment
                       </button>
                     </div>
+
                   </div>
 
                 </motion.div>

@@ -160,12 +160,16 @@ export default function LessonPlayerPage() {
   const [revealedVocab, setRevealedVocab] = useState<any[]>([]);
   const [expandedVocab, setExpandedVocab] = useState<Record<string, boolean>>({});
 
-  const [activeTooltip, setActiveTooltip] = useState<{term: string, def: string} | null>(null);
-
   const [blueprint, setBlueprint] = useState({
     mvp: [] as string[],
     beyond: ""
   });
+
+  const [activeTooltip, setActiveTooltip] = useState<{term: string, def: string} | null>(null);
+  
+  // Tutorial Interaction States
+  const [tutorialClicked, setTutorialClicked] = useState(false);
+  const [tutorialOutcome, setTutorialOutcome] = useState<'pending' | 'success' | 'help'>('pending');
 
   const showToast = (text: string, type: 'error' | 'success' = 'error') => {
     setToastMsg({ text, type });
@@ -224,11 +228,16 @@ export default function LessonPlayerPage() {
 
   const currentStepData = useMemo(() => steps[currentStepIndex] || {}, [steps, currentStepIndex]);
 
+  // --- PROGRESS TRACKING LOGIC ---
   const isIntroStep = currentStepData.type === 'intro';
   const isBlueprintStep = currentStepData.type === 'blueprint';
   const isCaptureStep = currentStepData.type === 'capture';
   const isCodeStep = !isIntroStep && !isBlueprintStep && !isCaptureStep; 
   
+  const isMakeCode = !!currentStepData.makecode_project_id || mission?.sandbox_type === 'makecode';
+  
+  const showWorkspace = isCodeStep || (isCaptureStep && !!currentStepData.makecode_project_id);
+
   const isBlueprintValid = blueprint.mvp.length > 0;
 
   const toggleMvpOption = (option: string) => {
@@ -382,11 +391,21 @@ export default function LessonPlayerPage() {
     return () => clearTimeout(timer);
   }, [currentStepIndex, displayedLore, isTyping, liveCode, simLogs, revealedVocab, mainScroll, sidebarScroll]);
 
+  // Formatters that transform markdown links to tracked buttons
   const getFormattedLore = () => {
-    if (!revealedVocab || revealedVocab.length === 0) return displayedLore;
-    let formattedText = displayedLore;
-    const sortedVocab = [...revealedVocab].sort((a, b) => b.term.length - a.term.length);
+    let formattedText = displayedLore || "";
+
+    // 0. Convert standard line breaks (\n) to HTML line breaks
+    formattedText = formattedText.replace(/\n/g, '<br />');
+
+    // 1. Convert Markdown Links to Big Buttons FIRST with tracking attribute
+    const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g;
+    formattedText = formattedText.replace(linkRegex, `<a href="$2" target="_blank" rel="noopener noreferrer" data-tutorial-link="true" class="inline-flex items-center justify-center gap-2 px-5 py-3.5 mt-4 w-full bg-purple-600 hover:bg-purple-500 text-white font-black uppercase tracking-widest text-[10px] md:text-xs rounded-xl transition-all shadow-[0_0_25px_rgba(147,51,234,0.4)] border border-purple-400/50 hover:scale-[1.02] active:scale-95 no-underline cursor-pointer pointer-events-auto">$1</a>`);
+
+    if (!revealedVocab || revealedVocab.length === 0) return formattedText;
     
+    // 2. Process Vocabulary
+    const sortedVocab = [...revealedVocab].sort((a, b) => b.term.length - a.term.length);
     sortedVocab.forEach(v => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b(${escapedTerm})\\b(?![^<]*>)`, 'gi');
@@ -397,10 +416,16 @@ export default function LessonPlayerPage() {
   };
 
   const formatGlossaryText = (text: string) => {
-    if (!currentStepData?.vocabulary || currentStepData.vocabulary.length === 0) return text;
-    let formattedText = text;
-    const sortedVocab = [...currentStepData.vocabulary].sort((a, b) => b.term.length - a.term.length);
+    let formattedText = text || "";
     
+    // 1. Convert Markdown Links to Big Buttons FIRST with tracking attribute
+    const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g;
+    formattedText = formattedText.replace(linkRegex, `<a href="$2" target="_blank" rel="noopener noreferrer" data-tutorial-link="true" class="inline-flex items-center justify-center gap-2 px-5 py-3.5 mt-4 w-full bg-purple-600 hover:bg-purple-500 text-white font-black uppercase tracking-widest text-[10px] md:text-xs rounded-xl transition-all shadow-[0_0_25px_rgba(147,51,234,0.4)] border border-purple-400/50 hover:scale-[1.02] active:scale-95 no-underline cursor-pointer pointer-events-auto">$1</a>`);
+
+    if (!currentStepData?.vocabulary || currentStepData.vocabulary.length === 0) return formattedText;
+    
+    // 2. Process Vocabulary
+    const sortedVocab = [...currentStepData.vocabulary].sort((a, b) => b.term.length - a.term.length);
     sortedVocab.forEach((v: any) => {
         const escapedTerm = v.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`\\b(${escapedTerm})\\b(?![^<]*>)`, 'gi');
@@ -410,13 +435,20 @@ export default function LessonPlayerPage() {
     return formattedText;
   };
 
+  // Handle Tracking of Tutorial Links
   const handleGlobalClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+    
     const closestVocab = target.closest('[data-vocab="true"]');
     if (closestVocab) {
        const def = closestVocab.getAttribute('data-def');
        const term = closestVocab.textContent || "Definition";
        if (def) setActiveTooltip({ term, def });
+    }
+
+    const tutorialLink = target.closest('[data-tutorial-link="true"]');
+    if (tutorialLink) {
+       setTutorialClicked(true);
     }
   }, []);
 
@@ -466,7 +498,6 @@ export default function LessonPlayerPage() {
   useEffect(() => {
     if (!mission || mission.sandbox_type === 'none' || mission.sandbox_type === 'p5js' || !blocklyDiv.current) return;
     
-    // Check if we are rendering the MakeCode Iframe instead of Blockly
     if (parsedConfig.makecode_project_id) return;
 
     if (workspace.current) return;
@@ -542,11 +573,11 @@ export default function LessonPlayerPage() {
   }, [mission, loading, getBlockOriginalColor, parsedConfig]);
 
   useEffect(() => {
-    if (isCodeStep && workspace.current) {
+    if (showWorkspace && workspace.current) {
       const timer = setTimeout(() => { if (workspace.current) Blockly.svgResize(workspace.current); }, 50);
       return () => clearTimeout(timer);
     }
-  }, [isCodeStep]);
+  }, [showWorkspace]);
 
   const handleReplayMission = () => {
     setIsReadOnly(false); 
@@ -558,22 +589,13 @@ export default function LessonPlayerPage() {
     setSimLogs([]);
     setRevealedVocab([]); 
     setExpandedVocab({});
+    setTutorialClicked(false);
+    setTutorialOutcome('pending');
     if (workspace.current) workspace.current.clear();
     scrollToTop();
   };
 
   const runSimulation = async () => {
-    // --- BYPASS AUTO-GRADER FOR MAKECODE IFRAMES ---
-    if (parsedConfig.makecode_project_id) {
-        setIsRunning(true); setIsExecuting(true); setStepVerified(false);
-        setSimLogs([`[INITIALIZING_${theme.console.toUpperCase()}]...`]);
-        await new Promise(r => setTimeout(r, 800));
-        setSimLogs(prev => [...prev, `[SYSTEM]: Analyzing MakeCode Uplink...`, `[SUCCESS]: Logic structure verified.`, `[${theme.successCode}]`]);
-        setStepVerified(true);
-        setIsExecuting(false);
-        return;
-    }
-
     if (!workspace.current) return;
     
     workspace.current.getAllBlocks(false).forEach(block => {
@@ -748,9 +770,14 @@ export default function LessonPlayerPage() {
       
       const newHistoryString = newHistoryArray.filter(Boolean).join(',');
 
+      // Apply SOS prefix if the student requested help
+      const finalDesc = tutorialOutcome === 'help' 
+          ? `[SOS: STUCK ON MAKECODE] ${finalMVP || "Needs assistance"}` 
+          : (finalMVP || "Logic Complete");
+
       const { error: archiveError } = await supabase.from('tech_archive').upsert({
         student_id: user.id, mission_id: mission.id, title: mission.title,
-        description: finalMVP || "Logic Complete", 
+        description: finalDesc, 
         win_condition: finalBeyond, 
         media_url: newHistoryString, status: 'completed', xp_earned: mission.xp_reward || 50,
         type: 'blueprint'
@@ -796,8 +823,15 @@ export default function LessonPlayerPage() {
   }, []);
 
   const safeOnComplete = useCallback(() => {
+    const stringData = JSON.stringify(currentStepData);
+    const hasTutorial = stringData.includes('makecode.microbit.org') || stringData.includes('tutorial:');
+    
+    if (hasTutorial && !tutorialClicked && !isReadOnly) {
+        showToast("Please launch the MakeCode tutorial to advance.", "error");
+        return;
+    }
     if (stableOnCompleteRef.current) stableOnCompleteRef.current();
-  }, []);
+  }, [currentStepData, tutorialClicked, isReadOnly]);
 
   const safeCloseToast = useCallback(() => setToastMsg(null), []);
 
@@ -847,7 +881,6 @@ export default function LessonPlayerPage() {
          )}
       </AnimatePresence>
 
-      {/* --- TARGETED CSS INJECTION TO FIX SEQUENCE VIEWER MOBILE STYLING, HIDE SCROLLBARS & CONSTRAIN DESKTOP --- */}
       <style>{` 
         .blocklyToolboxContents { padding-top: 48px !important; } 
         .blocklyTreeRow { margin-bottom: 12px !important; height: 48px !important; line-height: 48px !important; } 
@@ -859,7 +892,6 @@ export default function LessonPlayerPage() {
            font-family: inherit !important;
         }
 
-        /* Complete scrollbar destruction for a clean UI */
         *::-webkit-scrollbar {
           display: none !important;
           width: 0 !important;
@@ -871,7 +903,6 @@ export default function LessonPlayerPage() {
           scrollbar-width: none !important;
         }
 
-        /* DESKTOP SEQUENCE VIEWER OVERRIDES (Constraints max-height to ~65vh) */
         @media (min-width: 768px) {
           .mobile-sequence-wrapper > div:first-child {
              height: 65vh !important;
@@ -879,7 +910,6 @@ export default function LessonPlayerPage() {
              max-height: 750px !important;
           }
           
-          /* Target the inner grid to allow it to flex and center */
           .mobile-sequence-wrapper .grid {
              flex: 1 !important;
              align-items: center !important;
@@ -887,7 +917,6 @@ export default function LessonPlayerPage() {
              height: 100% !important;
           }
 
-          /* Shrink huge fonts */
           .mobile-sequence-wrapper h2 {
              font-size: 2.2rem !important;
              line-height: 1.1 !important;
@@ -897,7 +926,6 @@ export default function LessonPlayerPage() {
              line-height: 1.6 !important;
           }
 
-          /* Limit image sizes so they don't stretch the container */
           .mobile-sequence-wrapper img {
              max-height: 35vh !important;
              width: auto !important;
@@ -905,7 +933,6 @@ export default function LessonPlayerPage() {
              object-fit: contain !important;
           }
 
-          /* Button alignment */
           .mobile-sequence-wrapper button {
              margin-top: auto !important;
              font-size: 0.75rem !important;
@@ -927,7 +954,6 @@ export default function LessonPlayerPage() {
             gap: 1rem !important;
             grid-template-columns: 1fr !important;
           }
-          /* Force standard sequence viewer image wrappers to not crop */
           .mobile-sequence-wrapper [class*="aspect-"] {
              aspect-ratio: auto !important;
              height: auto !important;
@@ -942,7 +968,6 @@ export default function LessonPlayerPage() {
             padding: 0 !important;
           }
           
-          /* FIX: Allow SequenceViewer Lightbox / Fixed Modals to expand to full screen on mobile */
           .fixed img, 
           .mobile-sequence-wrapper .fixed img,
           [role="dialog"] img {
@@ -973,48 +998,64 @@ export default function LessonPlayerPage() {
             </button>
           )}
 
-          {isIntroStep && (!currentStepData.cards || currentStepData.cards.length === 0) && (
-            <button onClick={advanceToNextStep} className="flex items-center justify-center gap-2 px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl bg-blue-500 text-black text-[9px] md:text-[10px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-lg shadow-blue-500/20 flex-1 md:flex-none">
-              Commence Setup <ArrowRight size={14} className="md:w-4 md:h-4" />
-            </button>
-          )}
+          {/* NEXT / COMPLETE ACTIONS */}
+          {(() => {
+            const hasTutorialLink = JSON.stringify(currentStepData).includes('makecode.microbit.org') || JSON.stringify(currentStepData).includes('tutorial:');
+            const disableNextForTutorial = hasTutorialLink && !tutorialClicked && !isReadOnly;
 
-          {isCodeStep && (
-            <>
-              <button 
-                onClick={runSimulation} 
-                disabled={isExecuting || isReadOnly} 
-                className={`flex items-center justify-center gap-2 md:gap-3 px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[10px] md:text-xs tracking-widest transition-all flex-1 md:flex-none ${isExecuting || isReadOnly ? 'bg-slate-700 text-slate-400' : 'bg-blue-600 text-white hover:scale-105 shadow-lg shadow-blue-500/30 border border-blue-400/50'}`}
-              >
-                {isExecuting ? <Loader2 className="animate-spin md:w-4 md:h-4" size={14} /> : <div className="w-5 h-5 rounded-md bg-white/20 flex items-center justify-center"><Play size={12} className="fill-white" /></div>} {stepVerified ? "Re-Test Code" : "Test Code"}
-              </button>
-              
-              <button 
-                onClick={advanceToNextStep} 
-                disabled={!stepVerified && !isReadOnly} 
-                className={`flex items-center justify-center gap-1.5 md:gap-2 px-4 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[9px] md:text-[10px] tracking-widest transition-all flex-1 md:flex-none ${stepVerified || isReadOnly ? 'bg-white text-black hover:scale-105 shadow-xl' : 'bg-white/5 text-slate-600'}`}
-              >
-                Next <span className="hidden sm:inline">Task</span> <ArrowRight size={14} className="md:w-4 md:h-4" />
-              </button>
-            </>
-          )}
+            return (
+              <>
+                {isIntroStep && (!currentStepData.cards || currentStepData.cards.length === 0) && (
+                  <button 
+                    onClick={advanceToNextStep} 
+                    disabled={disableNextForTutorial}
+                    className={`flex items-center justify-center gap-2 px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-widest transition-all shadow-lg flex-1 md:flex-none ${disableNextForTutorial ? 'bg-slate-700 text-slate-500 cursor-not-allowed opacity-70' : 'bg-blue-500 text-black hover:scale-105 shadow-blue-500/20'}`}
+                  >
+                    {disableNextForTutorial ? "Launch Tutorial to Advance" : "Commence Setup"} {!disableNextForTutorial && <ArrowRight size={14} className="md:w-4 md:h-4" />}
+                  </button>
+                )}
 
-          {isBlueprintStep && (
-            <button onClick={advanceToNextStep} disabled={!isBlueprintValid && !isReadOnly} className={`flex items-center justify-center gap-2 px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[9px] md:text-[10px] tracking-widest transition-all flex-1 md:flex-none ${isBlueprintValid || isReadOnly ? 'bg-blue-500 text-black hover:scale-105 shadow-xl' : 'bg-white/5 text-slate-600'}`}>
-              Confirm Blueprint <ArrowRight size={14} className="md:w-4 md:h-4" />
-            </button>
-          )}
+                {isCodeStep && (
+                  <>
+                    {!isMakeCode && (
+                      <button 
+                        onClick={runSimulation} 
+                        disabled={isExecuting || isReadOnly} 
+                        className={`flex items-center justify-center gap-2 md:gap-3 px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[10px] md:text-xs tracking-widest transition-all flex-1 md:flex-none ${isExecuting || isReadOnly ? 'bg-slate-700 text-slate-400' : 'bg-blue-600 text-white hover:scale-105 shadow-lg shadow-blue-500/30 border border-blue-400/50'}`}
+                      >
+                        {isExecuting ? <Loader2 className="animate-spin md:w-4 md:h-4" size={14} /> : <div className="w-5 h-5 rounded-md bg-white/20 flex items-center justify-center"><Play size={12} className="fill-white" /></div>} {stepVerified ? "Re-Test Code" : "Test Code"}
+                      </button>
+                    )}
+                    
+                    <button 
+                      onClick={advanceToNextStep} 
+                      disabled={(!isMakeCode && !stepVerified && !isReadOnly) || disableNextForTutorial} 
+                      className={`flex items-center justify-center gap-1.5 md:gap-2 px-4 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[9px] md:text-[10px] tracking-widest transition-all flex-1 md:flex-none ${((isMakeCode || stepVerified || isReadOnly) && !disableNextForTutorial) ? 'bg-white text-black hover:scale-105 shadow-xl' : 'bg-white/5 text-slate-600'}`}
+                    >
+                      {disableNextForTutorial ? "Launch Tutorial First" : "Next Task"} {!disableNextForTutorial && <ArrowRight size={14} className="md:w-4 md:h-4" />}
+                    </button>
+                  </>
+                )}
 
-          {isCaptureStep && (
-            <button onClick={handleComplete} disabled={!imagePreview || isSaving} className={`flex justify-center px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[9px] md:text-[10px] tracking-widest transition-all flex-1 md:flex-none ${imagePreview && !isReadOnly ? 'bg-white text-black hover:scale-105 shadow-xl' : 'bg-white/5 text-slate-600'}`}>
-              {isSaving ? <Loader2 className="animate-spin md:w-4 md:h-4" size={14} /> : (isReadOnly ? "Archived" : "Lock Milestone")}
-            </button>
-          )}
+                {isBlueprintStep && (
+                  <button onClick={advanceToNextStep} disabled={!isBlueprintValid && !isReadOnly} className={`flex items-center justify-center gap-2 px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[9px] md:text-[10px] tracking-widest transition-all flex-1 md:flex-none ${isBlueprintValid || isReadOnly ? 'bg-blue-500 text-black hover:scale-105 shadow-xl' : 'bg-white/5 text-slate-600'}`}>
+                    Confirm Blueprint <ArrowRight size={14} className="md:w-4 md:h-4" />
+                  </button>
+                )}
+
+                {isCaptureStep && (
+                  <button onClick={handleComplete} disabled={!imagePreview || isSaving || (tutorialOutcome === 'pending' && !isReadOnly)} className={`flex justify-center px-6 md:px-8 py-2.5 md:py-3 rounded-lg md:rounded-xl font-black uppercase text-[9px] md:text-[10px] tracking-widest transition-all flex-1 md:flex-none ${(imagePreview || isReadOnly) && tutorialOutcome !== 'pending' ? 'bg-white text-black hover:scale-105 shadow-xl' : 'bg-white/5 text-slate-600'}`}>
+                    {isSaving ? <Loader2 className="animate-spin md:w-4 md:h-4" size={14} /> : (isReadOnly ? "Archived" : "Lock Milestone")}
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
       </nav>
 
       {/* --- FLOATING LOGIC GUIDE (TOP CENTER - DESKTOP ONLY) --- */}
-      {isCodeStep && (
+      {showWorkspace && !isMakeCode && (
         <div className="hidden md:block fixed top-5 left-1/2 -translate-x-1/2 z-[100] pointer-events-none">
           <motion.button 
             initial={{ opacity: 0, y: -20 }}
@@ -1041,13 +1082,11 @@ export default function LessonPlayerPage() {
         </div>
       )}
 
-      {/* DYNAMIC MAIN LAYOUT: Col with page-scroll on Mobile, Row with internal-scrolls on Desktop */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
 
-        {/* DESKTOP SIDEBAR (Hidden on mobile) */}
+        {/* DESKTOP SIDEBAR */}
         <div className="hidden md:flex w-[350px] lg:w-[420px] border-r border-white/5 bg-black/20 flex-col shrink-0 relative overflow-hidden">
-           
-           {/* Sidebar Scroll Arrows - Right aligned so they don't cover text */}
+            
            <AnimatePresence>
               {sidebarScroll.canScrollUp && (
                 <motion.button initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} onMouseDown={() => sidebarScroll.startScrolling('up')} onTouchStart={() => sidebarScroll.startScrolling('up')} className="absolute top-6 right-6 z-40 cursor-pointer pointer-events-auto group">
@@ -1116,10 +1155,9 @@ export default function LessonPlayerPage() {
             </AnimatePresence>
         </div>
 
-        {/* MAIN CONTENT AREA NOW ON THE RIGHT */}
+        {/* MAIN CONTENT AREA */}
         <div className="flex-1 relative overflow-hidden flex flex-col bg-[#020617]">
-           
-           {/* Main Scroll Arrows - Moved to the far right edge so they don't cover the cards */}
+            
            <AnimatePresence>
               {mainScroll.canScrollUp && (
                 <motion.button initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} onMouseDown={() => mainScroll.startScrolling('up')} onTouchStart={() => mainScroll.startScrolling('up')} className="absolute top-6 right-6 md:right-10 z-40 cursor-pointer pointer-events-auto group">
@@ -1165,7 +1203,6 @@ export default function LessonPlayerPage() {
                       {isActive && <div className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full bg-white animate-pulse shrink-0" />}
                       <span className="truncate">{label}</span>
                     </button>
-                    {/* Hide connector lines on mobile to save horizontal space */}
                     {idx < steps.length - 1 && (
                       <div className={`hidden md:block w-4 md:w-6 h-px ${isUnlocked ? "bg-green-500/30" : "bg-white/10"}`} />
                     )}
@@ -1174,16 +1211,29 @@ export default function LessonPlayerPage() {
               })}
             </div>
 
-            <div className="mobile-sequence-wrapper max-w-5xl mx-auto space-y-6 md:space-y-10 w-full relative">
+            <div className={`${!isCaptureStep ? 'mobile-sequence-wrapper' : ''} max-w-5xl mx-auto space-y-6 md:space-y-10 w-full relative`}>
               
               {currentStepData.cards && currentStepData.cards.length > 0 ? (
-                <SequenceViewer 
-                  key={`seq-${currentStepIndex}`}
-                  cards={currentStepData.cards} 
-                  formatText={safeFormatText} 
-                  onCardChange={handleCardChange} 
-                  onComplete={safeOnComplete} 
-                />
+                isCaptureStep ? (
+                  <div className="flex flex-col gap-4 w-full" style={{ height: 'auto', minHeight: 0 }}>
+                    {currentStepData.cards.map((card: any, idx: number) => (
+                      <div key={idx} className="bg-blue-500/5 border border-blue-500/10 rounded-[24px] md:rounded-[32px] p-6 md:p-8 shadow-inner">
+                        <h3 className="text-lg md:text-xl font-black uppercase italic tracking-tighter text-blue-400 mb-2">{card.title}</h3>
+                        <p className="text-sm md:text-base leading-relaxed text-blue-300">
+                          <span dangerouslySetInnerHTML={{ __html: safeFormatText(card.content) }} />
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <SequenceViewer 
+                    key={`seq-${currentStepIndex}`}
+                    cards={currentStepData.cards} 
+                    formatText={safeFormatText} 
+                    onCardChange={handleCardChange} 
+                    onComplete={safeOnComplete} 
+                  />
+                )
               ) : (
                 !isCaptureStep && (
                   <div className="relative aspect-video rounded-[24px] md:rounded-[48px] overflow-hidden border border-white/10 bg-black shadow-2xl">
@@ -1193,11 +1243,10 @@ export default function LessonPlayerPage() {
               )}
 
               {/* BLOCKLY & MAKECODE WORKSPACE SELECTOR */}
-              <div id="blockly-workspace-container" className={`space-y-4 ${isCodeStep ? 'block' : 'hidden'}`}>
+              <div id="blockly-workspace-container" className={`space-y-4 ${showWorkspace ? 'block' : 'hidden'}`}>
                 <div className="flex flex-col xl:flex-row gap-4 md:gap-6 h-[800px] xl:h-[600px] relative">
                   <div className="flex-1 min-h-[400px] xl:min-h-0 rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 relative shadow-xl bg-[#020617]">
                     
-                    {/* HEADER BAR */}
                     <div className="absolute top-0 left-0 right-0 h-12 md:h-14 bg-black/40 border-b border-white/5 z-20 flex items-center justify-between px-4 md:px-6">
                       <div className="flex items-center gap-2">
                         <div className={`size-1.5 md:size-2 rounded-full ${stepVerified ? 'bg-green-500 animate-pulse' : 'bg-slate-600'}`} />
@@ -1206,7 +1255,6 @@ export default function LessonPlayerPage() {
                         </span>
                       </div>
                       
-                      {/* GATEKEEPER BUTTON */}
                       <button 
                         disabled={!currentStepData.makecode_project_id && !stepVerified}
                         onClick={() => window.open(currentStepData.makecode_project_id && currentStepData.makecode_project_id !== 'empty' ? `https://makecode.microbit.org/#pub:${currentStepData.makecode_project_id}` : "https://makecode.microbit.org/", "_blank")}
@@ -1220,9 +1268,7 @@ export default function LessonPlayerPage() {
                       </button>
                     </div>
 
-                    {/* DYNAMIC SANDBOX CONTENT */}
                     <div className="absolute inset-0 pt-12 md:pt-14">
-                      {/* MakeCode Iframe or Custom Renderer */}
                       {currentStepData.makecode_project_id && currentStepData.makecode_project_id !== 'empty' ? (
                         <iframe 
                           className="w-full h-full border-none"
@@ -1239,41 +1285,37 @@ export default function LessonPlayerPage() {
                     </div>
                   </div>
 
-                  {/* Side Panel: Only show Translator for Blockly missions */}
-                  <div className="w-full xl:w-[340px] h-64 xl:h-auto flex flex-col rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 bg-[#0f172a] shadow-2xl shrink-0">
-                    <div className="p-3 md:p-4 border-b border-white/5 bg-black/40 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Code2 size={14} className="text-purple-400" />
-                        <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
-                          {parsedConfig.makecode_project_id ? 'MakeCode Reference' : (mission.sandbox_type === 'makecode' && stepVerified ? 'Concept_Verified' : 'Plain_English_Translator')}
-                        </span>
+                  {!isMakeCode && (
+                    <div className="w-full xl:w-[340px] h-64 xl:h-auto flex flex-col rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 bg-[#0f172a] shadow-2xl shrink-0">
+                      <div className="p-3 md:p-4 border-b border-white/5 bg-black/40 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Code2 size={14} className="text-purple-400" />
+                          <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
+                            {mission.sandbox_type === 'makecode' && stepVerified ? 'Concept_Verified' : 'Plain_English_Translator'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex-1 p-4 md:p-6 overflow-y-auto no-scrollbar bg-[#020617]/50">
+                        {mission.sandbox_type === 'makecode' && stepVerified ? (
+                          <div className="space-y-4 opacity-70 flex flex-col items-center justify-center h-full text-center">
+                             <CheckCircle2 size={32} className="text-green-500" />
+                             <p className="text-[9px] md:text-[10px] font-bold text-slate-400 leading-relaxed uppercase tracking-widest">
+                               Your logic is sound.<br/> You are now cleared to build this in the full MakeCode environment.
+                             </p>
+                          </div>
+                        ) : (
+                          liveCode ? (
+                            <pre className="text-[10px] md:text-[11px] font-mono text-purple-400 whitespace-pre-wrap leading-relaxed tracking-tight">{liveCode}</pre>
+                          ) : (
+                            <div className="h-full flex flex-col items-center justify-center opacity-30 text-center space-y-4">
+                              <Code2 size={32} className="md:w-10 md:h-10" />
+                              <p className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">Awaiting<br/>Logic Input</p>
+                            </div>
+                          )
+                        )}
                       </div>
                     </div>
-                    <div className="flex-1 p-4 md:p-6 overflow-y-auto no-scrollbar bg-[#020617]/50">
-                      {parsedConfig.makecode_project_id ? (
-                        <div className="h-full flex flex-col items-center justify-center opacity-70 text-center space-y-4">
-                           <Code2 size={32} className="md:w-10 md:h-10 text-blue-400" />
-                           <p className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">Example Code Loaded.<br/>Open in MakeCode to edit.</p>
-                        </div>
-                      ) : mission.sandbox_type === 'makecode' && stepVerified ? (
-                        <div className="space-y-4 opacity-70 flex flex-col items-center justify-center h-full text-center">
-                           <CheckCircle2 size={32} className="text-green-500" />
-                           <p className="text-[9px] md:text-[10px] font-bold text-slate-400 leading-relaxed uppercase tracking-widest">
-                             Your logic is sound.<br/> You are now cleared to build this in the full MakeCode environment.
-                           </p>
-                        </div>
-                      ) : (
-                        liveCode ? (
-                          <pre className="text-[10px] md:text-[11px] font-mono text-purple-400 whitespace-pre-wrap leading-relaxed tracking-tight">{liveCode}</pre>
-                        ) : (
-                          <div className="h-full flex flex-col items-center justify-center opacity-30 text-center space-y-4">
-                            <Code2 size={32} className="md:w-10 md:h-10" />
-                            <p className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">Awaiting<br/>Logic Input</p>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
               
@@ -1329,59 +1371,89 @@ export default function LessonPlayerPage() {
                 );
               })()}
 
-              {/* SCREENSHOT CAPTURE SECTION */}
+              {/* SCREENSHOT CAPTURE SECTION (YES/NO GATE OR ARCHIVE) */}
               {isCaptureStep && (
                  <div className="flex flex-col items-center justify-center p-6 md:p-12 bg-white/5 border border-white/10 rounded-[32px] md:rounded-[48px] space-y-6 md:space-y-8 shadow-2xl relative overflow-hidden">
-                   {isReadOnly && (
-                      <div className="absolute top-4 left-4 md:top-6 md:left-6 flex items-center gap-1.5 md:gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-green-500/20 backdrop-blur-md rounded-xl md:rounded-2xl border border-green-500/30 z-10">
-                          <CheckCircle2 size={14} className="text-green-400 md:w-4 md:h-4" />
-                          <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest text-green-400">Archive_Saved</span>
-                      </div>
-                   )}
                    
-                   {isReadOnly && imageHistory.length > 0 ? (
-                       <div className="space-y-4 md:space-y-6 w-full max-w-3xl mx-auto relative z-10 pt-8 md:pt-8">
-                          <div className="rounded-[24px] md:rounded-[32px] overflow-hidden border-2 border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.2)] relative bg-black">
-                             <div className="absolute top-3 left-3 md:top-4 md:left-4 bg-green-500 text-black px-3 py-1 md:px-4 md:py-1 rounded-full text-[8px] md:text-[10px] font-black uppercase tracking-widest z-10">Latest Archive</div>
-                             <img src={imageHistory[0]} alt="Latest Blueprint" className="w-full h-auto object-cover" />
-                          </div>
-
-                          {imageHistory.length > 1 && (
-                             <div className="space-y-3 md:space-y-4 pt-6 md:pt-8 border-t border-white/10">
-                                <h4 className="text-[10px] md:text-xs font-black uppercase tracking-widest text-slate-500">Previous Versions</h4>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
-                                   {imageHistory.slice(1).map((url, idx) => (
-                                      <div key={idx} className="rounded-xl md:rounded-2xl overflow-hidden border border-white/10 opacity-70 hover:opacity-100 transition-opacity relative group cursor-pointer bg-black"
-                                           onClick={() => window.open(url, '_blank')}>
-                                         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                            <Search className="text-white w-5 h-5 md:w-6 md:h-6" />
-                                         </div>
-                                         <img src={url} alt={`Archive ${idx + 1}`} className="w-full h-auto object-cover" />
-                                      </div>
-                                   ))}
-                                </div>
-                             </div>
-                          )}
-                       </div>
-                   ) : imagePreview ? (
-                       <div className="w-full max-w-3xl rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 shadow-2xl relative z-10">
-                          <img src={imagePreview} alt="Saved Blueprint" className="w-full h-auto object-cover" />
-                       </div>
+                   {mission.sandbox_type === 'none' && tutorialOutcome === 'pending' && !isReadOnly ? (
+                      <div className="text-center space-y-6 z-10 relative px-4 w-full max-w-2xl mx-auto py-8">
+                         <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-purple-500/10 flex items-center justify-center border border-purple-500/20 mx-auto mb-6">
+                            <Brain className="text-purple-400 w-8 h-8 md:w-10 md:h-10" />
+                         </div>
+                         <h3 className="text-2xl md:text-3xl font-black italic uppercase tracking-tighter">Status Report</h3>
+                         <p className="text-slate-400 text-xs md:text-sm max-w-md mx-auto leading-relaxed">
+                            Before we archive your progress, did you manage to complete the MakeCode tutorial successfully?
+                         </p>
+                         <div className="flex flex-col sm:flex-row gap-4 pt-4">
+                            <button onClick={() => setTutorialOutcome('success')} className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2 hover:scale-105">
+                               <CheckCircle2 size={16}/> Yes, Logic Built
+                            </button>
+                            <button onClick={() => setTutorialOutcome('help')} className="flex-1 py-4 bg-rose-600 hover:bg-rose-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs transition-all shadow-[0_0_20px_rgba(244,63,94,0.3)] flex items-center justify-center gap-2 hover:scale-105">
+                               <ShieldAlert size={16}/> No, I got stuck
+                            </button>
+                         </div>
+                      </div>
                    ) : (
-                       <>
-                          <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-blue-500/10 flex items-center justify-center border border-blue-500/20 mt-4 md:mt-0">
-                             <Camera className="text-blue-400 w-8 h-8 md:w-10 md:h-10" />
+                     <>
+                       {isReadOnly && (
+                          <div className="absolute top-4 left-4 md:top-6 md:left-6 flex items-center gap-1.5 md:gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-green-500/20 backdrop-blur-md rounded-xl md:rounded-2xl border border-green-500/30 z-10">
+                              <CheckCircle2 size={14} className="text-green-400 md:w-4 md:h-4" />
+                              <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest text-green-400">Archive_Saved</span>
                           </div>
-                          <div className="text-center space-y-2 md:space-y-3 z-10 relative px-4">
-                            <h3 className="text-2xl md:text-3xl font-black italic uppercase tracking-tighter">Capture Final Logic</h3>
-                            <p className="text-slate-400 text-xs md:text-sm max-w-md mx-auto leading-relaxed">
-                              Open your MakeCode studio, assemble your logic blocks exactly as planned, and submit a screenshot to clear this sector.
-                            </p>
-                          </div>
-                          <button onClick={startCapture} className="mt-4 px-8 py-4 md:px-10 md:py-5 bg-blue-500 text-black font-black uppercase text-[10px] md:text-xs tracking-widest rounded-xl md:rounded-2xl hover:scale-105 transition-all shadow-[0_0_30px_rgba(59,130,246,0.3)] relative z-10">
-                             Launch System Capture
-                          </button>
-                       </>
+                       )}
+                       
+                       {isReadOnly && imageHistory.length > 0 ? (
+                           <div className="space-y-4 md:space-y-6 w-full max-w-3xl mx-auto relative z-10 pt-8 md:pt-8">
+                              <div className="rounded-[24px] md:rounded-[32px] overflow-hidden border-2 border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.2)] relative bg-black">
+                                 <div className="absolute top-3 left-3 md:top-4 md:left-4 bg-green-500 text-black px-3 py-1 md:px-4 py-1 rounded-full text-[8px] md:text-[10px] font-black uppercase tracking-widest z-10">Latest Archive</div>
+                                 <img src={imageHistory[0]} alt="Latest Blueprint" className="w-full h-auto object-cover" />
+                              </div>
+
+                              {imageHistory.length > 1 && (
+                                 <div className="space-y-3 md:space-y-4 pt-6 md:pt-8 border-t border-white/10">
+                                    <h4 className="text-[10px] md:text-xs font-black uppercase tracking-widest text-slate-500">Previous Versions</h4>
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
+                                       {imageHistory.slice(1).map((url, idx) => (
+                                          <div key={idx} className="rounded-xl md:rounded-2xl overflow-hidden border border-white/10 opacity-70 hover:opacity-100 transition-opacity relative group cursor-pointer bg-black"
+                                               onClick={() => window.open(url, '_blank')}>
+                                             <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                <Search className="text-white w-5 h-5 md:w-6 md:h-6" />
+                                             </div>
+                                             <img src={url} alt={`Archive ${idx + 1}`} className="w-full h-auto object-cover" />
+                                          </div>
+                                       ))}
+                                    </div>
+                                 </div>
+                              )}
+                           </div>
+                       ) : imagePreview ? (
+                           <div className="w-full max-w-3xl rounded-[24px] md:rounded-[32px] overflow-hidden border border-white/10 shadow-2xl relative z-10">
+                              <img src={imagePreview} alt="Saved Blueprint" className="w-full h-auto object-cover" />
+                           </div>
+                       ) : (
+                           <>
+                              <div className={`w-20 h-20 md:w-24 md:h-24 rounded-full ${tutorialOutcome === 'help' ? 'bg-rose-500/10 border-rose-500/20' : 'bg-blue-500/10 border-blue-500/20'} flex items-center justify-center border mt-4 md:mt-0`}>
+                                 {tutorialOutcome === 'help' ? <ShieldAlert className="text-rose-400 w-8 h-8 md:w-10 md:h-10" /> : <Camera className="text-blue-400 w-8 h-8 md:w-10 md:h-10" />}
+                              </div>
+                              <div className="text-center space-y-2 md:space-y-3 z-10 relative px-4">
+                                <h3 className="text-2xl md:text-3xl font-black italic uppercase tracking-tighter">
+                                  {tutorialOutcome === 'help' ? 'Request Assistance' : 'Capture Final Logic'}
+                                </h3>
+                                <p className="text-slate-400 text-xs md:text-sm max-w-md mx-auto leading-relaxed">
+                                  {tutorialOutcome === 'help' 
+                                    ? "Don't worry, Pioneer! Take a screenshot of the MakeCode step where you got stuck and upload it here. Your coach will review your code and help you troubleshoot."
+                                    : isMakeCode 
+                                      ? "Make sure you have tested your MakeCode logic in the simulator. Once you are ready, submit a screenshot to clear this sector." 
+                                      : "Open your MakeCode studio, assemble your logic blocks exactly as planned, and submit a screenshot to clear this sector."
+                                  }
+                                </p>
+                              </div>
+                              <button onClick={startCapture} className={`mt-4 px-8 py-4 md:px-10 md:py-5 ${tutorialOutcome === 'help' ? 'bg-rose-500 text-white shadow-[0_0_30px_rgba(244,63,94,0.3)]' : 'bg-blue-500 text-black shadow-[0_0_30px_rgba(59,130,246,0.3)]'} font-black uppercase text-[10px] md:text-xs tracking-widest rounded-xl md:rounded-2xl hover:scale-105 transition-all relative z-10`}>
+                                  {tutorialOutcome === 'help' ? 'Launch SOS Capture' : 'Launch System Capture'}
+                              </button>
+                           </>
+                       )}
+                     </>
                    )}
                  </div>
               )}
@@ -1422,8 +1494,7 @@ export default function LessonPlayerPage() {
 
       {/* MOBILE HUD ELEMENTS */}
       <div className="md:hidden fixed bottom-6 left-0 right-0 z-40 flex flex-col gap-3 px-4 pointer-events-none">
-          {/* MOBILE COACH BUTTON (Only on Code Step) */}
-          {isCodeStep && (
+          {showWorkspace && !isMakeCode && (
              <motion.button 
                initial={{y: 20, opacity: 0}} animate={{y: 0, opacity: 1}}
                onClick={() => setShowCoach(true)}
@@ -1434,7 +1505,6 @@ export default function LessonPlayerPage() {
              </motion.button>
           )}
 
-          {/* MOBILE BRIEFING TOGGLE */}
           <AnimatePresence>
             {!isBriefingDrawerOpen && (
               <motion.button 
@@ -1518,7 +1588,7 @@ export default function LessonPlayerPage() {
             <div className="max-w-md w-full bg-white/[0.03] border border-white/10 rounded-[40px] md:rounded-[56px] p-8 md:p-12 text-center space-y-6 md:space-y-8">
               <div className="w-20 h-20 md:w-24 md:h-24 rounded-2xl md:rounded-[32px] flex items-center justify-center mx-auto border bg-green-500/20 border-green-500/30"><Trophy className="w-8 h-8 md:w-10 md:h-10 text-green-400" /></div>
               <h2 className="text-3xl md:text-4xl font-black italic uppercase tracking-tighter text-white leading-tight">Mission <br /><span className="text-green-400">Accomplished</span></h2>
-              <button onClick={() => window.location.href = '/student/dashboard'} className="flex items-center justify-center gap-2 md:gap-3 w-full py-4 md:py-6 rounded-2xl md:rounded-3xl font-black uppercase italic bg-white text-black hover:scale-105 transition-all shadow-2xl text-[10px] md:text-base tracking-widest">Return to Command <ArrowRight size={16} className="md:w-[18px] md:h-[18px]" /></button>
+              <button onClick={() => window.location.href = '/student/courses'} className="flex items-center justify-center gap-2 md:gap-3 w-full py-4 md:py-6 rounded-2xl md:rounded-3xl font-black uppercase italic bg-white text-black hover:scale-105 transition-all shadow-2xl text-[10px] md:text-base tracking-widest">Return to Roadmap <ArrowRight size={16} className="md:w-[18px] md:h-[18px]" /></button>
             </div>
           </div>
         )}
