@@ -31,6 +31,7 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
   const [isBulkMode, setIsBulkMode] = useState(false);
   const [queue, setQueue] = useState<string[]>([]);
   const [isSavingGlobal, setIsSavingGlobal] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Schedule State
   const [schedule, setSchedule] = useState<any[]>([]);
@@ -487,23 +488,40 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
 
     setIsSavingCredentials(true);
     try {
+       const newUsername = credUsername.trim();
+       const newPin = credPin.trim();
+
+       // 1. Update the metadata for UI/history consistency
        const updatedMeta = { 
          ...student.metadata, 
-         username: credUsername.trim(), 
-         pin: credPin.trim() 
+         username: newUsername, 
+         pin: newPin 
        };
 
-       const updates: any = { metadata: updatedMeta };
-       if (credUsername.trim() !== student.student_identifier) {
-         updates.student_identifier = credUsername.trim();
+       // 2. Prepare the database payload targeting the actual columns
+       const updates: any = { 
+         metadata: updatedMeta,
+         temp_entry_pin: newPin // <-- THE CRITICAL FIX
+       };
+
+       if (newUsername !== student.student_identifier) {
+         updates.student_identifier = newUsername;
        }
 
-       await supabase.from('profiles').update(updates).eq('id', student.id);
+       // 3. Execute the update
+       const { error } = await supabase.from('profiles').update(updates).eq('id', student.id);
        
+       if (error) {
+         console.error("Supabase Update Error:", error);
+         throw error;
+       }
+       
+       // 4. Update the local state so the UI reflects the change
        setStudent({ ...student, ...updates, metadata: updatedMeta });
        setIsEditingCredentials(false);
-    } catch (err) {
-       alert("Failed to update credentials. Ensure the username is unique.");
+       alert("Credentials successfully updated!");
+    } catch (err: any) {
+       alert(`Failed to update credentials. ${err.message || "Ensure the username is unique and you have permission."}`);
     } finally {
        setIsSavingCredentials(false);
     }
