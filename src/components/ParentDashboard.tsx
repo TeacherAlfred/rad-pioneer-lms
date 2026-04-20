@@ -286,10 +286,9 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
     const coachId = selectedChild.meta?.teacher?.id || '00000000-0000-0000-0000-000000000000';
     const text = message.trim();
     
-    setMessage(""); // Instantly clear input field
+    setMessage(""); 
     setIsSendingMessage(true);
 
-    // OPTIMISTIC UI: Create a temporary message to show instantly
     const tempId = `temp-${Date.now()}`;
     const optimisticMsg = {
       id: tempId,
@@ -314,8 +313,21 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
       }]).select().single();
 
       if (error) throw error;
-      
       setChatMessages(prev => prev.map(msg => msg.id === tempId ? data : msg));
+
+      // --- FIRE AUTOMATIC EMAIL NOTIFICATION ---
+      fetch('/api/messages/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: selectedChild.id,
+          guardian_id: parentId,
+          coach_id: coachId,
+          sender_id: parentId,
+          message: text
+        })
+      }).catch(console.error);
+
     } catch (err) {
       console.error("Send error:", err);
       setChatMessages(prev => prev.filter(msg => msg.id !== tempId));

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Mail, Save, Users, Send, Loader2, ArrowLeft, 
@@ -8,8 +8,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
 
-// Helper to safely parse JSON metadata whether it arrives as an object or string
+// Helper to safely parse JSON metadata
 const parseMeta = (meta: any) => {
   if (!meta) return {};
   if (typeof meta === 'string') {
@@ -19,6 +20,8 @@ const parseMeta = (meta: any) => {
 };
 
 export default function CommunicationsHub() {
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'inbox' | 'templates' | 'dispatch' | 'history'>('inbox');
   
@@ -42,76 +45,86 @@ export default function CommunicationsHub() {
   // --- HISTORY ACCORDION STATE ---
   const [expandedHistory, setExpandedHistory] = useState<string[]>([]);
 
-  // Inbox State
-  const [inboxConversations, setInboxConversations] = useState<any[]>([]);
-  const [activeConversation, setActiveConversation] = useState<string | null>(null);
-  const [activeMessages, setActiveMessages] = useState<any[]>([]);
+  // --- NEW LIVE INBOX STATE ---
+  const [profilesMap, setProfilesMap] = useState<Map<string, any>>(new Map());
+  const [students, setStudents] = useState<any[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchData();
+  }, []);
 
-    // REAL-TIME SUBSCRIPTION FOR THE INBOX
-    const messagesSubscription = supabase
-      .channel('admin-inbox-updates')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload) => {
-          console.log("New transmission received:", payload);
-          fetchData(); 
-        }
-      )
+  // NEW: Real-time subscription for the Coach Messages table
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const channel = supabase.channel('admin_global_chat')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'coach_messages' }, (payload) => {
+        setChatMessages(prev => {
+          if (prev.some(msg => msg.id === payload.new.id)) return prev;
+          return [...prev, payload.new];
+        });
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'coach_messages' }, (payload) => {
+         setChatMessages(prev => prev.map(msg => msg.id === payload.new.id ? payload.new : msg));
+      })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(messagesSubscription);
-    };
-  }, [activeTab]);
+    return () => { supabase.removeChannel(channel); };
+  }, [currentUser]);
 
+  // Auto-scroll chat
   useEffect(() => {
-    // Scroll to bottom when opening a conversation or sending a reply
-    if (activeMessages.length > 0) {
-       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messagesEndRef.current && activeTab === 'inbox') {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [activeMessages]);
+  }, [activeChatId, chatMessages, activeTab]);
 
   async function fetchData() {
     setLoading(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { router.push("/"); return; }
+
+      const { data: userProfile } = await supabase.from('profiles').select('*').eq('auth_user_id', session.user.id).single();
+      if (userProfile) setCurrentUser(userProfile);
+
       // 1. Fetch Email Templates
-      const { data: tplData } = await supabase
-        .from('email_templates')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const { data: tplData } = await supabase.from('email_templates').select('*').order('created_at', { ascending: false });
       if (tplData) setTemplates(tplData);
 
-      // 2. Fetch Guardians for the Dispatch List
-      const { data: gData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('role', 'guardian');
-      if (gData) setGuardians(gData);
+      // 2. Fetch Profiles & Build Dictionary
+      const { data: allProfiles } = await supabase.from('profiles').select('*');
+      const pMap = new Map();
+      const studentList: any[] = [];
+      const guardianList: any[] = [];
 
-      // 3. Fetch Communication Logs (The History Tab)
-      const { data: logsData } = await supabase
-        .from('communication_logs')
-        .select('*');
+      if (allProfiles) {
+        allProfiles.forEach(p => {
+          p.meta = typeof p.metadata === 'string' ? JSON.parse(p.metadata) : (p.metadata || {});
+          pMap.set(p.id, p);
+          if (p.role === 'student') studentList.push(p);
+          if (p.role === 'guardian') guardianList.push(p);
+        });
+      }
+      setProfilesMap(pMap);
+      setStudents(studentList);
+      setGuardians(guardianList);
 
-      // --- THE FIX: INJECT BILLING RECORDS INTO COMMUNICATIONS HISTORY ---
-      // This ensures Quotes & Invoices sent to Prospects/Leads are mapped into the timeline
-      const { data: billingData } = await supabase
-        .from('billing_records')
-        .select('*, profiles(display_name, metadata)');
+      // 3. Fetch Communication Logs
+      const { data: logsData } = await supabase.from('communication_logs').select('*');
+
+      // Inject Billing Records into Timeline
+      const { data: billingData } = await supabase.from('billing_records').select('*, profiles(display_name, metadata)');
 
       let combinedLogs = logsData || [];
-
       if (billingData) {
         const billingLogs = billingData.map(rec => {
           const recMeta = parseMeta(rec.metadata);
           const profMeta = parseMeta(rec.profiles?.metadata);
-
           const name = rec.profiles?.display_name || recMeta.prospect_name || "Unknown Entity";
           const email = profMeta.email || recMeta.prospect_email || "";
 
@@ -120,74 +133,18 @@ export default function CommunicationsHub() {
             recipient_email: email,
             recipient_name: name,
             subject: `${rec.doc_type === 'quote' ? 'Quotation' : 'Invoice'} Transmitted: ${rec.doc_type === 'quote' ? 'QT' : 'INV'}-${rec.invoice_number}`,
-            status: 'Action Taken', // Use the purple action badge for financial docs
+            status: 'Action Taken',
             sent_at: rec.created_at
           };
         });
         combinedLogs = [...combinedLogs, ...billingLogs];
       }
-
-      // Sort the fully combined timeline by newest first
       combinedLogs.sort((a: any, b: any) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime());
       setCommsLogs(combinedLogs);
 
-      // 4. INBOX FETCH LOGIC
-      if (activeTab === 'inbox') {
-        const { data: msgs, error: msgError } = await supabase
-          .from('messages')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (msgError) throw msgError;
-
-        const { data: allProfiles } = await supabase
-          .from('profiles')
-          .select('id, display_name');
-
-        const profileMap = (allProfiles || []).reduce((acc: any, profile) => {
-          acc[profile.id] = profile.display_name;
-          return acc;
-        }, {});
-
-        if (msgs) {
-          const grouped = msgs.reduce((acc: Record<string, any>, msg: any) => {
-            const parentId = msg.sender_role === 'parent' ? msg.sender_id : msg.recipient_id;
-            
-            if (!parentId) return acc; 
-            
-            if (!acc[parentId]) {
-              acc[parentId] = {
-                parentId: parentId,
-                parentName: profileMap[parentId] || "Unknown Guardian",
-                messages: [],
-                lastMessageTime: msg.created_at,
-                preview: msg.content,
-                unreadCount: 0
-              };
-            }
-            
-            if (msg.sender_role === 'parent' && !msg.is_read) {
-               acc[parentId].unreadCount += 1;
-            }
-
-            acc[parentId].messages.unshift(msg); 
-            return acc;
-          }, {} as Record<string, any>);
-
-          const sortedInbox = Object.values(grouped).sort((a: any, b: any) => {
-             return new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime();
-          });
-
-          setInboxConversations(sortedInbox);
-
-          if (activeConversation) {
-            const updatedActiveConv = sortedInbox.find((c: any) => c.parentId === activeConversation);
-            if (updatedActiveConv) {
-               setActiveMessages(updatedActiveConv.messages);
-            }
-          }
-        }
-      }
+      // 4. Fetch ALL Coach Messages for the Inbox
+      const { data: allMessages } = await supabase.from('coach_messages').select('*').order('created_at', { ascending: true });
+      if (allMessages) setChatMessages(allMessages);
 
     } catch (err) {
       console.error("Error loading communications:", err);
@@ -196,62 +153,127 @@ export default function CommunicationsHub() {
     }
   }
 
-  const handleSelectConversation = (conversation: any) => {
-    setActiveConversation(conversation.parentId);
-    setActiveMessages(conversation.messages);
-  };
+  // --- NEW LIVE INBOX LOGIC ---
+  const chatThreads = useMemo(() => {
+    const groups = new Map<string, { lastMessage: any, unreadCount: number, allMsgs: any[] }>();
+    
+    chatMessages.forEach(msg => {
+      if (!groups.has(msg.student_id)) {
+        groups.set(msg.student_id, { lastMessage: msg, unreadCount: 0, allMsgs: [] });
+      }
+      const group = groups.get(msg.student_id)!;
+      group.allMsgs.push(msg);
+      
+      if (new Date(msg.created_at) > new Date(group.lastMessage.created_at)) {
+        group.lastMessage = msg;
+      }
+      
+      // Count unread (only count messages from parents)
+      const senderProfile = profilesMap.get(msg.sender_id);
+      if (!msg.is_read && senderProfile?.role === 'guardian') {
+        group.unreadCount += 1;
+      }
+    });
+
+    const threads = students.map(student => {
+      const group = groups.get(student.id) || { lastMessage: null, unreadCount: 0, allMsgs: [] };
+      const guardian = profilesMap.get(student.linked_parent_id);
+      
+      return {
+        student,
+        guardian,
+        lastMessage: group.lastMessage,
+        unreadCount: group.unreadCount,
+        messages: group.allMsgs,
+        sortTime: group.lastMessage ? new Date(group.lastMessage.created_at).getTime() : 0
+      };
+    }).filter(t => t.lastMessage !== null); // Only show students with active chats
+
+    return threads.sort((a, b) => {
+      if (a.unreadCount > 0 && b.unreadCount === 0) return -1;
+      if (b.unreadCount > 0 && a.unreadCount === 0) return 1;
+      return b.sortTime - a.sortTime;
+    });
+
+  }, [students, chatMessages, profilesMap]);
+
+  const activeThread = useMemo(() => {
+    return chatThreads.find(t => t.student.id === activeChatId) || null;
+  }, [activeChatId, chatThreads]);
 
   const handleSendReply = async () => {
-    if (!replyText.trim() || !activeConversation) return;
+    if (!replyText.trim() || !activeThread || !currentUser) return;
+
+    const text = replyText.trim();
+    setReplyText("");
+    setIsSending(true);
+
+    const tempId = `temp-${Date.now()}`;
+    const coachId = activeThread.student.meta?.teacher?.id || currentUser.id;
+
+    const optimisticMsg = {
+      id: tempId,
+      student_id: activeThread.student.id,
+      guardian_id: activeThread.student.linked_parent_id,
+      coach_id: coachId,
+      sender_id: currentUser.id,
+      message: text,
+      created_at: new Date().toISOString(),
+      is_read: true
+    };
+
+    // FIXED: Changed setMessages to setChatMessages
+    setChatMessages(prev => [...prev, optimisticMsg]);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("No active session.");
+      const { data, error } = await supabase.from('coach_messages').insert([{
+        student_id: activeThread.student.id,
+        guardian_id: activeThread.student.linked_parent_id,
+        coach_id: coachId,
+        sender_id: currentUser.id,
+        message: text
+      }]).select().single();
 
-      const { data: adminProfile, error: profileError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('auth_user_id', session.user.id)
-        .single();
-
-      if (profileError || !adminProfile) {
-        console.error("Profile lookup failed:", profileError);
-        throw new Error("Could not find admin profile linked to this account.");
-      }
-
-      const { data, error } = await supabase
-        .from('messages')
-        .insert({
-          sender_id: adminProfile.id,
-          recipient_id: activeConversation,
-          sender_role: 'admin',
-          content: replyText,
-          is_read: true 
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error("Supabase Insertion Error:", error);
-        throw error;
-      }
-
-      setActiveMessages(prev => [...prev, data]);
-      setReplyText("");
+      if (error) throw error;
       
-      setInboxConversations(prev => prev.map(conv => {
-        if (conv.parentId === activeConversation) {
-          return { ...conv, preview: data.content, lastMessageTime: data.created_at };
-        }
-        return conv;
-      }));
+      // FIXED: Changed setMessages to setChatMessages
+      setChatMessages(prev => prev.map(msg => msg.id === tempId ? data : msg));
 
-    } catch (err: any) {
-      console.error("Failed to send reply:", err);
-      alert(`Send failed: ${err.message || 'Database error'}`);
+      // --- FIRE AUTOMATIC EMAIL NOTIFICATION ---
+      fetch('/api/messages/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: activeThread.student.id,
+          guardian_id: activeThread.student.linked_parent_id,
+          coach_id: coachId,
+          sender_id: currentUser.id,
+          message: text
+        })
+      }).catch(console.error);
+
+    } catch (err) {
+      console.error("Send error:", err);
+      // FIXED: Changed setMessages to setChatMessages
+      setChatMessages(prev => prev.filter(msg => msg.id !== tempId));
+      alert("Failed to send message.");
+      setReplyText(text);
+    } finally {
+      setIsSending(false);
     }
   };
 
+  const handleMarkAllRead = async () => {
+    if (!activeChatId || !currentUser) return;
+    window.dispatchEvent(new Event('messagesRead'));
+    await supabase.from('coach_messages')
+      .update({ is_read: true })
+      .eq('student_id', activeChatId)
+      .neq('sender_id', currentUser.id)
+      .eq('is_read', false);
+  };
+
+  // --- OLD LOGIC CONTINUED ---
   const generateEmailPreviewHTML = (content: string, subject: string) => {
     const whatsappLink = `#`;
     return `
@@ -463,51 +485,73 @@ export default function CommunicationsHub() {
                   <h3 className="text-sm font-black uppercase italic text-white flex items-center gap-2">Parent Messages</h3>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
-                  {inboxConversations.length === 0 ? (
+                  {chatThreads.length === 0 ? (
                      <p className="text-center text-slate-500 text-xs py-10">No messages found.</p>
                   ) : (
-                    inboxConversations.map((conv) => (
-                      <button 
-                        key={conv.parentId}
-                        onClick={() => handleSelectConversation(conv)}
-                        className={`w-full text-left p-4 rounded-2xl transition-all border ${activeConversation === conv.parentId ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <span className="font-bold text-sm text-white flex items-center gap-2">
-                            {conv.parentName || "Unknown"}
-                          </span>
-                          <span className="text-[10px] text-slate-500 font-bold">
-                            {new Date(conv.lastMessageTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-400 line-clamp-2">{conv.preview}</p>
-                      </button>
-                    ))
+                    chatThreads.map((thread) => {
+                      const isActive = activeChatId === thread.student.id;
+                      const hasUnread = thread.unreadCount > 0;
+                      
+                      return (
+                        <button 
+                          key={thread.student.id}
+                          onClick={() => setActiveChatId(thread.student.id)}
+                          className={`w-full text-left p-4 rounded-2xl transition-all border ${isActive ? 'bg-indigo-500/10 border-indigo-500/30' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <span className={`font-bold text-sm flex items-center gap-2 ${hasUnread ? 'text-indigo-300' : 'text-white'}`}>
+                              {thread.guardian?.display_name || "Unknown"}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-bold">
+                              {new Date(thread.lastMessage.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-end gap-2">
+                            <p className="text-[11px] text-slate-400 line-clamp-2">{thread.lastMessage.message}</p>
+                            {hasUnread && (
+                              <span className="bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0">
+                                {thread.unreadCount}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      )
+                    })
                   )}
                 </div>
               </div>
 
               {/* Active Message & Reply */}
               <div className="lg:col-span-2 bg-white/[0.02] border border-white/10 rounded-[32px] overflow-hidden flex flex-col shadow-2xl">
-                {!activeConversation ? (
+                {!activeThread ? (
                   <div className="flex-1 flex flex-col items-center justify-center text-slate-500">
                     <MessageSquare size={48} className="opacity-20 mb-4" />
                     <p className="font-bold uppercase text-sm">Select a message to view</p>
                   </div>
                 ) : (
                   <>
-                    <div className="p-6 border-b border-white/5 bg-[#020617]/50">
+                    <div className="p-6 border-b border-white/5 bg-[#020617]/50 flex items-center justify-between">
                       <div className="flex items-center gap-2 font-bold text-slate-300">
-                        <Users size={16}/> Chatting with: {inboxConversations.find(c => c.parentId === activeConversation)?.parentName}
+                        <Users size={16}/> Chatting with: {activeThread.guardian?.display_name} <span className="text-slate-500 text-xs ml-2">({activeThread.student.display_name}'s Guardian)</span>
                       </div>
+                      <button 
+                        onClick={handleMarkAllRead}
+                        className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-indigo-400 bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-md border border-white/10 transition-colors"
+                      >
+                        <CheckCircle2 size={12}/> Mark Read
+                      </button>
                     </div>
                     <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
-                      {activeMessages.map((msg) => {
-                         const isAdmin = msg.sender_role === 'admin';
+                      {activeThread.messages.map((msg) => {
+                         const sender = profilesMap.get(msg.sender_id);
+                         const isSystemStaff = sender?.role === 'admin' || sender?.role === 'educator';
                          return (
-                           <div key={msg.id} className={`flex flex-col max-w-[80%] ${isAdmin ? 'ml-auto items-end' : 'mr-auto items-start'}`}>
-                             <div className={`p-4 rounded-2xl text-sm ${isAdmin ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-white/10 text-slate-200 rounded-bl-sm'}`}>
-                               {msg.content}
+                           <div key={msg.id} className={`flex flex-col max-w-[80%] ${isSystemStaff ? 'ml-auto items-end' : 'mr-auto items-start'}`}>
+                             <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1 px-1">
+                               {isSystemStaff ? (sender?.id === currentUser?.id ? 'You (Admin)' : `${sender?.display_name} (Coach)`) : (sender?.display_name || 'Guardian')}
+                             </span>
+                             <div className={`p-4 rounded-2xl text-sm ${isSystemStaff ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-white/10 text-slate-200 rounded-bl-sm'}`}>
+                               {msg.message}
                              </div>
                              <span className="text-[10px] text-slate-500 mt-1 px-1 font-medium">
                                {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -522,12 +566,14 @@ export default function CommunicationsHub() {
                         <textarea 
                           value={replyText}
                           onChange={(e) => setReplyText(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSendReply()}
                           placeholder="Draft response to parent..."
                           className="w-full h-20 bg-transparent p-3 text-sm text-white placeholder-slate-500 focus:outline-none resize-none custom-scrollbar"
                         />
-                        <div className="flex justify-end px-3 pb-2 pt-2 border-t border-white/5">
-                          <button onClick={handleSendReply} disabled={!replyText.trim()} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-colors">
-                            <Send size={14} /> Send Reply
+                        <div className="flex justify-between items-center px-3 pb-2 pt-2 border-t border-white/5">
+                          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest">Responses appear as Admin/Support</p>
+                          <button onClick={handleSendReply} disabled={!replyText.trim() || isSending} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-colors">
+                            {isSending ? <Loader2 size={14} className="animate-spin"/> : <Send size={14} />} Send Reply
                           </button>
                         </div>
                       </div>

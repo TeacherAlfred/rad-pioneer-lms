@@ -155,16 +155,17 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
     if (!chatInput.trim() || !currentUserId || !student?.linked_parent_id) return;
     
     const text = chatInput.trim();
-    setChatInput(""); // Instantly clear input
+    setChatInput(""); 
     setIsSendingChat(true);
 
-    // OPTIMISTIC UI: Create fake local message
     const tempId = `temp-${Date.now()}`;
+    const coachId = student.metadata?.teacher?.id || currentUserId;
+
     const optimisticMsg = {
       id: tempId,
       student_id: studentId,
       guardian_id: student.linked_parent_id,
-      coach_id: student.metadata?.teacher?.id || currentUserId,
+      coach_id: coachId,
       sender_id: currentUserId,
       message: text,
       created_at: new Date().toISOString(),
@@ -177,15 +178,27 @@ export default function ComprehensiveStudentProfile({ studentId, role }: Profile
       const { data, error } = await supabase.from('coach_messages').insert([{
         student_id: studentId,
         guardian_id: student.linked_parent_id,
-        coach_id: student.metadata?.teacher?.id || currentUserId,
+        coach_id: coachId,
         sender_id: currentUserId,
         message: text
       }]).select().single();
       
       if (error) throw error;
-      
-      // Swap temp ID with real DB UUID
       setChatMessages(prev => prev.map(msg => msg.id === tempId ? data : msg));
+
+      // --- FIRE AUTOMATIC EMAIL NOTIFICATION ---
+      fetch('/api/messages/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_id: studentId,
+          guardian_id: student.linked_parent_id,
+          coach_id: coachId,
+          sender_id: currentUserId,
+          message: text
+        })
+      }).catch(console.error);
+
     } catch (err) {
       console.error("Chat error:", err);
       setChatMessages(prev => prev.filter(msg => msg.id !== tempId));
