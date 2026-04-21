@@ -6,9 +6,9 @@ import {
   Search, Cpu, Power, Code2, BookOpen, ChevronDown, ChevronRight, RotateCcw, ChevronUp, Brain, Star
 } from "lucide-react";
 import Link from "next/link";
-import MakeCodeRenderer from "@/components/lms/MakeCodeRenderer";
-import SequenceViewer from "@/components/lms/SequenceViewer";
-import PioneerCoach from "@/components/ui/PioneerCoach";
+import MakeCodeRenderer from "../lms/MakeCodeRenderer";
+import SequenceViewer from "../lms/SequenceViewer";
+import PioneerCoach from "../ui/PioneerCoach";
 
 function ToastNotification({ message, type, onClose, activeTheme }: any) {
   if (!message) return null;
