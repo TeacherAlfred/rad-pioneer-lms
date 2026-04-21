@@ -432,6 +432,7 @@ export default function DirectoryPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-2 space-y-8">
+                
                 <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
                   <h3 className="text-xl font-black uppercase text-white border-b border-white/5 pb-4">Profile Identity</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -441,6 +442,31 @@ export default function DirectoryPage() {
                     <DiffLabel label="Relationship" value={workspaceEditData?.metadata.relationship} onChange={(v:any) => setWorkspaceEditData({...workspaceEditData, metadata: {...workspaceEditData.metadata, relationship: v}})} />
                   </div>
                 </div>
+
+                {/* NEW PLAN CONFIGURATION WIDGET */}
+                {selectedProfile.role === 'guardian' && (
+                  <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
+                    <h3 className="text-xl font-black uppercase text-white border-b border-white/5 pb-4 flex items-center gap-3">
+                      <CreditCard size={20} className="text-purple-500" /> Account & Plan Configuration
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-2">Plan Type (Preference)</label>
+                        <select
+                          value={workspaceEditData?.payment_plan_preference || ""}
+                          onChange={(e) => setWorkspaceEditData({ ...workspaceEditData, payment_plan_preference: e.target.value })}
+                          className="w-full bg-[#0f172a] rounded-xl px-4 py-3 text-sm font-bold text-white border border-white/10 outline-none focus:border-purple-500 transition-all"
+                        >
+                          <option value="">Unassigned</option>
+                          <option value="Bootcamp">Bootcamp (One-Off)</option>
+                          <option value="Term (Monthly)">Term (Monthly)</option>
+                          <option value="Term (Upfront)">Term (Upfront)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </div>
               <div className="space-y-8">
                 <div className="bg-white/[0.02] border border-white/5 p-10 rounded-[40px]">

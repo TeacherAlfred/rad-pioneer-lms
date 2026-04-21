@@ -67,16 +67,23 @@ export default function RevenueIntelligencePortal() {
     const profileMap = new Map(profiles.map(p => [p.id, p]));
     const itemCostMap = new Map(billingItems.map(i => [i.name, Number(i.cost) || 0]));
 
-    // --- 1. ACTIVE BASE CALCULATION ---
+    // --- 1. ACTIVE BASE & GLOBAL A/R CALCULATION ---
     const totalInvoicedParentsSet = new Set();
+    let globalAccountsReceivable = 0;
+    
     invoices.forEach(inv => {
       if (inv.guardian_id) totalInvoicedParentsSet.add(inv.guardian_id);
+      
+      const dbTotal = Number(inv.total_amount) || 0;
+      const dbPaid = Number(inv.amount_paid) || 0;
+      const actualPaid = ['paid', 'settled'].includes(inv.status) ? dbTotal : dbPaid;
+      globalAccountsReceivable += Math.max(0, dbTotal - actualPaid);
     });
+    
     const totalInvoicedParentsCount = totalInvoicedParentsSet.size;
 
-    // --- 2. TERM REVENUE REALIZATION PROJECTION (LINE-ITEM & PARTIAL-PAY AWARE) ---
+    // --- 2. TERM REVENUE REALIZATION PROJECTION ---
     let termProjectedTotal = 0;
-    
     let termCollectedCoreTotal = 0;
     let termUnpaidCoreTotal = 0;
     let termCollectedOtherTotal = 0;
@@ -96,18 +103,15 @@ export default function RevenueIntelligencePortal() {
     let termUpfrontOtherUnpaid = 0;
     
     const termBreakdown: any[] = [];
-
     const allParentsMap = new Map();
+    
     invoices.forEach(inv => {
       const gId = inv.guardian_id;
       if (!gId) return;
       if (!allParentsMap.has(gId)) {
         const profile = profileMap.get(gId) || {};
         const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
-        allParentsMap.set(gId, {
-          invoices: [],
-          frequency: meta.billing_schedule?.frequency || 'monthly'
-        });
+        allParentsMap.set(gId, { invoices: [], frequency: meta.billing_schedule?.frequency || 'monthly' });
       }
       allParentsMap.get(gId).invoices.push(inv);
     });
@@ -116,7 +120,7 @@ export default function RevenueIntelligencePortal() {
       let isTermParent = false;
       const isUpfront = data.frequency === 'termly';
       
-      // Pass 1: Identify if they are a core term parent
+      // Pass 1: Identify if they are a core term parent (strictly Term/Lesson, NOT Bootcamp)
       data.invoices.forEach((i: any) => {
         i.line_items?.forEach((li: any) => {
           const desc = (li.desc || "").toLowerCase();
@@ -124,9 +128,8 @@ export default function RevenueIntelligencePortal() {
         });
       });
 
-      // Pass 2: Calculate Line-Item Split & Payment Splitting
       if (isTermParent) {
-        const projected = isUpfront ? 2000 : 2250; // R2000 upfront vs R750x3 monthly
+        const projected = isUpfront ? 2000 : 2250;
         termProjectedTotal += projected;
         
         if (isUpfront) termUpfrontCount++;
@@ -154,10 +157,8 @@ export default function RevenueIntelligencePortal() {
 
           const dbTotal = Number(i.total_amount) || 0;
           const dbPaid = Number(i.amount_paid) || 0;
-          // If status is paid/settled but amount_paid wasn't updated correctly, default to full dbTotal
           const actualPaid = ['paid', 'settled'].includes(i.status) ? dbTotal : dbPaid;
           const actualUnpaid = Math.max(0, dbTotal - actualPaid);
-
           const calcTotal = invCoreSum + invOtherSum;
           
           if (calcTotal > 0) {
@@ -188,26 +189,19 @@ export default function RevenueIntelligencePortal() {
           termMonthlyOtherUnpaid += parentOtherUnpaid;
         }
 
-        // Save to breakdown for the modal
         termBreakdown.push({
-          id: gId,
-          name: profileMap.get(gId)?.display_name || "Unknown Guardian",
-          isUpfront,
-          projected,
-          collectedCore: parentCoreCollected,
-          unpaidCore: parentCoreUnpaid,
-          collectedOther: parentOtherCollected,
-          unpaidOther: parentOtherUnpaid
+          id: gId, name: profileMap.get(gId)?.display_name || "Unknown Guardian", isUpfront, projected,
+          collectedCore: parentCoreCollected, unpaidCore: parentCoreUnpaid,
+          collectedOther: parentOtherCollected, unpaidOther: parentOtherUnpaid
         });
       }
     });
 
     termBreakdown.sort((a, b) => a.name.localeCompare(b.name));
 
-    // --- 3. UNIT ECONOMICS (STRICT CASHFLOW) ---
-    const paidInvoices = invoices.filter(inv => ['paid', 'settled'].includes(inv.status));
-
-    paidInvoices.forEach(inv => {
+    // --- 3. UNIT ECONOMICS & COHORTS (INCLUDING PENDING INVOICES) ---
+    // We now iterate over ALL invoices to map pending Bootcamps into cohorts
+    invoices.forEach(inv => {
       const gId = inv.guardian_id;
       if (!gId) return;
 
@@ -225,7 +219,10 @@ export default function RevenueIntelligencePortal() {
       }
 
       const stat = parentStats.get(gId);
-      const grossRevenue = Number(inv.total_amount) || 0;
+      
+      const dbTotal = Number(inv.total_amount) || 0;
+      const dbPaid = Number(inv.amount_paid) || 0;
+      const actualPaid = ['paid', 'settled'].includes(inv.status) ? dbTotal : dbPaid;
       
       let invoiceCost = 0;
       inv.line_items?.forEach((item: any) => {
@@ -233,11 +230,15 @@ export default function RevenueIntelligencePortal() {
         invoiceCost += unitCost * (Number(item.qty) || 1);
       });
 
-      const grossProfit = grossRevenue - invoiceCost;
+      // Scale cost against what was actually collected
+      const costFraction = dbTotal > 0 ? (actualPaid / dbTotal) : 0;
+      const realizedCost = invoiceCost * costFraction;
+      const grossProfit = actualPaid - realizedCost;
 
-      stat.totalGross += grossRevenue;
+      stat.totalGross += actualPaid;
       stat.totalProfit += grossProfit;
-      stat.invoiceCount += 1;
+      
+      if (actualPaid > 0) stat.invoiceCount += 1;
       
       const invDate = new Date(inv.created_at);
       if (invDate < stat.firstDate) stat.firstDate = invDate;
@@ -255,11 +256,11 @@ export default function RevenueIntelligencePortal() {
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const cohorts: Record<string, { count: number, grossLTV: number, netLTV: number, totalMonths: number }> = {
-      "Bootcamp to Ongoing": { count: 0, grossLTV: 0, netLTV: 0, totalMonths: 0 },
-      "Referral Network": { count: 0, grossLTV: 0, netLTV: 0, totalMonths: 0 },
-      "Online Direct": { count: 0, grossLTV: 0, netLTV: 0, totalMonths: 0 },
-      "Organic / Unknown": { count: 0, grossLTV: 0, netLTV: 0, totalMonths: 0 }
+    const cohorts: Record<string, { count: number, payingCount: number, grossLTV: number, netLTV: number, totalMonths: number }> = {
+      "Bootcamp to Ongoing": { count: 0, payingCount: 0, grossLTV: 0, netLTV: 0, totalMonths: 0 },
+      "Referral Network": { count: 0, payingCount: 0, grossLTV: 0, netLTV: 0, totalMonths: 0 },
+      "Online Direct": { count: 0, payingCount: 0, grossLTV: 0, netLTV: 0, totalMonths: 0 },
+      "Organic / Unknown": { count: 0, payingCount: 0, grossLTV: 0, netLTV: 0, totalMonths: 0 }
     };
 
     parentStats.forEach(stat => {
@@ -268,11 +269,13 @@ export default function RevenueIntelligencePortal() {
       
       const diffTime = Math.abs(stat.lastDate.getTime() - stat.firstDate.getTime());
       const diffMonths = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 30)));
-      totalRetentionMonths += diffMonths;
 
-      if (stat.lastDate >= thirtyDaysAgo) {
-        grossMRR30Days += (stat.totalGross / diffMonths); 
-        netMRR30Days += (stat.totalProfit / diffMonths); 
+      if (stat.totalGross > 0) {
+        totalRetentionMonths += diffMonths;
+        if (stat.lastDate >= thirtyDaysAgo) {
+          grossMRR30Days += (stat.totalGross / diffMonths); 
+          netMRR30Days += (stat.totalProfit / diffMonths); 
+        }
       }
 
       if (stat.invoiceCount > 1) recurringParentsCount++;
@@ -286,22 +289,26 @@ export default function RevenueIntelligencePortal() {
       else if (firstItem.includes('online')) cohort = "Online Direct";
 
       cohorts[cohort].count++;
+      if (stat.totalGross > 0) {
+        cohorts[cohort].payingCount++;
+        cohorts[cohort].totalMonths += diffMonths;
+      }
       cohorts[cohort].grossLTV += stat.totalGross;
       cohorts[cohort].netLTV += stat.totalProfit;
-      cohorts[cohort].totalMonths += diffMonths;
     });
 
-    const activePaidParents = parentStats.size; 
+    const payingParentsCount = Array.from(parentStats.values()).filter(s => s.totalGross > 0).length;
     const globalMargin = globalGross > 0 ? (globalProfit / globalGross) * 100 : 0;
-    const avgNetLTV = activePaidParents > 0 ? globalProfit / activePaidParents : 0;
-    const avgGrossLTV = activePaidParents > 0 ? globalGross / activePaidParents : 0;
-    const avgRetention = activePaidParents > 0 ? totalRetentionMonths / activePaidParents : 0;
+    const avgNetLTV = payingParentsCount > 0 ? globalProfit / payingParentsCount : 0;
+    const avgGrossLTV = payingParentsCount > 0 ? globalGross / payingParentsCount : 0;
+    const avgRetention = payingParentsCount > 0 ? totalRetentionMonths / payingParentsCount : 0;
 
     const processedCohorts = Object.entries(cohorts)
-      .filter(([_, data]) => data.count > 0)
+      .filter(([_, data]) => data.count > 0) // Cohort maps instantly on pending invoices
       .map(([name, data]) => {
-        const avgGross = data.grossLTV / data.count;
-        const avgNet = data.netLTV / data.count;
+        const divisor = data.payingCount > 0 ? data.payingCount : 1;
+        const avgGross = data.grossLTV / divisor;
+        const avgNet = data.netLTV / divisor;
         const margin = avgGross > 0 ? (avgNet / avgGross) * 100 : 0;
         return {
           name,
@@ -309,14 +316,15 @@ export default function RevenueIntelligencePortal() {
           avgGrossLtv: avgGross,
           avgNetLtv: avgNet,
           marginPct: margin,
-          avgRetention: data.totalMonths / data.count
+          avgRetention: data.payingCount > 0 ? (data.totalMonths / data.payingCount) : 0
         };
       })
       .sort((a, b) => b.avgNetLtv - a.avgNetLtv);
 
     return {
-      activePaidParents,
+      payingParentsCount,
       totalInvoicedParentsCount,
+      globalAccountsReceivable,
       recurringParentsCount,
       grossMRR: grossMRR30Days,
       netMRR: netMRR30Days,
@@ -351,11 +359,9 @@ export default function RevenueIntelligencePortal() {
     if (!drilldown) return [];
     let list = [...economics.term.breakdown];
     
-    // Plan Filter
     if (drilldown.filter === 'monthly') list = list.filter(p => !p.isUpfront);
     if (drilldown.filter === 'upfront') list = list.filter(p => p.isUpfront);
     
-    // Sort logic based on mode
     if (drilldown.mode === 'collected') {
       list.sort((a, b) => b.collectedCore - a.collectedCore);
     } else if (drilldown.mode === 'unpaid') {
@@ -367,7 +373,6 @@ export default function RevenueIntelligencePortal() {
   }, [drilldown, economics.term.breakdown]);
 
 
-  // Bar Math
   const pctCollected = Math.min(100, (economics.term.coreCollected / (economics.term.projected || 1)) * 100);
   const pctUnpaid = Math.min(100 - pctCollected, (economics.term.coreUnpaid / (economics.term.projected || 1)) * 100);
 
@@ -401,8 +406,8 @@ export default function RevenueIntelligencePortal() {
           </div>
         </header>
 
-        {/* NORTH STAR METRICS */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* NORTH STAR METRICS (NOW WITH GLOBAL A/R) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
           <div className="bg-gradient-to-br from-emerald-500/10 to-[#020617] border border-emerald-500/20 rounded-[32px] p-8 shadow-2xl relative overflow-hidden group hover:border-emerald-500/40 transition-colors">
             <div className="absolute -right-4 -top-4 p-8 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all"/>
             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500 mb-1 flex items-center gap-2"><Zap size={14}/> Net MRR (GP)</p>
@@ -410,6 +415,14 @@ export default function RevenueIntelligencePortal() {
             <div className="mt-4 flex items-center gap-2 text-xs font-bold text-slate-400 border-t border-white/5 pt-4">
                <span>Gross: R {Math.round(economics.grossMRR).toLocaleString()}</span>
                <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-[9px] uppercase tracking-widest">Top Line</span>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-amber-500/10 to-[#020617] border border-amber-500/20 rounded-[32px] p-8 shadow-xl relative overflow-hidden group hover:border-amber-500/40 transition-colors">
+            <p className="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-1 flex items-center gap-2"><Clock size={14}/> Pending Cash (A/R)</p>
+            <p className="text-4xl font-black text-white tracking-tighter mt-2">R {Math.round(economics.globalAccountsReceivable).toLocaleString()}</p>
+            <div className="mt-4 flex items-center gap-2 text-xs font-bold text-slate-400 border-t border-white/5 pt-4">
+               <span>All Global Invoices</span>
             </div>
           </div>
 
@@ -438,9 +451,9 @@ export default function RevenueIntelligencePortal() {
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1 flex items-center gap-2"><TrendingUp size={14}/> Retention Avg</p>
             <p className="text-4xl font-black text-purple-400 tracking-tighter mt-2">{economics.avgRetention.toFixed(1)} <span className="text-lg text-slate-500">Mths</span></p>
             <div className="mt-4 flex items-center justify-between text-xs font-bold text-slate-400 border-t border-white/5 pt-4">
-               <span>Active Base</span>
+               <span>Paid Base</span>
                <span className="text-white bg-white/10 px-3 py-1 rounded-lg border border-white/5">
-                 {economics.activePaidParents} / {economics.totalInvoicedParentsCount} Parents
+                 {economics.payingParentsCount} / {economics.totalInvoicedParentsCount} Parents
                </span>
             </div>
           </div>

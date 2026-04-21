@@ -13,6 +13,7 @@ export default function PublicQuoteView() {
 
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false); // Security state for Admin tools
   const [quote, setQuote] = useState<any>(null);
   const [guardian, setGuardian] = useState<any>(null);
   const [actionState, setActionState] = useState<'pending' | 'accepted' | 'declined' | 'expired'>('pending');
@@ -25,6 +26,20 @@ export default function PublicQuoteView() {
 
   async function fetchQuoteData() {
     try {
+      // 1. Security Check: Is the current viewer an Admin?
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('auth_user_id', session.user.id)
+          .single();
+        if (profile?.role === 'admin') {
+          setIsAdmin(true);
+        }
+      }
+
+      // 2. Fetch Document Data
       const { data: quoteData, error: quoteErr } = await supabase
         .from('billing_records')
         .select('*')
@@ -41,9 +56,8 @@ export default function PublicQuoteView() {
 
       setQuote(quoteData);
 
-      // --- THE FIX: Prospect-Aware Routing ---
+      // 3. Prospect-Aware Routing
       if (quoteData.guardian_id) {
-        // Path A: This is a fully registered user
         const { data: guardianData } = await supabase
           .from('profiles')
           .select('*')
@@ -52,9 +66,8 @@ export default function PublicQuoteView() {
 
         if (guardianData) setGuardian(guardianData);
       } else if (quoteData.metadata?.prospect_name) {
-        // Path B: This is a CRM Prospect. Create a virtual guardian object for the UI!
         setGuardian({
-          id: null, // No official ID yet
+          id: null,
           display_name: quoteData.metadata.prospect_name,
           email: quoteData.metadata.prospect_email,
           metadata: { email: quoteData.metadata.prospect_email, phone: "Pending Account Setup" }
@@ -75,13 +88,11 @@ export default function PublicQuoteView() {
     setIsProcessing(true);
 
     try {
-      // 1. Update the document status to Accepted/Declined
       await supabase
         .from('billing_records')
         .update({ status: pendingAction })
         .eq('id', quoteId);
 
-      // 2. ONLY attempt to update the profile if they actually have a database ID
       if (pendingAction === 'accepted' && guardian?.id) {
         await supabase
           .from('profiles')
@@ -101,6 +112,31 @@ export default function PublicQuoteView() {
     } catch (err: any) {
       alert("System Error: " + err.message);
     } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // --- ADMIN TOOL: CONVERT TO INVOICE ---
+  const handleConvertToInvoice = async () => {
+    const confirm = window.confirm("Convert this accepted quote into an active invoice?");
+    if (!confirm) return;
+
+    setIsProcessing(true);
+    try {
+      const { error } = await supabase
+        .from('billing_records')
+        .update({ 
+          doc_type: 'invoice', 
+          status: 'pending' // Reset status so the client knows it requires payment
+        })
+        .eq('id', quoteId);
+
+      if (error) throw error;
+      
+      alert("Quote successfully converted to an Invoice!");
+      window.location.reload(); // Instantly refresh the page to load the new Invoice view
+    } catch (err: any) {
+      alert("Conversion Error: " + err.message);
       setIsProcessing(false);
     }
   };
@@ -132,17 +168,17 @@ export default function PublicQuoteView() {
         <motion.div 
           initial={{ y: -50, opacity: 0 }} 
           animate={{ y: 0, opacity: 1 }}
-          className={`max-w-4xl mx-auto mb-8 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-center gap-4 text-center border ${
+          className={`max-w-4xl mx-auto mb-8 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-center gap-6 text-center md:text-left border ${
             actionState === 'accepted' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
             actionState === 'declined' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' :
             'bg-amber-500/10 border-amber-500/30 text-amber-400'
           }`}
         >
-          {actionState === 'accepted' && <CheckCircle2 size={32} />}
-          {actionState === 'declined' && <XCircle size={32} />}
-          {actionState === 'expired' && <FileSignature size={32} />}
+          {actionState === 'accepted' && <CheckCircle2 size={40} className="shrink-0" />}
+          {actionState === 'declined' && <XCircle size={40} className="shrink-0" />}
+          {actionState === 'expired' && <FileSignature size={40} className="shrink-0" />}
           
-          <div className="space-y-1">
+          <div className="flex-1 space-y-1">
             <h2 className="text-xl font-black uppercase tracking-widest">
               Quotation {actionState.charAt(0).toUpperCase() + actionState.slice(1)}
             </h2>
@@ -152,14 +188,28 @@ export default function PublicQuoteView() {
               {actionState === 'expired' && "This quotation has passed its validity date. Please contact us for a revised quote."}
             </p>
           </div>
+
+          {/* ADMIN ACTION: Convert to Invoice (Only visible to Admins on Accepted Quotes) */}
+          {isAdmin && actionState === 'accepted' && quote.doc_type === 'quote' && (
+            <div className="shrink-0 border-t md:border-t-0 md:border-l border-emerald-500/20 pt-4 md:pt-0 md:pl-6 w-full md:w-auto">
+              <button 
+                onClick={handleConvertToInvoice}
+                disabled={isProcessing}
+                className="w-full md:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg disabled:opacity-50"
+              >
+                {isProcessing ? <Loader2 size={16} className="animate-spin"/> : <FileSignature size={16}/>}
+                Convert to Invoice
+              </button>
+            </div>
+          )}
         </motion.div>
       )}
 
-      {/* THE DOCUMENT */}
-      <div className={`transition-all duration-700 ${actionState !== 'pending' ? 'opacity-50 grayscale pointer-events-none' : ''}`}>
+      {/* THE DOCUMENT (Dynamically shifts between Quote/Invoice rendering) */}
+      <div className={`transition-all duration-700 ${actionState !== 'pending' && quote.doc_type === 'quote' ? 'opacity-50 grayscale pointer-events-none' : ''}`}>
         <RADBillingDocument 
-          type="quote"
-          docNumber={`QT-${quote.invoice_number}`}
+          type={quote.doc_type || "quote"}
+          docNumber={`${quote.doc_type === 'invoice' ? 'INV' : 'QT'}-${quote.invoice_number}`}
           recipient={{
               name: guardian.display_name,
               email: guardian.metadata?.email || guardian.email || "",
@@ -172,8 +222,8 @@ export default function PublicQuoteView() {
         />
       </div>
 
-      {/* INTERACTIVE RESPONSE BAR */}
-      {actionState === 'pending' && (
+      {/* INTERACTIVE RESPONSE BAR (Only show if it's still a pending Quote) */}
+      {actionState === 'pending' && quote.doc_type === 'quote' && (
         <motion.div 
           initial={{ y: 50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -251,7 +301,7 @@ export default function PublicQuoteView() {
       </AnimatePresence>
 
       {/* Padding to ensure document isn't hidden behind the fixed bar */}
-      {actionState === 'pending' && <div className="h-32"></div>}
+      {actionState === 'pending' && quote.doc_type === 'quote' && <div className="h-32"></div>}
     </div>
   );
 }

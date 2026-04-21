@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Search, Plus, X, Save, PhoneCall, Mail, MessageSquare, 
-  Calendar, Clock, Target, ClipboardList, Loader2, ArrowRight, ArrowLeft, Trash2, CheckCircle2, User, Users, FilterX, FileText, FileSignature, MessageCircle
+  Calendar, Clock, Target, ClipboardList, Loader2, ArrowRight, 
+  ArrowLeft, Trash2, CheckCircle2, User, Users, FilterX, 
+  FileText, FileSignature, MessageCircle, CheckSquare, Square, Send,
+  ExternalLink, UserPlus
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -39,14 +42,53 @@ export default function ProspectsCRM() {
   });
 
   const [selectedProspect, setSelectedProspect] = useState<any>(null);
+  const [prospectQuotes, setProspectQuotes] = useState<any[]>([]); 
   const [isCreating, setIsCreating] = useState(false);
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false); 
   const [newLogText, setNewLogText] = useState("");
   const [newLogType, setNewLogType] = useState("Note");
 
+  // --- WHATSAPP SEQUENCER STATE ---
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isSequencerOpen, setIsSequencerOpen] = useState(false);
+  const [sequencerIndex, setSequencerIndex] = useState(0);
+  const [waTemplate, setWaTemplate] = useState("Hi {{name}},\n\n....\n\nRegards,\nRAD Academy Team");
+
   useEffect(() => {
     fetchProspects();
   }, []);
+
+  // Fetch Quotes automatically when a prospect is selected
+  useEffect(() => {
+    if (selectedProspect && !isCreating) {
+      const fetchQuotes = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('billing_records')
+            .select('*')
+            .eq('doc_type', 'quote')
+            .order('created_at', { ascending: false });
+          
+          if (error) throw error;
+          
+          if (data) {
+            const filtered = data.filter(q => {
+              const meta = typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {});
+              return q.prospect_id === selectedProspect.id || 
+                     (meta.prospect_email && meta.prospect_email === selectedProspect.email) || 
+                     (meta.prospect_name && meta.prospect_name === selectedProspect.name);
+            });
+            setProspectQuotes(filtered);
+          }
+        } catch (err) {
+          console.error("Failed to fetch prospect quotes", err);
+        }
+      };
+      fetchQuotes();
+    } else {
+      setProspectQuotes([]);
+    }
+  }, [selectedProspect, isCreating]);
 
   async function fetchProspects() {
     setLoading(true);
@@ -78,6 +120,91 @@ export default function ProspectsCRM() {
       setLoading(false);
     }
   }
+
+  // --- SEQUENCER LOGIC ---
+  const toggleSelection = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedIds.length === filteredProspects.length && filteredProspects.length > 0) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredProspects.map(p => p.id));
+    }
+  };
+
+  const handleSendAndNext = () => {
+    const currentId = selectedIds[sequencerIndex];
+    const prospect = prospects.find(p => p.id === currentId);
+    
+    if (prospect && prospect.phone) {
+      // Extract just the first name for a friendlier greeting
+      const firstName = prospect.name.split(' ')[0] || prospect.name;
+      const finalMsg = waTemplate.replace(/\{\{name\}\}/gi, firstName);
+      const url = `whatsapp://send?phone=${formatWhatsAppNumber(prospect.phone)}&text=${encodeURIComponent(finalMsg)}`;
+      window.open(url, '_blank');
+    } else {
+      alert(`Skipping ${prospect?.name || 'Unknown'} - No valid phone number.`);
+    }
+
+    if (sequencerIndex >= selectedIds.length - 1) {
+      setIsSequencerOpen(false);
+      setSelectedIds([]);
+      setSequencerIndex(0);
+      setSuccessMessage("Bulk WhatsApp sequence completed!");
+    } else {
+      setSequencerIndex(prev => prev + 1);
+    }
+  };
+
+  // --- CONVERT PROSPECT TO PROFILE ---
+  const handleConvertToProfile = async () => {
+    if (!selectedProspect) return;
+    
+    if (!selectedProspect.email) {
+      alert("Cannot convert: Prospect must have a valid email address to create a login account.");
+      return;
+    }
+
+    const confirm = window.confirm(`Convert ${selectedProspect.name} into an official Guardian profile and generate login credentials?`);
+    if (!confirm) return;
+
+    setIsProcessing(true);
+    try {
+      const response = await fetch('/api/prospects/convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prospectId: selectedProspect.id,
+          name: selectedProspect.name,
+          email: selectedProspect.email,
+          phone: selectedProspect.phone,
+          source: selectedProspect.source
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to communicate with conversion server.");
+      }
+
+      // Update Local State
+      const updatedProspect = { ...selectedProspect, status: 'Converted (Won)' };
+      setSelectedProspect(updatedProspect);
+      setProspects(prospects.map(p => p.id === selectedProspect.id ? updatedProspect : p));
+      
+      // Show the temporary password to the Admin
+      alert(`SUCCESS: ${selectedProspect.name} is now an official Guardian!\n\nTemporary Password: ${data.tempPassword}\n\nPlease share this with the parent so they can log in.`);
+      
+    } catch (err: any) {
+      console.error("Conversion error:", err);
+      alert(`Conversion Failed:\n${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleSaveProspect = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -179,15 +306,14 @@ export default function ProspectsCRM() {
   };
 
   const filteredProspects = prospects.filter(p => {
-    // Clean the search query and the phone number for better matching (digits only)
     const cleanSearch = searchQuery.replace(/\D/g, '');
     const cleanPhone = p.phone ? p.phone.replace(/\D/g, '') : '';
 
     const matchesSearch = 
       p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
       p.email?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      p.phone?.includes(searchQuery) || // Matches exact string (e.g. "082 123")
-      (cleanSearch !== "" && cleanPhone.includes(cleanSearch)); // Matches digits only (e.g. "082123")
+      p.phone?.includes(searchQuery) || 
+      (cleanSearch !== "" && cleanPhone.includes(cleanSearch)); 
     
     const matchesPipeline = filterPipeline === "All" ? true 
       : filterPipeline === "Active" ? !['Lost', 'Converted (Won)'].includes(p.status)
@@ -228,7 +354,7 @@ export default function ProspectsCRM() {
   );
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans relative overflow-hidden">
+    <div className={`min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans relative overflow-hidden ${selectedIds.length > 0 ? 'pb-32' : ''}`}>
       <div className="max-w-7xl mx-auto space-y-10 relative z-10">
         
         {!selectedProspect && !isCreating ? (
@@ -327,19 +453,29 @@ export default function ProspectsCRM() {
               <table className="w-full text-left">
                 <thead className="bg-white/5 text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-white/5">
                   <tr>
-                    <th className="px-8 py-5">Prospect Details</th>
-                    <th className="px-8 py-5">Status / Source</th>
-                    <th className="px-8 py-5">Next Action</th>
+                    <th className="px-6 py-5 w-12 text-center">
+                      <button onClick={handleSelectAll} className="hover:text-white transition-colors" title="Select All">
+                        {selectedIds.length === filteredProspects.length && filteredProspects.length > 0 ? <CheckSquare size={16}/> : <Square size={16}/>}
+                      </button>
+                    </th>
+                    <th className="px-4 py-5">Prospect Details</th>
+                    <th className="px-4 py-5">Status / Source</th>
+                    <th className="px-4 py-5">Next Action</th>
                     <th className="px-8 py-5 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {filteredProspects.length === 0 ? (
-                    <tr><td colSpan={4} className="px-8 py-20 text-center text-slate-500 font-black uppercase tracking-widest text-sm italic">No prospects found matching your filters.</td></tr>
+                    <tr><td colSpan={5} className="px-8 py-20 text-center text-slate-500 font-black uppercase tracking-widest text-sm italic">No prospects found matching your filters.</td></tr>
                   ) : (
                     filteredProspects.map(p => (
                       <tr key={p.id} className="hover:bg-white/[0.03] transition-colors group">
-                        <td className="px-8 py-6 align-top">
+                        <td className="px-6 py-6 align-top text-center" onClick={(e) => e.stopPropagation()}>
+                          <button onClick={() => toggleSelection(p.id)} className={`transition-colors ${selectedIds.includes(p.id) ? "text-fuchsia-400" : "text-slate-600 hover:text-slate-400"}`}>
+                            {selectedIds.includes(p.id) ? <CheckSquare size={18}/> : <Square size={18}/>}
+                          </button>
+                        </td>
+                        <td className="px-4 py-6 align-top">
                           <div className="flex items-center gap-3">
                             <p className="font-black text-white uppercase italic text-lg leading-none">{p.name}</p>
                             {p.quote_sent && <span className="px-2 py-0.5 bg-fuchsia-500/20 text-fuchsia-400 rounded-md text-[8px] font-black uppercase tracking-widest border border-fuchsia-500/30">Quote Sent</span>}
@@ -362,13 +498,13 @@ export default function ProspectsCRM() {
                             )}
                           </div>
                         </td>
-                        <td className="px-8 py-6 align-top space-y-2">
+                        <td className="px-4 py-6 align-top space-y-2">
                           <span className={`inline-flex px-3 py-1 rounded-md text-[9px] font-black uppercase tracking-widest border ${getStatusColor(p.status)}`}>
                             {p.status}
                           </span>
                           <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1"><ClipboardList size={10}/> {p.source}</p>
                         </td>
-                        <td className="px-8 py-6 align-top">
+                        <td className="px-4 py-6 align-top">
                           {p.next_action_task ? (
                             <div className="space-y-1">
                               <p className="text-xs font-bold text-slate-300 max-w-[250px] truncate">{p.next_action_task}</p>
@@ -448,6 +584,75 @@ export default function ProspectsCRM() {
                     </div>
                   </div>
 
+                  {/* QUOTE HISTORY TABLE */}
+                  {!isCreating && (
+                    <div className="space-y-4 pt-6 border-t border-white/5">
+                      <div className="flex items-center gap-3">
+                        <FileSignature className="text-fuchsia-500" size={18} />
+                        <h3 className="text-sm font-black uppercase tracking-widest text-white">Quote History</h3>
+                      </div>
+                      <div className="bg-[#020617] border border-white/10 rounded-2xl overflow-x-auto shadow-inner">
+                        <table className="w-full text-left text-sm whitespace-nowrap">
+                          <thead className="bg-white/5 text-[9px] font-black uppercase tracking-widest text-slate-500 border-b border-white/5">
+                            <tr>
+                              <th className="px-4 py-4">Date Issued</th>
+                              <th className="px-4 py-4">Quote #</th>
+                              <th className="px-4 py-4 text-right">Total Value</th>
+                              <th className="px-4 py-4 text-right">Quote GP</th>
+                              <th className="px-4 py-4">Expiry Date</th>
+                              <th className="px-4 py-4">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {prospectQuotes.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="px-4 py-8 text-center text-xs font-bold text-slate-600 italic">No quotes generated for this prospect.</td>
+                              </tr>
+                            ) : (
+                              prospectQuotes.map(q => {
+                                const meta = typeof q.metadata === 'string' ? JSON.parse(q.metadata) : (q.metadata || {});
+                                const gp = meta.quote_gp || meta.gp || meta.gross_profit || 0;
+                                const expiryDate = q.due_date || meta.expiry_date || meta.valid_until;
+                                
+                                return (
+                                  <tr key={q.id} className="hover:bg-white/[0.02] transition-colors text-slate-300">
+                                    <td className="px-4 py-3 text-xs">{new Date(q.created_at).toLocaleDateString()}</td>
+                                    <td className="px-4 py-3 font-mono font-bold">
+                                      <button 
+                                        type="button"
+                                        onClick={() => window.open(`/admin/finance/preview?id=${q.id}`, '_blank')}
+                                        className="text-fuchsia-400 hover:text-fuchsia-300 flex items-center gap-1.5 transition-colors group"
+                                        title="Open Quotation"
+                                      >
+                                        QT-{q.invoice_number} <ExternalLink size={12} className="opacity-50 group-hover:opacity-100" />
+                                      </button>
+                                    </td>
+                                    <td className="px-4 py-3 text-right font-bold text-emerald-400">
+                                      R {parseFloat(q.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="px-4 py-3 text-right font-bold text-blue-400">
+                                      R {parseFloat(gp).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="px-4 py-3 text-xs">{expiryDate ? new Date(expiryDate).toLocaleDateString() : 'N/A'}</td>
+                                    <td className="px-4 py-3">
+                                      <span className={`px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-widest border ${
+                                        (q.status === 'accepted' || q.status === 'paid') ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                        (q.status === 'declined' || q.status === 'cancelled') ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                                        'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                      }`}>
+                                        {q.status || 'Pending'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                )
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-2 pt-6 border-t border-white/5">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2 flex items-center gap-2"><ClipboardList size={14}/> Raw Ad Response / Form Data</label>
                     <textarea 
@@ -467,6 +672,18 @@ export default function ProspectsCRM() {
                   
                   <div className="space-y-5 relative z-10">
 
+                    {!isCreating && selectedProspect?.status !== 'Converted (Won)' && (
+                      <button 
+                        type="button"
+                        onClick={handleConvertToProfile}
+                        disabled={isProcessing}
+                        className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase italic text-xs rounded-xl shadow-lg transition-colors flex items-center justify-center gap-2 mb-3 disabled:opacity-50"
+                        title="Promote to Database Profile"
+                      >
+                        {isProcessing ? <Loader2 className="animate-spin" size={16}/> : <UserPlus size={16}/>} Convert to Official Profile
+                      </button>
+                    )}
+
                     {selectedProspect.phone && !isCreating && (
                       <a 
                         href={`whatsapp://send?phone=${formatWhatsAppNumber(selectedProspect.phone)}`}
@@ -481,6 +698,7 @@ export default function ProspectsCRM() {
                     
                     {!isCreating && (
                       <button 
+                        type="button"
                         onClick={() => setIsQuoteModalOpen(true)}
                         className="w-full py-4 bg-white text-black font-black uppercase italic text-xs rounded-xl shadow-lg hover:scale-105 transition-transform flex items-center justify-center gap-2"
                       >
@@ -540,7 +758,7 @@ export default function ProspectsCRM() {
                            <option>Note</option><option>Call</option><option>Email</option><option>Quote Sent</option>
                          </select>
                          <textarea value={newLogText} onChange={e => setNewLogText(e.target.value)} placeholder="Type update..." className="w-full bg-[#020617] border border-white/10 rounded-lg px-4 py-3 text-sm text-slate-300 outline-none focus:border-fuchsia-500 min-h-[80px]" onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleAddLogEntry()}/>
-                         <button onClick={handleAddLogEntry} disabled={!newLogText.trim() || isProcessing} className="bg-fuchsia-600 text-white py-3 rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-50 hover:bg-fuchsia-500 transition-all">Add Entry</button>
+                         <button type="button" onClick={handleAddLogEntry} disabled={!newLogText.trim() || isProcessing} className="bg-fuchsia-600 text-white py-3 rounded-lg font-bold text-xs uppercase tracking-widest disabled:opacity-50 hover:bg-fuchsia-500 transition-all">Add Entry</button>
                        </div>
                     </div>
 
@@ -551,7 +769,7 @@ export default function ProspectsCRM() {
                             {log.type === 'Call' ? <PhoneCall size={14}/> : log.type === 'Email' ? <Mail size={14}/> : <MessageSquare size={14}/>}
                           </div>
                           <div className="ml-4 w-full bg-white/5 p-4 rounded-2xl border border-white/5 relative mt-1">
-                            <button onClick={() => handleDeleteLog(log.id)} className="absolute top-3 right-3 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
+                            <button type="button" onClick={() => handleDeleteLog(log.id)} className="absolute top-3 right-3 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
                             <div className="flex items-center justify-between mb-2 pr-6">
                               <span className="text-[10px] font-black uppercase text-fuchsia-400 tracking-widest">{log.type}</span>
                               <span className="text-[9px] font-bold text-slate-500">{new Date(log.date).toLocaleDateString()}</span>
@@ -573,6 +791,97 @@ export default function ProspectsCRM() {
         )}
 
       </div>
+
+      {/* =========================================
+          STICKY BOTTOM BAR: BULK WHATSAPP COMMAND
+          ========================================= */}
+      {selectedIds.length > 0 && !isCreating && !selectedProspect && !isSequencerOpen && (
+        <motion.div 
+          initial={{ y: 100, opacity: 0 }} 
+          animate={{ y: 0, opacity: 1 }}
+          className="fixed bottom-0 left-0 right-0 p-6 z-40 pointer-events-none"
+        >
+           <div className="max-w-[1400px] mx-auto flex justify-center">
+              <div className="bg-[#25D366]/90 backdrop-blur-xl p-4 rounded-3xl flex items-center gap-6 shadow-[0_0_40px_rgba(37,211,102,0.5)] border border-[#25D366] pointer-events-auto">
+                 <div className="flex items-center gap-3">
+                   <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-black text-white">{selectedIds.length}</div>
+                   <div className="hidden sm:block text-right">
+                     <h3 className="font-black uppercase italic tracking-widest text-sm text-white">Targets Acquired</h3>
+                     <p className="text-[10px] font-bold uppercase tracking-widest text-[#25D366] text-white/80">Ready for Broadcast</p>
+                   </div>
+                 </div>
+                 <div className="flex gap-2">
+                   <button type="button" onClick={() => setSelectedIds([])} className="px-6 py-3 rounded-xl bg-black/20 hover:bg-black/30 text-white font-black uppercase tracking-widest text-[10px] transition-colors">Clear</button>
+                   <button type="button" onClick={() => { setIsSequencerOpen(true); setSequencerIndex(0); }} className="px-8 py-3 rounded-xl bg-white text-[#128C7E] hover:scale-105 font-black uppercase tracking-widest text-[10px] flex items-center gap-2 transition-all shadow-lg">
+                      <MessageCircle size={16}/> Launch WhatsApp Sequencer
+                   </button>
+                 </div>
+              </div>
+           </div>
+        </motion.div>
+      )}
+
+      {/* =========================================
+          WHATSAPP SEQUENCER MODAL
+          ========================================= */}
+      <AnimatePresence>
+        {isSequencerOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{opacity:0, scale:0.95}} 
+              animate={{opacity:1, scale:1}} 
+              exit={{opacity:0, scale:0.95}}
+              className="bg-[#0f172a] border border-[#25D366]/30 rounded-[40px] p-8 max-w-2xl w-full shadow-2xl flex flex-col"
+            >
+              {/* Header */}
+              <div className="flex justify-between items-center mb-6">
+                 <h2 className="text-2xl font-black uppercase italic text-white flex items-center gap-3">
+                   <MessageCircle className="text-[#25D366]"/> WhatsApp Sequencer
+                 </h2>
+                 <button type="button" onClick={() => setIsSequencerOpen(false)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400">
+                   <X size={16}/>
+                 </button>
+              </div>
+              
+              {/* Body */}
+              <div className="space-y-6">
+                 <div className="bg-[#25D366]/10 border border-[#25D366]/20 p-5 rounded-2xl flex justify-between items-center">
+                   <div>
+                     <p className="text-[10px] font-black uppercase tracking-widest text-[#25D366] mb-1">Current Target ({sequencerIndex + 1} of {selectedIds.length})</p>
+                     <p className="text-xl font-black text-white">{prospects.find(p => p.id === selectedIds[sequencerIndex])?.name || 'Unknown'}</p>
+                     <p className="text-xs font-bold text-slate-400 mt-1">{prospects.find(p => p.id === selectedIds[sequencerIndex])?.phone || 'MISSING PHONE NUMBER'}</p>
+                   </div>
+                   <div className="w-12 h-12 rounded-full bg-[#25D366]/20 border border-[#25D366]/30 flex items-center justify-center">
+                     <MessageCircle className="text-[#25D366]" size={20}/>
+                   </div>
+                 </div>
+
+                 <div>
+                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 block">Message Template</label>
+                   <textarea 
+                     value={waTemplate} 
+                     onChange={e => setWaTemplate(e.target.value)} 
+                     className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 text-sm font-medium text-slate-300 min-h-[200px] outline-none focus:border-[#25D366] custom-scrollbar"
+                   />
+                   <p className="text-[9px] text-slate-500 font-bold mt-2 uppercase tracking-widest">
+                     Use <strong className="text-white">{'{{name}}'}</strong> to automatically inject the prospect's first name.
+                   </p>
+                 </div>
+              </div>
+
+              {/* Footer */}
+              <div className="mt-8 pt-6 border-t border-white/5 flex gap-3">
+                <button type="button" onClick={() => setIsSequencerOpen(false)} className="flex-1 py-4 rounded-xl bg-white/5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
+                  Pause Sequence
+                </button>
+                <button type="button" onClick={handleSendAndNext} className="flex-[2] py-4 bg-[#25D366] hover:bg-[#20b858] text-black rounded-xl font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(37,211,102,0.3)]">
+                  <Send size={16}/> Launch WhatsApp & Next Target
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* QUOTE ENGINE MODAL */}
       <AnimatePresence>
@@ -597,6 +906,7 @@ export default function ProspectsCRM() {
                 </div>
                 
                 <button 
+                  type="button"
                   onClick={() => setIsQuoteModalOpen(false)} 
                   className="flex items-center gap-2 px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-[10px] font-black uppercase tracking-widest transition-all text-slate-300 hover:text-white"
                 >
@@ -657,7 +967,7 @@ function SuccessModal({ message, onClose }: { message: string | null, onClose: (
               <h3 className="text-xs font-black uppercase tracking-widest text-white leading-none mb-1">Success</h3>
               <p className="text-[10px] font-bold text-slate-400 leading-tight">{message}</p>
             </div>
-            <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors shrink-0">
+            <button type="button" onClick={onClose} className="text-slate-500 hover:text-white transition-colors shrink-0">
               <X size={16} />
             </button>
           </motion.div>

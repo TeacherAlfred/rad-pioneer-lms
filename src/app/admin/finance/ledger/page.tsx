@@ -48,7 +48,8 @@ export default function FinanceLedgerPage() {
       const [profilesRes, enrollmentsRes, billingRes] = await Promise.all([
         supabase.from('profiles').select('id, display_name, role, linked_parent_id, metadata'),
         supabase.from('enrollments').select('student_id, courses(title)'),
-        supabase.from('billing_records').select('*').eq('doc_type', 'invoice').order('created_at', { ascending: false })
+        // NOTE: Declined/Draft invoices are safely ignored here due to the .in() filter
+        supabase.from('billing_records').select('*').eq('doc_type', 'invoice').in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid']).order('created_at', { ascending: false })
       ]);
 
       if (profilesRes.error) throw profilesRes.error;
@@ -81,11 +82,18 @@ export default function FinanceLedgerPage() {
       const processedClients = guardians.map(guardian => {
         // Find linked kids
         const myKids = students.filter(s => s.linked_parent_id === guardian.id);
-        if (myKids.length === 0) return null;
-
+        
+        // Financials (Only valid invoices are in this array)
+        const myInvoices = invoices.filter(i => i.guardian_id === guardian.id);
+        
         // Parse Guardian Metadata for Custom Billing Schedule
         const gMeta = typeof guardian.metadata === 'string' ? JSON.parse(guardian.metadata) : (guardian.metadata || {});
         const billingSchedule = gMeta.billing_schedule || {};
+
+        // CRITICAL FIX: If they are NOT configured AND have NO valid invoice records, exclude them entirely.
+        if (!billingSchedule.frequency && myInvoices.length === 0) {
+          return null;
+        }
 
         // Determine Plan Type (If any kid is in a non-bootcamp course, they are 'Term')
         let isTerm = false;
@@ -105,8 +113,6 @@ export default function FinanceLedgerPage() {
                    : billingSchedule.frequency === 'monthly' ? 'Term (Monthly)' 
                    : isTerm ? 'Term' : 'Bootcamp';
 
-        // Financials
-        const myInvoices = invoices.filter(i => i.guardian_id === guardian.id);
         const lastInv = myInvoices.length > 0 ? myInvoices[0] : null;
         
         let accBalance = 0;
