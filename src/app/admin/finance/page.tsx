@@ -850,20 +850,20 @@ export default function FinancePortal() {
 
         </div>
 
-        {/* RECENT ACTIVITY & PAYFAST LOG */}
+        {/* RECENT ACTIVITY & ALL PAYMENTS LOG */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           
-          {/* GENERAL TRANSACTIONS */}
-          <div className="bg-white/[0.02] border border-white/10 rounded-[40px] p-8 shadow-2xl space-y-6 flex flex-col">
-            <div className="flex items-center justify-between border-b border-white/5 pb-4">
-               <h3 className="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2"><Clock size={16}/> General Activity</h3>
+          {/* GENERAL TRANSACTIONS (Latest 5) */}
+          <div className="bg-white/[0.02] border border-white/10 rounded-[40px] p-8 shadow-2xl flex flex-col h-[500px]">
+            <div className="flex items-center justify-between border-b border-white/5 pb-4 shrink-0">
+               <h3 className="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2"><Clock size={16}/> Recent Transactions</h3>
                <Link href="/admin/finance/ledger" className="text-[10px] font-bold text-blue-400 hover:text-white transition-colors">View Ledger</Link>
             </div>
-            <div className="divide-y divide-white/5 flex-1">
+            <div className="divide-y divide-white/5 flex-1 overflow-y-auto custom-scrollbar pr-2 mt-2">
                {records.slice(0, 5).map(rec => (
                  <div key={rec.id} className="py-4 flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border ${rec.doc_type === 'quote' ? 'bg-purple-500/10 border-purple-500/20 text-purple-400' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border ${rec.doc_type === 'quote' ? 'bg-purple-500/10 border-purple-500/20 text-purple-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
                         {rec.doc_type === 'quote' ? <FileText size={16}/> : <Receipt size={16}/>}
                       </div>
                       <div>
@@ -888,18 +888,18 @@ export default function FinancePortal() {
             </div>
           </div>
 
-          {/* NEW: PAYFAST & PAYMENTS LOG */}
-          <div className="bg-gradient-to-b from-emerald-500/10 to-[#020617] border border-emerald-500/20 rounded-[40px] p-8 shadow-2xl space-y-6 flex flex-col relative overflow-hidden">
+          {/* ALL PAYMENTS LOG (PayFast & Manual) */}
+          <div className="bg-gradient-to-b from-emerald-500/10 to-[#020617] border border-emerald-500/20 rounded-[40px] p-8 shadow-2xl flex flex-col relative overflow-hidden h-[500px]">
             <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none"><CreditCard size={120}/></div>
-            <div className="flex items-center justify-between border-b border-emerald-500/20 pb-4 relative z-10">
-               <h3 className="text-sm font-black uppercase tracking-widest text-emerald-400 flex items-center gap-2"><CreditCard size={16}/> Payment & ITN Log</h3>
-               <Link href="/admin/finance/capture" className="text-[10px] font-bold text-emerald-400 hover:text-white transition-colors">Manual Capture</Link>
+            <div className="flex items-center justify-between border-b border-emerald-500/20 pb-4 shrink-0 relative z-10">
+               <h3 className="text-sm font-black uppercase tracking-widest text-emerald-400 flex items-center gap-2"><CreditCard size={16}/> All Payments Received</h3>
+               <Link href="/admin/finance/capture" className="text-[10px] font-bold text-emerald-400 hover:text-white transition-colors">Capture Manual</Link>
             </div>
-            <div className="divide-y divide-emerald-500/10 flex-1 relative z-10">
+            
+            <div className="divide-y divide-emerald-500/10 flex-1 overflow-y-auto custom-scrollbar pr-2 mt-2 relative z-10">
                {records
                  .filter(r => r.doc_type === 'invoice' && (r.status === 'itn_received' || r.status === 'paid' || Number(r.amount_paid) > 0))
-                 .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
-                 .slice(0, 5)
+                 .sort((a, b) => new Date(b.paid_at || b.updated_at || b.created_at).getTime() - new Date(a.paid_at || a.updated_at || a.created_at).getTime())
                  .map(rec => {
                    const isPayFast = rec.status === 'itn_received';
                    const amountToDisplay = Number(rec.amount_paid) > 0 ? Number(rec.amount_paid) : Number(rec.total_amount);
@@ -914,11 +914,11 @@ export default function FinancePortal() {
                             <p className="font-bold text-sm text-white">{rec.profiles?.display_name || 'Unknown Client'}</p>
                             <div className="flex items-center gap-2 mt-1">
                                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500/70">INV-{rec.invoice_number}</span>
-                               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">• {new Date(rec.updated_at || rec.created_at).toLocaleDateString()}</span>
+                               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">• {new Date(rec.paid_at || rec.updated_at || rec.created_at).toLocaleDateString()}</span>
                             </div>
                           </div>
                         </div>
-                        <div className="text-right">
+                        <div className="text-right shrink-0">
                           <p className="font-black text-emerald-400">+ R {amountToDisplay.toLocaleString()}</p>
                           <p className={`text-[9px] font-black uppercase tracking-widest mt-1 ${isPayFast ? 'text-amber-400 animate-pulse' : 'text-emerald-500'}`}>
                             {isPayFast ? 'PayFast ITN' : 'Manual Paid'}

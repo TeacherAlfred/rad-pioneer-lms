@@ -49,7 +49,7 @@ export default function FinanceLedgerPage() {
         supabase.from('profiles').select('id, display_name, role, linked_parent_id, metadata'),
         supabase.from('enrollments').select('student_id, courses(title)'),
         // NOTE: Declined/Draft invoices are safely ignored here due to the .in() filter
-        supabase.from('billing_records').select('*').eq('doc_type', 'invoice').in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid']).order('created_at', { ascending: false })
+        supabase.from('billing_records').select('*').eq('doc_type', 'invoice').in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid', 'itn_received']).order('created_at', { ascending: false })
       ]);
 
       if (profilesRes.error) throw profilesRes.error;
@@ -118,7 +118,7 @@ export default function FinanceLedgerPage() {
         let accBalance = 0;
         myInvoices.forEach(inv => {
           const amt = Number(inv.total_amount) || 0;
-          if (inv.status === 'pending' || inv.status === 'overdue' || inv.status === 'partially_paid') {
+          if (inv.status === 'pending' || inv.status === 'overdue' || inv.status === 'partially_paid' || inv.status === 'itn_received') {
             accBalance += Math.max(0, amt - Number(inv.amount_paid || 0));
           }
         });
@@ -207,7 +207,7 @@ export default function FinanceLedgerPage() {
             status: inv.status,
             date: new Date(inv.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }),
             dueDate: inv.expires_at ? new Date(inv.expires_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-',
-            paidDate: (inv.status === 'paid' || inv.status === 'settled') ? new Date(inv.updated_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-'
+            paidDate: (inv.status === 'paid' || inv.status === 'settled' || inv.status === 'itn_received') && (inv.paid_at || inv.updated_at) ? new Date(inv.paid_at || inv.updated_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-'
           }));
 
         return {
@@ -580,7 +580,7 @@ export default function FinanceLedgerPage() {
                                               client.history.map((hist: any) => (
                                                 <div key={hist.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-slate-100 hover:border-blue-200 hover:bg-slate-50 transition-colors">
                                                   <div className="flex items-center gap-3">
-                                                    <div className={`p-2 rounded-lg ${hist.status === 'paid' ? 'bg-emerald-50 text-emerald-600' : hist.status === 'pending' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'}`}>
+                                                    <div className={`p-2 rounded-lg ${hist.status === 'paid' ? 'bg-emerald-50 text-emerald-600' : hist.status === 'itn_received' ? 'bg-amber-50 text-amber-600' : hist.status === 'pending' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'}`}>
                                                       <Receipt size={16}/>
                                                     </div>
                                                     <div>
@@ -594,14 +594,14 @@ export default function FinanceLedgerPage() {
                                                   <div className="flex items-center justify-between sm:justify-end gap-6 sm:w-auto">
                                                     <div className="text-right">
                                                       <p className="text-sm font-black text-slate-900">R {hist.amount.toLocaleString()}</p>
-                                                      <p className={`text-[9px] font-black uppercase tracking-widest mt-1 ${hist.status === 'paid' ? 'text-emerald-500' : hist.status === 'pending' ? 'text-blue-500' : 'text-rose-500'}`}>
-                                                        {hist.status}
+                                                      <p className={`text-[9px] font-black uppercase tracking-widest mt-1 ${hist.status === 'paid' ? 'text-emerald-500' : hist.status === 'itn_received' ? 'text-amber-500 animate-pulse' : hist.status === 'pending' ? 'text-blue-500' : 'text-rose-500'}`}>
+                                                        {hist.status.replace('_', ' ')}
                                                       </p>
                                                     </div>
                                                     <div className="text-right w-24">
                                                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-0.5">Clearance</p>
                                                       <p className="text-xs font-bold text-slate-700">{hist.paidDate}</p>
-                                                    </div>
+                                                      </div>
                                                   </div>
                                                 </div>
                                               ))
