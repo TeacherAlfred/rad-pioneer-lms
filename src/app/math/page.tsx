@@ -4,21 +4,22 @@ import { useEffect, useState } from "react";
 import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrapper";
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import { 
-  Zap, Brain, Triangle, Ruler, BarChart, Lock, 
+  Zap, Brain, Triangle, Ruler, BarChart, 
   CheckCircle2, Play, Sparkles, Clock, ChevronRight,
-  Cpu, Mail, ArrowRight, Loader2, X, Target
+  Cpu, Mail, ArrowRight, Loader2, X, Target, Trophy
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
+// ADDED: Premium gradient themes for each sector to make them look like game worlds
 const SECTORS = [
-  { id: 'numbers', title: 'Numbers & Operations', weight: '50%', themeText: 'text-blue-600', themeBg: 'bg-blue-50', themeBorder: 'border-blue-100', themeActive: 'bg-blue-500', icon: Brain, description: 'Number sense, fractions, and calculation logic.' },
-  { id: 'algebra', title: 'Patterns & Algebra', weight: '10%', themeText: 'text-purple-600', themeBg: 'bg-purple-50', themeBorder: 'border-purple-100', themeActive: 'bg-purple-500', icon: Zap, description: 'Flow diagrams, number sentences, and rules.' },
-  { id: 'geometry', title: 'Space & Shape', weight: '15%', themeText: 'text-orange-600', themeBg: 'bg-orange-50', themeBorder: 'border-orange-100', themeActive: 'bg-orange-500', icon: Triangle, description: '2D shapes, 3D objects, and symmetry.' },
-  { id: 'measurement', title: 'Measurement', weight: '15%', themeText: 'text-emerald-600', themeBg: 'bg-emerald-50', themeBorder: 'border-emerald-100', themeActive: 'bg-emerald-500', icon: Ruler, description: 'Time, length, mass, and volume labs.' },
-  { id: 'data', title: 'Data Handling', weight: '10%', themeText: 'text-indigo-600', themeBg: 'bg-indigo-50', themeBorder: 'border-indigo-100', themeActive: 'bg-indigo-500', icon: BarChart, description: 'Graphs, probability, and statistics.' },
+  { id: 'numbers', title: 'Numbers & Ops', weight: '50%', gradient: 'from-blue-600 to-blue-800', shadow: 'shadow-blue-900/20', icon: Brain, description: 'Number sense, fractions, and calculation logic.' },
+  { id: 'algebra', title: 'Patterns & Algebra', weight: '10%', gradient: 'from-purple-600 to-purple-800', shadow: 'shadow-purple-900/20', icon: Zap, description: 'Flow diagrams, number sentences, and rules.' },
+  { id: 'geometry', title: 'Space & Shape', weight: '15%', gradient: 'from-orange-500 to-red-600', shadow: 'shadow-orange-900/20', icon: Triangle, description: '2D shapes, 3D objects, and symmetry.' },
+  { id: 'measurement', title: 'Measurement', weight: '15%', gradient: 'from-emerald-500 to-teal-700', shadow: 'shadow-emerald-900/20', icon: Ruler, description: 'Time, length, mass, and volume labs.' },
+  { id: 'data', title: 'Data Handling', weight: '10%', gradient: 'from-indigo-600 to-blue-900', shadow: 'shadow-indigo-900/20', icon: BarChart, description: 'Graphs, probability, and statistics.' },
 ];
 
 export default function MathQuestMap() {
@@ -27,15 +28,14 @@ export default function MathQuestMap() {
   const [hasCompletedSprint, setHasCompletedSprint] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const [selectedLevels, setSelectedLevels] = useState<Record<string, number>>({
-    numbers: 1, algebra: 1, geometry: 1, measurement: 1, data: 1
-  });
-
   const [isRewardsOpen, setIsRewardsOpen] = useState(false);
   const [unlockStatus, setUnlockStatus] = useState<'idle' | 'processing' | 'success'>('idle');
+  const [leaderboardTab, setLeaderboardTab] = useState<string>('overall');
+  const [leaders, setLeaders] = useState<any[]>([]);
+  const [isLoadingLeaders, setIsLoadingLeaders] = useState(false);
 
   useEffect(() => {
-    async function checkDailySprint() {
+    async function checkDailySprintAndProfile() {
       const sessionData = localStorage.getItem("pioneer_session");
       if (!sessionData) return;
       const localUser = JSON.parse(sessionData);
@@ -54,8 +54,31 @@ export default function MathQuestMap() {
       if (sprint && sprint.length > 0) setHasCompletedSprint(true);
       setLoading(false);
     }
-    checkDailySprint();
+    checkDailySprintAndProfile();
   }, []);
+
+  useEffect(() => {
+    async function fetchLeaders() {
+      setIsLoadingLeaders(true);
+      try {
+        const sortColumn = leaderboardTab === 'overall' ? 'sparks' : `${leaderboardTab}_xp`;
+        const { data, error } = await supabase
+          .from('profiles')
+          .select(`student_identifier, ${sortColumn}`)
+          .not(sortColumn, 'is', null) 
+          .order(sortColumn, { ascending: false })
+          .limit(5);
+
+        if (error) throw error;
+        setLeaders(data || []);
+      } catch (error: any) {
+        setLeaders([]);
+      } finally {
+        setIsLoadingLeaders(false);
+      }
+    }
+    fetchLeaders();
+  }, [leaderboardTab]);
 
   const handleUnlockMission = async () => {
     if (!userProfile || userProfile.sparks < 5) return;
@@ -67,15 +90,14 @@ export default function MathQuestMap() {
       await new Promise(resolve => setTimeout(resolve, 2500)); 
       setUnlockStatus('success');
     } catch (error) {
-      console.error("Unlock failed", error);
       setUnlockStatus('idle');
     }
   };
 
   if (loading) return (
-    <div className="h-screen bg-[#F8FAFC] flex flex-col items-center justify-center gap-4">
-      <Loader2 className="animate-spin text-blue-600" size={40} />
-      <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Loading_Math_Lab</span>
+    <div className="h-screen bg-[#0B1120] flex flex-col items-center justify-center gap-4">
+      <Loader2 className="animate-spin text-blue-500" size={40} />
+      <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Initializing_World</span>
     </div>
   );
 
@@ -86,33 +108,40 @@ export default function MathQuestMap() {
     nextLevel: { name: "Math Lead", xpRequired: 1000 }
   };
 
+  const getLeaderScore = (leader: any) => {
+    const score = leaderboardTab === 'overall' ? leader.sparks : leader[`${leaderboardTab}_xp`];
+    return score || 0;
+  };
+
+  const formatUsername = (identifier: string, index: number) => identifier || `Pioneer_${index + 104}`;
+
   return (
     <DashboardClientWrapper initialStats={stats}>
       <main className="min-h-screen lg:mr-80 bg-[#F8FAFC] text-slate-900 relative overflow-hidden pb-24">
         
-        <div className="absolute inset-0 opacity-[0.4] pointer-events-none" 
-             style={{ backgroundImage: 'radial-gradient(#CBD5E1 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+        {/* Subtle grid background */}
+        <div className="absolute inset-0 opacity-[0.4] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#CBD5E1 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
         
-        <div className="max-w-5xl mx-auto p-6 md:p-12 space-y-10 relative z-10">
+        <div className="max-w-6xl mx-auto p-6 md:p-8 lg:p-12 space-y-8 relative z-10">
           
           {/* HEADER SECTION */}
-          <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-slate-200 pb-8">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-blue-600">
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-blue-600 mb-2">
                 <Target size={16} />
-                <span className="text-[10px] font-black uppercase tracking-[0.4em]">Main Logic Interface</span>
+                <span className="text-[10px] font-black uppercase tracking-[0.4em]">Sector Selection</span>
               </div>
-              <h1 className="text-5xl md:text-7xl font-black tracking-tighter uppercase italic leading-none text-slate-900">
-                Quest_<span className="text-blue-600">Map</span>
+              <h1 className="text-5xl md:text-7xl font-black tracking-tighter uppercase italic leading-none text-slate-900 drop-shadow-sm">
+                Quest_<span className="text-blue-600 text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">Map</span>
               </h1>
             </div>
 
             <button 
               onClick={() => setIsRewardsOpen(true)}
-              className="bg-white/80 backdrop-blur-md px-6 py-4 rounded-[32px] border border-white shadow-sm flex items-center gap-6 hover:shadow-xl hover:-translate-y-1 transition-all group"
+              className="bg-white/80 backdrop-blur-md px-6 py-4 rounded-[32px] border border-white shadow-lg flex items-center gap-6 hover:shadow-xl hover:-translate-y-1 transition-all group"
             >
               <div className="text-left">
-                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Pioneer Sparks</p>
+                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">BrainBux Balance</p>
                 <p className="text-3xl font-black text-amber-500 italic leading-none tabular-nums">{userProfile?.sparks || 0}</p>
               </div>
               <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500 border border-amber-100 shadow-inner group-hover:rotate-12 transition-transform">
@@ -121,96 +150,183 @@ export default function MathQuestMap() {
             </button>
           </header>
 
-          {/* UNIFIED GRADE SUB-HEADER */}
-          <div className="relative group w-full md:w-fit mx-auto md:mx-0">
-             <div className="relative bg-white border border-slate-200 px-8 py-4 rounded-2xl shadow-sm flex flex-col md:flex-row items-center gap-4">
-                <div className="flex items-center gap-2">
-                   <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                   <span className="text-xs font-black uppercase tracking-widest text-slate-900">Unified CAPS Curriculum</span>
-                </div>
-                <div className="hidden md:block w-px h-4 bg-slate-200" />
-                <span className="text-xs font-bold text-blue-600 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full border border-blue-100">Grades 4 — 6</span>
-             </div>
-          </div>
-
-          {/* THE SECTOR MAP GRID */}
-          <div className="relative">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {SECTORS.map((sector) => {
-                const currentLevel = selectedLevels[sector.id] || 1;
-
-                return (
-                  <motion.div 
-                    key={sector.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className={`group relative bg-white border border-slate-100 rounded-[50px] p-8 md:p-10 transition-all hover:shadow-[0_30px_60px_rgba(0,0,0,0.04)] ${!hasCompletedSprint ? 'blur-[4px] pointer-events-none grayscale opacity-30' : ''}`}
-                  >
-                    {/* Header: Icon and Full-Width Heading */}
-                    <div className="flex items-center gap-5 mb-8">
-                       <div className={`w-16 h-16 shrink-0 rounded-[22px] ${sector.themeBg} ${sector.themeText} flex items-center justify-center border ${sector.themeBorder} shadow-sm group-hover:scale-105 transition-transform`}>
-                         <sector.icon size={32} />
-                       </div>
-                       <div className="flex-1 min-w-0">
-                          <h3 className="text-2xl md:text-3xl font-black uppercase italic tracking-tighter text-slate-900 leading-[0.9] break-words">
+          {/* MAIN TWO-COLUMN LAYOUT */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
+            
+            {/* LEFT COLUMN: THE MATHS LABS (Primary Focus - takes up 2/3 of space) */}
+            <div className="xl:col-span-2 relative">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                {SECTORS.map((sector, index) => {
+                  // Make the first card (Numbers) span full width to anchor the design
+                  const isFeatured = index === 0;
+                  
+                  return (
+                    <motion.div 
+                      key={sector.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                      className={`group relative overflow-hidden rounded-[40px] bg-gradient-to-br ${sector.gradient} shadow-xl ${sector.shadow} transition-all hover:scale-[1.02] hover:shadow-2xl cursor-pointer ${!hasCompletedSprint ? 'blur-[3px] grayscale opacity-40 pointer-events-none' : ''} ${isFeatured ? 'sm:col-span-2' : ''}`}
+                      onClick={() => { if(hasCompletedSprint) router.push(`/math/lab/${sector.id}`); }}
+                    >
+                      {/* Massive Watermark Icon */}
+                      <sector.icon className="absolute -bottom-8 -right-8 w-64 h-64 text-white opacity-10 group-hover:scale-110 group-hover:rotate-6 transition-transform duration-500" />
+                      
+                      <div className="relative z-10 p-8 md:p-10 flex flex-col h-full min-h-[280px]">
+                        <div className="flex-1">
+                          <div className="flex justify-between items-start">
+                            <div className="w-14 h-14 bg-white/10 backdrop-blur-md border border-white/20 rounded-[20px] flex items-center justify-center text-white mb-6 shadow-inner">
+                              <sector.icon size={28} />
+                            </div>
+                            <div className="bg-black/20 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/10 text-[9px] font-black text-white uppercase tracking-widest">
+                              {sector.weight} Weight
+                            </div>
+                          </div>
+                          
+                          <h3 className="text-3xl md:text-4xl font-black uppercase italic tracking-tighter text-white leading-none mb-3 drop-shadow-md">
                             {sector.title}
                           </h3>
-                       </div>
-                    </div>
-                    
-                    <div className="space-y-4">
-                      {/* CAPS Weight Sit as a small badge before description */}
-                      <div className="flex items-center gap-2">
-                        <span className="text-[8px] font-black text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded uppercase tracking-widest">
-                          {sector.weight} Curriculum Weight
-                        </span>
+                          <p className="text-white/80 text-sm font-medium leading-relaxed max-w-[85%]">
+                            {sector.description}
+                          </p>
+                        </div>
+                        
+                        <div className="mt-8 flex items-end justify-between">
+                          {/* Fake Mastery Bar for Stickiness */}
+                          <div className="w-1/2 space-y-2">
+                            <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-white/70">
+                              <span>Mastery</span>
+                              <span>Lvl 1</span>
+                            </div>
+                            <div className="h-2 w-full bg-black/20 rounded-full overflow-hidden border border-white/10">
+                              <div className="h-full bg-white rounded-full w-[15%]" />
+                            </div>
+                          </div>
+
+                          <div className="w-14 h-14 bg-white text-slate-900 rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(255,255,255,0.3)] group-hover:bg-slate-900 group-hover:text-white transition-colors">
+                            <Play size={24} fill="currentColor" className="ml-1" />
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-sm text-slate-500 leading-relaxed font-medium line-clamp-2 min-h-[40px]">
-                        {sector.description}
-                      </p>
-                    </div>
-                    
-                    <div className="mt-10 pt-8 border-t border-slate-50 flex items-center justify-between">
-                     
-                      <Link 
-                        href={`/math/lab/${sector.id}?level=${currentLevel}&grade=4`} 
-                        className={`flex items-center gap-2 text-xs font-black uppercase ${sector.themeText} hover:gap-4 transition-all active:scale-95`}
+                    </motion.div>
+                  );
+                })}
+              </div>
+
+              {/* LOCKED OVERLAY - Covers just the labs area */}
+              <AnimatePresence>
+                {!hasCompletedSprint && (
+                  <motion.div 
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                    className="absolute inset-0 z-20 flex items-center justify-center"
+                  >
+                    <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-700 p-10 rounded-[50px] shadow-2xl max-w-sm text-center space-y-6">
+                      <div className="w-20 h-20 bg-blue-500/20 text-blue-400 rounded-[28px] flex items-center justify-center mx-auto border border-blue-500/30">
+                        <Clock size={40} />
+                      </div>
+                      <div>
+                        <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white mb-2">Access Denied</h2>
+                        <p className="text-slate-400 text-sm font-medium leading-relaxed">
+                          The Lab network is locked. Complete your daily Brain Check to power up the modules.
+                        </p>
+                      </div>
+                      <button 
+                        onClick={() => router.push('/math/sprint')}
+                        className="flex items-center justify-center gap-3 w-full py-5 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-[0.1em] text-xs hover:bg-blue-500 transition-all shadow-[0_0_20px_rgba(37,99,235,0.4)]"
                       >
-                        Enter Lab <ChevronRight size={18} strokeWidth={3} />
-                      </Link>
+                        Start Brain Check <ChevronRight size={18} />
+                      </button>
                     </div>
                   </motion.div>
-                );
-              })}
+                )}
+              </AnimatePresence>
             </div>
 
-            {/* LOCKED STATE OVERLAY */}
-            <AnimatePresence>
-              {!hasCompletedSprint && (
-                <motion.div 
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                  className="absolute inset-0 z-20 flex items-start justify-center pt-20"
-                >
-                  <div className="bg-white/90 backdrop-blur-xl border border-blue-100 p-10 md:p-14 rounded-[60px] shadow-[0_50px_100px_rgba(0,0,0,0.1)] max-w-md text-center space-y-8 sticky top-32">
-                    <div className="w-24 h-24 bg-blue-600 text-white rounded-[32px] flex items-center justify-center mx-auto shadow-[0_20px_40px_rgba(37,99,235,0.3)]">
-                      <Clock size={48} />
-                    </div>
-                    <div className="space-y-3">
-                      <h2 className="text-3xl font-black uppercase italic tracking-tighter leading-none text-slate-900 text-center">Brain Check Needed</h2>
-                      <p className="text-slate-500 text-sm font-medium leading-relaxed">
-                        Finish your quick Brain Check to unlock the laboratory and start earning rewards for today.
-                      </p>
-                    </div>
-                    <button 
-                      onClick={() => window.location.href = '/math/sprint'}
-                      className="flex items-center justify-center gap-3 w-full py-6 bg-blue-600 text-white rounded-[28px] font-black uppercase tracking-[0.1em] text-xs hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 active:scale-[0.98]"
-                    >
-                      Start Brain Check <ChevronRight size={18} />
-                    </button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* RIGHT COLUMN: COMMAND CENTER (Leaderboard & Meta info) */}
+            <div className="xl:col-span-1 space-y-6">
+              
+              {/* CAPS Info Module */}
+              <div className="bg-white border border-slate-200 p-6 rounded-[32px] shadow-sm flex items-center gap-5">
+                 <div className="w-12 h-12 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-center shrink-0">
+                    <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+                 </div>
+                 <div>
+                   <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Curriculum Sync</h3>
+                   <p className="text-sm font-black text-slate-800 uppercase tracking-wide">Unified CAPS Gr 4-6</p>
+                 </div>
+              </div>
+
+              {/* Leaderboard Module */}
+              <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col h-full min-h-[500px]">
+                 <div className="flex items-center gap-3 text-slate-800 mb-6">
+                   <div className="w-10 h-10 bg-amber-50 text-amber-500 rounded-xl flex items-center justify-center border border-amber-100">
+                     <Trophy size={20} />
+                   </div>
+                   <div>
+                     <h2 className="text-lg font-black uppercase italic tracking-tighter leading-none">Global Ranks</h2>
+                     <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">Top Earners Network</p>
+                   </div>
+                 </div>
+
+                 {/* Custom Scrollbar Tabs */}
+                 <div className="flex flex-wrap gap-2 mb-6">
+                   {['overall', 'numbers', 'algebra', 'geometry', 'measurement', 'data'].map((tab) => (
+                     <button 
+                       key={tab}
+                       onClick={() => setLeaderboardTab(tab)}
+                       className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${leaderboardTab === tab ? 'bg-slate-900 text-white shadow-md scale-105' : 'bg-slate-50 text-slate-400 hover:bg-slate-100'}`}
+                     >
+                       {tab.substring(0, 4)}
+                     </button>
+                   ))}
+                 </div>
+
+                 <div className="flex-1 space-y-3 relative bg-slate-50 rounded-2xl p-4 border border-slate-100 overflow-hidden">
+                   {isLoadingLeaders ? (
+                     <div className="absolute inset-0 flex items-center justify-center">
+                        <Loader2 className="animate-spin text-blue-500" size={24} />
+                     </div>
+                   ) : (
+                     <>
+                       {leaders.slice(0, 5).map((leader, idx) => (
+                         <motion.div 
+                           initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.1 }}
+                           key={idx} 
+                           className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-slate-100 shadow-sm"
+                         >
+                           <div className="flex items-center gap-3">
+                             <div className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-xs ${idx === 0 ? 'bg-gradient-to-br from-amber-300 to-amber-500 text-white shadow-md' : idx === 1 ? 'bg-slate-300 text-white' : idx === 2 ? 'bg-orange-300 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                               {idx + 1}
+                             </div>
+                             <span className="font-bold text-slate-700 text-xs truncate max-w-[100px]">
+                               {formatUsername(leader.student_identifier, idx)}
+                             </span>
+                           </div>
+                           <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+                             <span className="text-xs font-black text-amber-500 tabular-nums">
+                                {getLeaderScore(leader)}
+                             </span>
+                             {leaderboardTab === 'overall' ? (
+                                <Zap size={12} className="text-amber-400" fill="currentColor" />
+                             ) : (
+                                <span className="text-[8px] font-black uppercase text-amber-400">XP</span>
+                             )}
+                           </div>
+                         </motion.div>
+                       ))}
+                       {leaders.length === 0 && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-4">
+                             <BarChart className="text-slate-300 mb-2" size={24} />
+                             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                               Awaiting Data Core
+                             </p>
+                          </div>
+                       )}
+                     </>
+                   )}
+                 </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -238,7 +354,7 @@ export default function MathQuestMap() {
                     <div>
                       <h2 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900">Pioneer Depot</h2>
                       <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest">
-                        Available Balance: {userProfile?.sparks || 0} Sparks
+                        Balance: {userProfile?.sparks || 0} BrainBux
                       </p>
                     </div>
                   </div>
@@ -254,7 +370,7 @@ export default function MathQuestMap() {
                     <div className="space-y-8">
                       <div className="text-left space-y-2">
                         <h3 className="text-xl font-black uppercase italic tracking-tight text-slate-800">New Mission Detected</h3>
-                        <p className="text-sm text-slate-500 font-medium">Trade your sparks to unlock premium engineering missions.</p>
+                        <p className="text-sm text-slate-500 font-medium">Trade your BrainBux to unlock premium engineering missions.</p>
                       </div>
 
                       <div className="bg-white border border-slate-200 rounded-[36px] p-8 flex flex-col items-center gap-6 shadow-sm">
@@ -266,7 +382,7 @@ export default function MathQuestMap() {
                           <p className="text-xs text-slate-500 font-medium leading-relaxed max-w-xs mx-auto text-center">Build an automated logic system using robotics hardware components.</p>
                         </div>
                         <div className="bg-slate-900 text-white px-8 py-3 rounded-full flex items-center gap-3 font-black text-xs uppercase tracking-widest shadow-xl shadow-slate-200">
-                          Cost: <span className="text-amber-400 flex items-center gap-1"><Zap size={14} fill="currentColor"/> 5 Sparks</span>
+                          Cost: <span className="text-amber-400 flex items-center gap-1"><Zap size={14} fill="currentColor"/> 5 Bux</span>
                         </div>
                       </div>
 
@@ -276,11 +392,11 @@ export default function MathQuestMap() {
                             onClick={handleUnlockMission}
                             className="w-full py-6 bg-blue-600 text-white rounded-[28px] font-black uppercase italic tracking-widest text-xs hover:bg-blue-700 transition-all shadow-2xl shadow-blue-100 active:scale-[0.98]"
                           >
-                            Spend 5 Sparks to Unlock
+                            Spend 5 BrainBux to Unlock
                           </button>
                         ) : (
                           <div className="w-full py-6 bg-slate-200 text-slate-400 rounded-[28px] font-black uppercase italic tracking-widest text-xs text-center cursor-not-allowed">
-                            Need {5 - (userProfile?.sparks || 0)} more Sparks
+                            Need {5 - (userProfile?.sparks || 0)} more BrainBux
                           </div>
                         )}
                       </div>

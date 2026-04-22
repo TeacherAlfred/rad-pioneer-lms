@@ -1,36 +1,36 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Zap, Clock, CheckCircle2, ChevronRight, Brain, Smile, Frown, Meh, Target, Trophy, Loader2, ArrowRight
 } from "lucide-react";
+import { MATH_BANK, MathQuestion } from "@/lib/mathDatabase";
 
 type SprintPhase = 'mood' | 'countdown' | 'sprint' | 'results';
-
-interface Question {
-  num1: number;
-  num2: number;
-  operator: string;
-  answer: number;
-}
 
 export default function DailySprintPage() {
   const router = useRouter();
   const [userProfile, setUserProfile] = useState<any>(null);
+  
+  // Game State
   const [phase, setPhase] = useState<SprintPhase>('mood');
   const [mood, setMood] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(3);
   const [timeLeft, setTimeLeft] = useState(60);
-  const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
-  const [userAnswer, setUserAnswer] = useState("");
+  
+  // Adaptive Engine State
+  const [currentDifficulty, setCurrentDifficulty] = useState(1);
+  const [currentQuestion, setCurrentQuestion] = useState<MathQuestion | null>(null);
   const [score, setScore] = useState(0);
   const [totalAttempts, setTotalAttempts] = useState(0);
+  
+  // UI State
   const [isError, setIsError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadUser() {
@@ -43,51 +43,54 @@ export default function DailySprintPage() {
     loadUser();
   }, [router]);
 
-  const generateQuestion = useCallback(() => {
-    const operators = ['+', '-', 'x', '÷'];
-    const operator = operators[Math.floor(Math.random() * operators.length)];
-    let num1 = 0, num2 = 0, answer = 0;
-
-    switch(operator) {
-      case '+':
-        num1 = Math.floor(Math.random() * 40) + 10;
-        num2 = Math.floor(Math.random() * 40) + 10;
-        answer = num1 + num2;
-        break;
-      case '-':
-        num1 = Math.floor(Math.random() * 50) + 20;
-        num2 = Math.floor(Math.random() * (num1 - 5)) + 1;
-        answer = num1 - num2;
-        break;
-      case 'x':
-        num1 = Math.floor(Math.random() * 12) + 2;
-        num2 = Math.floor(Math.random() * 10) + 2;
-        answer = num1 * num2;
-        break;
-      case '÷':
-        num2 = Math.floor(Math.random() * 10) + 2;
-        answer = Math.floor(Math.random() * 10) + 2;
-        num1 = num2 * answer;
-        break;
+  // SMART ADAPTIVE QUESTION GENERATOR
+  const generateQuestion = useCallback((difficultyLevel: number) => {
+    // Filter bank to find questions matching the target difficulty
+    const availableQuestions = MATH_BANK.filter(q => q.level === difficultyLevel);
+    
+    // Fallback if something goes wrong (e.g. asking for level 6)
+    if (availableQuestions.length === 0) {
+       const fallback = MATH_BANK.filter(q => q.level === 5);
+       setCurrentQuestion(fallback[Math.floor(Math.random() * fallback.length)]);
+       return;
     }
-    setCurrentQuestion({ num1, num2, operator, answer });
-    setUserAnswer("");
+
+    // Pick a random question from that difficulty pool
+    const nextQ = availableQuestions[Math.floor(Math.random() * availableQuestions.length)];
+    
+    // Shuffle the options so the answer isn't always in the same place
+    const shuffledOptions = [...nextQ.options].sort(() => Math.random() - 0.5);
+    
+    setCurrentQuestion({ ...nextQ, options: shuffledOptions });
+    setSelectedOption(null);
   }, []);
 
-  const handleManualSubmit = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!currentQuestion || userAnswer === "") return;
+  const handleAnswerSubmit = (chosenAnswer: string) => {
+    if (!currentQuestion) return;
 
+    setSelectedOption(chosenAnswer);
     setTotalAttempts(prev => prev + 1);
-    if (parseInt(userAnswer) === currentQuestion.answer) {
-      setScore(prev => prev + 1);
-      generateQuestion();
+
+    if (chosenAnswer === currentQuestion.answer) {
+      // CORRECT: Increase score based on difficulty multiplier, bump difficulty up (max 5)
+      setScore(prev => prev + currentQuestion.level);
+      const newDifficulty = Math.min(5, currentDifficulty + 1);
+      setCurrentDifficulty(newDifficulty);
+      
+      setTimeout(() => {
+        generateQuestion(newDifficulty);
+      }, 500);
+
     } else {
+      // INCORRECT: Drop difficulty down to rebuild confidence (min 1)
       setIsError(true);
+      const newDifficulty = Math.max(1, currentDifficulty - 1);
+      setCurrentDifficulty(newDifficulty);
+      
       setTimeout(() => {
         setIsError(false);
-        setUserAnswer("");
-      }, 400);
+        generateQuestion(newDifficulty);
+      }, 800);
     }
   };
 
@@ -98,10 +101,10 @@ export default function DailySprintPage() {
         return () => clearTimeout(timer);
       } else {
         setPhase('sprint');
-        generateQuestion();
+        generateQuestion(currentDifficulty); // Start at level 1
       }
     }
-  }, [phase, countdown, generateQuestion]);
+  }, [phase, countdown, generateQuestion, currentDifficulty]);
 
   useEffect(() => {
     if (phase === 'sprint' && timeLeft > 0) {
@@ -112,17 +115,15 @@ export default function DailySprintPage() {
     }
   }, [phase, timeLeft]);
 
-  useEffect(() => {
-    if (phase === 'sprint' && inputRef.current) inputRef.current.focus();
-  }, [phase, currentQuestion]);
-
   const handleSprintComplete = async () => {
     setPhase('results');
     setIsSaving(true);
     if (!userProfile) return;
+    
     const accuracy = totalAttempts > 0 ? Math.round((score / totalAttempts) * 100) : 0;
     const earnedXP = score * 10;
     const earnedSparks = score >= 10 ? 2 : 1;
+    
     try {
       await supabase.from('math_daily_sprints').insert({
         student_id: userProfile.id,
@@ -138,20 +139,17 @@ export default function DailySprintPage() {
     } catch (err) { console.error(err); } finally { setIsSaving(false); }
   };
 
-  // Timer Path Logic (Rounded Rect Path)
-  // Perimeter of a rounded rect is approx: 2*(w+h) - 8*r + 2*PI*r
-  // Using a simplified path for perfect control.
   const w = 340; const h = 440; const r = 60;
   const pathData = `M${r},4 H${w-r} A${r-4},${r-4} 0 0 1 ${w-4},${r} V${h-r} A${r-4},${r-4} 0 0 1 ${w-r},${h-4} H${r} A${r-4},${r-4} 0 0 1 4,${h-r} V${r} A${r-4},${r-4} 0 0 1 ${r},4`;
-  const totalLen = 1350; // Approximated length for the dasharray
+  const totalLen = 1350; 
 
   return (
     <main className="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col items-center justify-center p-4 md:p-6 relative overflow-hidden">
-      {/* HUD Grid */}
       <div className="absolute inset-0 opacity-[0.4] pointer-events-none" 
            style={{ backgroundImage: 'radial-gradient(#CBD5E1 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
 
       <AnimatePresence mode="wait">
+        {/* MOOD PHASE */}
         {phase === 'mood' && (
           <motion.div key="mood" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white/80 backdrop-blur-2xl border border-white rounded-[48px] p-8 md:p-12 max-w-lg w-full text-center shadow-xl relative z-10">
             <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-[24px] flex items-center justify-center mx-auto mb-8 border border-blue-100 shadow-inner"><Brain size={40} /></div>
@@ -168,20 +166,26 @@ export default function DailySprintPage() {
           </motion.div>
         )}
 
+        {/* COUNTDOWN PHASE */}
         {phase === 'countdown' && (
           <motion.div key="countdown" initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 2, opacity: 0 }} className="flex flex-col items-center justify-center relative z-10">
-            <p className="text-blue-600 font-black uppercase tracking-[0.5em] text-xs mb-4">Starting Game</p>
+            <p className="text-blue-600 font-black uppercase tracking-[0.5em] text-xs mb-4">Starting Sprint</p>
             <div className="text-[12rem] md:text-[15rem] font-black italic text-slate-900 leading-none tracking-tighter">{countdown}</div>
           </motion.div>
         )}
 
+        {/* ACTIVE SPRINT PHASE */}
         {phase === 'sprint' && currentQuestion && (
-          <motion.div key="sprint" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="w-full max-w-lg relative z-10 px-4">
+          <motion.div key="sprint" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="w-full max-w-2xl relative z-10 px-4">
+            
             {/* Header HUD */}
-            <div className="flex justify-between items-center mb-10">
+            <div className="flex justify-between items-center mb-6 md:mb-10">
               <div className="flex items-center gap-3 bg-white/80 backdrop-blur-md px-5 py-2.5 rounded-2xl border border-white shadow-sm">
                 <Clock className={timeLeft <= 10 ? "text-rose-500 animate-pulse" : "text-blue-600"} size={18} />
                 <span className={`text-lg font-black tabular-nums leading-none ${timeLeft <= 10 ? "text-rose-600" : "text-slate-900"}`}>00:{timeLeft.toString().padStart(2, '0')}</span>
+              </div>
+              <div className="flex flex-col items-center justify-center">
+                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-white px-3 py-1 rounded-full border border-slate-200">Level {currentDifficulty}</span>
               </div>
               <div className="flex items-center gap-3 bg-white/80 backdrop-blur-md px-5 py-2.5 rounded-2xl border border-white shadow-sm">
                 <span className="text-lg font-black tabular-nums text-emerald-600 leading-none">{score} PTS</span>
@@ -189,54 +193,43 @@ export default function DailySprintPage() {
               </div>
             </div>
 
-            <div className="relative flex items-center justify-center">
-              {/* THE PERIMETER TIMER SVG - Path based for perfect fit */}
-              <div className="absolute inset-0 -m-4">
-                <svg className="w-full h-full pointer-events-none overflow-visible" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-                   <path d={pathData} fill="transparent" stroke="#F1F5F9" strokeWidth="6" strokeLinecap="round" />
-                   <motion.path 
-                    d={pathData} fill="transparent" 
-                    stroke={timeLeft <= 10 ? "#F43F5E" : "#2563EB"} 
-                    strokeWidth="6"
-                    strokeDasharray={totalLen}
-                    animate={{ strokeDashoffset: totalLen - (timeLeft / 60) * totalLen }}
-                    transition={{ duration: 1, ease: "linear" }}
-                    strokeLinecap="round"
-                  />
-                </svg>
+            {/* Main Question Card */}
+            <motion.div animate={isError ? { x: [-8, 8, -8, 8, 0] } : {}} className={`bg-white rounded-[48px] p-8 md:p-12 border ${isError ? 'border-rose-300 bg-rose-50/20' : 'border-slate-100'} flex flex-col items-center shadow-[0_25px_60px_rgba(0,0,0,0.04)] relative z-10 w-full text-center`}>
+              
+              <div className="mb-10 space-y-4">
+                 <span className="inline-flex text-[10px] font-black uppercase tracking-widest text-blue-500 bg-blue-50 px-3 py-1 rounded-md">{currentQuestion.sector}</span>
+                 <h2 className="text-2xl md:text-4xl font-black italic tracking-tighter text-slate-900 leading-tight">
+                   {currentQuestion.question}
+                 </h2>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                 {currentQuestion.options.map((opt, idx) => {
+                    const isSelected = selectedOption === opt;
+                    const isCorrectAnswer = opt === currentQuestion.answer;
+                    
+                    let btnClass = "bg-slate-50 border-slate-200 text-slate-700 hover:bg-blue-50 hover:border-blue-200";
+                    if (isSelected && isCorrectAnswer) btnClass = "bg-emerald-500 border-emerald-600 text-white shadow-lg";
+                    if (isSelected && !isCorrectAnswer) btnClass = "bg-rose-500 border-rose-600 text-white shadow-lg";
+
+                    return (
+                      <button 
+                        key={idx}
+                        onClick={() => handleAnswerSubmit(opt)}
+                        disabled={selectedOption !== null}
+                        className={`w-full py-5 md:py-6 rounded-2xl border-2 text-xl font-black transition-all ${btnClass}`}
+                      >
+                        {opt}
+                      </button>
+                    )
+                 })}
               </div>
 
-              {/* Main Card */}
-              <motion.div animate={isError ? { x: [-8, 8, -8, 8, 0] } : {}} className={`bg-white rounded-[60px] p-10 md:p-14 border ${isError ? 'border-rose-300 bg-rose-50/20' : 'border-slate-100'} flex flex-col items-center shadow-[0_25px_60px_rgba(0,0,0,0.04)] relative z-10 w-full`}>
-                <div className="flex items-center justify-center gap-4 text-6xl md:text-8xl font-black italic tracking-tighter text-slate-900 mb-10">
-                  <span>{currentQuestion.num1}</span>
-                  <span className="text-blue-600">{currentQuestion.operator}</span>
-                  <span>{currentQuestion.num2}</span>
-                </div>
-                
-                <form onSubmit={handleManualSubmit} className="w-full max-w-[280px] space-y-6">
-                  <div className="relative">
-                    <input
-                      ref={inputRef}
-                      type="number"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={userAnswer}
-                      onChange={(e) => setUserAnswer(e.target.value)}
-                      className="w-full bg-slate-50 border-2 border-slate-100 rounded-[32px] py-6 text-center text-5xl font-black text-slate-900 outline-none focus:border-blue-600 focus:bg-white transition-all shadow-inner"
-                      placeholder="?"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <button type="submit" className="w-full bg-slate-900 text-white rounded-[24px] py-5 flex items-center justify-center gap-3 font-black uppercase tracking-widest text-[10px] md:text-xs hover:bg-blue-600 active:scale-[0.98] transition-all shadow-lg">
-                    Confirm Answer <ArrowRight size={18} />
-                  </button>
-                </form>
-              </motion.div>
-            </div>
+            </motion.div>
           </motion.div>
         )}
 
+        {/* RESULTS PHASE */}
         {phase === 'results' && (
           <motion.div key="results" initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="bg-white/70 backdrop-blur-3xl border border-white rounded-[60px] p-8 md:p-14 max-w-lg w-full text-center shadow-2xl relative z-10 overflow-hidden">
             <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-64 bg-gradient-to-b from-blue-400/5 to-transparent -z-10" />
@@ -259,7 +252,7 @@ export default function DailySprintPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 mb-8 md:mb-10">
                   <div className="p-4 md:p-6 rounded-[28px] md:rounded-[36px] bg-slate-50/50 border border-white shadow-inner">
-                    <div className="flex items-center justify-center gap-2 mb-2 md:mb-3 text-slate-400"><CheckCircle2 size={12} /><span className="text-[8px] md:text-[9px] font-black uppercase tracking-widest">Correct</span></div>
+                    <div className="flex items-center justify-center gap-2 mb-2 md:mb-3 text-slate-400"><CheckCircle2 size={12} /><span className="text-[8px] md:text-[9px] font-black uppercase tracking-widest">Score</span></div>
                     <p className="text-4xl md:text-5xl font-black text-slate-900 italic tracking-tighter">{score}</p>
                   </div>
                   <div className="p-4 md:p-6 rounded-[28px] md:rounded-[36px] bg-slate-50/50 border border-white shadow-inner">

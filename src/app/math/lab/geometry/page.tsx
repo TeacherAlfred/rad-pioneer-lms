@@ -1,40 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrapper";
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, Triangle, Zap, CheckCircle2, RefreshCcw, Sparkles, Shield, 
-  Square, RectangleHorizontal, Hexagon, Box
+  Square, RectangleHorizontal, Hexagon, Box, Loader2, AlertCircle
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-
-// CAPS Context: Space & Shape (Properties of 3D Objects & 2D Faces)
-const CHALLENGES = [
-  { 
-    id: 'cube', 
-    targetName: 'Cube', 
-    targetImage: <Box size={64} className="text-orange-500" strokeWidth={1.5} />,
-    prompt: 'Construct a Cube. Gather the required 2D faces from the supply room.',
-    requiredFaces: { square: 6, triangle: 0, rectangle: 0, hexagon: 0 }
-  },
-  { 
-    id: 'sq_pyramid', 
-    targetName: 'Square-Based Pyramid', 
-    targetImage: <Triangle size={64} className="text-orange-500" strokeWidth={1.5} fill="currentColor" fillOpacity={0.2} />,
-    prompt: 'Construct a Square-Based Pyramid. Gather the exact faces needed.',
-    requiredFaces: { square: 1, triangle: 4, rectangle: 0, hexagon: 0 }
-  },
-  { 
-    id: 'tri_prism', 
-    targetName: 'Triangular Prism', 
-    targetImage: <Box size={64} className="text-orange-500" strokeWidth={1.5} style={{ transform: 'skewY(-15deg)' }} />,
-    prompt: 'Construct a Triangular Prism. Analyze its sides and bases carefully.',
-    requiredFaces: { square: 0, triangle: 2, rectangle: 3, hexagon: 0 }
-  }
-];
 
 const SHAPE_TOOLS = [
   { id: 'square', name: 'Square', icon: Square, color: 'blue' },
@@ -45,276 +20,302 @@ const SHAPE_TOOLS = [
 
 export default function GeometryLab() {
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState<string | null>(null);
+
+  // Adaptive Engine State
+  const [allQuestions, setAllQuestions] = useState<any[]>([]);
+  const [activeQuestion, setActiveQuestion] = useState<any>(null);
+  const [currentDifficulty, setCurrentDifficulty] = useState(3); 
   
-  // Interactive Inventory State
-  const [inventory, setInventory] = useState<Record<string, number>>({
-    square: 0, triangle: 0, rectangle: 0, hexagon: 0
-  });
+  const [inventory, setInventory] = useState<Record<string, number>>({ square: 0, triangle: 0, rectangle: 0, hexagon: 0 });
   
-  // Challenge State
-  const [currentLevel, setCurrentLevel] = useState(0);
+  // UI Flow State
   const [isSuccess, setIsSuccess] = useState(false);
+  const [isFailed, setIsFailed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [forgeAnimating, setForgeAnimating] = useState(false);
-
-  const challenge = CHALLENGES[currentLevel];
-
-  useEffect(() => {
-    async function loadUser() {
-      const sessionData = localStorage.getItem("pioneer_session");
-      if (sessionData) {
-        const localUser = JSON.parse(sessionData);
-        const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
-        setUserProfile(profile);
-      }
-    }
-    loadUser();
-  }, []);
 
   const updateInventory = (id: string, delta: number) => {
     setInventory(prev => ({
       ...prev,
-      [id]: Math.max(0, Math.min(10, prev[id] + delta)) // Limit to 10 to prevent crazy numbers
+      [id]: Math.max(0, Math.min(20, prev[id] + delta)) // Increased max to 20 for complex shapes
     }));
   };
 
+  // Helper: Renders what the user has currently placed in the forge
+  const renderForgeInventory = (currentInventory: Record<string, number>) => {
+    const addedShapes = SHAPE_TOOLS.filter(tool => currentInventory[tool.id] > 0);
+
+    if (addedShapes.length === 0) {
+      return (
+        <div className="flex flex-col items-center gap-4 opacity-30">
+          <Box size={64} className="text-orange-500" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-orange-500 text-center">
+            Forge Empty <br /> Add Components
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col items-center justify-center gap-8 w-full">
+        <div className="flex flex-wrap items-center justify-center gap-6 md:gap-10 px-4">
+          <AnimatePresence>
+            {addedShapes.map((shape) => (
+              <motion.div 
+                key={shape.id}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.5 }}
+                className="flex flex-col items-center gap-3"
+              >
+                <div className="w-20 h-20 md:w-24 md:h-24 rounded-[2rem] bg-orange-500/10 border border-orange-500/30 flex items-center justify-center relative group shadow-[0_0_20px_rgba(249,115,22,0.1)]">
+                  <shape.icon size={40} className="text-orange-500 relative z-10" strokeWidth={1.5} />
+                  
+                  {/* Live Counter Badge */}
+                  <motion.div 
+                    key={currentInventory[shape.id]} // Forces re-animation when number changes
+                    initial={{ scale: 1.5, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="absolute -top-2 -right-2 w-8 h-8 bg-slate-900 border-2 border-orange-500 rounded-full flex items-center justify-center text-[12px] font-black text-orange-500 shadow-lg"
+                  >
+                    {currentInventory[shape.id]}
+                  </motion.div>
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500/80">
+                  {shape.name}s
+                </span>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+
+        <div className="flex flex-col items-center gap-2 mt-4">
+           <div className="h-px w-32 bg-gradient-to-r from-transparent via-orange-500/50 to-transparent" />
+           <p className="text-[9px] font-black uppercase tracking-[0.4em] text-orange-500/60 animate-pulse">
+             Active Forge Components
+           </p>
+        </div>
+      </div>
+    );
+  };
+
+  const pickRandomFromPool = useCallback((questions: any[], level: number) => {
+    const pool = questions.filter(q => q.difficulty_level === level);
+    const selected = pool.length > 0 
+      ? pool[Math.floor(Math.random() * pool.length)] 
+      : questions[Math.floor(Math.random() * questions.length)];
+
+    if (selected) {
+      setInventory({ square: 0, triangle: 0, rectangle: 0, hexagon: 0 }); // Reset inventory for new question
+    }
+    return selected;
+  }, []);
+
+  useEffect(() => {
+    async function initialize() {
+      try {
+        setLoading(true);
+        const sessionData = localStorage.getItem("pioneer_session");
+        if (sessionData) {
+          const localUser = JSON.parse(sessionData);
+          const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
+          setUserProfile(profile);
+        }
+
+        const { data, error } = await supabase.from('math_lab_questions').select('*').eq('sector', 'geometry');
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          const shuffledData = [...data].sort(() => Math.random() - 0.5);
+          setAllQuestions(shuffledData);
+          setActiveQuestion(pickRandomFromPool(shuffledData, 3));
+        } else {
+          setDbError("No geometry schematics found.");
+        }
+      } catch (err: any) {
+        setDbError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    initialize();
+  }, [pickRandomFromPool]);
+
   const handleVerify = async () => {
+    if (!activeQuestion) return;
     setIsProcessing(true);
     setForgeAnimating(true);
     
-    // Check if inventory exactly matches required faces
+    const config = typeof activeQuestion.config === 'string' ? JSON.parse(activeQuestion.config) : activeQuestion.config;
+    const required = config?.requiredFaces || config || {};
+    
+    const faceCounts: Record<string, number> = {
+      square: required.square || required.Square || 0,
+      triangle: required.triangle || required.Triangle || 0,
+      rectangle: required.rectangle || required.Rectangle || 0,
+      hexagon: required.hexagon || required.Hexagon || 0
+    };
+    
     const isCorrect = 
-      inventory.square === challenge.requiredFaces.square &&
-      inventory.triangle === challenge.requiredFaces.triangle &&
-      inventory.rectangle === challenge.requiredFaces.rectangle &&
-      inventory.hexagon === challenge.requiredFaces.hexagon;
+      inventory.square === faceCounts.square &&
+      inventory.triangle === faceCounts.triangle &&
+      inventory.rectangle === faceCounts.rectangle &&
+      inventory.hexagon === faceCounts.hexagon;
 
     setTimeout(async () => {
       setForgeAnimating(false);
+      setIsProcessing(false);
       
       if (isCorrect) {
         setIsSuccess(true);
-        
         if (userProfile) {
-          const earnedXP = 50;
-          const earnedSparks = 2;
-
-          // Update profile
-          await supabase.from('profiles').update({
-            xp: (userProfile.xp || 0) + earnedXP,
-            sparks: (userProfile.sparks || 0) + earnedSparks
+          await supabase.from('profiles').update({ 
+            xp: (userProfile.xp || 0) + (activeQuestion.xp_reward || 50), 
+            sparks: (userProfile.sparks || 0) + (activeQuestion.sparks_reward || 2) 
           }).eq('id', userProfile.id);
-
-          // Update math mastery record for Space & Shape
-          await supabase.from('math_mastery').upsert({
-            student_id: userProfile.id,
-            grade: 5,
-            content_area: 'Space and Shape',
-            topic: 'Properties of 3D Objects',
-            cognitive_level: 'Complex Procedures',
-            mastery_score: 100,
-            total_challenges_completed: currentLevel + 1,
-            last_activity_at: new Date().toISOString()
-          }, { onConflict: 'student_id, grade, content_area, topic' });
         }
-
         setTimeout(() => {
-          if (currentLevel < CHALLENGES.length - 1) {
-            setCurrentLevel(prev => prev + 1);
-            setInventory({ square: 0, triangle: 0, rectangle: 0, hexagon: 0 }); // Reset inventory
-            setIsSuccess(false);
-          }
-          setIsProcessing(false);
-        }, 3000);
-
+          setIsSuccess(false);
+          const nextDifficulty = Math.min(5, currentDifficulty + 1);
+          setCurrentDifficulty(nextDifficulty);
+          setActiveQuestion(pickRandomFromPool(allQuestions, nextDifficulty));
+        }, 2000);
       } else {
-        setIsProcessing(false);
-        // Reset inventory on fail to force them to try again
-        setInventory({ square: 0, triangle: 0, rectangle: 0, hexagon: 0 });
+        // TRIGGER FAILURE OVERLAY
+        setIsFailed(true);
       }
-    }, 2000); // 2 second "forging" animation
+    }, 2000);
   };
 
-  // Safe wrapper stats
-  const currentXP = userProfile?.xp || 0;
-  const isEngineer = currentXP >= 1000;
-  const stats = {
-    xp: currentXP,
-    level: isEngineer ? 2 : 1,
-    currentLevel: {
-      name: "Geometry Architect",
-      code: "MTH-GEO",
-      accentColor: "#f97316", // Orange theme for Geometry
-      floor: 0
-    },
-    nextLevel: { name: "Math Lead", xpRequired: 1000 }
+  // NEW: Manual continue after reading the explanation
+  const handleFailContinue = () => {
+    setIsFailed(false);
+    const nextDifficulty = Math.max(1, currentDifficulty - 1); // Scale down
+    setCurrentDifficulty(nextDifficulty);
+    setActiveQuestion(pickRandomFromPool(allQuestions, nextDifficulty));
   };
+
+  if (loading || !activeQuestion) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-orange-600" size={40} /></div>;
+
+  const currentConfig = typeof activeQuestion.config === 'string' ? JSON.parse(activeQuestion.config) : activeQuestion.config;
 
   return (
-    <DashboardClientWrapper initialStats={stats}>
+    <DashboardClientWrapper initialStats={{ xp: userProfile?.xp || 0, level: (userProfile?.xp || 0) >= 1000 ? 2 : 1, currentLevel: { name: "Geometry Architect", code: "MTH-GEO", accentColor: "#f97316", floor: 0 }, nextLevel: { name: "Math Lead", xpRequired: 1000 } }}>
       <main className="min-h-screen lg:mr-80 bg-[#f8fafc] text-slate-900 relative overflow-hidden pb-20">
-        
-        {/* Blueprint Grid Background */}
-        <div className="absolute inset-0 opacity-[0.03] pointer-events-none" 
-             style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 1px)', backgroundSize: '30px 30px' }} />
-
         <div className="max-w-5xl mx-auto p-6 md:p-12 space-y-8 relative z-10">
-          
-          {/* HEADER */}
           <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
             <div className="space-y-2">
-              <Link href="/math" className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-orange-600 transition-colors">
-                <ArrowLeft size={14} /> Return to Quest Map
-              </Link>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center border border-orange-200 shadow-sm">
-                  <Triangle size={24} />
-                </div>
-                <div>
-                  <h1 className="text-3xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">
-                    Geometry_<span className="text-orange-600">Forge</span>
-                  </h1>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 mt-1">Apparatus Room: Level {currentLevel + 1}</p>
-                </div>
-              </div>
+              <Link href="/math" className="text-[10px] font-black uppercase text-slate-400 flex items-center gap-2 hover:text-orange-600 transition-colors"><ArrowLeft size={14}/> Map</Link>
+              <h1 className="text-3xl font-black uppercase italic text-slate-900">Geometry_<span className="text-orange-600">Forge</span></h1>
+              <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mt-1">Adaptive Mode // Difficulty: {currentDifficulty}</p>
             </div>
-
-            <div className="bg-white px-6 py-3 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-[8px] font-black text-slate-400 uppercase">Sparks Earned</p>
-                <p className="text-xl font-black text-amber-500 italic leading-none">{userProfile?.sparks || 0}</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600 border border-amber-200">
-                <Zap size={20} fill="currentColor" />
-              </div>
+            <div className="bg-white px-6 py-3 rounded-2xl border border-slate-200 flex items-center gap-4 shadow-sm">
+                <div className="text-right">
+                  <p className="text-[8px] font-black text-slate-400 uppercase">Balance</p>
+                  <p className="text-xl font-black text-amber-500 italic leading-none">{userProfile?.sparks || 0}</p>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-500 border border-amber-100">
+                  <Zap size={20} fill="currentColor" />
+                </div>
             </div>
           </header>
 
-          {/* THE CHALLENGE BOARD */}
           <div className="bg-white border-2 border-orange-100 rounded-[40px] p-8 md:p-12 shadow-2xl relative overflow-hidden">
-            
-            {/* Success Overlay */}
             <AnimatePresence>
+              {/* SUCCESS OVERLAY */}
               {isSuccess && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
-                  className="absolute inset-0 z-50 bg-white/90 backdrop-blur-sm rounded-[36px] flex flex-col items-center justify-center space-y-6"
-                >
-                  <div className="w-24 h-24 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center shadow-lg shadow-emerald-200">
-                    <CheckCircle2 size={48} />
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm rounded-[36px] flex flex-col items-center justify-center space-y-4 text-center">
+                  <div className="w-20 h-20 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center shadow-lg animate-bounce"><CheckCircle2 size={40} /></div>
+                  <h2 className="text-3xl font-black uppercase italic text-emerald-600">Structure Forge Complete</h2>
+                  <p className="font-bold text-slate-500 tracking-widest uppercase text-xs">Calibrating Next Protocol (+1)...</p>
+                </motion.div>
+              )}
+
+              {/* FAILURE & LEARNING OVERLAY */}
+              {isFailed && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm rounded-[36px] flex flex-col items-center justify-center p-8 text-center">
+                  <div className="w-20 h-20 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center shadow-lg mb-6">
+                    <AlertCircle size={40} />
                   </div>
-                  <div className="text-center space-y-4">
-                    <div>
-                      <h2 className="text-3xl font-black uppercase italic text-emerald-600 tracking-tighter mb-2">Structure Forged!</h2>
-                      <p className="text-slate-500 font-bold">+50 XP | +2 RAD Sparks</p>
-                    </div>
-                    {currentLevel === CHALLENGES.length - 1 && (
-                      <Link 
-                        href="/math"
-                        className="inline-flex items-center gap-2 px-8 py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-orange-600 transition-colors shadow-xl"
-                      >
-                        Return to Map
-                      </Link>
-                    )}
+                  
+                  <h2 className="text-3xl font-black uppercase italic text-rose-600 mb-2">Blueprint Mismatch</h2>
+                  
+                  <div className="max-w-md bg-slate-50 border-2 border-slate-200 rounded-2xl p-6 mt-4 shadow-sm">
+                    <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">System Analysis:</p>
+                    <p className="text-lg text-slate-700 leading-relaxed">
+                      A <span className="font-black text-slate-900">{currentConfig.targetName || "3D Object"}</span> is constructed using specific 2D components. You need exactly: <br/>
+                      <span className="inline-block mt-3 text-left">
+                      {Object.entries(currentConfig.requiredFaces || {})
+                        .filter(([_, count]: any) => count > 0)
+                        .map(([shape, count]: any) => (
+                          <span key={shape} className="block mt-1 font-black text-orange-600 text-xl capitalize">
+                            {count}x {shape}s
+                          </span>
+                      ))}
+                      </span>
+                    </p>
                   </div>
+
+                  <button 
+                    onClick={handleFailContinue}
+                    className="mt-8 px-10 py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-slate-800 transition-colors active:scale-95 flex items-center gap-2"
+                  >
+                    <RefreshCcw size={18} /> Rebuild Logic & Continue
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 relative z-10">
-              
-              {/* Left Column: Target Schematic */}
               <div className="space-y-6">
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-orange-50 border border-orange-100 text-orange-600 rounded-xl text-xs font-black uppercase tracking-widest">
-                  <Shield size={14} /> Blueprint Target
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-orange-50 text-orange-600 rounded-xl text-xs font-black uppercase tracking-widest">
+                   <Shield size={14} /> Blueprint Target: {currentConfig.targetName || "Custom Shape"}
                 </div>
-                <div>
-                  <h2 className="text-2xl font-black italic tracking-tight text-slate-800 mb-2">
-                    {challenge.targetName}
-                  </h2>
-                  <p className="text-sm text-slate-500 font-medium leading-relaxed">
-                    {challenge.prompt}
-                  </p>
-                </div>
-
-                {/* The Hologram Viewer */}
-                <div className="relative w-full aspect-square bg-slate-900 rounded-[32px] border-4 border-slate-800 shadow-inner flex items-center justify-center overflow-hidden">
-                  {/* Grid Lines inside hologram */}
-                  <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'linear-gradient(#334155 1px, transparent 1px), linear-gradient(90deg, #334155 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
+                <h2 className="text-2xl font-black italic text-slate-800 leading-tight">{activeQuestion.prompt}</h2>
+                
+                {/* LIVE WORKSPACE VIEWPORT */}
+                <div className="relative w-full aspect-square bg-slate-900 rounded-[32px] border-4 border-slate-800 shadow-inner flex flex-col items-center justify-center overflow-hidden">
+                  <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#fff 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
                   
-                  <motion.div 
-                    animate={forgeAnimating ? { scale: [1, 1.2, 0.8, 1.1, 1], rotate: [0, 10, -10, 5, 0] } : { y: [0, -10, 0] }}
-                    transition={forgeAnimating ? { duration: 2 } : { duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                    className="relative z-10 drop-shadow-[0_0_30px_rgba(249,115,22,0.4)]"
-                  >
-                    {challenge.targetImage}
-                  </motion.div>
-
-                  {/* Scanning line effect */}
-                  {forgeAnimating && (
-                    <motion.div 
-                      className="absolute left-0 right-0 h-1 bg-orange-500 shadow-[0_0_20px_rgba(249,115,22,1)] z-20"
-                      initial={{ top: 0 }}
-                      animate={{ top: '100%' }}
-                      transition={{ duration: 1, repeat: 1 }}
-                    />
-                  )}
-                </div>
-              </div>
-
-              {/* Right Column: 2D Supply Room */}
-              <div className="space-y-8 flex flex-col justify-between">
-                <div className="space-y-6">
-                  <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100 pb-4">
-                    2D Materials Supply Room
-                  </h3>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    {SHAPE_TOOLS.map((shape) => {
-                      const count = inventory[shape.id];
-                      return (
-                        <div key={shape.id} className={`bg-white border-2 rounded-2xl p-4 transition-all ${count > 0 ? `border-${shape.color}-400 shadow-md` : 'border-slate-200'}`}>
-                          <div className="flex justify-between items-center mb-4">
-                            <div className={`w-10 h-10 rounded-xl bg-${shape.color}-50 text-${shape.color}-500 flex items-center justify-center`}>
-                              <shape.icon size={20} />
-                            </div>
-                            <span className="text-2xl font-black text-slate-800 tabular-nums">{count}</span>
-                          </div>
-                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 text-center mb-3">{shape.name}</p>
-                          <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
-                            <button 
-                              onClick={() => updateInventory(shape.id, -1)}
-                              className="flex-1 py-2 flex items-center justify-center bg-white rounded-lg text-slate-500 hover:text-rose-500 hover:bg-rose-50 transition-colors shadow-sm font-black"
-                            >-</button>
-                            <button 
-                              onClick={() => updateInventory(shape.id, 1)}
-                              className="flex-1 py-2 flex items-center justify-center bg-white rounded-lg text-slate-500 hover:text-emerald-500 hover:bg-emerald-50 transition-colors shadow-sm font-black"
-                            >+</button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div className="relative z-10 w-full">
+                     {/* PASS THE USER'S INVENTORY, NOT THE ANSWER KEY */}
+                     {renderForgeInventory(inventory)}
                   </div>
-                </div>
-
-                {/* Action Area */}
-                <div>
-                  <button 
-                    onClick={handleVerify}
-                    disabled={isProcessing || Object.values(inventory).every(v => v === 0)}
-                    className="w-full py-5 bg-orange-500 text-white rounded-[24px] font-black uppercase italic tracking-widest hover:bg-orange-600 transition-all shadow-xl shadow-orange-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
-                  >
-                    {isProcessing ? <RefreshCcw size={20} className="animate-spin" /> : <Sparkles size={20} />} Forge 3D Object
-                  </button>
+                  
+                  {forgeAnimating && <motion.div className="absolute left-0 right-0 h-1 bg-orange-400 shadow-[0_0_20px_rgba(249,115,22,1)] z-20" initial={{ top: 0 }} animate={{ top: '100%' }} transition={{ duration: 1, repeat: 1 }} />}
                 </div>
               </div>
 
+              <div className="space-y-8 flex flex-col justify-between">
+                <div className="grid grid-cols-2 gap-4">
+                  {SHAPE_TOOLS.map(shape => (
+                    <div key={shape.id} className={`bg-white border-2 rounded-2xl p-4 transition-all ${inventory[shape.id] > 0 ? `border-orange-400 shadow-md` : 'border-slate-200'}`}>
+                      <div className="flex justify-between items-center mb-4">
+                        <div className={`w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center`}><shape.icon size={20} /></div>
+                        <span className="text-2xl font-black tabular-nums">{inventory[shape.id]}</span>
+                      </div>
+                      <p className="text-[9px] font-black uppercase text-slate-400 text-center mb-2">{shape.name}</p>
+                      <div className="flex bg-slate-100 rounded-xl p-1 gap-1">
+                        <button onClick={() => updateInventory(shape.id, -1)} className="flex-1 py-2 bg-white rounded-lg font-black hover:bg-rose-50 hover:text-rose-500 transition-colors">-</button>
+                        <button onClick={() => updateInventory(shape.id, 1)} className="flex-1 py-2 bg-white rounded-lg font-black hover:bg-emerald-50 hover:text-emerald-500 transition-colors">+</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button 
+                  onClick={handleVerify} 
+                  disabled={isProcessing || Object.values(inventory).every(v => v === 0)} 
+                  className="w-full py-6 bg-orange-500 text-white rounded-[28px] font-black uppercase italic shadow-xl shadow-orange-100 hover:bg-orange-600 transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50"
+                >
+                  {isProcessing ? <RefreshCcw size={20} className="animate-spin" /> : <Sparkles size={20} />} Forge 3D Object
+                </button>
+              </div>
             </div>
           </div>
-          
         </div>
       </main>
-
       <ProfileSidebar />
     </DashboardClientWrapper>
   );
