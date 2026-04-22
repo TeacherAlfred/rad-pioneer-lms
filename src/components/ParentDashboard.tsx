@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Key, Zap, Flame, Calendar, Shield, TrendingUp, 
+  Key, Zap, Flame, Calendar, Shield, TrendingUp, Link,
   ChevronRight, Loader2, AlertCircle, CheckCircle2,
   Trophy, Clock, Plus, Copy, BarChart3, FolderGit2, Star,
   HeartHandshake, CreditCard, CalendarCheck, MessageSquare, 
@@ -974,7 +974,14 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
               </p>
               
               <div className="flex flex-col sm:flex-row gap-3 mt-auto">
-                <button disabled className="px-6 py-4 bg-slate-800 text-slate-500 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 cursor-not-allowed border border-white/5" title="Under Development">
+                <a 
+                  href={`/statement/${parentId}`}
+                  target="_blank"
+                  className="flex-1 px-6 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20"
+                >
+                  <FileText size={16}/> View Full Statement
+                </a>
+                <button disabled className="flex-1 px-6 py-4 bg-slate-800 text-slate-500 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 cursor-not-allowed border border-white/5" title="Under Development">
                   <Lock size={14}/> Settle Account (In Dev)
                 </button>
               </div>

@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, Fragment } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, Search, Filter, TrendingUp, Wallet, Receipt, 
-  Clock, AlertTriangle, CheckCircle2, ChevronRight, BarChart3,
+  Clock, AlertTriangle, CheckCircle2, ChevronRight, BarChart3, FileText, 
   Users, Activity, ArrowDownToLine, ArrowUpRight, DollarSign, LayoutDashboard,
   Loader2, Target, ChevronDown, ChevronUp, Save, Settings
 } from "lucide-react";
@@ -497,7 +497,15 @@ export default function FinanceLedgerPage() {
                                 )}
                               </td>
                               <td className="px-8 py-6 text-right">
-                                <p className="text-sm font-black text-slate-900">R {client.expectedTermRev.toLocaleString()}</p>
+                                <p className="text-sm font-black text-slate-900 mb-2">R {client.expectedTermRev.toLocaleString()}</p>
+                                <a 
+                                  href={`/statement/${client.id}`} 
+                                  target="_blank"
+                                  onClick={(e) => e.stopPropagation()} 
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-colors border border-blue-100 shadow-sm"
+                                >
+                                  <FileText size={12} /> <span className="text-[9px] font-black uppercase tracking-widest">Statement</span>
+                                </a>
                               </td>
                             </tr>
                             
@@ -554,7 +562,16 @@ export default function FinanceLedgerPage() {
                                         <div className="xl:col-span-2 bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm">
                                           <h4 className="text-xs font-black uppercase tracking-widest text-slate-900 mb-6 flex items-center justify-between border-b border-slate-100 pb-3">
                                             <span className="flex items-center gap-2"><Receipt size={14} className="text-emerald-500" /> Account History</span>
-                                            <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">Current Year</span>
+                                            <div className="flex items-center gap-3">
+                                              <Link 
+                                                href={`/statement/${client.id}`} 
+                                                target="_blank"
+                                                className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-colors border border-blue-100 shadow-sm"
+                                              >
+                                                <FileText size={12} /> <span className="text-[9px] font-black uppercase tracking-widest">Statement</span>
+                                              </Link>
+                                              <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">Current Year</span>
+                                            </div>
                                           </h4>
                                           <div className="max-h-[300px] overflow-y-auto custom-scrollbar pr-2 space-y-2">
                                             {client.history.length === 0 ? (

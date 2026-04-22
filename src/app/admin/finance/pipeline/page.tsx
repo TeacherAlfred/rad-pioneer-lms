@@ -274,10 +274,12 @@ export default function PipelineDashboard() {
              <div className="bg-white/5 p-4 rounded-3xl border border-white/10 flex flex-col justify-center text-right shadow-inner">
                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1">Total Pipeline</p>
                <p className="text-2xl md:text-3xl font-black italic text-slate-300">R {pipelineStats.totalValue.toLocaleString()}</p>
+               <p className="text-[10px] font-bold text-slate-500 mt-1">{quotes.length} Total Quotes</p>
              </div>
              <div className="bg-white/5 p-4 rounded-3xl border border-white/10 flex flex-col justify-center text-right shadow-inner">
                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1">Pending Value</p>
                <p className="text-2xl md:text-3xl font-black italic text-purple-400">R {pipelineStats.pendingValue.toLocaleString()}</p>
+               <p className="text-[10px] font-bold text-purple-400/60 mt-1">{pipelineStats.pendingCount} Active Quotes</p>
              </div>
           </div>
         </header>
