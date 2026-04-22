@@ -640,6 +640,7 @@ export default function FinancePortal() {
           doc_type: formData.doc_type,
           payment_reference: `INV-${invNumber}`,
           created_at: issueDate,
+          paid_at: formData.status === 'paid' ? paymentDate : null,
           line_items: [{ desc: formData.description, price: amount, qty: 1, disc: 0 }]
         }]);
 

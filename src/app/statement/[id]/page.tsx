@@ -138,8 +138,13 @@ export default function StatementView() {
 
     // 2. The Payment (Credit) - If they have paid anything towards this invoice
     if (paid > 0) {
+      // Use explicit paid_at date if it exists, otherwise fallback to the last update
+      const paymentDateStr = inv.paid_at 
+        ? new Date(inv.paid_at).toLocaleDateString('en-ZA') 
+        : new Date(inv.updated_at || inv.created_at).toLocaleDateString('en-ZA');
+
       safeTransactions.push({
-        date: new Date(inv.updated_at || inv.created_at).toLocaleDateString('en-ZA'), // Approx payment date
+        date: paymentDateStr,
         ref: `PAY-${inv.invoice_number}`,
         desc: 'Payment Received - Thank You',
         debit: null,

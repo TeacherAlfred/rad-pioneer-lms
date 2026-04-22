@@ -58,7 +58,8 @@ export async function POST(req: Request) {
                 .from('billing_records')
                 .update({ 
                   amount_paid: newPaidTotal,
-                  status: 'itn_received' // Flags it for Admin Review
+                  status: 'itn_received',
+                  paid_at: new Date().toISOString()
                 })
                 .eq('id', inv.id);
 
