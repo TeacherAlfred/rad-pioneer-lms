@@ -148,7 +148,7 @@ export default function FinancePortal() {
     quotes.forEach(q => {
        const amt = Number(q.total_amount) || 0;
        quotesTotalValue += amt;
-       if (q.status === 'accepted') {
+       if (q.status === 'accepted' || q.status === 'invoiced') {
           acceptedQuotesCount++;
           acceptedQuotesValue += amt;
        }

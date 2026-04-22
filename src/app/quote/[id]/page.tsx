@@ -16,7 +16,7 @@ export default function PublicQuoteView() {
   const [isAdmin, setIsAdmin] = useState(false); // Security state for Admin tools
   const [quote, setQuote] = useState<any>(null);
   const [guardian, setGuardian] = useState<any>(null);
-  const [actionState, setActionState] = useState<'pending' | 'accepted' | 'declined' | 'expired'>('pending');
+  const [actionState, setActionState] = useState<'pending' | 'accepted' | 'declined' | 'expired' | 'invoiced'>('pending');
   
   const [pendingAction, setPendingAction] = useState<'accepted' | 'declined' | null>(null);
 
@@ -50,8 +50,8 @@ export default function PublicQuoteView() {
       
       if (quoteData.expires_at && new Date(quoteData.expires_at) < new Date() && quoteData.status === 'pending') {
         setActionState('expired');
-      } else if (quoteData.status === 'accepted' || quoteData.status === 'declined') {
-        setActionState(quoteData.status as 'accepted' | 'declined');
+      } else if (['accepted', 'declined', 'invoiced'].includes(quoteData.status)) {
+        setActionState(quoteData.status as any);
       }
 
       setQuote(quoteData);
@@ -118,27 +118,13 @@ export default function PublicQuoteView() {
 
   // --- ADMIN TOOL: CONVERT TO INVOICE ---
   const handleConvertToInvoice = async () => {
-    const confirm = window.confirm("Convert this accepted quote into an active invoice?");
+    const confirm = window.confirm("Open this quote in the Composer to generate an invoice?");
     if (!confirm) return;
 
     setIsProcessing(true);
-    try {
-      const { error } = await supabase
-        .from('billing_records')
-        .update({ 
-          doc_type: 'invoice', 
-          status: 'pending' // Reset status so the client knows it requires payment
-        })
-        .eq('id', quoteId);
-
-      if (error) throw error;
-      
-      alert("Quote successfully converted to an Invoice!");
-      window.location.reload(); // Instantly refresh the page to load the new Invoice view
-    } catch (err: any) {
-      alert("Conversion Error: " + err.message);
-      setIsProcessing(false);
-    }
+    
+    // Redirect the admin to the composer, passing the quote ID so it auto-populates
+    window.location.href = `/admin/finance/composer?convertFromQuote=${quoteId}&mode=invoice`;
   };
 
   if (loading) {
@@ -169,21 +155,22 @@ export default function PublicQuoteView() {
           initial={{ y: -50, opacity: 0 }} 
           animate={{ y: 0, opacity: 1 }}
           className={`max-w-4xl mx-auto mb-8 p-6 rounded-3xl flex flex-col md:flex-row items-center justify-center gap-6 text-center md:text-left border ${
-            actionState === 'accepted' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+            ['accepted', 'invoiced'].includes(actionState) ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
             actionState === 'declined' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' :
             'bg-amber-500/10 border-amber-500/30 text-amber-400'
           }`}
         >
-          {actionState === 'accepted' && <CheckCircle2 size={40} className="shrink-0" />}
+          {['accepted', 'invoiced'].includes(actionState) && <CheckCircle2 size={40} className="shrink-0" />}
           {actionState === 'declined' && <XCircle size={40} className="shrink-0" />}
           {actionState === 'expired' && <FileSignature size={40} className="shrink-0" />}
           
           <div className="flex-1 space-y-1">
             <h2 className="text-xl font-black uppercase tracking-widest">
-              Quotation {actionState.charAt(0).toUpperCase() + actionState.slice(1)}
+              {actionState === 'invoiced' ? 'Quotation Invoiced' : `Quotation ${actionState.charAt(0).toUpperCase() + actionState.slice(1)}`}
             </h2>
             <p className="text-xs opacity-80">
               {actionState === 'accepted' && "Thank you! We will issue your official invoice shortly."}
+              {actionState === 'invoiced' && "This quotation has been securely accepted and converted into an active invoice."}
               {actionState === 'declined' && "This quotation has been securely declined and closed."}
               {actionState === 'expired' && "This quotation has passed its validity date. Please contact us for a revised quote."}
             </p>

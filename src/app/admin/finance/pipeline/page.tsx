@@ -114,7 +114,7 @@ export default function PipelineDashboard() {
     sevenDaysAgo.setDate(now.getDate() - 7);
 
     const pending = processedQuotes.filter(q => q.status === 'pending');
-    const accepted = processedQuotes.filter(q => q.status === 'accepted');
+    const accepted = processedQuotes.filter(q => q.status === 'accepted' || q.status === 'invoiced');
     const declined = processedQuotes.filter(q => q.status === 'declined');
     const past7Days = processedQuotes.filter(q => new Date(q.created_at) >= sevenDaysAgo);
 
@@ -166,7 +166,7 @@ export default function PipelineDashboard() {
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       result = result.filter(q => new Date(q.created_at) >= sevenDaysAgo);
     } else if (activeFilter === 'accepted') {
-      result = result.filter(q => q.status === 'accepted');
+      result = result.filter(q => q.status === 'accepted' || q.status === 'invoiced');
     } else if (activeFilter === 'pending') {
       result = result.filter(q => q.status === 'pending');
     } else if (activeFilter === 'declined') {
@@ -418,11 +418,12 @@ export default function PipelineDashboard() {
 
                         <td className="px-6 py-5">
                           <span className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest border ${
+                            q.status === 'invoiced' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' :
                             q.status === 'accepted' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                             q.status === 'declined' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
                             'bg-amber-500/10 text-amber-400 border-amber-500/20'
                           }`}>
-                            {q.status}
+                            {q.status === 'invoiced' ? 'Accepted & Invoiced' : q.status}
                           </span>
                         </td>
                         <td className="px-6 py-5 text-right">
@@ -480,11 +481,12 @@ export default function PipelineDashboard() {
                    <div>
                      <div className="flex items-center gap-3 mb-2">
                        <span className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest border ${
+                            activeQuote.status === 'invoiced' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' :
                             activeQuote.status === 'accepted' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                             activeQuote.status === 'declined' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
                             'bg-amber-500/10 text-amber-400 border-amber-500/20'
                           }`}>
-                            {activeQuote.status}
+                            {activeQuote.status === 'invoiced' ? 'Accepted & Invoiced' : activeQuote.status}
                        </span>
                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 font-mono">QT-{activeQuote.invoice_number}</span>
                      </div>

@@ -197,7 +197,8 @@ function BillingComposer() {
           const { data: oldQuote } = await supabase.from('billing_records').select('metadata').eq('id', convertFromQuoteId).single();
           if (oldQuote) {
               await supabase.from('billing_records').update({
-                  metadata: { ...oldQuote.metadata, converted_to_invoice: true }
+                  metadata: { ...oldQuote.metadata, converted_to_invoice: true },
+                  status: 'invoiced' // CRITICAL: Updates the pipeline status!
               }).eq('id', convertFromQuoteId);
           }
       }
