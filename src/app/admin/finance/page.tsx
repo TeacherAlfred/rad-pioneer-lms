@@ -849,39 +849,89 @@ export default function FinancePortal() {
 
         </div>
 
-        {/* RECENT ACTIVITY LOG (Quick Glance) */}
-        <div className="bg-white/[0.02] border border-white/10 rounded-[40px] p-8 shadow-2xl space-y-6">
-          <div className="flex items-center justify-between border-b border-white/5 pb-4">
-             <h3 className="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2"><Clock size={16}/> Recent Transactions</h3>
-             <Link href="/admin/finance/ledger" className="text-[10px] font-bold text-blue-400 hover:text-white transition-colors">View All</Link>
+        {/* RECENT ACTIVITY & PAYFAST LOG */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          
+          {/* GENERAL TRANSACTIONS */}
+          <div className="bg-white/[0.02] border border-white/10 rounded-[40px] p-8 shadow-2xl space-y-6 flex flex-col">
+            <div className="flex items-center justify-between border-b border-white/5 pb-4">
+               <h3 className="text-sm font-black uppercase tracking-widest text-slate-400 flex items-center gap-2"><Clock size={16}/> General Activity</h3>
+               <Link href="/admin/finance/ledger" className="text-[10px] font-bold text-blue-400 hover:text-white transition-colors">View Ledger</Link>
+            </div>
+            <div className="divide-y divide-white/5 flex-1">
+               {records.slice(0, 5).map(rec => (
+                 <div key={rec.id} className="py-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border ${rec.doc_type === 'quote' ? 'bg-purple-500/10 border-purple-500/20 text-purple-400' : 'bg-white/5 border-white/10 text-slate-400'}`}>
+                        {rec.doc_type === 'quote' ? <FileText size={16}/> : <Receipt size={16}/>}
+                      </div>
+                      <div>
+                        <p className="font-bold text-sm text-white">{rec.profiles?.display_name || rec.metadata?.prospect_name || 'Unknown Client'}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{rec.doc_type === 'quote' ? 'QT' : 'INV'}-{rec.invoice_number}</span>
+                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">• {new Date(rec.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-black text-white">R {Number(rec.total_amount).toLocaleString()}</p>
+                      <p className={`text-[9px] font-black uppercase tracking-widest mt-1 ${
+                        rec.status === 'paid' ? 'text-emerald-500' :
+                        rec.status === 'accepted' ? 'text-purple-400' :
+                        rec.status === 'overdue' ? 'text-rose-500' : 'text-amber-500'
+                      }`}>{rec.status.replace('_', ' ')}</p>
+                    </div>
+                 </div>
+               ))}
+               {records.length === 0 && <p className="py-8 text-center text-slate-500 text-sm font-bold italic">No recent transactions found.</p>}
+            </div>
           </div>
-          <div className="divide-y divide-white/5">
-             {records.slice(0, 5).map(rec => (
-                <div key={rec.id} className="py-4 flex items-center justify-between">
-                   <div className="flex items-center gap-4">
-                     <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border ${rec.doc_type === 'quote' ? 'bg-purple-500/10 border-purple-500/20 text-purple-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
-                       {rec.doc_type === 'quote' ? <FileText size={16}/> : <Receipt size={16}/>}
+
+          {/* NEW: PAYFAST & PAYMENTS LOG */}
+          <div className="bg-gradient-to-b from-emerald-500/10 to-[#020617] border border-emerald-500/20 rounded-[40px] p-8 shadow-2xl space-y-6 flex flex-col relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none"><CreditCard size={120}/></div>
+            <div className="flex items-center justify-between border-b border-emerald-500/20 pb-4 relative z-10">
+               <h3 className="text-sm font-black uppercase tracking-widest text-emerald-400 flex items-center gap-2"><CreditCard size={16}/> Payment & ITN Log</h3>
+               <Link href="/admin/finance/capture" className="text-[10px] font-bold text-emerald-400 hover:text-white transition-colors">Manual Capture</Link>
+            </div>
+            <div className="divide-y divide-emerald-500/10 flex-1 relative z-10">
+               {records
+                 .filter(r => r.doc_type === 'invoice' && (r.status === 'itn_received' || r.status === 'paid' || Number(r.amount_paid) > 0))
+                 .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
+                 .slice(0, 5)
+                 .map(rec => {
+                   const isPayFast = rec.status === 'itn_received';
+                   const amountToDisplay = Number(rec.amount_paid) > 0 ? Number(rec.amount_paid) : Number(rec.total_amount);
+                   
+                   return (
+                     <div key={`pay-${rec.id}`} className="py-4 flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 border ${isPayFast ? 'bg-amber-500/20 border-amber-500/30 text-amber-400' : 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'}`}>
+                            <Coins size={16}/>
+                          </div>
+                          <div>
+                            <p className="font-bold text-sm text-white">{rec.profiles?.display_name || 'Unknown Client'}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                               <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500/70">INV-{rec.invoice_number}</span>
+                               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">• {new Date(rec.updated_at || rec.created_at).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-black text-emerald-400">+ R {amountToDisplay.toLocaleString()}</p>
+                          <p className={`text-[9px] font-black uppercase tracking-widest mt-1 ${isPayFast ? 'text-amber-400 animate-pulse' : 'text-emerald-500'}`}>
+                            {isPayFast ? 'PayFast ITN' : 'Manual Paid'}
+                          </p>
+                        </div>
                      </div>
-                     <div>
-                       <p className="font-bold text-sm text-white">{rec.profiles?.display_name || rec.metadata?.prospect_name || 'Unknown Client'}</p>
-                       <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{rec.doc_type === 'quote' ? 'QT' : 'INV'}-{rec.invoice_number}</span>
-                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">• {new Date(rec.created_at).toLocaleDateString()}</span>
-                       </div>
-                     </div>
-                   </div>
-                   <div className="text-right">
-                     <p className="font-black text-white">R {Number(rec.total_amount).toLocaleString()}</p>
-                     <p className={`text-[9px] font-black uppercase tracking-widest mt-1 ${
-                       rec.status === 'paid' ? 'text-emerald-500' :
-                       rec.status === 'accepted' ? 'text-purple-400' :
-                       rec.status === 'overdue' ? 'text-rose-500' : 'text-amber-500'
-                     }`}>{rec.status}</p>
-                   </div>
-                </div>
-             ))}
-             {records.length === 0 && <p className="py-8 text-center text-slate-500 text-sm font-bold italic">No recent transactions found.</p>}
+                   )
+               })}
+               {records.filter(r => r.doc_type === 'invoice' && (r.status === 'itn_received' || r.status === 'paid' || Number(r.amount_paid) > 0)).length === 0 && (
+                 <p className="py-8 text-center text-emerald-500/50 text-sm font-bold italic">No payments logged yet.</p>
+               )}
+            </div>
           </div>
+
         </div>
 
       </div>
