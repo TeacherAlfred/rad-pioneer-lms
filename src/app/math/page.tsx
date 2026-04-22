@@ -5,7 +5,7 @@ import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrappe
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import { 
   Zap, Brain, Triangle, Ruler, BarChart, 
-  CheckCircle2, Play, Sparkles, Clock, ChevronRight,
+  CheckCircle2, Play, Clock, ChevronRight, Sparkles,
   Cpu, Mail, ArrowRight, Loader2, X, Target, Trophy
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -13,7 +13,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-// ADDED: Premium gradient themes for each sector to make them look like game worlds
 const SECTORS = [
   { id: 'numbers', title: 'Numbers & Ops', weight: '50%', gradient: 'from-blue-600 to-blue-800', shadow: 'shadow-blue-900/20', icon: Brain, description: 'Number sense, fractions, and calculation logic.' },
   { id: 'algebra', title: 'Patterns & Algebra', weight: '10%', gradient: 'from-purple-600 to-purple-800', shadow: 'shadow-purple-900/20', icon: Zap, description: 'Flow diagrams, number sentences, and rules.' },
@@ -28,11 +27,14 @@ export default function MathQuestMap() {
   const [hasCompletedSprint, setHasCompletedSprint] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Leaderboard & Rewards Shared State
   const [isRewardsOpen, setIsRewardsOpen] = useState(false);
+  const [isMobileLeaderboardOpen, setIsMobileLeaderboardOpen] = useState(false); // ADDED FOR MOBILE APP FEEL
   const [unlockStatus, setUnlockStatus] = useState<'idle' | 'processing' | 'success'>('idle');
   const [leaderboardTab, setLeaderboardTab] = useState<string>('overall');
   const [leaders, setLeaders] = useState<any[]>([]);
   const [isLoadingLeaders, setIsLoadingLeaders] = useState(false);
+  const [expandedMobileSector, setExpandedMobileSector] = useState<string | null>(null);
 
   useEffect(() => {
     async function checkDailySprintAndProfile() {
@@ -62,6 +64,7 @@ export default function MathQuestMap() {
       setIsLoadingLeaders(true);
       try {
         const sortColumn = leaderboardTab === 'overall' ? 'sparks' : `${leaderboardTab}_xp`;
+
         const { data, error } = await supabase
           .from('profiles')
           .select(`student_identifier, ${sortColumn}`)
@@ -118,13 +121,262 @@ export default function MathQuestMap() {
   return (
     <DashboardClientWrapper initialStats={stats}>
       <main className="min-h-screen lg:mr-80 bg-[#F8FAFC] text-slate-900 relative overflow-hidden pb-24">
-        
-        {/* Subtle grid background */}
         <div className="absolute inset-0 opacity-[0.4] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#CBD5E1 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
         
-        <div className="max-w-6xl mx-auto p-6 md:p-8 lg:p-12 space-y-8 relative z-10">
+        {/* ========================================================= */}
+        {/* MOBILE VIEW (Hidden on large screens, optimized for App feel) */}
+        {/* ========================================================= */}
+        <div className="block lg:hidden relative z-10 px-4 pt-4 space-y-5 pb-28">
           
-          {/* HEADER SECTION */}
+          {/* Mobile Sticky Header */}
+          <header className="sticky top-2 z-40 flex justify-between items-center bg-white/70 backdrop-blur-xl p-3.5 rounded-[24px] border border-white shadow-[0_8px_30px_rgba(0,0,0,0.04)]">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-inner">
+                 <Target size={20} className="text-white" />
+              </div>
+              <div className="leading-tight">
+                 <h1 className="text-lg font-black uppercase italic tracking-tighter text-slate-900">
+                    Quest<span className="text-blue-600">_Map</span>
+                 </h1>
+                 <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400">Logic Interface</span>
+              </div>
+            </div>
+            <button onClick={() => setIsRewardsOpen(true)} className="flex items-center gap-1.5 bg-gradient-to-b from-amber-100 to-amber-50 border border-amber-200 px-3 py-2 rounded-xl active:scale-95 transition-transform shadow-sm">
+               <span className="text-base font-black text-amber-600 italic tabular-nums leading-none">{userProfile?.sparks || 0}</span>
+               <Zap size={16} className="text-amber-500 drop-shadow-sm" fill="currentColor" />
+            </button>
+          </header>
+
+          {/* Dynamic Encouragement Banner (Psychological Pull) */}
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className={`mx-1 p-3.5 rounded-2xl border flex items-start gap-3 shadow-sm ${hasCompletedSprint ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-100/60' : 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-100/60'}`}
+          >
+            <div className="bg-white rounded-full p-2 shadow-sm shrink-0 mt-0.5">
+               {hasCompletedSprint ? <Sparkles size={16} className="text-emerald-500" /> : <Brain size={16} className="text-blue-500 animate-pulse" />}
+            </div>
+            <div>
+              <h3 className="text-xs font-black text-slate-800 tracking-tight uppercase">
+                {hasCompletedSprint ? "Logic Core: 100% Charged!" : "Awaiting Daily Initialization"}
+              </h3>
+              <p className="text-[10px] text-slate-600 font-medium leading-relaxed mt-1">
+                {hasCompletedSprint 
+                  ? "Sprint complete! Your neural pathways are primed. Dive into a lab below to convert this momentum into BrainBux." 
+                  : "Your labs are currently locked. Complete your quick Brain Check to power up the network!"}
+              </p>
+            </div>
+          </motion.div>
+
+          {/* Sub Header row: CAPS + Leaderboard Trigger Button */}
+          <div className="flex items-center justify-between px-1">
+            <div className="bg-white/80 backdrop-blur border border-slate-200 px-3 py-2 rounded-xl shadow-sm flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]" />
+              <span className="text-[9px] font-black uppercase tracking-widest text-slate-700">CAPS Gr 4-6</span>
+            </div>
+            <button 
+              onClick={() => setIsMobileLeaderboardOpen(true)} 
+              className="bg-slate-900 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 shadow-lg shadow-slate-900/20 active:scale-95 transition-transform"
+            >
+              <Trophy size={14} className="text-amber-400" />
+              <span className="text-[9px] font-black uppercase tracking-widest">Rankings</span>
+            </button>
+          </div>
+
+          {/* Premium Mobile Labs Grid (2x2 Expanding) */}
+          <div className="relative grid grid-cols-2 gap-3 px-1">
+            {SECTORS.map((sector) => {
+              const isExpanded = expandedMobileSector === sector.id;
+
+              return (
+                <motion.div 
+                  layout
+                  key={sector.id}
+                  className={`relative overflow-hidden bg-gradient-to-br ${sector.gradient} shadow-[0_15px_30px_rgba(0,0,0,0.15)] text-white active:scale-[0.97] transition-all duration-200 cursor-pointer ${!hasCompletedSprint ? 'blur-[3px] grayscale opacity-60 pointer-events-none' : ''} ${isExpanded ? 'col-span-2 rounded-[32px] p-6' : 'col-span-1 rounded-[28px] p-5 aspect-square flex flex-col justify-center items-center text-center border-t border-white/20'}`}
+                  onClick={() => {
+                    if (!hasCompletedSprint) return;
+                    // Toggle expansion state
+                    setExpandedMobileSector(isExpanded ? null : sector.id);
+                  }}
+                >
+                  {/* Glossy Overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent opacity-50" />
+                  
+                  {/* Dynamic Background Icon */}
+                  <sector.icon className={`absolute opacity-[0.08] transition-all duration-500 ease-out ${isExpanded ? '-right-4 -bottom-4 w-40 h-40 rotate-12' : 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32'}`} />
+
+                  <div className={`relative z-10 flex ${isExpanded ? 'flex-col gap-4' : 'flex-col items-center gap-3 w-full'}`}>
+                    
+                    {/* Header Row / Centered Icon */}
+                    <motion.div layout className={`flex ${isExpanded ? 'items-start justify-between w-full' : 'items-center justify-center w-full'}`}>
+                      <motion.div layout className={`bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center border border-white/30 shadow-[inset_0_2px_10px_rgba(255,255,255,0.2)] ${isExpanded ? 'w-14 h-14' : 'w-12 h-12'}`}>
+                        <sector.icon size={isExpanded ? 26 : 22} className="drop-shadow-md" />
+                      </motion.div>
+                      
+                      {isExpanded && (
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-black/30 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 shadow-sm">
+                          <span className="text-[8px] font-black text-white/90 uppercase tracking-widest">{sector.weight} Weight</span>
+                        </motion.div>
+                      )}
+                    </motion.div>
+                    
+                    {/* Title & Description */}
+                    <motion.div layout className={`w-full ${isExpanded ? '' : 'flex flex-col items-center'}`}>
+                      <motion.h3 layout className={`font-black uppercase italic tracking-tighter leading-tight drop-shadow-lg ${isExpanded ? 'text-2xl mb-1.5' : 'text-sm text-center'}`}>
+                        {sector.title}
+                      </motion.h3>
+                      {isExpanded && (
+                        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }} className="text-[10px] text-white/70 font-medium leading-tight max-w-[85%] mt-1">
+                          {sector.description}
+                        </motion.p>
+                      )}
+                    </motion.div>
+
+                    {/* Interactive Mastery Footer (Only when zoomed) */}
+                    <AnimatePresence>
+                      {isExpanded && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0 }}
+                          className="mt-2 flex items-center justify-between bg-black/20 backdrop-blur-sm p-2.5 rounded-2xl border border-white/10 shadow-inner w-full"
+                        >
+                          <div className="flex-1 mr-4 pl-2">
+                            <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-white/80 mb-1.5">
+                              <span>Mastery Level</span><span>1</span>
+                            </div>
+                            <div className="h-1.5 w-full bg-black/40 rounded-full overflow-hidden shadow-inner">
+                              <div className="h-full bg-gradient-to-r from-white/50 to-white rounded-full w-[15%] shadow-[0_0_10px_rgba(255,255,255,0.8)]" />
+                            </div>
+                          </div>
+                          
+                          {/* The actual navigation button */}
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation(); // Prevents the card from collapsing
+                              router.push(`/math/lab/${sector.id}`);
+                            }}
+                            className="w-10 h-10 bg-white text-slate-900 rounded-xl flex items-center justify-center shadow-[0_5px_15px_rgba(0,0,0,0.2)] active:bg-slate-100 transition-colors"
+                          >
+                            <Play size={16} fill="currentColor" className="ml-0.5" />
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </motion.div>
+              );
+            })}
+
+            {/* Mobile Locked Overlay */}
+            <AnimatePresence>
+              {!hasCompletedSprint && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-20 flex items-center justify-center p-2">
+                  <div className="bg-slate-900/90 backdrop-blur-xl border border-slate-700 p-8 rounded-[40px] shadow-2xl w-full text-center space-y-6 relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-b from-blue-500/10 to-transparent" />
+                    <div className="w-16 h-16 bg-blue-500/20 text-blue-400 rounded-2xl flex items-center justify-center mx-auto border border-blue-500/30 relative z-10">
+                      <Clock size={32} />
+                    </div>
+                    <div className="relative z-10">
+                      <h2 className="text-xl font-black uppercase italic tracking-tighter text-white mb-2">Access Denied</h2>
+                      <p className="text-slate-400 text-xs font-medium leading-relaxed">Complete your daily Brain Check to unlock the labs.</p>
+                    </div>
+                    <button onClick={() => router.push('/math/sprint')} className="relative z-10 flex items-center justify-center gap-2 w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-[0.1em] text-[10px] shadow-[0_0_20px_rgba(37,99,235,0.4)] active:scale-95 transition-all">
+                      Start Brain Check <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* BOTTOM SHEET LEADERBOARD (Mobile Only) */}
+          <AnimatePresence>
+            {isMobileLeaderboardOpen && (
+              <div className="fixed inset-0 z-[110] flex items-end justify-center lg:hidden">
+                 <motion.div 
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
+                    onClick={() => setIsMobileLeaderboardOpen(false)} 
+                    className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" 
+                 />
+                 <motion.div 
+                    initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} transition={{ type: "spring", damping: 25, stiffness: 200 }} 
+                    className="relative w-full bg-white rounded-t-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] border-t border-slate-200"
+                 >
+                    {/* iOS style Drag Handle */}
+                    <div className="w-full flex justify-center pt-4 pb-2"><div className="w-12 h-1.5 bg-slate-200 rounded-full" /></div>
+
+                    <div className="px-6 pb-8 pt-2 overflow-y-auto">
+                       {/* Header */}
+                       <div className="flex items-center justify-between mb-6">
+                          <div className="flex items-center gap-3">
+                             <div className="w-10 h-10 bg-amber-50 text-amber-500 rounded-xl flex items-center justify-center border border-amber-100 shadow-inner">
+                                <Trophy size={20} />
+                             </div>
+                             <div>
+                                <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">Rankings</h2>
+                                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-1">Global Top Earners</p>
+                             </div>
+                          </div>
+                          <button onClick={() => setIsMobileLeaderboardOpen(false)} className="w-8 h-8 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center active:scale-90 transition-transform"><X size={16} /></button>
+                       </div>
+
+                       {/* Scrolling Tabs */}
+                       <div className="flex overflow-x-auto gap-2 pb-2 mb-4 scrollbar-hide -mx-2 px-2">
+                          {['overall', 'numbers', 'algebra', 'geometry', 'measurement', 'data'].map((tab) => (
+                             <button 
+                               key={tab} 
+                               onClick={() => setLeaderboardTab(tab)} 
+                               className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-colors ${leaderboardTab === tab ? 'bg-slate-900 text-white shadow-md' : 'bg-slate-50 text-slate-500 border border-slate-100'}`}
+                             >
+                               {tab}
+                             </button>
+                          ))}
+                       </div>
+
+                       {/* Rankings List */}
+                       <div className="space-y-2.5">
+                          {isLoadingLeaders ? (
+                             <div className="py-12 flex justify-center"><Loader2 className="animate-spin text-blue-500" size={24} /></div>
+                          ) : (
+                             <>
+                               {leaders.slice(0, 5).map((leader, idx) => (
+                                 <motion.div 
+                                    initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }}
+                                    key={idx} 
+                                    className={`flex items-center justify-between p-3 rounded-2xl border ${idx === 0 ? 'bg-amber-50/40 border-amber-100 shadow-sm' : idx === 1 ? 'bg-slate-50 border-slate-200 shadow-sm' : 'bg-white border-slate-100'}`}
+                                 >
+                                    <div className="flex items-center gap-3.5">
+                                       <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs ${idx === 0 ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-md' : idx === 1 ? 'bg-gradient-to-br from-slate-300 to-slate-400 text-white' : idx === 2 ? 'bg-gradient-to-br from-orange-300 to-orange-400 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                          {idx + 1}
+                                       </div>
+                                       <span className="font-bold text-slate-700 text-sm truncate max-w-[120px]">{formatUsername(leader.student_identifier, idx)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg shadow-sm border border-slate-100">
+                                       <span className="text-sm font-black text-amber-500 italic tabular-nums">{getLeaderScore(leader)}</span>
+                                       {leaderboardTab === 'overall' ? <Zap size={12} className="text-amber-400 drop-shadow-sm" fill="currentColor" /> : <span className="text-[9px] font-black text-amber-400 uppercase">XP</span>}
+                                    </div>
+                                 </motion.div>
+                               ))}
+                               {leaders.length === 0 && (
+                                  <p className="text-xs text-center text-slate-400 font-bold uppercase tracking-widest py-8">Awaiting Data Core...</p>
+                               )}
+                             </>
+                          )}
+                       </div>
+                    </div>
+                 </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+        </div>
+
+        {/* ========================================================= */}
+        {/* DESKTOP VIEW (Hidden on Mobile, exactly as you requested)   */}
+        {/* ========================================================= */}
+        <div className="hidden lg:block max-w-6xl mx-auto p-6 md:p-8 lg:p-12 space-y-8 relative z-10">
+          
           <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-blue-600 mb-2">
@@ -150,16 +402,12 @@ export default function MathQuestMap() {
             </button>
           </header>
 
-          {/* MAIN TWO-COLUMN LAYOUT */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
             
-            {/* LEFT COLUMN: THE MATHS LABS (Primary Focus - takes up 2/3 of space) */}
             <div className="xl:col-span-2 relative">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 {SECTORS.map((sector, index) => {
-                  // Make the first card (Numbers) span full width to anchor the design
                   const isFeatured = index === 0;
-                  
                   return (
                     <motion.div 
                       key={sector.id}
@@ -169,7 +417,6 @@ export default function MathQuestMap() {
                       className={`group relative overflow-hidden rounded-[40px] bg-gradient-to-br ${sector.gradient} shadow-xl ${sector.shadow} transition-all hover:scale-[1.02] hover:shadow-2xl cursor-pointer ${!hasCompletedSprint ? 'blur-[3px] grayscale opacity-40 pointer-events-none' : ''} ${isFeatured ? 'sm:col-span-2' : ''}`}
                       onClick={() => { if(hasCompletedSprint) router.push(`/math/lab/${sector.id}`); }}
                     >
-                      {/* Massive Watermark Icon */}
                       <sector.icon className="absolute -bottom-8 -right-8 w-64 h-64 text-white opacity-10 group-hover:scale-110 group-hover:rotate-6 transition-transform duration-500" />
                       
                       <div className="relative z-10 p-8 md:p-10 flex flex-col h-full min-h-[280px]">
@@ -192,7 +439,6 @@ export default function MathQuestMap() {
                         </div>
                         
                         <div className="mt-8 flex items-end justify-between">
-                          {/* Fake Mastery Bar for Stickiness */}
                           <div className="w-1/2 space-y-2">
                             <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-white/70">
                               <span>Mastery</span>
@@ -213,7 +459,6 @@ export default function MathQuestMap() {
                 })}
               </div>
 
-              {/* LOCKED OVERLAY - Covers just the labs area */}
               <AnimatePresence>
                 {!hasCompletedSprint && (
                   <motion.div 
@@ -242,10 +487,7 @@ export default function MathQuestMap() {
               </AnimatePresence>
             </div>
 
-            {/* RIGHT COLUMN: COMMAND CENTER (Leaderboard & Meta info) */}
             <div className="xl:col-span-1 space-y-6">
-              
-              {/* CAPS Info Module */}
               <div className="bg-white border border-slate-200 p-6 rounded-[32px] shadow-sm flex items-center gap-5">
                  <div className="w-12 h-12 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-center shrink-0">
                     <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
@@ -256,7 +498,6 @@ export default function MathQuestMap() {
                  </div>
               </div>
 
-              {/* Leaderboard Module */}
               <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col h-full min-h-[500px]">
                  <div className="flex items-center gap-3 text-slate-800 mb-6">
                    <div className="w-10 h-10 bg-amber-50 text-amber-500 rounded-xl flex items-center justify-center border border-amber-100">
@@ -268,7 +509,6 @@ export default function MathQuestMap() {
                    </div>
                  </div>
 
-                 {/* Custom Scrollbar Tabs */}
                  <div className="flex flex-wrap gap-2 mb-6">
                    {['overall', 'numbers', 'algebra', 'geometry', 'measurement', 'data'].map((tab) => (
                      <button 
@@ -330,7 +570,7 @@ export default function MathQuestMap() {
           </div>
         </div>
 
-        {/* REWARDS MODAL */}
+        {/* SHARED REWARDS MODAL (Works on both) */}
         <AnimatePresence>
           {isRewardsOpen && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6">
