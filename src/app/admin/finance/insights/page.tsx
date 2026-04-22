@@ -35,7 +35,7 @@ export default function RevenueIntelligencePortal() {
         .from('billing_records')
         .select('*')
         .eq('doc_type', 'invoice')
-        .in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid'])
+        .in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid', 'itn_received'])
         .order('created_at', { ascending: true });
 
       // 2. Fetch Profiles for Cohort mapping & Billing Schedules
