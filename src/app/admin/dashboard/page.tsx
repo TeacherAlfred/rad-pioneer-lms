@@ -6,7 +6,7 @@ import {
   CheckCircle2, CreditCard, ChevronRight, Loader2, 
   Target, TrendingUp, DollarSign, Clock, X, ArrowUpRight,
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
-  GraduationCap, Eye, Bell
+  GraduationCap, Eye, Bell, CalendarDays 
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -207,10 +207,9 @@ export default function AdminDashboard() {
                   { label: 'Comms Center', icon: Activity, path: '/admin/communications', color: 'hover:border-orange-500' },
                   { label: 'Master Data', icon: Briefcase, path: '/admin/contacts', color: 'hover:border-slate-500' },
                   { label: 'Teacher Portal', icon: GraduationCap, path: '/teacher/dashboard', color: 'hover:border-cyan-500' },
-                  
-                  // NEW PARENT PORTAL VIEWER
                   { label: 'Parent Portals', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' },
-                  
+                  // NEW: Events Hub
+                  { label: 'Events & Bootcamps', icon: CalendarDays, path: '/admin/events', color: 'hover:border-yellow-500' },
                 ].map((item, i) => (
                   <Link key={i} href={item.path} className={`p-6 bg-white/5 border border-transparent rounded-[32px] transition-all flex flex-col gap-4 group ${item.color}`}>
                     <item.icon size={20} className="text-slate-400 group-hover:text-white" />
