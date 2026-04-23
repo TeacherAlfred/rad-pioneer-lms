@@ -12,7 +12,9 @@ export async function POST(req: Request) {
     const data = Object.fromEntries(formData.entries());
 
     const pfParamString = new URLSearchParams(data as Record<string, string>).toString();
-    const validationUrl = 'https://sandbox.payfast.co.za/eng/query/validate';
+    
+    // LIVE PayFast Validation URL
+    const validationUrl = 'https://www.payfast.co.za/eng/query/validate';
 
     const pfValidResponse = await fetch(validationUrl, {
       method: 'POST',

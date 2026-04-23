@@ -66,10 +66,12 @@ export default function RADStatement({ guardianId, name, email, phone, transacti
                   </div>
                 </div>
 
-                <form action="https://sandbox.payfast.co.za/eng/process" method="POST">
-                  {/* 1. Merchant Details (REPLACE WITH YOUR SANDBOX DETAILS) */}
-                  <input type="hidden" name="merchant_id" value="10048108" />
-                  <input type="hidden" name="merchant_key" value="rmic3yvvboic9" />
+                {/* LIVE PAYFAST CHECKOUT FORM */}
+                <form action="https://www.payfast.co.za/eng/process" method="POST">
+                  
+                  {/* SECURELY LOADED MERCHANT DETAILS */}
+                  <input type="hidden" name="merchant_id" value={process.env.NEXT_PUBLIC_PAYFAST_MERCHANT_ID} />
+                  <input type="hidden" name="merchant_key" value={process.env.NEXT_PUBLIC_PAYFAST_MERCHANT_KEY} />
                   
                   {/* Custom String to securely pass the Guardian ID to our Webhook */}
                   <input type="hidden" name="custom_str1" value={guardianId} />
