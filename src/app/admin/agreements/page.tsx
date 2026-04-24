@@ -8,13 +8,15 @@ import {
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 
+// UPDATED: These tags now perfectly map to the Directory CRM dropdowns!
 const PROGRAM_TAGS = [
+  "Bootcamp", 
   "Term (Monthly)", 
   "Term (Upfront)", 
-  "Bootcamp", 
+  "Demo LMS Access",
+  "Full LMS Access",
   "Online", 
-  "In-Person",
-  "Demo LMS Access"
+  "In-Person"
 ];
 
 export default function AgreementsPage() {
@@ -29,7 +31,7 @@ export default function AgreementsPage() {
     id: "",
     title: "",
     description: "",
-    type: "required_checkbox", // NEW: Added type selection
+    type: "required_checkbox",
     applicable_to: [] as string[]
   });
 

@@ -128,10 +128,9 @@ export default function DirectoryPage() {
                 }));
           }
 
-          // STRICT CLEANUP: Remove token from meta, force root usage.
           const meta = { ...(selectedProfile.metadata || {}) };
           const legacyMetaToken = meta.onboarding_token;
-          delete meta.onboarding_token; // Scrub it from the JSON
+          delete meta.onboarding_token; 
 
           setWorkspaceEditData({
             display_name: selectedProfile.display_name || "",
@@ -140,7 +139,6 @@ export default function DirectoryPage() {
             payment_plan_preference: selectedProfile.payment_plan_preference || "",
             funnel_stage: selectedProfile.funnel_stage || "",
             lead_source: selectedProfile.lead_source || "",
-            // Use root token, or fallback to legacy meta token just in case
             onboarding_token: selectedProfile.onboarding_token || legacyMetaToken || "", 
             metadata: {
               ...meta, 
@@ -148,6 +146,7 @@ export default function DirectoryPage() {
               phone: meta?.phone || "",
               relationship: meta?.relationship || "Guardian",
               is_primary_contact: meta?.is_primary_contact ?? true,
+              lesson_delivery_format: meta?.lesson_delivery_format || "", // NEW: Added Delivery Format
               admin_notes: meta?.admin_notes || "",
               username: meta?.username || "",
               date_of_birth: meta?.date_of_birth || "",
@@ -199,7 +198,6 @@ export default function DirectoryPage() {
     }
   }
 
-  // --- TRIAGE HIGHLIGHT ENGINE ---
   const getHighlightLevel = (profile: any) => {
     const timestamps = [
       profile.updated_at,
@@ -306,7 +304,6 @@ export default function DirectoryPage() {
     if (!selectedProfile || !workspaceEditData) return;
     setIsProcessing(true);
     try {
-      // Ensure we scrub token from metadata payload to clean the DB
       const cleanMeta = { ...workspaceEditData.metadata, last_reviewed_at: new Date().toISOString() };
       delete cleanMeta.onboarding_token;
 
@@ -317,7 +314,7 @@ export default function DirectoryPage() {
           payment_plan_preference: workspaceEditData.payment_plan_preference,
           funnel_stage: workspaceEditData.funnel_stage,
           lead_source: workspaceEditData.lead_source,
-          onboarding_token: workspaceEditData.onboarding_token, // ALWAYS WRITE TO ROOT
+          onboarding_token: workspaceEditData.onboarding_token, 
           updated_at: new Date().toISOString(), 
           metadata: cleanMeta
       };
@@ -352,7 +349,7 @@ export default function DirectoryPage() {
           requires_review: false,
           previous_state: {},
           inactive_since: workspaceEditData.status === 'inactive' ? workspaceEditData.inactive_since : null,
-          onboarding_token: workspaceEditData.onboarding_token, // ALWAYS WRITE TO ROOT
+          onboarding_token: workspaceEditData.onboarding_token, 
           updated_at: new Date().toISOString(), 
           metadata: cleanMeta
       }).eq('id', selectedProfile.id);
@@ -381,13 +378,10 @@ export default function DirectoryPage() {
     }
   };
 
-  // --- STRICT COMMS & ROOT TOKEN LOGIC ---
   const handleGenerateToken = async () => {
     setIsProcessing(true);
     try {
       const newToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      
-      // Write explicitly to ROOT
       const { error } = await supabase.from('profiles').update({
         onboarding_token: newToken,
         updated_at: new Date().toISOString()
@@ -400,7 +394,7 @@ export default function DirectoryPage() {
         onboarding_token: newToken
       });
       await fetchDirectory(); 
-      alert("Token generated and saved to database successfully!"); // VISUAL PROOF
+      alert("Token generated and saved to database successfully!"); 
     } catch (err) {
       alert("Failed to generate token.");
     } finally {
@@ -433,8 +427,6 @@ export default function DirectoryPage() {
     }
   };
 
-
-  // Logic for Workspace Rendering
   const isCoGuardian = !!(selectedProfile?.linked_parent_id || selectedProfile?.metadata?.household_lead_id);
   const isPrimaryGuardian = !isCoGuardian;
   const householdLeadId = isCoGuardian ? (selectedProfile.linked_parent_id || selectedProfile.metadata?.household_lead_id) : selectedProfile?.id;
@@ -482,7 +474,6 @@ export default function DirectoryPage() {
               </div>
             </div>
 
-            {/* TRIAGE LEGEND */}
             <div className="flex flex-wrap items-center gap-6 text-[9px] uppercase tracking-widest font-bold text-slate-500 border-b border-white/5 pb-4">
                <span className="flex items-center gap-2"><div className="w-2.5 h-2.5 bg-rose-500 rounded-full shadow-[0_0_10px_rgba(244,63,94,0.5)]"/> &lt; 2hrs (Critical)</span>
                <span className="flex items-center gap-2"><div className="w-2.5 h-2.5 bg-orange-500 rounded-full shadow-[0_0_10px_rgba(249,115,22,0.5)]"/> &lt; 4hrs (Urgent)</span>
@@ -543,7 +534,6 @@ export default function DirectoryPage() {
         ) : (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} key="workspace" className="space-y-8 pb-20">
             
-            {/* WORKSPACE HEADER */}
             <div className="flex flex-col md:flex-row justify-between items-center gap-6 border-b border-white/5 pb-8">
               <div className="space-y-4">
                 <button onClick={handleCloseWorkspace} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-500 hover:text-purple-400 transition-colors"><ArrowLeft size={16}/> Back to Directory</button>
@@ -580,9 +570,6 @@ export default function DirectoryPage() {
                   </div>
                 </div>
 
-                {/* --- 360 DEGREE EXPANSION BEGINS HERE --- */}
-                
-                {/* 1A. PRIMARY GUARDIAN VIEW (Only visible if viewing a Co-Guardian) */}
                 {isCoGuardian && selectedProfileLeadGuardian && (
                   <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
                     <h3 className="text-xl font-black uppercase text-white border-b border-white/5 pb-4 flex items-center gap-3">
@@ -599,7 +586,6 @@ export default function DirectoryPage() {
                   </div>
                 )}
 
-                {/* 1B. LINKED PIONEERS (Visible to all guardians) */}
                 <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
                   <h3 className="text-xl font-black uppercase text-white border-b border-white/5 pb-4 flex items-center gap-3">
                      <GraduationCap size={20} className="text-blue-500"/> Linked Pioneers
@@ -627,7 +613,6 @@ export default function DirectoryPage() {
                   )}
                 </div>
 
-                {/* 2. CO-GUARDIANS (Only visible if viewing Primary Guardian) */}
                 {isPrimaryGuardian && workspaceEditData?.supportCrew?.length > 0 && (
                   <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
                     <h3 className="text-xl font-black uppercase text-white border-b border-white/5 pb-4 flex items-center gap-3">
@@ -648,7 +633,6 @@ export default function DirectoryPage() {
                   </div>
                 )}
 
-                {/* 3. SYSTEM & ONBOARDING (Only visible to Primary Guardian) */}
                 {isPrimaryGuardian && (
                   <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
                     <h3 className="text-xl font-black uppercase text-white border-b border-white/5 pb-4 flex items-center gap-3">
@@ -695,7 +679,6 @@ export default function DirectoryPage() {
                   </div>
                 )}
 
-                {/* ACCOUNT & PLAN CONFIGURATION WIDGET (Only visible to Primary Guardian) */}
                 {isPrimaryGuardian && (
                   <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
                     <h3 className="text-xl font-black uppercase text-white border-b border-white/5 pb-4 flex items-center gap-3">
@@ -710,9 +693,25 @@ export default function DirectoryPage() {
                           className="w-full bg-[#0f172a] rounded-xl px-4 py-3 text-sm font-bold text-white border border-white/10 outline-none focus:border-purple-500 transition-all appearance-none cursor-pointer"
                         >
                           <option value="">Unassigned</option>
-                          <option value="Bootcamp">Bootcamp (One-Off)</option>
+                          <option value="Bootcamp">Bootcamp</option>
                           <option value="Term (Monthly)">Term (Monthly)</option>
                           <option value="Term (Upfront)">Term (Upfront)</option>
+                          <option value="Demo LMS Access">Demo LMS Access</option>
+                          <option value="Full LMS Access">Full LMS Access</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-2">Lesson Delivery Format</label>
+                        <select
+                          value={workspaceEditData?.metadata?.lesson_delivery_format || ""}
+                          onChange={(e) => setWorkspaceEditData({ ...workspaceEditData, metadata: { ...workspaceEditData.metadata, lesson_delivery_format: e.target.value } })}
+                          className="w-full bg-[#0f172a] rounded-xl px-4 py-3 text-sm font-bold text-white border border-white/10 outline-none focus:border-purple-500 transition-all appearance-none cursor-pointer"
+                        >
+                          <option value="">Unassigned</option>
+                          <option value="Self-paced">Self-paced</option>
+                          <option value="Online">Online</option>
+                          <option value="In-Person">In-Person</option>
                         </select>
                       </div>
                       
@@ -733,7 +732,6 @@ export default function DirectoryPage() {
               
               <div className="space-y-8">
                 
-                {/* NEW: MAGIC ONBOARDING WIDGET */}
                 <div className="bg-white/[0.02] border border-white/5 p-10 rounded-[40px] space-y-6">
                   <h3 className="text-sm font-black uppercase text-white flex items-center gap-2"><Link2 size={16} className="text-blue-500"/> Magic Onboarding Link</h3>
                   

@@ -53,10 +53,11 @@ export default function WelcomePortal() {
 
   const [wizardData, setWizardData] = useState({
     password: "", confirmPassword: "",
+    planType: "", // NEW: Stores plan type to dynamically hide steps
     guardians: [{ id: 'primary', name: "", email: "", phone: "", isPrimary: true, removalRequested: false }],
     learners: [{ id: 1 as any, name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }],
     billing: { frequency: "monthly", date: "1st" },
-    agreements: {} as Record<string, any> // Changed to 'any' to support booleans and strings
+    agreements: {} as Record<string, any>
   });
 
   // --- REAL-TIME PASSWORD CHECKS ---
@@ -64,6 +65,11 @@ export default function WelcomePortal() {
   const pwdHasUpper = /[A-Z]/.test(wizardData.password);
   const pwdHasNum = /\d/.test(wizardData.password);
   const pwdMatch = wizardData.password.length > 0 && wizardData.password === wizardData.confirmPassword;
+
+  // --- DYNAMIC WIZARD PATHING ---
+  // If their plan type has "LMS Access" OR "Bootcamp", remove step 3 (Billing) from the flow
+  const skipBilling = wizardData.planType?.includes("LMS Access") || wizardData.planType?.includes("Bootcamp");
+  const wizardSteps = skipBilling ? [0, 1, 2, 4] : [0, 1, 2, 3, 4];
 
   // --- INITIALIZATION (Connected to Supabase) ---
   useEffect(() => {
@@ -150,24 +156,29 @@ export default function WelcomePortal() {
               .select('*')
               .order('created_at', { ascending: true });
 
-            let filteredAgreements = agreementsData || [];
-            
-            // Optionally: Filter `filteredAgreements` here if you want to only show them agreements 
-            // where `applicable_to` includes `guardianData.payment_plan_preference`
-            // For now, we load all active agreements.
+            // SMART FILTERING
+            const parentTags = [
+              guardianData.payment_plan_preference,
+              meta.lesson_delivery_format
+            ].filter(Boolean);
+
+            let filteredAgreements = (agreementsData || []).filter((a: any) => {
+              if (!a.applicable_to || a.applicable_to.length === 0) return true;
+              return a.applicable_to.some((tag: string) => parentTags.includes(tag));
+            });
 
             setRequiredAgreements(filteredAgreements);
             
-            // Initialize agreement state based on type
             const initialAgreementsState: Record<string, any> = {};
-            filteredAgreements.forEach(a => {
+            filteredAgreements.forEach((a: any) => {
               if (a.type === 'required_checkbox') initialAgreementsState[a.id] = false;
-              else if (a.type === 'yes_no') initialAgreementsState[a.id] = null; // null means undeclared
+              else if (a.type === 'yes_no') initialAgreementsState[a.id] = null;
               else if (a.type === 'optional_text') initialAgreementsState[a.id] = "";
             });
 
             setWizardData(prev => ({
               ...prev,
+              planType: guardianData.payment_plan_preference || "", // Track plan type
               guardians: loadedGuardians,
               learners: loadedLearners,
               agreements: initialAgreementsState
@@ -219,9 +230,20 @@ export default function WelcomePortal() {
     }, 1500);
   };
 
-  // --- WIZARD HANDLERS ---
-  const handleNext = () => setStep(prev => Math.min(prev + 1, 5));
-  const handleBack = () => setStep(prev => Math.max(prev - 1, 0));
+  // --- SMART WIZARD HANDLERS ---
+  const handleNext = () => {
+    const currentIndex = wizardSteps.indexOf(step);
+    if (currentIndex < wizardSteps.length - 1) {
+      setStep(wizardSteps[currentIndex + 1]);
+    }
+  };
+
+  const handleBack = () => {
+    const currentIndex = wizardSteps.indexOf(step);
+    if (currentIndex > 0) {
+      setStep(wizardSteps[currentIndex - 1]);
+    }
+  };
   
   // Tab Functions for Guardians
   const handleAddGuardian = () => {
@@ -283,7 +305,7 @@ export default function WelcomePortal() {
           password: wizardData.password,
           guardians: wizardData.guardians, 
           learners: wizardData.learners,
-          billing: wizardData.billing,
+          billing: wizardData.billing, // If it's LMS access, this just sends default values and safely does nothing
           agreements: wizardData.agreements
         })
       });
@@ -306,12 +328,10 @@ export default function WelcomePortal() {
     if (step === 1) return wizardData.guardians.some(g => !g.removalRequested && (!g.name || !g.email));
     if (step === 2) return wizardData.learners.some(l => !l.removalRequested && !l.name);
     
-    // Validates based on agreement TYPE
     if (step === 4) {
       return requiredAgreements.some(req => {
         if (req.type === 'required_checkbox') return wizardData.agreements[req.id] !== true;
         if (req.type === 'yes_no') return wizardData.agreements[req.id] === null || wizardData.agreements[req.id] === undefined;
-        // 'optional_text' never blocks
         return false;
       });
     }
@@ -343,9 +363,14 @@ export default function WelcomePortal() {
 
           {step < 6 && (
             <div className="mb-8 flex items-center justify-center gap-2">
-              {[0, 1, 2, 3, 4].map(i => (
-                <div key={i} className={`h-1.5 rounded-full transition-all duration-500 ${i === step ? 'w-12 bg-blue-600' : i < step ? 'w-6 bg-blue-300' : 'w-6 bg-slate-200'}`} />
-              ))}
+              {wizardSteps.map((s, idx) => {
+                const currentVisualIndex = wizardSteps.indexOf(step);
+                const isActive = idx === currentVisualIndex;
+                const isPast = idx < currentVisualIndex;
+                return (
+                  <div key={s} className={`h-1.5 rounded-full transition-all duration-500 ${isActive ? 'w-12 bg-blue-600' : isPast ? 'w-6 bg-blue-300' : 'w-6 bg-slate-200'}`} />
+                );
+              })}
             </div>
           )}
 
@@ -615,8 +640,8 @@ export default function WelcomePortal() {
                     </div>
                   )}
 
-                  {/* STEP 3: Billing */}
-                  {step === 3 && (
+                  {/* STEP 3: Billing (HIDDEN FOR LMS ACCESS & BOOTCAMP PARENTS) */}
+                  {step === 3 && !skipBilling && (
                     <div className="space-y-8">
                       <div>
                         <h2 className="text-2xl font-black tracking-tight text-slate-900 flex items-center gap-3"><CreditCard className="text-blue-500" /> Tailor Your Billing</h2>
@@ -739,6 +764,11 @@ export default function WelcomePortal() {
                             </label>
                           )
                         })}
+                        {requiredAgreements.length === 0 && (
+                          <div className="text-center py-10 border border-dashed border-slate-200 rounded-3xl">
+                            <p className="text-slate-500 font-bold italic">No specific agreements are required for your selected plan.</p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -766,7 +796,8 @@ export default function WelcomePortal() {
                 {step > 0 ? (
                   <button onClick={handleBack} className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-900 transition-colors"><ArrowLeft size={16} /> Back</button>
                 ) : <div />}
-                {step < 4 ? (
+                
+                {step !== wizardSteps[wizardSteps.length - 1] ? (
                   <button onClick={handleNext} disabled={isWizardNextDisabled()} className="bg-slate-900 hover:bg-blue-600 text-white px-8 py-3.5 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center gap-2 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-md">
                     Continue <ChevronRight size={16} />
                   </button>

@@ -203,12 +203,12 @@ export default function AdminDashboard() {
                   { label: 'Pioneer Ledger', icon: Users, path: '/admin/pioneers', color: 'hover:border-purple-500' },
                   { label: 'CRM Database', icon: Users, path: '/admin/directory', color: 'hover:border-purple-500' },
                   { label: 'Finance Hub', icon: CreditCard, path: '/admin/finance', color: 'hover:border-emerald-500' },
+                  { label: 'Core Agreements', icon: ShieldCheck, path: '/admin/agreements', color: 'hover:border-emerald-400' },
                   { label: 'Growth Plan', icon: LayoutDashboard, path: '/admin/blueprint', color: 'hover:border-fuchsia-500' },
                   { label: 'Comms Center', icon: Activity, path: '/admin/communications', color: 'hover:border-orange-500' },
                   { label: 'Master Data', icon: Briefcase, path: '/admin/contacts', color: 'hover:border-slate-500' },
                   { label: 'Teacher Portal', icon: GraduationCap, path: '/teacher/dashboard', color: 'hover:border-cyan-500' },
                   { label: 'Parent Portals', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' },
-                  // NEW: Events Hub
                   { label: 'Events & Bootcamps', icon: CalendarDays, path: '/admin/events', color: 'hover:border-yellow-500' },
                 ].map((item, i) => (
                   <Link key={i} href={item.path} className={`p-6 bg-white/5 border border-transparent rounded-[32px] transition-all flex flex-col gap-4 group ${item.color}`}>
