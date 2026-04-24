@@ -359,7 +359,9 @@ export default function WelcomePortal() {
                     <div className="space-y-8">
                       <div className="text-center space-y-4">
                         <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner border border-blue-100"><Sparkles size={28} /></div>
-                        <h1 className="text-3xl md:text-4xl font-black tracking-tight text-slate-900">Welcome to RAD Academy!</h1>
+                        <h1 className="text-3xl md:text-4xl font-black tracking-tight text-slate-900">
+                          Welcome{wizardData.guardians[0]?.name ? `, ${wizardData.guardians[0].name.split(' ')[0]}` : ' to RAD Academy'}!
+                        </h1>
                         <p className="text-slate-500 font-medium max-w-md mx-auto leading-relaxed">We are thrilled to have your family join us. Let's secure your account and personalize your pioneer's journey.</p>
                       </div>
                       <div className="bg-slate-50 rounded-3xl p-6 md:p-8 border border-slate-100 space-y-6">

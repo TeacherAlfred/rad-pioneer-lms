@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { 
   Users, Search, ShieldAlert, ArrowRight, X, Mail, Phone, 
   Calendar, BookOpen, User, Key, Copy, RotateCcw, Save, GraduationCap,
-  Loader2, ArrowLeft, ListTree, CheckCircle2, AlertCircle, UserPlus, PowerOff, Shield, BellRing, Plus, Trash2, ChevronDown, CreditCard, ChevronRight, ChevronLeft, Send, Eye, PenTool, LayoutTemplate, Clock, Star, Globe
+  Loader2, ArrowLeft, ListTree, CheckCircle2, AlertCircle, UserPlus, PowerOff, Shield, BellRing, Plus, Trash2, ChevronDown, CreditCard, ChevronRight, ChevronLeft, Send, Eye, PenTool, LayoutTemplate, Clock, Star, Globe, Link2, Zap, MessageCircle
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -79,6 +79,10 @@ export default function DirectoryPage() {
 
   const [childrenMap, setChildrenMap] = useState<Record<string, any[]>>({});
 
+  // COMMS STATE
+  const [commsMode, setCommsMode] = useState<'none' | 'whatsapp' | 'email'>('none');
+  const [customMessage, setCustomMessage] = useState("");
+
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -124,7 +128,10 @@ export default function DirectoryPage() {
                 }));
           }
 
-          const meta = selectedProfile.metadata || {};
+          // STRICT CLEANUP: Remove token from meta, force root usage.
+          const meta = { ...(selectedProfile.metadata || {}) };
+          const legacyMetaToken = meta.onboarding_token;
+          delete meta.onboarding_token; // Scrub it from the JSON
 
           setWorkspaceEditData({
             display_name: selectedProfile.display_name || "",
@@ -133,6 +140,8 @@ export default function DirectoryPage() {
             payment_plan_preference: selectedProfile.payment_plan_preference || "",
             funnel_stage: selectedProfile.funnel_stage || "",
             lead_source: selectedProfile.lead_source || "",
+            // Use root token, or fallback to legacy meta token just in case
+            onboarding_token: selectedProfile.onboarding_token || legacyMetaToken || "", 
             metadata: {
               ...meta, 
               email: meta?.email || "",
@@ -143,11 +152,11 @@ export default function DirectoryPage() {
               username: meta?.username || "",
               date_of_birth: meta?.date_of_birth || "",
               tc_accepted_version: meta?.tc_accepted_version || "",
-              agreements: meta?.agreements || {},
-              onboarding_token: meta?.onboarding_token || selectedProfile.onboarding_token || ""
+              agreements: meta?.agreements || {}
             },
             supportCrew: existingCrew
           });
+          setCommsMode('none'); 
       } else {
           setWorkspaceEditData(null);
           setSelectedProfileLeadGuardian(null);
@@ -297,6 +306,10 @@ export default function DirectoryPage() {
     if (!selectedProfile || !workspaceEditData) return;
     setIsProcessing(true);
     try {
+      // Ensure we scrub token from metadata payload to clean the DB
+      const cleanMeta = { ...workspaceEditData.metadata, last_reviewed_at: new Date().toISOString() };
+      delete cleanMeta.onboarding_token;
+
       const payload: any = {
           display_name: workspaceEditData.display_name,
           status: workspaceEditData.status,
@@ -304,8 +317,9 @@ export default function DirectoryPage() {
           payment_plan_preference: workspaceEditData.payment_plan_preference,
           funnel_stage: workspaceEditData.funnel_stage,
           lead_source: workspaceEditData.lead_source,
+          onboarding_token: workspaceEditData.onboarding_token, // ALWAYS WRITE TO ROOT
           updated_at: new Date().toISOString(), 
-          metadata: { ...workspaceEditData.metadata, last_reviewed_at: new Date().toISOString() }
+          metadata: cleanMeta
       };
 
       const { error } = await supabase.from('profiles').update(payload).eq('id', selectedProfile.id);
@@ -330,13 +344,17 @@ export default function DirectoryPage() {
     if (!selectedProfile || !workspaceEditData) return;
     setIsProcessing(true);
     try {
+      const cleanMeta = { ...workspaceEditData.metadata, last_reviewed_at: new Date().toISOString() };
+      delete cleanMeta.onboarding_token;
+
       const { error } = await supabase.from('profiles').update({
           ...workspaceEditData,
           requires_review: false,
           previous_state: {},
           inactive_since: workspaceEditData.status === 'inactive' ? workspaceEditData.inactive_since : null,
+          onboarding_token: workspaceEditData.onboarding_token, // ALWAYS WRITE TO ROOT
           updated_at: new Date().toISOString(), 
-          metadata: { ...workspaceEditData.metadata, last_reviewed_at: new Date().toISOString() }
+          metadata: cleanMeta
       }).eq('id', selectedProfile.id);
       if (error) throw error;
       await fetchDirectory();
@@ -362,6 +380,59 @@ export default function DirectoryPage() {
       setIsProcessing(false);
     }
   };
+
+  // --- STRICT COMMS & ROOT TOKEN LOGIC ---
+  const handleGenerateToken = async () => {
+    setIsProcessing(true);
+    try {
+      const newToken = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      
+      // Write explicitly to ROOT
+      const { error } = await supabase.from('profiles').update({
+        onboarding_token: newToken,
+        updated_at: new Date().toISOString()
+      }).eq('id', selectedProfile.id);
+
+      if (error) throw error;
+
+      setWorkspaceEditData({
+        ...workspaceEditData,
+        onboarding_token: newToken
+      });
+      await fetchDirectory(); 
+      alert("Token generated and saved to database successfully!"); // VISUAL PROOF
+    } catch (err) {
+      alert("Failed to generate token.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const getTemplateMessage = (mode: 'whatsapp' | 'email') => {
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    const link = `${baseUrl}/welcome?t=${workspaceEditData?.onboarding_token}`;
+    const firstName = workspaceEditData?.display_name?.split(' ')[0] || 'there';
+
+    if (mode === 'whatsapp') {
+      return `Hi ${firstName},\n\nWelcome to RAD Academy! Please use this secure link to set up your family profile and access the platform:\n\n${link}\n\nLet us know if you need any help!`;
+    } else {
+      return `Hi ${firstName},\n\nWelcome to RAD Academy!\n\nPlease use the secure link below to set up your family profile, complete your agreements, and access the platform.\n\nSecure Link: ${link}\n\nIf you have any questions, just reply to this email.\n\nBest regards,\nThe RAD Academy Team`;
+    }
+  };
+
+  const handleSendComms = () => {
+    if (commsMode === 'whatsapp') {
+      const phone = workspaceEditData?.metadata?.phone;
+      if (!phone) return alert("No phone number on file for this guardian.");
+      const cleanPhone = phone.replace(/\D/g, ''); 
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(customMessage)}`, '_blank');
+    } else if (commsMode === 'email') {
+      const email = workspaceEditData?.metadata?.email;
+      if (!email) return alert("No email address on file for this guardian.");
+      window.open(`mailto:${email}?subject=${encodeURIComponent("Welcome to RAD Academy")}&body=${encodeURIComponent(customMessage)}`, '_blank');
+    }
+  };
+
 
   // Logic for Workspace Rendering
   const isCoGuardian = !!(selectedProfile?.linked_parent_id || selectedProfile?.metadata?.household_lead_id);
@@ -661,6 +732,68 @@ export default function DirectoryPage() {
               </div>
               
               <div className="space-y-8">
+                
+                {/* NEW: MAGIC ONBOARDING WIDGET */}
+                <div className="bg-white/[0.02] border border-white/5 p-10 rounded-[40px] space-y-6">
+                  <h3 className="text-sm font-black uppercase text-white flex items-center gap-2"><Link2 size={16} className="text-blue-500"/> Magic Onboarding Link</h3>
+                  
+                  {!workspaceEditData?.onboarding_token ? (
+                    <button onClick={handleGenerateToken} disabled={isProcessing} className="w-full py-4 rounded-xl bg-blue-600/10 hover:bg-blue-600/20 text-blue-500 font-black uppercase tracking-widest text-xs transition-colors flex items-center justify-center gap-2 border border-blue-500/20">
+                      {isProcessing ? <Loader2 size={14} className="animate-spin"/> : <Zap size={14}/>} Generate Secure Link
+                    </button>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 bg-[#0f172a] p-3 rounded-xl border border-white/10">
+                        <input 
+                          readOnly 
+                          value={`${typeof window !== 'undefined' ? window.location.origin : ''}/welcome?t=${workspaceEditData.onboarding_token}`} 
+                          className="bg-transparent text-slate-400 text-xs w-full outline-none font-medium" 
+                        />
+                        <button 
+                          onClick={() => { 
+                            navigator.clipboard.writeText(`${typeof window !== 'undefined' ? window.location.origin : ''}/welcome?t=${workspaceEditData.onboarding_token}`); 
+                            alert("Copied to clipboard!"); 
+                          }} 
+                          className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-slate-300 transition-all"
+                          title="Copy Link"
+                        >
+                          <Copy size={14}/>
+                        </button>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-3">
+                        <button 
+                          onClick={() => { setCommsMode('whatsapp'); setCustomMessage(getTemplateMessage('whatsapp')); }} 
+                          className={`py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 border transition-all ${commsMode === 'whatsapp' ? 'bg-emerald-500 text-white border-emerald-500 shadow-md' : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/20'}`}
+                        >
+                          <MessageCircle size={14}/> WhatsApp
+                        </button>
+                        <button 
+                          onClick={() => { setCommsMode('email'); setCustomMessage(getTemplateMessage('email')); }} 
+                          className={`py-3 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 border transition-all ${commsMode === 'email' ? 'bg-blue-500 text-white border-blue-500 shadow-md' : 'bg-blue-500/10 text-blue-500 border-blue-500/20 hover:bg-blue-500/20'}`}
+                        >
+                          <Mail size={14}/> Email
+                        </button>
+                      </div>
+
+                      <AnimatePresence>
+                        {commsMode !== 'none' && (
+                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden space-y-3 pt-2">
+                            <textarea 
+                              value={customMessage} 
+                              onChange={e => setCustomMessage(e.target.value)}
+                              className="w-full bg-[#0f172a] border border-white/10 rounded-xl p-4 text-xs text-white outline-none focus:border-purple-500 resize-none h-40 leading-relaxed"
+                            />
+                            <button onClick={handleSendComms} className="w-full py-3 bg-white text-slate-900 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-colors flex items-center justify-center gap-2 shadow-lg">
+                              <Send size={14}/> Launch {commsMode === 'whatsapp' ? 'WhatsApp' : 'Email App'}
+                            </button>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+                </div>
+
                 <div className="bg-white/[0.02] border border-white/5 p-10 rounded-[40px]">
                   <h3 className="text-sm font-black uppercase mb-6 text-white flex items-center gap-2"><PowerOff size={16}/> System Protocol</h3>
                   <select value={workspaceEditData?.status} onChange={e => setWorkspaceEditData({...workspaceEditData, status: e.target.value})} className="w-full bg-[#020617] border border-white/10 p-4 rounded-xl font-bold uppercase tracking-widest text-xs outline-none focus:border-purple-500 appearance-none cursor-pointer">
