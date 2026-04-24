@@ -91,7 +91,8 @@ export default function RADStatement({ guardianId, name, email, phone, transacti
 
                   <button 
                     type="submit"
-                    disabled={Number(payAmount) <= 0}
+                    disabled={true} // <-- FORCED DISABLED FOR TESTING
+                    title="Payment gateway is currently undergoing maintenance."
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3.5 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-[0_0_15px_rgba(16,185,129,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Lock size={12} /> Pay Securely via PayFast
