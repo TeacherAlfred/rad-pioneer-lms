@@ -7,10 +7,11 @@ import {
   ChevronRight, Phone, Mail, Target, BookOpen, 
   MessageSquare, Shield, Clock, Plus, Zap, Laptop,
   CheckCircle2, ChevronLeft, CalendarCheck, Loader2, X, Edit2, Save, MapPin, Video, CalendarPlus,
-  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard, TrendingUp, Trophy, FileText, Check, XCircle, CalendarRange, Bell
+  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard, TrendingUp, Trophy, FileText, Check, XCircle, CalendarRange, Bell, ArrowRight
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 
 const AVAILABLE_COURSES = [
   "Robotics Pioneer Bootcamp", 
@@ -42,7 +43,6 @@ const getSyllabusForCourse = (courseName: string) => {
   if (COURSE_SYLLABUS[courseName]) return COURSE_SYLLABUS[courseName];
   return Array.from({ length: 8 }).map((_, i) => ({ week: i + 1, title: `Standard Module ${i + 1}` }));
 };
-
 
 export default function TeacherDashboard() {
   const router = useRouter();
@@ -100,8 +100,7 @@ export default function TeacherDashboard() {
          fetchUnread(); 
       }).subscribe();
 
-    // ADD THESE 3 LINES: Listen for the manual clear event
-    const handleClear = () => fetchUnread(); // For teachers, we re-fetch to see if other students still have messages
+    const handleClear = () => fetchUnread();
     window.addEventListener('messagesRead', handleClear);
 
     return () => { 
@@ -147,9 +146,9 @@ export default function TeacherDashboard() {
          });
       }
 
-      const guardiansMap = new Map(guardiansRes.data.map(g => [g.id, g]));
+      const guardiansMap = new Map(guardiansRes.data?.map(g => [g.id, g]) || []);
 
-      const mappedStudents = studentsRes.data.map(s => {
+      const mappedStudents = studentsRes.data?.map(s => {
         const guardian: any = guardiansMap.get(s.linked_parent_id) || {};
         const guardianMeta: any = typeof guardian.metadata === 'string' ? JSON.parse(guardian.metadata) : (guardian.metadata || {});
         const studentMeta: any = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata || {});
@@ -188,7 +187,7 @@ export default function TeacherDashboard() {
           teacherId: studentMeta.teacher?.id || null,
           recentNote: studentMeta.admin_notes || "No instructional notes on file."
         };
-      });
+      }) || [];
 
       setStudents(mappedStudents);
 
@@ -198,6 +197,32 @@ export default function TeacherDashboard() {
       setLoading(false);
     }
   }
+
+  // --- BOOTCAMP ENROLLMENT LOGIC ---
+  const enrollInBootcamp = async (studentId: string) => {
+    try {
+      const { data: course } = await supabase.from('courses').select('id').eq('title', 'Robotics Pioneer Bootcamp').single();
+      if (!course) return alert("Robotics Pioneer Bootcamp course not found in DB.");
+
+      await supabase.from('enrollments').upsert({
+        student_id: studentId,
+        course_id: course.id,
+        status: 'active'
+      }, { onConflict: 'student_id,course_id' });
+
+      const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', studentId).single();
+      const meta = typeof profile?.metadata === 'string' ? JSON.parse(profile.metadata) : (profile?.metadata || {});
+      meta.learning_mode = 'In-person';
+      meta.interested_programs = ['Robotics Pioneer Bootcamp'];
+      
+      await supabase.from('profiles').update({ metadata: meta }).eq('id', studentId);
+      alert("Student enrolled in Bootcamp successfully!");
+      fetchDashboardData();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to enroll student.");
+    }
+  };
 
   const handleLogout = async () => {
     localStorage.removeItem("pioneer_session");
@@ -227,7 +252,6 @@ export default function TeacherDashboard() {
     wrapUpData: { attendance: Record<string, string>, xp: number, note: string }
   ) => {
     try {
-      // 1. UPDATE SCHEDULES & LOGISTICS
       const originalAttendees = lessonGroup.attendees || [];
       const originalIds = originalAttendees.map((a: any) => a.studentId);
       const finalIds = finalAttendees.map((a: any) => a.studentId);
@@ -239,12 +263,12 @@ export default function TeacherDashboard() {
       const isLink = newDelivery === 'online';
 
       const updateStudentScheduleOnly = async (studentId: string, mutator: (sched: any[]) => any[]) => {
-         const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', studentId).single();
-         if(profile) {
-             const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
-             meta.schedule = mutator(meta.schedule || []);
-             await supabase.from('profiles').update({ metadata: meta }).eq('id', studentId);
-         }
+          const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', studentId).single();
+          if(profile) {
+              const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+              meta.schedule = mutator(meta.schedule || []);
+              await supabase.from('profiles').update({ metadata: meta }).eq('id', studentId);
+          }
       };
 
       await Promise.all([
@@ -277,7 +301,6 @@ export default function TeacherDashboard() {
         })
       ]);
 
-      // 2. PROCESS ATTENDANCE & XP (WRAP-UP)
       if (wrapUpData && Object.keys(wrapUpData.attendance).length > 0) {
         await Promise.all(Object.entries(wrapUpData.attendance).map(async ([studentId, status]) => {
           const { data: profile } = await supabase.from('profiles').select('xp, metadata').eq('id', studentId).single();
@@ -292,7 +315,7 @@ export default function TeacherDashboard() {
               meta.lessons_attended = (meta.lessons_attended || 0) + 1;
               meta.current_streak = (meta.current_streak || 0) + 1;
             } else if (status === 'absent') {
-              meta.current_streak = 0; // Break streak
+              meta.current_streak = 0; 
             }
 
             if (wrapUpData.note) {
@@ -407,7 +430,7 @@ export default function TeacherDashboard() {
     return (
       <div className="h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
         <Loader2 className="animate-spin text-purple-500" size={40} />
-        <p className="text-purple-400 font-black uppercase tracking-widest text-[10px]">Loading Student Intelligence...</p>
+        <p className="text-purple-400 font-black uppercase tracking-widest text-[10px]">Loading Intelligence...</p>
       </div>
     );
   }
@@ -472,7 +495,7 @@ export default function TeacherDashboard() {
         </header>
 
         {/* TOOLBAR ROW: FILTERS & ACTIONS (Role-Based View) */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 py-2 pb-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 py-2 pb-6 border-b border-white/5">
             
            {/* SCOPE SELECTION (Admin vs Teacher) */}
            {currentUser?.role === 'admin' ? (
@@ -528,6 +551,31 @@ export default function TeacherDashboard() {
            </div>
         </div>
 
+        {/* --- NEW: BOOTCAMP TOOLKIT COMMAND CENTER --- */}
+        <div className="bg-gradient-to-r from-emerald-900/40 to-[#020617] border border-emerald-500/20 rounded-[32px] p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-2xl">
+          <div>
+             <h3 className="text-xl font-black uppercase italic tracking-tighter text-white flex items-center gap-2">
+               <Zap size={20} className="text-emerald-400" /> Live Bootcamp Control
+             </h3>
+             <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1 font-bold">Manage queue, unlock the logic lab, and cast the leaderboard.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+             <Link 
+                href="/teacher/bootcamp/leaderboard" 
+                target="_blank"
+                className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-white/5 border border-white/10 hover:bg-white/10 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+             >
+                <Trophy size={14}/> Cast Leaderboard <ArrowRight size={14} className="ml-1" />
+             </Link>
+             <Link 
+                href="/teacher/bootcamp" 
+                className="flex-1 md:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:scale-105"
+             >
+                Open Review Queue <ArrowRight size={14} className="ml-1" />
+             </Link>
+          </div>
+        </div>
+
         {/* HERO METRICS */}
         <HeroMetrics metrics={metrics} onDrilldown={setMetricDrilldown} scopeName={scopeName} />
 
@@ -550,7 +598,12 @@ export default function TeacherDashboard() {
       </div>
 
       {/* MODALS */}
-      <MetricDrilldownModal metric={metricDrilldown} students={scopedStudents} onClose={() => setMetricDrilldown(null)} />
+      <MetricDrilldownModal 
+        metric={metricDrilldown} 
+        students={scopedStudents} 
+        onClose={() => setMetricDrilldown(null)} 
+        onEnroll={enrollInBootcamp}
+      />
 
       <BulkScheduleModal
         isOpen={isBulkScheduleOpen} onClose={() => setIsBulkScheduleOpen(false)}
@@ -600,7 +653,7 @@ function HeroMetrics({ metrics, onDrilldown, scopeName }: { metrics: any, onDril
   );
 }
 
-function MetricDrilldownModal({ metric, students, onClose }: { metric: string | null, students: any[], onClose: () => void }) {
+function MetricDrilldownModal({ metric, students, onClose, onEnroll }: { metric: string | null, students: any[], onClose: () => void, onEnroll: (id: string) => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const [cachedMetric, setCachedMetric] = useState<string | null>(null);
@@ -649,7 +702,7 @@ function MetricDrilldownModal({ metric, students, onClose }: { metric: string | 
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
           <motion.div 
             initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
-            className="relative bg-[#0f172a] border border-white/10 rounded-[40px] w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+            className="relative bg-[#0f172a] border border-white/10 rounded-[40px] w-full max-w-5xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
           >
             <div className="p-8 border-b border-white/5 flex justify-between items-center bg-white/[0.02] shrink-0">
               <div className="flex items-center gap-4">
@@ -669,20 +722,32 @@ function MetricDrilldownModal({ metric, students, onClose }: { metric: string | 
                       <tr>
                         <th className="px-6 py-4">Student</th>
                         <th className="px-6 py-4">Current Course</th>
-                        <th className="px-6 py-4">Attendance</th>
-                        <th className="px-6 py-4 text-right">Alerts</th>
+                        <th className="px-6 py-4 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {filtered.map((s: any) => (
-                        <tr key={s.id} onClick={() => { onClose(); router.push(`${basePath}/${s.id}`); }} className="hover:bg-white/5 cursor-pointer transition-colors group">
-                          <td className="px-6 py-4 font-bold text-sm text-white group-hover:text-purple-400 transition-colors flex items-center gap-2">{s.name}</td>
+                        <tr key={s.id} className="hover:bg-white/5 transition-colors group">
+                          <td className="px-6 py-4 font-bold text-sm text-white group-hover:text-purple-400 transition-colors flex items-center gap-2">
+                             {s.name}
+                             {s.alerts.length > 0 && <AlertTriangle size={12} className="text-rose-500" />}
+                          </td>
                           <td className="px-6 py-4 text-xs text-slate-400">{s.course}</td>
-                          <td className="px-6 py-4 text-xs font-bold text-emerald-400">{s.attendance}</td>
-                          <td className="px-6 py-4 text-right">
-                            {s.alerts.length > 0 ? (
-                              <span className="inline-flex items-center gap-1 bg-rose-500/20 text-rose-400 px-2 py-1 rounded-md text-[9px] font-black uppercase"><AlertTriangle size={10}/> {s.alerts.length} Alert</span>
-                            ) : (<span className="text-slate-600">-</span>)}
+                          <td className="px-6 py-4 text-right flex justify-end gap-2">
+                             {s.course !== "Robotics Pioneer Bootcamp" && (
+                               <button 
+                                 onClick={(e) => { e.stopPropagation(); onEnroll(s.id); }}
+                                 className="px-3 py-1.5 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-emerald-500 hover:text-black transition-all"
+                               >
+                                 Enroll in Bootcamp
+                               </button>
+                             )}
+                             <button 
+                               onClick={() => { onClose(); router.push(`${basePath}/${s.id}`); }}
+                               className="px-3 py-1.5 bg-white/5 text-slate-400 border border-white/10 rounded-lg text-[9px] font-black uppercase hover:text-white"
+                             >
+                               View Profile
+                             </button>
                           </td>
                         </tr>
                       ))}
@@ -827,7 +892,6 @@ function NextDaysTracker({ students, onEditLesson }: { students: any[], onEditLe
   );
 }
 
-// INTEGRATING UNREAD STATE INTO STUDENT INTELLIGENCE
 function StudentIntelligence({ students, unreadStudentIds, unreadOnlyFilter }: { students: any[], unreadStudentIds: Set<string>, unreadOnlyFilter: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -844,7 +908,6 @@ function StudentIntelligence({ students, unreadStudentIds, unreadOnlyFilter }: {
 
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
-      // 1. If unread filter is ON, drop anyone without a message instantly
       if (unreadOnlyFilter && !unreadStudentIds.has(s.id)) return false;
 
       const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase());

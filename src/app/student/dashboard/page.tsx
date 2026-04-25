@@ -598,31 +598,38 @@ export default function DashboardPage() {
                               </h3>
 
                               {/* ABA: Errorless Learning - MASSIVE, pulsing, unmissable button */}
-                              <Link 
-                                href={activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`} 
-                                className={`w-full py-5 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl ${
-                                  activeTask.type === 'checkpoint' 
-                                    ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black hover:shadow-[0_0_40px_rgba(245,158,11,0.6)]' 
-                                    : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:shadow-[0_0_40px_rgba(59,130,246,0.6)]'
-                                }`}
-                              >
-                                {/* Light sweep animation */}
-                                <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12" />
-                                
-                                {activeTask.type === 'checkpoint' ? (
-                                  <>
-                                    <ShieldCheck className="w-6 h-6 animate-pulse" />
-                                    <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Boss Level</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                      <Play fill="currentColor" className="w-4 h-4 ml-1" />
-                                    </div>
-                                    <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Mission</span>
-                                  </>
-                                )}
-                              </Link>
+<Link 
+  href={courseData.title === 'Robotics Pioneer Bootcamp' ? '/student/bootcamp' : activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`} 
+  className={`w-full py-5 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl ${
+    courseData.title === 'Robotics Pioneer Bootcamp'
+      ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-black hover:shadow-[0_0_40px_rgba(16,185,129,0.6)]'
+      : activeTask.type === 'checkpoint' 
+        ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black hover:shadow-[0_0_40px_rgba(245,158,11,0.6)]' 
+        : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:shadow-[0_0_40px_rgba(59,130,246,0.6)]'
+  }`}
+>
+  {/* Light sweep animation */}
+  <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12" />
+  
+  {courseData.title === 'Robotics Pioneer Bootcamp' ? (
+    <>
+      <Zap className="w-6 h-6 animate-pulse" />
+      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Enter Logic Lab</span>
+    </>
+  ) : activeTask.type === 'checkpoint' ? (
+    <>
+      <ShieldCheck className="w-6 h-6 animate-pulse" />
+      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Boss Level</span>
+    </>
+  ) : (
+    <>
+      <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+        <Play fill="currentColor" className="w-4 h-4 ml-1" />
+      </div>
+      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Mission</span>
+    </>
+  )}
+</Link>
                             </div>
                           </>
                         ) : (
