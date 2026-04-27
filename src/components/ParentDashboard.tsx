@@ -5,11 +5,11 @@ import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Key, Zap, Flame, Calendar, Shield, TrendingUp, Link,
-  ChevronRight, Loader2, AlertCircle, CheckCircle2,
+  ChevronRight, Loader2, AlertCircle, CheckCircle2, AlertTriangle, 
   Trophy, Clock, Plus, Copy, BarChart3, FolderGit2, Star,
   HeartHandshake, CreditCard, CalendarCheck, MessageSquare, 
   Download, Send, User, FileText, Sparkles, Share2, Award, 
-  CalendarX2, RefreshCw, X, Lock, XCircle, Landmark
+  CalendarX2, RefreshCw, X, Lock, XCircle, Landmark, CalendarPlus, ArrowRight
 } from 'lucide-react';
 
 export default function ParentDashboard({ parentId }: { parentId: string }) {
@@ -30,6 +30,13 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showCoachBio, setShowCoachBio] = useState<any>(null);
   
+  // --- Booking Engine State ---
+  const [showBookingModal, setShowBookingModal] = useState(false);
+  const [bookingMode, setBookingMode] = useState<'new' | 'reschedule'>('new');
+  const [targetLesson, setTargetLesson] = useState<any>(null);
+  const [availableSlots, setAvailableSlots] = useState<any[]>([]);
+  const [isFetchingSlots, setIsFetchingSlots] = useState(false);
+  
   // --- Action States ---
   const [resettingId, setResettingId] = useState<string | null>(null);
   const [newPinDisplay, setNewPinDisplay] = useState<any>(null);
@@ -41,8 +48,11 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
   const [isUpdatingParentPassword, setIsUpdatingParentPassword] = useState(false);
   const [parentPasswordSuccess, setParentPasswordSuccess] = useState(false);
 
-  const [kudosSent, setKudosSent] = useState(false);
-  const [isSendingKudos, setIsSendingKudos] = useState(false);
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
   
   // --- Chat States ---
   const [message, setMessage] = useState("");
@@ -54,60 +64,63 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
 
   // 1. Initial Dashboard Load
   useEffect(() => {
-    async function fetchDashboardData() {
-      try {
-        const [parentRes, studentsRes, billingRes] = await Promise.all([
-          supabase.from('profiles').select('*').eq('id', parentId).single(),
-          supabase.from('profiles').select('*').eq('role', 'student').eq('linked_parent_id', parentId),
-          supabase.from('billing_records').select('*').eq('guardian_id', parentId).order('created_at', { ascending: false })
-        ]);
-
-        if (parentRes.error) throw parentRes.error;
-        if (studentsRes.error) throw studentsRes.error;
-        
-        setParentData(parentRes.data);
-        
-        // Handle RLS gracefully for billing
-        if (billingRes.error) {
-          console.warn("Notice: Could not load billing records. Check RLS policies.", billingRes.error);
-          setInvoices([]);
-        } else {
-          setInvoices(billingRes.data || []);
-        }
-        
-        const parsedKids = (studentsRes.data || []).map(kid => {
-          const meta = typeof kid.metadata === 'string' ? JSON.parse(kid.metadata) : (kid.metadata || {});
-          
-          // NEW: Calculate dynamic lessons attended vs scheduled for the UI
-          const lessonsAttended = meta.lessons_attended || 0;
-          const missedClasses = meta.missed_classes || 0;
-          const lessonsScheduled = meta.lessons_scheduled || (lessonsAttended + missedClasses);
-
-          return {
-            ...kid,
-            meta,
-            attendanceRate: meta.attendance_rate || 100,
-            missedClasses: missedClasses,
-            lessonsAttended: lessonsAttended,
-            lessonsScheduled: lessonsScheduled,
-          };
-        });
-
-        setStudents(parsedKids);
-        if (parsedKids.length > 0) {
-          setSelectedChildId(parsedKids[0].id);
-          fetchPortfolio(parsedKids[0].id);
-        }
-      } catch (err: any) {
-        console.error("Dashboard Fetch Error:", err);
-        setError("Failed to establish secure link: " + (err.message || "Unknown Error"));
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    if (parentId) fetchDashboardData();
+    fetchDashboardData();
   }, [parentId]);
+
+  async function fetchDashboardData() {
+    try {
+      const [parentRes, studentsRes, billingRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', parentId).single(),
+        supabase.from('profiles').select('*').eq('role', 'student').eq('linked_parent_id', parentId),
+        supabase.from('billing_records').select('*').eq('guardian_id', parentId).order('created_at', { ascending: false })
+      ]);
+
+      if (parentRes.error) throw parentRes.error;
+      if (studentsRes.error) throw studentsRes.error;
+      
+      setParentData(parentRes.data);
+      
+      if (billingRes.error) {
+        console.warn("Notice: Could not load billing records. Check RLS policies.", billingRes.error);
+        setInvoices([]);
+      } else {
+        setInvoices(billingRes.data || []);
+      }
+      
+      const parsedKids = (studentsRes.data || []).map(kid => {
+        const meta = typeof kid.metadata === 'string' ? JSON.parse(kid.metadata) : (kid.metadata || {});
+        
+        const lessonsAttended = meta.lessons_attended || 0;
+        const missedClasses = meta.missed_classes || 0;
+        const lessonsScheduled = meta.lessons_scheduled || (lessonsAttended + missedClasses);
+
+        return {
+          ...kid,
+          meta,
+          attendanceRate: meta.attendance_rate || 100,
+          missedClasses: missedClasses,
+          lessonsAttended: lessonsAttended,
+          lessonsScheduled: lessonsScheduled,
+        };
+      });
+
+      setStudents(parsedKids);
+      
+      // NEW LOGIC: Only auto-select if there is exactly ONE student.
+      if (parsedKids.length === 1 && !selectedChildId) {
+        setSelectedChildId(parsedKids[0].id);
+        fetchPortfolio(parsedKids[0].id);
+      } else if (selectedChildId) {
+        // Re-fetch portfolio if data updates and a child is already selected
+        fetchPortfolio(selectedChildId);
+      }
+    } catch (err: any) {
+      console.error("Dashboard Fetch Error:", err);
+      setError("Failed to establish secure link.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   // 2. Fetch Portfolio
   const fetchPortfolio = async (studentId: string) => {
@@ -135,7 +148,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
   useEffect(() => {
     if (!selectedChildId || activeChildTab !== 'feedback') return;
 
-    // Load History
     const loadMessages = async () => {
       const { data, error } = await supabase
         .from('coach_messages')
@@ -147,7 +159,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
     
     loadMessages();
 
-    // Subscribe to new incoming messages
     const channel = supabase.channel(`chat_${selectedChildId}`)
       .on('postgres_changes', { 
         event: 'INSERT', 
@@ -156,7 +167,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
         filter: `student_id=eq.${selectedChildId}` 
       }, (payload) => {
         setChatMessages(prev => {
-          // Prevent duplicates if our Optimistic UI already added it
           if (prev.some(msg => msg.id === payload.new.id)) return prev;
           return [...prev, payload.new];
         });
@@ -166,7 +176,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
     return () => { supabase.removeChannel(channel); };
   }, [selectedChildId, activeChildTab]);
 
-  // Auto-scroll chat to bottom
   useEffect(() => {
     if (chatScrollRef.current) {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -174,6 +183,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
   }, [chatMessages, activeChildTab]);
 
   const selectedChild = students.find(s => s.id === selectedChildId);
+  const bookingCredits = parentData?.metadata?.booking_credits || 0;
 
   // --- Dynamic Schedule Parser ---
   const { upcomingLessons, pastLessons, nextLesson } = useMemo(() => {
@@ -190,10 +200,55 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
     return { upcomingLessons: future, pastLessons: past, nextLesson: future.length > 0 ? future[0] : null };
   }, [selectedChild]);
 
-  const householdTeachers = Array.from(
-    new Map(students.map(s => s.meta?.teacher).filter(Boolean).map(t => [t.name, t])).values()
-  );
-  const primaryTeacher: any = householdTeachers.length > 0 ? householdTeachers[0] : null;
+  // --- Booking Engine Core Rules ---
+  const isSlotBookable = (startTimeStr: string) => {
+    const slotDate = new Date(startTimeStr);
+    const cutoff = new Date(slotDate);
+    cutoff.setDate(cutoff.getDate() - 2);
+    cutoff.setHours(8, 0, 0, 0); // 8 AM local time, 2 days prior
+    return new Date() < cutoff;
+  };
+
+  const isSlotLockedForReschedule = (startTimeStr: string) => {
+    const slotTime = new Date(startTimeStr).getTime();
+    const now = new Date().getTime();
+    return (slotTime - now) < (2 * 60 * 60 * 1000); // Strictly locked if within 2 hours
+  };
+
+  const handleOpenBookingEngine = async (mode: 'new' | 'reschedule', lessonData: any = null) => {
+    if (mode === 'reschedule') {
+      if (isSlotLockedForReschedule(lessonData.date)) {
+        return showToast("Locked: Lessons within 2 hours cannot be rescheduled.", "error");
+      }
+      setTargetLesson(lessonData);
+    } else {
+      setTargetLesson(null);
+    }
+    
+    setBookingMode(mode);
+    setIsFetchingSlots(true);
+    setShowBookingModal(true);
+
+    try {
+      const { data, error } = await supabase
+        .from('teacher_availability')
+        .select('*, profiles:teacher_id(display_name)')
+        .eq('is_booked', false)
+        .gte('start_time', new Date().toISOString())
+        .order('start_time', { ascending: true });
+        
+      if (error) throw error;
+      
+      // Filter out slots that violate the 48hr/8AM rule
+      const validSlots = (data || []).filter(slot => isSlotBookable(slot.start_time));
+      setAvailableSlots(validSlots);
+    } catch (err) {
+      showToast("Failed to fetch available time slots.", "error");
+      setShowBookingModal(false);
+    } finally {
+      setIsFetchingSlots(false);
+    }
+  };
 
   // --- Actions ---
   const handleResetPin = async (studentId: string) => {
@@ -210,11 +265,12 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
       if (response.ok) {
         setNewPinDisplay({ id: studentId, name: data.studentIdentifier, pin: data.newPin });
         setShowResetConfirm(null);
+        showToast("PIN Reset Successful", "success");
       } else {
-        setError(data.error || "Failed to reset PIN.");
+        showToast(data.error || "Failed to reset PIN.", "error");
       }
     } catch (err) {
-      setError("An error occurred while resetting the PIN.");
+      showToast("An error occurred while resetting the PIN.", "error");
     } finally {
       setResettingId(null);
     }
@@ -222,19 +278,18 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
 
   const handleUpdateParentPassword = async () => {
     if (!parentPassword || parentPassword.length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
+      return showToast("Password must be at least 6 characters.", "error");
     }
     setIsUpdatingParentPassword(true);
-    setError(null);
     try {
       const { error } = await supabase.auth.updateUser({ password: parentPassword });
       if (error) throw error;
       setParentPasswordSuccess(true);
       setParentPassword("");
+      showToast("Password updated securely.", "success");
       setTimeout(() => setParentPasswordSuccess(false), 4000);
     } catch (err: any) {
-      setError(err.message || "Failed to update password.");
+      showToast(err.message || "Failed to update password.", "error");
     } finally {
       setIsUpdatingParentPassword(false);
     }
@@ -246,7 +301,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy text: ', err);
+      console.error('Failed to copy', err);
     }
   };
 
@@ -256,7 +311,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
       setBankCopied(true);
       setTimeout(() => setBankCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy bank details: ', err);
+      console.error('Failed to copy bank details', err);
     }
   };
 
@@ -268,16 +323,14 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
     return `Active ${days} days ago`;
   };
 
-  const handleSendKudos = async () => {
-    setIsSendingKudos(true);
-    await new Promise(resolve => setTimeout(resolve, 1500)); 
-    setKudosSent(true);
-    setIsSendingKudos(false);
-    setTimeout(() => setKudosSent(false), 4000);
-  };
-
   const handleLessonAction = async (lessonId: string, action: 'apology' | 'reschedule') => {
-    setLessonActions(prev => ({ ...prev, [lessonId]: action }));
+    if (action === 'reschedule') {
+      const target = upcomingLessons.find(l => l.id === lessonId);
+      if (target) handleOpenBookingEngine('reschedule', target);
+    } else {
+      setLessonActions(prev => ({ ...prev, [lessonId]: action }));
+      showToast("Apology logged. This does not refund your credit.", "success");
+    }
   };
 
   const handleSendMessage = async () => {
@@ -315,7 +368,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
       if (error) throw error;
       setChatMessages(prev => prev.map(msg => msg.id === tempId ? data : msg));
 
-      // --- FIRE AUTOMATIC EMAIL NOTIFICATION ---
       fetch('/api/messages/notify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -329,9 +381,8 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
       }).catch(console.error);
 
     } catch (err) {
-      console.error("Send error:", err);
       setChatMessages(prev => prev.filter(msg => msg.id !== tempId));
-      alert("Failed to send message. Please try again.");
+      showToast("Failed to send message.", "error");
       setMessage(text); 
     } finally {
       setIsSendingMessage(false);
@@ -340,24 +391,19 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
 
   const handleMarkAsRead = async () => {
     if (!selectedChildId || !parentId) return;
-    
-    // INSTANT UI UPDATE: Dispatch custom event to tell the Header to clear the bell right now
     window.dispatchEvent(new Event('messagesRead'));
     
     try {
-      const { error } = await supabase.from('coach_messages')
+      await supabase.from('coach_messages')
         .update({ is_read: true })
         .eq('student_id', selectedChildId)
         .neq('sender_id', parentId)
         .eq('is_read', false);
-        
-      if (error) console.error("Update Error:", error);
     } catch (err) {
-      console.error("Failed to mark messages as read:", err);
+      console.error(err);
     }
   };
 
-  // --- Aggregate Stats & Finances ---
   const totalXP = students.reduce((acc, kid) => acc + (kid.xp || 0), 0);
   const isDemo = parentData?.payment_plan_preference === 'demo';
 
@@ -369,10 +415,10 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
   }, 0);
 
   const getHouseholdTier = (xp: number) => {
-    if (xp < 500) return { title: "Initiate Hub", color: "text-slate-300", bg: "bg-slate-500/10", border: "border-slate-500/20" };
-    if (xp < 2500) return { title: "Pioneer Hub", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" };
-    if (xp < 10000) return { title: "Quantum Hub", color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/20" };
-    return { title: "Apex Hub", color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20" };
+    if (xp < 5000) return { title: "New", color: "text-slate-300", bg: "bg-slate-500/10", border: "border-slate-500/20" };
+    if (xp < 10000) return { title: "Intermediate", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" };
+    if (xp < 25000) return { title: "Advanced", color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/20" };
+    return { title: "Expert", color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/20" };
   };
   const householdTier = getHouseholdTier(totalXP);
 
@@ -391,21 +437,31 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-32 text-slate-400 space-y-6">
-        <div className="relative">
-          <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse" />
-          <Loader2 className="animate-spin text-blue-500 relative z-10" size={48} />
-        </div>
-        <p className="font-black tracking-[0.2em] uppercase text-xs text-blue-400/80 animate-pulse">Establishing Secure Link...</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-12">
+    <div className="max-w-5xl mx-auto space-y-8 pb-12 relative">
       
+      {/* PREMIUM TOAST NOTIFICATION */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border backdrop-blur-xl ${
+              toast.type === 'success' 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.2)]' 
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-400 shadow-[0_0_30px_rgba(244,63,94,0.2)]'
+            }`}
+          >
+            {toast.type === 'success' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
+            <p className="text-xs md:text-sm font-black uppercase tracking-widest">{toast.message}</p>
+            <button onClick={() => setToast(null)} className="ml-4 opacity-50 hover:opacity-100 transition-opacity">
+              <X size={16} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* 1. GLOBAL HOUSEHOLD HEADER */}
       <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="bg-[#0f172a] border border-white/10 rounded-[32px] p-8 md:p-10 shadow-2xl relative overflow-hidden group">
         <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-gradient-to-br from-blue-500/10 to-purple-500/10 blur-[120px] rounded-full -translate-y-1/2 translate-x-1/3 transition-transform duration-1000 group-hover:translate-x-1/4 group-hover:-translate-y-1/3 pointer-events-none" />
@@ -414,10 +470,10 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3 mb-2">
               <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${isDemo ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-green-500/10 text-green-400 border-green-500/20 shadow-[0_0_15px_rgba(34,197,94,0.2)]'}`}>
-                {isDemo ? 'Trial Access' : 'Pro Member'}
+                {isDemo ? 'Trial Access' : 'Active Account'}
               </span>
               <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 bg-white/5 px-4 py-1.5 rounded-full border border-white/5">
-                <Shield size={12} /> Guard Mode Active
+                <Shield size={12} /> Secure Portal
               </span>
               {students.length > 0 && (
                 <span className={`flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full border ${householdTier.bg} ${householdTier.color} ${householdTier.border}`}>
@@ -446,11 +502,37 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
         </div>
       </motion.div>
 
+      {/* ACTION BANNER: BOOKING ENGINE */}
       <AnimatePresence>
-        {error && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex items-center gap-3 text-red-400 shadow-lg mb-6">
-            <AlertCircle size={20} />
-            <p className="font-bold text-sm">{error}</p>
+        {bookingCredits > 0 && activeGlobalTab === 'overview' && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} 
+            className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/40 rounded-[32px] p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6 shadow-[0_0_30px_rgba(37,99,235,0.15)] relative overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+              <CalendarPlus size={120} />
+            </div>
+            <div className="relative z-10 flex items-center gap-5">
+              <div className="w-14 h-14 bg-blue-500 text-white rounded-full flex items-center justify-center shadow-lg font-black text-xl shrink-0">
+                {bookingCredits}
+              </div>
+              <div>
+                <h3 className="text-xl font-black uppercase italic text-white tracking-tight">Action Required</h3>
+                <p className="text-sm text-blue-200 font-medium">You have {bookingCredits} unbooked lesson {bookingCredits === 1 ? 'credit' : 'credits'}. Click below to secure a timeslot.</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                if (!selectedChildId) {
+                  showToast("Please select a student below to schedule their lesson.", "error");
+                  return;
+                }
+                handleOpenBookingEngine('new');
+              }}
+              className="w-full md:w-auto relative z-10 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-[0_0_20px_rgba(37,99,235,0.4)] flex items-center justify-center gap-2 hover:scale-105 active:scale-95"
+            >
+              <CalendarPlus size={16} /> Schedule Lesson
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -513,11 +595,11 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                 </div>
               )}
 
-              {/* SPECIFIC CHILD DASHBOARD */}
-              {selectedChild && (
+              {/* SPECIFIC CHILD DASHBOARD OR EMPTY STATE */}
+              {selectedChild ? (
                 <div key={selectedChild.id} className="space-y-6 bg-white/[0.02] border border-white/5 rounded-[40px] p-6 md:p-8">
                   
-                  {/* Child Banner & Kudos */}
+                  {/* Child Banner */}
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 bg-[#0f172a] border border-white/10 rounded-[32px] p-6 shadow-xl">
                     <div className="flex items-center gap-5">
                       <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-white/10 flex items-center justify-center text-2xl font-black text-white shadow-inner">
@@ -532,7 +614,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                             @{selectedChild.student_identifier}
                           </span>
                           <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 bg-[#020617] px-2 py-1 rounded-md border border-white/10">
-                            <Flame size={12} className="text-orange-500" /> {selectedChild.current_streak} Wk Streak
+                            <Flame size={12} className="text-orange-500" /> {selectedChild.current_streak || 0} Wk Streak
                           </span>
                         </div>
                       </div>
@@ -590,7 +672,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                             <div className="h-full bg-emerald-500 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)]" style={{ width: `${selectedChild.attendanceRate}%` }} />
                           </div>
                           
-                          {/* UPDATED: Attendance Fractional Display */}
                           <p className="text-xs text-slate-400 font-bold uppercase tracking-widest text-right mt-1">
                             {selectedChild.missedClasses > 0 
                               ? `${selectedChild.missedClasses} Classes Missed` 
@@ -654,15 +735,21 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                               
                               <button 
                                 onClick={() => handleLessonAction(nextLesson.id, 'reschedule')}
-                                disabled={lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled'}
+                                disabled={lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled' || isSlotLockedForReschedule(nextLesson.date)}
                                 className={`flex-1 py-3.5 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all border ${
                                   (lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled') 
                                     ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' 
+                                    : isSlotLockedForReschedule(nextLesson.date)
+                                    ? 'bg-slate-800 text-slate-600 border-slate-700 cursor-not-allowed'
                                     : 'bg-white/5 text-slate-300 hover:text-white border-white/10 hover:bg-white/10'
                                 }`}
+                                title={isSlotLockedForReschedule(nextLesson.date) ? "Locked (< 2 hours)" : "Request Reschedule"}
                               >
-                                {(lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled') ? <CheckCircle2 size={14}/> : <RefreshCw size={14}/>}
-                                {(lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled') ? 'Rescheduled' : 'Request Reschedule'}
+                                {(lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled') 
+                                  ? <><CheckCircle2 size={14}/> Rescheduled</> 
+                                  : isSlotLockedForReschedule(nextLesson.date)
+                                  ? <><Lock size={14}/> Locked (&lt;2h)</>
+                                  : <><RefreshCw size={14}/> Request Reschedule</>}
                               </button>
                             </div>
                           </div>
@@ -744,54 +831,47 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                   {activeChildTab === 'feedback' && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                       
-                      <div className="lg:col-span-1 space-y-6 relative group/dev">
-                        <div className="absolute inset-0 z-20 bg-[#0f172a]/80 backdrop-blur-sm rounded-[32px] flex flex-col items-center justify-center border border-white/10">
-                          <Lock className="text-slate-400 mb-3" size={24} />
-                          <span className="text-xs font-black uppercase tracking-widest text-slate-300">Under Development</span>
+                      <div className="lg:col-span-1 space-y-6">
+                        <div className="bg-white/5 border border-white/10 rounded-[32px] p-8 relative overflow-hidden group mb-6">
+                          <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-6 relative z-10">Assigned Coach</h3>
+                          {selectedChild.meta?.teacher ? (
+                            <div className="text-center relative z-10">
+                              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 border-2 border-purple-500/50 flex items-center justify-center font-black text-xl text-purple-400 mx-auto mb-4 overflow-hidden shadow-xl">
+                                {selectedChild.meta.teacher.avatar_url ? (
+                                  <img src={selectedChild.meta.teacher.avatar_url} alt={selectedChild.meta.teacher.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  selectedChild.meta.teacher.name.charAt(0)
+                                )}
+                              </div>
+                              <h4 className="text-lg font-bold text-white mb-1">{selectedChild.meta.teacher.name}</h4>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Lead Robotics Coach</p>
+                              
+                              <button onClick={() => setShowCoachBio(selectedChild.meta.teacher)} className="text-[10px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 transition-colors hover:bg-purple-500/20 px-4 py-2 rounded-xl border border-purple-500/20">
+                                View Bio
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-slate-400 italic text-center py-6">No coach assigned yet.</p>
+                          )}
                         </div>
-                        
-                        <div className="opacity-50 pointer-events-none">
-                          <div className="bg-white/5 border border-white/10 rounded-[32px] p-8 relative overflow-hidden group mb-6">
-                            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-6 relative z-10">Assigned Coach</h3>
-                            {selectedChild.meta?.teacher ? (
-                              <div className="text-center relative z-10">
-                                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 border-2 border-purple-500/50 flex items-center justify-center font-black text-xl text-purple-400 mx-auto mb-4 overflow-hidden shadow-xl">
-                                  {selectedChild.meta.teacher.avatar_url ? (
-                                    <img src={selectedChild.meta.teacher.avatar_url} alt={selectedChild.meta.teacher.name} className="w-full h-full object-cover" />
-                                  ) : (
-                                    selectedChild.meta.teacher.name.charAt(0)
-                                  )}
-                                </div>
-                                <h4 className="text-lg font-bold text-white mb-1">{selectedChild.meta.teacher.name}</h4>
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Lead Robotics Coach</p>
-                                
-                                <button className="text-[10px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 transition-colors px-4 py-2 rounded-xl border border-purple-500/20">
-                                  View Bio
-                                </button>
-                              </div>
-                            ) : (
-                              <p className="text-sm text-slate-400 italic text-center py-6">No coach assigned yet.</p>
-                            )}
-                          </div>
 
-                          <div className="bg-gradient-to-br from-blue-900/40 to-[#0f172a] border border-blue-500/20 rounded-[32px] p-8 shadow-inner">
-                            <div className="flex items-center gap-3 mb-6">
-                              <Award className="text-blue-400" size={20}/>
-                              <h3 className="text-sm font-black uppercase tracking-widest text-white">Latest Evaluation</h3>
+                        <div className="bg-gradient-to-br from-blue-900/40 to-[#0f172a] border border-blue-500/20 rounded-[32px] p-8 shadow-inner">
+                          <div className="flex items-center gap-3 mb-6">
+                            <Award className="text-blue-400" size={20}/>
+                            <h3 className="text-sm font-black uppercase tracking-widest text-white">Latest Evaluation</h3>
+                          </div>
+                          <div className="space-y-4">
+                            <div>
+                              <div className="flex justify-between text-xs font-bold mb-1"><span className="text-slate-300">Logic & Problem Solving</span><span className="text-emerald-400">Excellent</span></div>
+                              <div className="h-1.5 w-full bg-black/40 rounded-full"><div className="h-full bg-emerald-500 rounded-full w-[90%]"/></div>
                             </div>
-                            <div className="space-y-4">
-                              <div>
-                                <div className="flex justify-between text-xs font-bold mb-1"><span className="text-slate-300">Logic & Problem Solving</span><span className="text-emerald-400">Excellent</span></div>
-                                <div className="h-1.5 w-full bg-black/40 rounded-full"><div className="h-full bg-emerald-500 rounded-full w-[90%]"/></div>
-                              </div>
-                              <div>
-                                <div className="flex justify-between text-xs font-bold mb-1"><span className="text-slate-300">Focus & Participation</span><span className="text-blue-400">Good</span></div>
-                                <div className="h-1.5 w-full bg-black/40 rounded-full"><div className="h-full bg-blue-500 rounded-full w-[75%]"/></div>
-                              </div>
-                              <p className="text-xs text-slate-400 italic mt-4 pt-4 border-t border-white/10">
-                                "{selectedChild.display_name.split(' ')[0]} is showing incredible aptitude for conditional logic this week. Very proud of their progress!"
-                              </p>
+                            <div>
+                              <div className="flex justify-between text-xs font-bold mb-1"><span className="text-slate-300">Focus & Participation</span><span className="text-blue-400">Good</span></div>
+                              <div className="h-1.5 w-full bg-black/40 rounded-full"><div className="h-full bg-blue-500 rounded-full w-[75%]"/></div>
                             </div>
+                            <p className="text-xs text-slate-400 italic mt-4 pt-4 border-t border-white/10">
+                              "{selectedChild.display_name.split(' ')[0]} is showing incredible aptitude for conditional logic this week. Very proud of their progress!"
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -804,7 +884,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                             <h3 className="text-sm font-black uppercase tracking-widest text-slate-300">Direct Coach Portal</h3>
                           </div>
                           
-                          {/* ROBUST MARK AS READ BUTTON */}
                           <div className="flex items-center gap-2 sm:gap-3">
                             <button 
                               onClick={handleMarkAsRead}
@@ -953,6 +1032,16 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                     </motion.div>
                   )}
                 </div>
+              ) : (
+                students.length > 1 && (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="border-2 border-dashed border-white/10 rounded-[40px] p-12 md:p-16 text-center space-y-5 bg-white/[0.02] mt-6">
+                    <div className="w-20 h-20 bg-[#0f172a] rounded-full flex items-center justify-center mx-auto shadow-2xl border border-white/5 relative">
+                      <User size={32} className="text-blue-500" />
+                    </div>
+                    <h3 className="text-2xl font-black text-white tracking-tight">Select a Pioneer</h3>
+                    <p className="text-slate-400 max-w-sm mx-auto text-sm leading-relaxed">Choose a student from the menu above to access their schedule, log attendance, and manage bookings.</p>
+                  </motion.div>
+                )
               )}
             </>
           )}
@@ -1044,7 +1133,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                   };
                   const colorClass = statusColors[inv.status as keyof typeof statusColors] || statusColors.pending;
 
-                  // Infer Due Date: 7 days after creation if not provided
                   const dueDate = inv.due_date 
                     ? new Date(inv.due_date) 
                     : new Date(new Date(inv.created_at).getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -1061,7 +1149,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                             <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
                               Issued: {new Date(inv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                             </p>
-                            {/* ONLY SHOW DUE DATE IF NOT PAID */}
                             {inv.status !== 'paid' && (
                                <>
                                  <span className="text-slate-700 hidden sm:inline">•</span>
@@ -1124,6 +1211,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                       const isLocked = lesson.attendance_status === 'apology' || lesson.attendance_status === 'rescheduled';
                       const localApology = lessonActions[lesson.id] === 'apology';
                       const localReschedule = lessonActions[lesson.id] === 'reschedule';
+                      const timeLocked = isSlotLockedForReschedule(lesson.date);
 
                       return (
                         <div key={lesson.id} className="bg-[#020617] border border-white/5 rounded-2xl p-5 flex flex-col sm:flex-row justify-between gap-4 items-start sm:items-center">
@@ -1153,11 +1241,17 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                                 </button>
                                 <button 
                                   onClick={() => handleLessonAction(lesson.id, 'reschedule')}
-                                  disabled={localReschedule}
-                                  className={`flex-1 sm:flex-none p-2 rounded-xl border transition-all ${localReschedule ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-white/5 border-white/10 hover:bg-white/10 text-slate-400 hover:text-white'}`}
-                                  title="Request Reschedule"
+                                  disabled={localReschedule || timeLocked}
+                                  className={`flex-1 sm:flex-none p-2 rounded-xl border transition-all ${
+                                    localReschedule 
+                                      ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' 
+                                      : timeLocked
+                                      ? 'bg-slate-800 border-slate-700 text-slate-600 cursor-not-allowed'
+                                      : 'bg-white/5 border-white/10 hover:bg-white/10 text-slate-400 hover:text-white'
+                                  }`}
+                                  title={timeLocked ? "Locked (< 2 hours)" : "Request Reschedule"}
                                 >
-                                  {localReschedule ? <CheckCircle2 size={16}/> : <RefreshCw size={16}/>}
+                                  {localReschedule ? <CheckCircle2 size={16}/> : timeLocked ? <Lock size={16}/> : <RefreshCw size={16}/>}
                                 </button>
                               </>
                             )}
@@ -1218,6 +1312,168 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
               <p className="text-sm text-slate-300 leading-relaxed font-medium bg-[#020617] p-6 rounded-3xl border border-white/5 shadow-inner">
                 {showCoachBio.bio || "This coach is an expert in foundational logic, Python, and hardware engineering, dedicated to helping your child redefine their potential."}
               </p>
+            </motion.div>
+          </div>
+        )}
+
+        {/* BOOKING ENGINE MODAL */}
+        {showBookingModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowBookingModal(false)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
+            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-2xl bg-[#0f172a] border border-white/10 rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+              
+              <div className="p-6 md:p-8 border-b border-white/5 bg-white/[0.02] flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-blue-500/20 rounded-2xl border border-blue-500/30 text-blue-400"><CalendarPlus size={24} /></div>
+                  <div>
+                    <h3 className="text-xl md:text-2xl font-black uppercase italic tracking-tighter text-white">
+                      {bookingMode === 'reschedule' ? 'Reschedule Lesson' : 'Schedule Lesson'}
+                    </h3>
+                    <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">
+                      {bookingMode === 'reschedule' ? `Swapping: ${new Date(targetLesson.date).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})}` : 'Select an available 1-hour timeslot.'}
+                    </p>
+                  </div>
+                </div>
+                <button onClick={() => setShowBookingModal(false)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"><X size={20}/></button>
+              </div>
+
+              <div className="p-6 md:p-8 overflow-y-auto flex-1 custom-scrollbar space-y-6">
+                {isFetchingSlots ? (
+                  <div className="py-20 flex flex-col items-center justify-center gap-4">
+                    <Loader2 className="animate-spin text-blue-500" size={32} />
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Fetching Database...</p>
+                  </div>
+                ) : availableSlots.length === 0 ? (
+                  <div className="py-20 text-center border border-dashed border-white/10 rounded-3xl">
+                    <CalendarX2 className="mx-auto text-slate-600 mb-4" size={40} />
+                    <p className="text-sm font-bold text-slate-400 italic">No available timeslots found.<br/>Please check back later or contact your coach.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {availableSlots.map(slot => {
+                      const start = new Date(slot.start_time);
+                      const end = new Date(slot.end_time);
+                      return (
+                        <div key={slot.id} className="bg-[#020617] border border-white/5 rounded-2xl p-5 hover:border-blue-500/50 transition-all group flex flex-col">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">
+                            {start.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
+                          </p>
+                          <p className="text-xl font-black text-white group-hover:text-blue-400 transition-colors">
+                            {start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          </p>
+                          <div className="flex items-center gap-2 mt-4 mb-4">
+                            <span className="px-2 py-1 bg-white/5 border border-white/10 rounded-md text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                              {slot.delivery_mode}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-500 truncate">
+                              with {slot.profiles?.display_name?.split(' ')[0] || 'Coach'}
+                            </span>
+                          </div>
+                          
+                          <button 
+                            onClick={async () => {
+                              // Execute the complex booking/rescheduling logic
+                              try {
+                                setIsFetchingSlots(true);
+                                let oldLessonDetails = "";
+
+                                // 1. If Rescheduling, free up the old slot
+                                if (bookingMode === 'reschedule' && targetLesson) {
+                                  oldLessonDetails = `${new Date(targetLesson.date).toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'})}`;
+                                  
+                                  // Attempt to free the old slot in the inventory
+                                  await supabase.from('teacher_availability')
+                                    .update({ is_booked: false, booked_by: null, student_id: null })
+                                    .eq('student_id', selectedChildId)
+                                    .eq('start_time', targetLesson.date);
+                                }
+
+                                // 2. Lock the new slot
+                                const { error: lockErr } = await supabase.from('teacher_availability')
+                                  .update({ is_booked: true, booked_by: parentId, student_id: selectedChildId })
+                                  .eq('id', slot.id)
+                                  .eq('is_booked', false); // Atomic check
+
+                                if (lockErr) throw new Error("Slot already taken.");
+
+                                // 3. Update the student's schedule
+                                const newSchedule = selectedChild?.meta?.schedule ? [...selectedChild.meta.schedule] : [];
+                                
+                                if (bookingMode === 'reschedule' && targetLesson) {
+                                  const idx = newSchedule.findIndex(l => l.id === targetLesson.id);
+                                  if (idx > -1) newSchedule.splice(idx, 1); // Remove old
+                                } else {
+                                  // Deduct 1 credit if not a reschedule
+                                  const newCredits = Math.max(0, bookingCredits - 1);
+                                  const updatedMeta = { ...parentData.metadata, booking_credits: newCredits };
+                                  await supabase.from('profiles').update({ metadata: updatedMeta }).eq('id', parentId);
+                                  setParentData((prev: any) => ({ ...prev, metadata: updatedMeta }));
+
+                                  // NEW: Write the withdrawal to the Audit Ledger
+                                  await supabase.from('credit_ledger').insert([{
+                                    guardian_id: parentId,
+                                    amount: -1,
+                                    reason: `Booked Lesson: ${start.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+                                  }]);
+                                }
+
+                                // Inject new lesson
+                                newSchedule.push({
+                                  id: Math.random().toString(36).substring(7),
+                                  date: slot.start_time,
+                                  topic: bookingMode === 'reschedule' ? targetLesson.topic : (selectedChild?.course || "Scheduled Lesson"),
+                                  course: selectedChild?.course || "Bootcamp",
+                                  delivery: slot.delivery_mode,
+                                  location: null,
+                                  link: null,
+                                  reminders: { parents: true, teacher: true }
+                                });
+
+                                const updatedChildMeta = { ...selectedChild.meta, schedule: newSchedule };
+                                await supabase.from('profiles').update({ metadata: updatedChildMeta }).eq('id', selectedChildId);
+
+                                // 4. Create WhatsApp / System Notification
+                                const newTimeFormatted = `${start.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'})} at ${start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+                                
+                                if (bookingMode === 'reschedule') {
+                                  const msg = `Hi Coach, I have rescheduled ${selectedChild?.display_name.split(' ')[0]}'s lesson from ${oldLessonDetails} to ${newTimeFormatted}. Thank you!`;
+                                  window.open(`https://wa.me/27767065959?text=${encodeURIComponent(msg)}`, '_blank');
+                                  showToast("Lesson rescheduled successfully. WhatsApp opened to notify the academy.", "success");
+                                } else {
+                                  await supabase.from('coach_messages').insert([{
+                                    student_id: selectedChildId,
+                                    guardian_id: parentId,
+                                    coach_id: slot.teacher_id,
+                                    sender_id: parentId,
+                                    message: `[SYSTEM: NEW BOOKING] I have scheduled a new lesson for ${newTimeFormatted}.`
+                                  }]);
+                                  
+                                  const remaining = Math.max(0, bookingCredits - 1);
+                                  if (remaining > 0) {
+                                    showToast(`Slot confirmed! You have ${remaining} credits remaining.`, "success");
+                                  } else {
+                                    showToast("Slot confirmed! Your schedule is fully booked.", "success");
+                                  }
+                                }
+
+                                fetchDashboardData(); // Refresh UI
+                                setShowBookingModal(false);
+
+                              } catch (err: any) {
+                                showToast(err.message || "Failed to secure slot. Please try another.", "error");
+                                setIsFetchingSlots(false);
+                              }
+                            }}
+                            className="mt-auto w-full py-3 bg-white/5 hover:bg-blue-600 text-slate-300 hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-white/10 hover:border-blue-500 shadow-md"
+                          >
+                            Confirm & Lock Slot
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             </motion.div>
           </div>
         )}

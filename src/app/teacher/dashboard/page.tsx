@@ -7,7 +7,7 @@ import {
   ChevronRight, Phone, Mail, Target, BookOpen, 
   MessageSquare, Shield, Clock, Plus, Zap, Laptop,
   CheckCircle2, ChevronLeft, CalendarCheck, Loader2, X, Edit2, Save, MapPin, Video, CalendarPlus,
-  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard, TrendingUp, Trophy, FileText, Check, XCircle, CalendarRange, Bell, ArrowRight
+  CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard, TrendingUp, Trophy, FileText, Check, XCircle, CalendarRange, Bell, ArrowRight, CalendarClock
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, usePathname } from "next/navigation";
@@ -48,6 +48,14 @@ export default function TeacherDashboard() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<any>(null);
   
+  // --- PREMIUM TOAST STATE ---
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+  
   // --- NOTIFICATION STATE ---
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadStudentIds, setUnreadStudentIds] = useState<Set<string>>(new Set());
@@ -55,11 +63,13 @@ export default function TeacherDashboard() {
   
   const [metricDrilldown, setMetricDrilldown] = useState<string | null>(null);
   const [isBulkScheduleOpen, setIsBulkScheduleOpen] = useState(false);
+  const [isAvailabilityOpen, setIsAvailabilityOpen] = useState(false); 
   const [editingLessonGroup, setEditingLessonGroup] = useState<any | null>(null);
   
   const [students, setStudents] = useState<any[]>([]);
   const [activeCourses, setActiveCourses] = useState<any[]>([]);
   const [educators, setEducators] = useState<any[]>([]); 
+  const [availabilities, setAvailabilities] = useState<any[]>([]); 
   const [loading, setLoading] = useState(true);
 
   const [viewScope, setViewScope] = useState<string>('global');
@@ -119,12 +129,13 @@ export default function TeacherDashboard() {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
       if (profile) setCurrentUser(profile);
 
-      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes] = await Promise.all([
+      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes, availRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'student').order('display_name', { ascending: true }),
         supabase.from('profiles').select('id, display_name, metadata').in('role', ['guardian', 'admin']),
         supabase.from('courses').select('*').eq('is_published', true).order('order_index', { ascending: true }),
         supabase.from('enrollments').select('*, courses(*)'),
-        supabase.from('profiles').select('id, display_name').eq('role', 'educator').order('display_name', { ascending: true })
+        supabase.from('profiles').select('id, display_name').eq('role', 'educator').order('display_name', { ascending: true }),
+        supabase.from('teacher_availability').select('*').gte('end_time', new Date().toISOString()).order('start_time', { ascending: true })
       ]);
 
       if (studentsRes.error) throw studentsRes.error;
@@ -132,6 +143,7 @@ export default function TeacherDashboard() {
       
       if (coursesRes.data) setActiveCourses(coursesRes.data);
       if (educatorsRes.data) setEducators(educatorsRes.data);
+      if (availRes.data) setAvailabilities(availRes.data);
 
       const enrollmentsMap = new Map();
       if (enrollmentsRes.data) {
@@ -202,7 +214,7 @@ export default function TeacherDashboard() {
   const enrollInBootcamp = async (studentId: string) => {
     try {
       const { data: course } = await supabase.from('courses').select('id').eq('title', 'Robotics Pioneer Bootcamp').single();
-      if (!course) return alert("Robotics Pioneer Bootcamp course not found in DB.");
+      if (!course) return showToast("Robotics Pioneer Bootcamp course not found in DB.", "error");
 
       await supabase.from('enrollments').upsert({
         student_id: studentId,
@@ -216,11 +228,11 @@ export default function TeacherDashboard() {
       meta.interested_programs = ['Robotics Pioneer Bootcamp'];
       
       await supabase.from('profiles').update({ metadata: meta }).eq('id', studentId);
-      alert("Student enrolled in Bootcamp successfully!");
+      showToast("Student enrolled in Bootcamp successfully!", "success");
       fetchDashboardData();
     } catch (err) {
       console.error(err);
-      alert("Failed to enroll student.");
+      showToast("Failed to enroll student.", "error");
     }
   };
 
@@ -235,6 +247,12 @@ export default function TeacherDashboard() {
     if (viewScope === 'my_roster') return students.filter(s => s.teacherId === currentUser?.id);
     return students.filter(s => s.teacherId === viewScope);
   }, [students, viewScope, currentUser]);
+
+  const scopedAvailabilities = useMemo(() => {
+    if (viewScope === 'global') return availabilities;
+    const targetId = viewScope === 'my_roster' ? currentUser?.id : viewScope;
+    return availabilities.filter(a => a.teacher_id === targetId);
+  }, [availabilities, viewScope, currentUser]);
 
   let scopeName = "Global";
   if (viewScope === 'my_roster') scopeName = "My";
@@ -329,9 +347,10 @@ export default function TeacherDashboard() {
       }
 
       await fetchDashboardData();
+      showToast("Lesson itinerary updated successfully!", "success");
     } catch (err) {
       console.error("Failed to update lesson edits:", err);
-      alert("Failed to update lesson.");
+      showToast("Failed to update lesson schedule.", "error");
     }
   };
 
@@ -364,38 +383,43 @@ export default function TeacherDashboard() {
       });
     }
 
-    await Promise.all(params.studentIds.map(async (id) => {
-      const student = students.find(s => s.id === id);
-      if(!student) return;
+    try {
+      await Promise.all(params.studentIds.map(async (id) => {
+        const student = students.find(s => s.id === id);
+        if(!student) return;
 
-      const currentSchedule = student.schedule || [];
-      
-      const filteredLessonsToCreate = lessonsToCreate.filter(newLesson => {
-         const newLessonDateString = new Date(newLesson.date).toLocaleDateString();
-         const isDuplicate = currentSchedule.some((existingLesson: any) => {
-            const existingLessonDateString = new Date(existingLesson.date).toLocaleDateString();
-            return existingLessonDateString === newLessonDateString && existingLesson.topic === newLesson.topic;
-         });
-         return !isDuplicate;
-      });
+        const currentSchedule = student.schedule || [];
+        
+        const filteredLessonsToCreate = lessonsToCreate.filter(newLesson => {
+           const newLessonDateString = new Date(newLesson.date).toLocaleDateString();
+           const isDuplicate = currentSchedule.some((existingLesson: any) => {
+              const existingLessonDateString = new Date(existingLesson.date).toLocaleDateString();
+              return existingLessonDateString === newLessonDateString && existingLesson.topic === newLesson.topic;
+           });
+           return !isDuplicate;
+        });
 
-      if (filteredLessonsToCreate.length === 0) return;
+        if (filteredLessonsToCreate.length === 0) return;
 
-      const newSchedule = [...currentSchedule, ...filteredLessonsToCreate];
+        const newSchedule = [...currentSchedule, ...filteredLessonsToCreate];
 
-      const { data: profile, error: fetchErr } = await supabase.from('profiles').select('metadata').eq('id', id).single();
-      if (!fetchErr) {
-        const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
-        meta.schedule = newSchedule;
-        meta.learning_mode = params.delivery; 
-        if (!meta.interested_programs || meta.interested_programs[0] !== params.course) {
-          meta.interested_programs = [params.course];
+        const { data: profile, error: fetchErr } = await supabase.from('profiles').select('metadata').eq('id', id).single();
+        if (!fetchErr) {
+          const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+          meta.schedule = newSchedule;
+          meta.learning_mode = params.delivery; 
+          if (!meta.interested_programs || meta.interested_programs[0] !== params.course) {
+            meta.interested_programs = [params.course];
+          }
+          await supabase.from('profiles').update({ metadata: meta }).eq('id', id);
         }
-        await supabase.from('profiles').update({ metadata: meta }).eq('id', id);
-      }
-    }));
+      }));
 
-    await fetchDashboardData();
+      await fetchDashboardData();
+      showToast(`Bulk schedule deployed to ${params.studentIds.length} students!`, "success");
+    } catch (err) {
+      showToast("Error deploying bulk schedule.", "error");
+    }
   };
 
   const todayClassesCount = useMemo(() => {
@@ -436,7 +460,30 @@ export default function TeacherDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans selection:bg-purple-500/30">
+    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans selection:bg-purple-500/30 relative">
+      
+      {/* PREMIUM TOAST NOTIFICATION */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border backdrop-blur-xl ${
+              toast.type === 'success' 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_30px_rgba(16,185,129,0.2)]' 
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-400 shadow-[0_0_30px_rgba(244,63,94,0.2)]'
+            }`}
+          >
+            {toast.type === 'success' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
+            <p className="text-xs md:text-sm font-black uppercase tracking-widest">{toast.message}</p>
+            <button onClick={() => setToast(null)} className="ml-4 opacity-50 hover:opacity-100 transition-opacity">
+              <X size={16} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="max-w-7xl mx-auto space-y-6">
         
         {/* TOP ROW: BRANDING & NAVIGATION */}
@@ -548,6 +595,12 @@ export default function TeacherDashboard() {
              >
                <CalendarDays size={14}/> Bulk Schedule
              </button>
+             <button 
+               onClick={() => setIsAvailabilityOpen(true)}
+               className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500/20 transition-all shadow-lg"
+             >
+               <CalendarClock size={14}/> Manage Availability
+             </button>
            </div>
         </div>
 
@@ -580,7 +633,7 @@ export default function TeacherDashboard() {
         <HeroMetrics metrics={metrics} onDrilldown={setMetricDrilldown} scopeName={scopeName} />
 
         {/* 7-DAY TRACKER */}
-        <NextDaysTracker students={scopedStudents} onEditLesson={setEditingLessonGroup} />
+        <NextDaysTracker students={scopedStudents} availabilities={scopedAvailabilities} onEditLesson={setEditingLessonGroup} />
 
         {/* WORKSPACE AREA */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-6">
@@ -592,7 +645,7 @@ export default function TeacherDashboard() {
              />
           </div>
           <div className="lg:col-span-1">
-             <ItinerarySidebar students={scopedStudents} onEditLesson={setEditingLessonGroup} />
+             <ItinerarySidebar students={scopedStudents} availabilities={scopedAvailabilities} onEditLesson={setEditingLessonGroup} />
           </div>
         </div>
       </div>
@@ -616,6 +669,16 @@ export default function TeacherDashboard() {
         students={scopedStudents}
         onClose={() => setEditingLessonGroup(null)}
         onSave={handleSaveLessonEdits}
+        showToast={showToast}
+      />
+
+      <ManageAvailabilityModal
+        isOpen={isAvailabilityOpen}
+        onClose={() => setIsAvailabilityOpen(false)}
+        teacherId={currentUser?.role === 'admin' && viewScope !== 'global' && viewScope !== 'my_roster' ? viewScope : currentUser?.id}
+        availabilities={scopedAvailabilities}
+        onRefresh={fetchDashboardData}
+        showToast={showToast}
       />
 
     </div>
@@ -625,6 +688,172 @@ export default function TeacherDashboard() {
 // ==========================================
 // SUB-COMPONENTS
 // ==========================================
+
+function ManageAvailabilityModal({ isOpen, onClose, teacherId, availabilities, onRefresh, showToast }: any) {
+  const [date, setDate] = useState("");
+  const [startTime, setStartTime] = useState("14:00");
+  const [endTime, setEndTime] = useState("17:00");
+  const [delivery, setDelivery] = useState("both");
+  const [isSaving, setIsSaving] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleGenerate = async () => {
+    if (!date || !startTime || !endTime) return showToast("Please fill out all fields.", "error");
+    const startDt = new Date(`${date}T${startTime}`);
+    const endDt = new Date(`${date}T${endTime}`);
+    
+    if (startDt >= endDt) return showToast("End time must be after start time.", "error");
+
+    setIsSaving(true);
+    try {
+      const slots = [];
+      let current = new Date(startDt);
+      
+      while (current < endDt) {
+        const next = new Date(current);
+        next.setHours(next.getHours() + 1);
+        if (next > endDt) break; // Only create full 1-hour slots
+        slots.push({
+          teacher_id: teacherId,
+          start_time: current.toISOString(),
+          end_time: next.toISOString(),
+          delivery_mode: delivery,
+          is_booked: false
+        });
+        current = next;
+      }
+
+      if (slots.length > 0) {
+        const { error } = await supabase.from('teacher_availability').insert(slots);
+        if (error) throw error;
+        await onRefresh();
+        showToast(`${slots.length} open slots generated successfully!`, "success");
+      } else {
+        showToast("Time window too short to generate a 1-hour slot.", "error");
+      }
+    } catch (err: any) {
+      showToast("Failed to generate slots. Check for overlaps.", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteSlot = async (id: string) => {
+    try {
+      await supabase.from('teacher_availability').delete().eq('id', id);
+      await onRefresh();
+      showToast("Slot deleted.", "success");
+    } catch (e) {
+      showToast("Failed to delete slot.", "error");
+    }
+  };
+
+  const openSlots = availabilities.filter((a: any) => !a.is_booked);
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center p-6">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
+      <motion.div 
+        initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+        className="relative bg-[#0f172a] border border-white/10 rounded-[40px] w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+      >
+        <div className="p-8 border-b border-white/5 flex justify-between items-center bg-white/[0.02] shrink-0">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-blue-500/20 text-blue-400 rounded-2xl border border-blue-500/30"><CalendarClock size={24} /></div>
+            <div>
+                <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white leading-none">Availability Generator</h2>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-2">Open your calendar for parents</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-2 bg-white/5 hover:bg-white/10 rounded-full"><X size={20} /></button>
+        </div>
+
+        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
+          <div className="lg:w-1/2 p-8 overflow-y-auto custom-scrollbar border-r border-white/5 space-y-6">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Date</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Start Time</label>
+                <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">End Time</label>
+                <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Delivery Mode Allowed</label>
+              <select value={delivery} onChange={e => setDelivery(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none">
+                <option value="both">Both (Online & In-Person)</option>
+                <option value="online">Online Only</option>
+                <option value="in-person">In-Person Only</option>
+              </select>
+            </div>
+
+            <div className="pt-6 border-t border-white/5">
+              <button 
+                onClick={handleGenerate} 
+                disabled={isSaving}
+                className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase italic tracking-widest flex items-center justify-center gap-2 transition-all shadow-xl disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 size={18} className="animate-spin"/> : <Plus size={18}/>} Generate 1-Hr Blocks
+              </button>
+            </div>
+          </div>
+
+          <div className="lg:w-1/2 flex flex-col bg-[#020617]">
+            <div className="p-6 border-b border-white/5 shrink-0">
+              <p className="text-sm font-bold text-white">Your Open Slots</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">{openSlots.length} unbooked blocks waiting</p>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
+              {openSlots.length === 0 ? (
+                <div className="text-center p-8 border border-dashed border-white/10 rounded-3xl">
+                  <p className="text-sm font-bold text-slate-400 italic">No open slots available.</p>
+                </div>
+              ) : (
+                openSlots.map((slot: any) => {
+                  const start = new Date(slot.start_time);
+                  const end = new Date(slot.end_time);
+                  return (
+                    <div key={slot.id} className="flex items-center justify-between p-4 rounded-2xl border border-white/5 bg-white/5 hover:border-white/10 transition-colors group">
+                      <div>
+                        <p className="text-sm font-bold text-white">
+                          {start.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'})}
+                        </p>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mt-1">
+                          {start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-[#020617] px-2 py-1 rounded-md border border-white/5">
+                          {slot.delivery_mode}
+                        </span>
+                        <button 
+                          onClick={() => handleDeleteSlot(slot.id)}
+                          className="text-rose-500 hover:text-rose-400 p-2 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl transition-colors"
+                        >
+                          <Trash2 size={14}/>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 function HeroMetrics({ metrics, onDrilldown, scopeName }: { metrics: any, onDrilldown: (metric: string) => void, scopeName: string }) {
   return (
@@ -763,7 +992,7 @@ function MetricDrilldownModal({ metric, students, onClose, onEnroll }: { metric:
   );
 }
 
-function NextDaysTracker({ students, onEditLesson }: { students: any[], onEditLesson: (lessonGroup: any) => void }) {
+function NextDaysTracker({ students, availabilities, onEditLesson }: { students: any[], availabilities: any[], onEditLesson: (lessonGroup: any) => void }) {
   const scheduleDays = useMemo(() => {
     const rawLessons = students.flatMap(student =>
       (student.schedule || []).map((lesson: any) => {
@@ -783,9 +1012,28 @@ function NextDaysTracker({ students, onEditLesson }: { students: any[], onEditLe
       })
     );
 
+    // Merge in the open availabilities so they render natively on the timeline
+    availabilities.filter(a => !a.is_booked).forEach(a => {
+       const d = new Date(a.start_time);
+       rawLessons.push({
+          is_open_slot: true,
+          lessonId: a.id,
+          dateObj: d,
+          dateTs: d.getTime(),
+          topic: "Available for Booking",
+          studentId: "open",
+          studentName: "Unbooked Slot",
+          course: "Time Inventory",
+          delivery: a.delivery_mode,
+          location: "TBD",
+          link: null
+       });
+    });
+
     const groupedMap = new Map<string, any>();
     rawLessons.forEach(lesson => {
-      const key = `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
+      // Open slots don't group with anything else
+      const key = lesson.is_open_slot ? `open-${lesson.lessonId}` : `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
       if (!groupedMap.has(key)) {
         groupedMap.set(key, { 
           ...lesson, 
@@ -820,7 +1068,7 @@ function NextDaysTracker({ students, onEditLesson }: { students: any[], onEditLe
           lessons: groupedLessons.filter(l => l.dateTs >= start && l.dateTs < end)
        };
     });
-  }, [students]);
+  }, [students, availabilities]);
 
   return (
     <div className="pt-6 pb-2">
@@ -845,33 +1093,39 @@ function NextDaysTracker({ students, onEditLesson }: { students: any[], onEditLe
                     const isOnline = lesson.delivery === 'online';
                     const isMissingLogistics = (isOnline && !lesson.link) || (!isOnline && !lesson.location);
                     
-                    const displayText = !isOnline 
-                      ? lesson.location 
-                      : lesson.attendees.map((a:any) => a.studentName).join(', ');
+                    const displayText = lesson.is_open_slot 
+                      ? "OPEN SLOT" 
+                      : (!isOnline ? lesson.location : lesson.attendees.map((a:any) => a.studentName).join(', '));
 
                     return (
                       <div 
                         key={lesson.key || `${lesson.dateTs}-${lessonIdx}`} 
-                        onClick={() => onEditLesson(lesson)}
-                        className="bg-[#020617] border border-white/5 rounded-2xl p-3 flex flex-col gap-1.5 group hover:border-purple-500/50 transition-colors cursor-pointer relative"
+                        onClick={() => !lesson.is_open_slot && onEditLesson(lesson)}
+                        className={`bg-[#020617] rounded-2xl p-3 flex flex-col gap-1.5 relative ${
+                          lesson.is_open_slot 
+                            ? 'border-2 border-dashed border-white/10 cursor-default opacity-80' 
+                            : 'border border-white/5 hover:border-purple-500/50 transition-colors cursor-pointer group'
+                        }`}
                       >
-                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-white transition-opacity">
-                          <Edit2 size={12}/>
-                        </div>
+                        {!lesson.is_open_slot && (
+                          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-white transition-opacity">
+                            <Edit2 size={12}/>
+                          </div>
+                        )}
 
-                        <p className={`text-xs font-black pr-5 ${isOnline ? 'text-purple-400' : 'text-emerald-400'}`}>
+                        <p className={`text-xs font-black pr-5 ${lesson.is_open_slot ? 'text-slate-400' : isOnline ? 'text-purple-400' : 'text-emerald-400'}`}>
                           {new Date(lesson.dateTs).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                         </p>
                         
                         <div className="flex items-start gap-1.5">
                           {isOnline ? <Video size={12} className="text-purple-500 shrink-0 mt-0.5"/> : <MapPin size={12} className={`shrink-0 mt-0.5 ${lesson.location ? 'text-emerald-500' : 'text-amber-500'}`}/>}
                           
-                          {isMissingLogistics ? (
+                          {isMissingLogistics && !lesson.is_open_slot ? (
                              <span className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
                                + Add {isOnline ? 'Link' : 'Venue'}
                              </span>
                           ) : (
-                             <p className="text-[10px] font-bold text-white leading-tight line-clamp-2">
+                             <p className={`text-[10px] font-bold leading-tight line-clamp-2 ${lesson.is_open_slot ? 'text-slate-500 tracking-widest uppercase' : 'text-white'}`}>
                                {displayText}
                              </p>
                           )}
@@ -1067,7 +1321,7 @@ function StudentIntelligence({ students, unreadStudentIds, unreadOnlyFilter }: {
   );
 }
 
-function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditLesson: (lessonGroup: any) => void }) {
+function ItinerarySidebar({ students, availabilities, onEditLesson }: { students: any[], availabilities: any[], onEditLesson: (lessonGroup: any) => void }) {
   const [viewMode, setViewMode] = useState<'today' | 'next5'>('today');
 
   const aggregatedLessons = useMemo(() => {
@@ -1096,12 +1350,30 @@ function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditL
       })
     );
 
+    availabilities.filter(a => !a.is_booked).forEach(a => {
+       const d = new Date(a.start_time);
+       rawLessons.push({
+          is_open_slot: true,
+          lessonId: a.id,
+          dateObj: d,
+          dateTs: d.getTime(),
+          topic: "Available for Booking",
+          studentId: "open",
+          studentName: "Unbooked Slot",
+          course: "Time Inventory",
+          delivery: a.delivery_mode,
+          location: "TBD",
+          link: null
+       });
+    });
+
     const groupedMap = new Map<string, any>();
     rawLessons.forEach(lesson => {
-      const key = `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
+      const key = lesson.is_open_slot ? `open-${lesson.lessonId}` : `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
       if (!groupedMap.has(key)) {
         groupedMap.set(key, {
           key: key,
+          is_open_slot: lesson.is_open_slot || false,
           dateObj: lesson.dateObj,
           dateTs: lesson.dateTs,
           course: lesson.course,
@@ -1123,7 +1395,7 @@ function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditL
     const next5Lessons = groupedLessons.filter(l => l.dateTs >= ongoingThreshold).slice(0, 5);
 
     return { today: todaysLessons, next5: next5Lessons };
-  }, [students]);
+  }, [students, availabilities]);
 
   const displayLessons = viewMode === 'today' ? aggregatedLessons.today : aggregatedLessons.next5;
 
@@ -1165,54 +1437,61 @@ function ItinerarySidebar({ students, onEditLesson }: { students: any[], onEditL
 
               return (
                 <div key={`${lessonGroup.key}-${idx}`} className="relative flex gap-4 items-start group">
-                  <div className={`w-6 h-6 rounded-full ${isOnline ? 'bg-blue-500/20' : 'bg-emerald-500/20'} border-2 border-[#0f172a] flex items-center justify-center z-10 shrink-0 mt-0.5`}>
-                    <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-blue-400' : 'bg-emerald-400'}`}/>
+                  <div className={`w-6 h-6 rounded-full ${lessonGroup.is_open_slot ? 'bg-slate-800' : isOnline ? 'bg-blue-500/20' : 'bg-emerald-500/20'} border-2 border-[#0f172a] flex items-center justify-center z-10 shrink-0 mt-0.5`}>
+                    <div className={`w-2 h-2 rounded-full ${lessonGroup.is_open_slot ? 'bg-slate-500' : isOnline ? 'bg-blue-400' : 'bg-emerald-400'}`}/>
                   </div>
-                  <div className="flex-1 bg-[#020617] p-4 rounded-2xl border border-white/5 group-hover:border-white/10 transition-colors shadow-sm mt-[-8px]">
+                  <div className={`flex-1 bg-[#020617] p-4 rounded-2xl border transition-colors shadow-sm mt-[-8px] ${lessonGroup.is_open_slot ? 'border-dashed border-white/10 opacity-80' : 'border-white/5 group-hover:border-white/10'}`}>
                     <div className="flex justify-between items-start mb-2">
-                      <p className={`text-xs font-black ${isOnline ? 'text-blue-400' : 'text-emerald-400'}`}>
+                      <p className={`text-xs font-black ${lessonGroup.is_open_slot ? 'text-slate-400' : isOnline ? 'text-blue-400' : 'text-emerald-400'}`}>
                         {dateString}{timeString}
                       </p>
-                      <div className="flex items-center gap-2">
-                        <button 
-                          onClick={() => onEditLesson(lessonGroup)} 
-                          className="p-1 hover:bg-white/10 rounded-lg text-slate-500 hover:text-white transition-colors border border-transparent hover:border-white/10"
-                          title="Edit Session"
-                        >
-                          <Edit2 size={12} />
-                        </button>
-                        <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                          {lessonGroup.attendees.length} {lessonGroup.attendees.length === 1 ? 'Student' : 'Students'}
-                        </span>
-                        
-                        {/* CLICKABLE LOGISTICS ICONS */}
-                        {isOnline ? (
-                          lessonGroup.link ? (
-                            <a href={lessonGroup.link} target="_blank" rel="noopener noreferrer" className="p-1 -m-1 hover:bg-blue-500/20 rounded transition-colors" title="Join Meeting">
-                              <Video size={12} className="text-blue-400 hover:text-blue-300" />
-                            </a>
+                      
+                      {!lessonGroup.is_open_slot && (
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => onEditLesson(lessonGroup)} 
+                            className="p-1 hover:bg-white/10 rounded-lg text-slate-500 hover:text-white transition-colors border border-transparent hover:border-white/10"
+                            title="Edit Session"
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                          <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                            {lessonGroup.attendees.length} {lessonGroup.attendees.length === 1 ? 'Student' : 'Students'}
+                          </span>
+                          
+                          {isOnline ? (
+                            lessonGroup.link ? (
+                              <a href={lessonGroup.link} target="_blank" rel="noopener noreferrer" className="p-1 -m-1 hover:bg-blue-500/20 rounded transition-colors" title="Join Meeting">
+                                <Video size={12} className="text-blue-400 hover:text-blue-300" />
+                              </a>
+                            ) : (
+                              <button onClick={() => onEditLesson(lessonGroup)} className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500/20 transition-colors">
+                                + Add Link
+                              </button>
+                            )
                           ) : (
-                            <button onClick={() => onEditLesson(lessonGroup)} className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500/20 transition-colors">
-                              + Add Link
-                            </button>
-                          )
-                        ) : (
-                          lessonGroup.location ? (
-                            <span title={`In-Person: ${lessonGroup.location}`} className="p-1 -m-1">
-                               <MapPin size={12} className="text-emerald-500/50" />
-                            </span>
-                          ) : (
-                            <button onClick={() => onEditLesson(lessonGroup)} className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500/20 transition-colors">
-                              + Add Venue
-                            </button>
-                          )
-                        )}
-                      </div>
+                            lessonGroup.location ? (
+                              <span title={`In-Person: ${lessonGroup.location}`} className="p-1 -m-1">
+                                 <MapPin size={12} className="text-emerald-500/50" />
+                              </span>
+                            ) : (
+                              <button onClick={() => onEditLesson(lessonGroup)} className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500/20 transition-colors">
+                                + Add Venue
+                              </button>
+                            )
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <p className="text-sm font-bold text-white leading-tight">{lessonGroup.course}</p>
-                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1 font-bold line-clamp-1 border-b border-white/5 pb-2 mb-2">{lessonGroup.topic}</p>
+                    
+                    <p className={`text-sm font-bold leading-tight ${lessonGroup.is_open_slot ? 'text-slate-500' : 'text-white'}`}>
+                      {lessonGroup.course}
+                    </p>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1 font-bold line-clamp-1 border-b border-white/5 pb-2 mb-2">
+                      {lessonGroup.topic}
+                    </p>
                     <p className="text-xs text-slate-300 leading-tight">
-                      {lessonGroup.attendees.map((a: any) => a.studentName).join(', ')}
+                      {lessonGroup.is_open_slot ? "OPEN SLOT" : lessonGroup.attendees.map((a: any) => a.studentName).join(', ')}
                     </p>
                   </div>
                 </div>
@@ -1449,7 +1728,7 @@ function BulkScheduleModal({ isOpen, onClose, students, activeCourses, onSchedul
 // ---------------------------------------------------------
 // UPDATED: DUAL-TAB SESSION MANAGER MODAL
 // ---------------------------------------------------------
-function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave }: any) {
+function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave, showToast }: any) {
   const [activeTab, setActiveTab] = useState<'details' | 'wrapup'>('details');
   
   // Details State

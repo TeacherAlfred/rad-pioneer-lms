@@ -22,6 +22,7 @@ export default function LiveBootcampLeaderboard() {
     const { data: subs } = await supabase
       .from('tutorial_submissions')
       .select('student_id, group_names, status, submitted_at')
+      .neq('student_id', '74b7334a-ef76-4862-8981-d3db46ad5378')
       .order('submitted_at', { ascending: true });
 
     if (!subs) return;
