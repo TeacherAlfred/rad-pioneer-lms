@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, Search, Wallet, CheckCircle2, AlertTriangle, 
   Receipt, Loader2, ArrowRight, Coins, RefreshCw, Save,
-  Building2, User, Calendar
+  Building2, User, Calendar, MessageSquare
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -137,7 +137,7 @@ export default function PaymentCapturePage() {
     }));
   };
 
-  const handleProcessPayment = async () => {
+  const handleProcessPayment = async (sendWhatsApp: boolean = false) => {
     const rcvAmt = Number(totalReceived) || 0;
     if (rcvAmt <= 0) return alert("Please enter a valid received amount.");
     if (unallocatedCredit < 0) return alert("You have allocated more funds than you received. Please check your math.");
@@ -196,6 +196,25 @@ export default function PaymentCapturePage() {
       }
 
       await Promise.all([...allocationPromises, ...invoiceUpdates]);
+
+      // 3. WHATSAPP NOTIFICATION LOGIC
+      if (sendWhatsApp) {
+        const firstName = selectedGuardian.display_name.split(' ')[0];
+        const amountStr = `R ${rcvAmt.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const balanceStr = `R ${projectedBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        
+        const msg = `Dear ${firstName},\n\nThank you for your payment that has been received today.\n\nAn amount of ${amountStr} has been received and will be allocated to your account. Leaving your balance at ${balanceStr}.\n\nRegards,\nRAD Academy Team`;
+        
+        let phoneParam = "";
+        const phoneRaw = selectedGuardian.metadata?.phone;
+        if (phoneRaw) {
+            let cleanPhone = phoneRaw.replace(/\D/g, '');
+            if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+            phoneParam = cleanPhone;
+        }
+        
+        window.open(`https://wa.me/${phoneParam}?text=${encodeURIComponent(msg)}`, '_blank');
+      }
 
       confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, colors: ['#10b981', '#34d399', '#ffffff'] });
       setSuccessMsg(`Successfully processed R ${rcvAmt.toLocaleString()} and updated ledger.`);
@@ -459,13 +478,22 @@ export default function PaymentCapturePage() {
                         </div>
                       </div>
 
-                      <button 
-                        onClick={handleProcessPayment}
-                        disabled={isProcessing || Number(totalReceived) <= 0 || unallocatedCredit < 0}
-                        className="w-full sm:w-auto px-8 py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase italic tracking-widest text-xs hover:bg-emerald-500 flex items-center justify-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-emerald-600/20"
-                      >
-                        {isProcessing ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} Process Payment
-                      </button>
+                      <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+                        <button 
+                          onClick={() => handleProcessPayment(false)}
+                          disabled={isProcessing || Number(totalReceived) <= 0 || unallocatedCredit < 0}
+                          className="w-full sm:w-auto px-6 py-4 bg-slate-800 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-700 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                        >
+                          {isProcessing ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} Just Process
+                        </button>
+                        <button 
+                          onClick={() => handleProcessPayment(true)}
+                          disabled={isProcessing || Number(totalReceived) <= 0 || unallocatedCredit < 0}
+                          className="w-full sm:w-auto px-8 py-4 bg-emerald-600 text-white rounded-2xl font-black uppercase italic tracking-widest text-[10px] hover:bg-emerald-500 flex items-center justify-center gap-2 transition-all disabled:opacity-50 shadow-lg shadow-emerald-600/20"
+                        >
+                          {isProcessing ? <Loader2 size={16} className="animate-spin"/> : <MessageSquare size={16}/>} Process & Notify
+                        </button>
+                      </div>
                     </div>
 
                   </div>
