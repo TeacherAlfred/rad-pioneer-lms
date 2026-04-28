@@ -6,12 +6,12 @@ import { Phone, Mail, Building2, Lock } from "lucide-react";
 export default function RADStatement({ guardianId, name, email, phone, transactions = [], balanceDue = 0 }: any) {
   const today = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric' });
   
-  // Create a state to hold the payment amount, defaulting to the full balance
-  const [payAmount, setPayAmount] = useState<number | string>(balanceDue);
+  // Create a state to hold the payment amount, defaulting to the full balance (or 0 if in credit)
+  const [payAmount, setPayAmount] = useState<number | string>(Math.max(0, balanceDue));
 
   // If the balanceDue prop updates (e.g. on load), sync it to the input box
   useEffect(() => {
-    setPayAmount(balanceDue);
+    setPayAmount(Math.max(0, balanceDue));
   }, [balanceDue]);
 
   return (
@@ -45,7 +45,10 @@ export default function RADStatement({ guardianId, name, email, phone, transacti
             </div>
             <div className="flex justify-between items-center mt-4">
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Total Amount Due:</span>
-              <span className="text-[10px] font-black tracking-widest text-white">R {Number(balanceDue).toLocaleString('en-ZA', {minimumFractionDigits: 2})}</span>
+              <span className="text-[10px] font-black tracking-widest text-white">
+                {/* Ensure we don't show a negative amount due */}
+                R {Math.max(0, Number(balanceDue)).toLocaleString('en-ZA', {minimumFractionDigits: 2})}
+              </span>
             </div>
             
             {/* INTEGRATED PAYFAST SANDBOX FORM WITH CUSTOM AMOUNT */}
@@ -105,19 +108,32 @@ export default function RADStatement({ guardianId, name, email, phone, transacti
       </div>
 
       {/* BILL TO SECTION */}
-      <div className="mb-10 p-6 bg-white/[0.02] border border-white/5 rounded-3xl">
-        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">To:</p>
-        <h2 className="text-xl font-black text-white uppercase italic tracking-tight">{name || "Client Name"}</h2>
-        
-        {/* Contact details forced into a single wrap-friendly row */}
-        <div className="flex flex-wrap items-center gap-x-8 gap-y-2 mt-2 text-sm">
-          {email && (
-            <p><span className="font-bold text-slate-500 mr-1.5">Email:</span><span className="text-slate-300">{email}</span></p>
-          )}
-          {phone && (
-            <p><span className="font-bold text-slate-500 mr-1.5">Mobile:</span><span className="text-slate-300">{phone}</span></p>
-          )}
+      <div className="mb-10 p-6 bg-white/[0.02] border border-white/5 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">To:</p>
+          <h2 className="text-xl font-black text-white uppercase italic tracking-tight">{name || "Client Name"}</h2>
+          
+          {/* Contact details forced into a single wrap-friendly row */}
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-2 mt-2 text-sm">
+            {email && (
+              <p><span className="font-bold text-slate-500 mr-1.5">Email:</span><span className="text-slate-300">{email}</span></p>
+            )}
+            {phone && (
+              <p><span className="font-bold text-slate-500 mr-1.5">Mobile:</span><span className="text-slate-300">{phone}</span></p>
+            )}
+          </div>
         </div>
+
+        {/* SECURE CREDIT DISPLAY */}
+        {balanceDue < 0 && (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 px-6 py-4 rounded-2xl text-right shrink-0 shadow-inner">
+            <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500 mb-1">Account in Credit</p>
+            <p className="text-3xl font-black text-emerald-400 leading-none tracking-tighter">
+              R {Math.abs(balanceDue).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+            <p className="text-[8px] font-bold text-emerald-500/70 mt-2 uppercase tracking-widest">To be applied to next invoice</p>
+          </div>
+        )}
       </div>
       
       {/* TRANSACTIONS TABLE */}
@@ -163,7 +179,8 @@ export default function RADStatement({ guardianId, name, email, phone, transacti
               <div key={i} className={`p-3 rounded-2xl text-center flex flex-col justify-center transition-colors ${i === 4 ? 'bg-emerald-500/10 border border-emerald-500/20 shadow-inner' : 'opacity-60'}`}>
                 <p className="text-[8px] font-black uppercase tracking-wider text-slate-200 mb-1">{label}</p>
                 <p className={`text-[6px] sm:text-xs ${i === 4 ? 'text-emerald-400' : 'text-slate-300'}`}>
-                  {i === 4 ? `R${Number(balanceDue).toLocaleString('en-ZA')}` : '0.00'}
+                  {/* Safely display R0.00 in the aging bucket if the account is in credit */}
+                  {i === 4 ? `R${Math.max(0, Number(balanceDue)).toLocaleString('en-ZA')}` : '0.00'}
                 </p>
               </div>
             ))}

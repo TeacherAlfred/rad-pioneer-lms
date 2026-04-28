@@ -13,7 +13,13 @@ export default function StatementView() {
   const [loading, setLoading] = useState(true);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [guardian, setGuardian] = useState<any>(null);
+  
+  // Track raw data
   const [invoices, setInvoices] = useState<any[]>([]);
+  const [payments, setPayments] = useState<any[]>([]);
+  
+  // Track the actual unallocated credit from the profile metadata
+  const [unallocatedCredit, setUnallocatedCredit] = useState<number>(0);
 
   useEffect(() => {
     if (guardianId) fetchStatementData();
@@ -21,7 +27,7 @@ export default function StatementView() {
 
   async function fetchStatementData() {
     try {
-      // 1. Fetch Guardian Profile
+      // 1. Fetch Guardian Profile (To get unallocated credits if any)
       const { data: profileData, error: profileErr } = await supabase
         .from('profiles')
         .select('*')
@@ -30,17 +36,33 @@ export default function StatementView() {
 
       if (profileErr || !profileData) throw new Error("Profile not found");
       setGuardian(profileData);
+      
+      const meta = typeof profileData.metadata === 'string' ? JSON.parse(profileData.metadata) : (profileData.metadata || {});
+      // Note: If you store financial unallocated credit in metadata, you can read it here.
+      // E.g., setUnallocatedCredit(meta.account_credit || 0);
 
-      // 2. Fetch All Billing Records (Excluding Quotes)
+      // 2. Fetch All Invoices (Charges)
       const { data: billingData, error: billingErr } = await supabase
         .from('billing_records')
         .select('*')
         .eq('guardian_id', guardianId)
         .eq('doc_type', 'invoice')
-        .order('created_at', { ascending: true }); // Chronological for statements
+        .in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid', 'itn_received'])
+        .order('created_at', { ascending: true }); 
 
       if (billingErr) throw billingErr;
       setInvoices(billingData || []);
+
+      // 3. Fetch All Raw Payments (Credits)
+      const { data: paymentData, error: paymentErr } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('parent_id', guardianId)
+        .eq('status', 'completed')
+        .order('paid_at', { ascending: true });
+
+      if (paymentErr) throw paymentErr;
+      setPayments(paymentData || []);
 
     } catch (err) {
       console.error(err);
@@ -106,51 +128,57 @@ export default function StatementView() {
     );
   }
 
-  // Calculate running total
-  const totalDue = invoices.reduce((acc, inv) => {
-    if (inv.status === 'paid' || inv.status === 'settled') return acc;
-    const total = parseFloat(inv.total_amount || 0);
-    const paid = parseFloat(inv.amount_paid || 0);
-    return acc + (total - paid);
-  }, 0);
+  // --- NEW: Master Ledger Compilation ---
+  const rawTransactions: any[] = [];
 
-  // NEW: Transform invoices into proper accounting Ledger rows (Debits & Credits)
-  const safeTransactions: any[] = [];
-
+  // 1. Add all Invoices (Debits)
   invoices.forEach(inv => {
     const amount = Number(inv.total_amount) || 0;
-    const paid = Number(inv.amount_paid) || 0;
-    const dateStr = new Date(inv.created_at).toLocaleDateString('en-ZA');
+    const dateObj = new Date(inv.created_at);
     
-    // Fallback description from the first line item
     const desc = inv.line_items && inv.line_items.length > 0 
       ? inv.line_items[0].desc || inv.line_items[0].description || 'Account Charge' 
       : 'Account Charge';
 
-    // 1. The Invoice Charge (Debit)
-    safeTransactions.push({
-      date: dateStr,
+    rawTransactions.push({
+      type: 'debit',
+      dateObj: dateObj,
+      date: dateObj.toLocaleDateString('en-ZA'),
       ref: `INV-${inv.invoice_number}`,
       desc: desc,
       debit: amount,
       credit: null
     });
+  });
 
-    // 2. The Payment (Credit) - If they have paid anything towards this invoice
-    if (paid > 0) {
-      // Use explicit paid_at date if it exists, otherwise fallback to the last update
-      const paymentDateStr = inv.paid_at 
-        ? new Date(inv.paid_at).toLocaleDateString('en-ZA') 
-        : new Date(inv.updated_at || inv.created_at).toLocaleDateString('en-ZA');
+  // 2. Add all Payments (Credits) directly from the payments table
+  payments.forEach(pay => {
+    const amount = Number(pay.amount) || 0;
+    const dateObj = new Date(pay.paid_at || pay.created_at);
+    
+    rawTransactions.push({
+      type: 'credit',
+      dateObj: dateObj,
+      date: dateObj.toLocaleDateString('en-ZA'),
+      ref: pay.description?.includes('Ref:') ? pay.description : `PAY-${pay.id.substring(0,6).toUpperCase()}`,
+      desc: 'Payment Received - Thank You',
+      debit: null,
+      credit: amount
+    });
+  });
 
-      safeTransactions.push({
-        date: paymentDateStr,
-        ref: `PAY-${inv.invoice_number}`,
-        desc: 'Payment Received - Thank You',
-        debit: null,
-        credit: paid
-      });
+  // 3. Sort chronologically
+  rawTransactions.sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
+
+  // 4. Calculate Running Total (Can be negative if in credit)
+  let runningBalance = 0;
+  const safeTransactions = rawTransactions.map(t => {
+    if (t.type === 'debit') {
+      runningBalance += t.debit;
+    } else {
+      runningBalance -= t.credit;
     }
+    return t;
   });
 
   return (
@@ -180,14 +208,14 @@ export default function StatementView() {
 
       {/* THE STATEMENT DOCUMENT */}
       <div className="flex justify-center pb-20">
-        <div id="statement-document" className="w-full max-w-4xl">
+        <div id="statement-document" className="w-full max-w-4xl bg-[#020617]">
           <RADStatement 
             guardianId={guardian.id}
             name={guardian.display_name}
             email={guardian.metadata?.email || guardian.email || ""}
             phone={guardian.metadata?.phone || guardian.phone || ""}
             transactions={safeTransactions}
-            balanceDue={totalDue}
+            balanceDue={runningBalance} 
           />
         </div>
       </div>
