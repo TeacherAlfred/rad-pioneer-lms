@@ -17,20 +17,14 @@ export async function POST(req: Request) {
 
     const firstName = name ? name.split(' ')[0] : 'Parent';
     
-    // Dynamically grab the exact live URL (or localhost) from the request itself
     const requestUrl = new URL(req.url);
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${requestUrl.protocol}//${requestUrl.host}`;
 
-    let emailsToSend = [];
+    let emailsToSend: any[] = [];
 
-    // --- TIMING CALCULATIONS FOR THE DRIP SEQUENCE ---
-    // Resend allows scheduling up to 72 hours in advance via ISO strings
     const now = new Date();
-    
-    // Email 2 (Quotation) delayed by 2 minutes
+    // Calculate precise future timestamps for Resend
     const timeEmailTwo = new Date(now.getTime() + 2 * 60000).toISOString();
-    
-    // Email 3 (Booking) delayed by 4 minutes
     const timeEmailThree = new Date(now.getTime() + 4 * 60000).toISOString();
 
     // ==========================================
@@ -38,7 +32,7 @@ export async function POST(req: Request) {
     // ==========================================
     if (scenario === 'fast-track' || scenario === 'manual-conversion') {
       
-      // 1. WELCOME & PASSWORD SETUP (Sent Immediately)
+      // 1. WELCOME & PASSWORD SETUP (Sent Immediately - No scheduled_at)
       emailsToSend.push({
         from: SENDER,
         to: email,
@@ -54,12 +48,12 @@ export async function POST(req: Request) {
         `
       });
 
-      // 2. QUOTATION (Sent 2 minutes later)
+      // 2. QUOTATION (Scheduled for 2 minutes later)
       emailsToSend.push({
         from: SENDER,
         to: email,
         subject: '(2 of 3) Your RAD Academy Quotation',
-        scheduled_at: timeEmailTwo, // Resend will hold this for 2 mins
+        scheduled_at: timeEmailTwo,
         html: `
           <div style="font-family: sans-serif; color: #0f172a; max-w: 600px; margin: 0 auto;">
             <h2>Your Quotation is Ready.</h2>
@@ -72,12 +66,12 @@ export async function POST(req: Request) {
         `
       });
 
-      // 3. 1-ON-1 COACHING SCHEDULER (Sent 4 minutes later)
+      // 3. 1-ON-1 COACHING SCHEDULER (Scheduled for 4 minutes later)
       emailsToSend.push({
         from: SENDER,
         to: email,
         subject: '(3 of 3) Claim your Free 1-on-1 Teams Session!',
-        scheduled_at: timeEmailThree, // Resend will hold this for 4 mins
+        scheduled_at: timeEmailThree,
         html: `
           <div style="font-family: sans-serif; color: #0f172a; max-w: 600px; margin: 0 auto;">
             <h2>Claim your Fast-Track Bonus! 🎁</h2>
@@ -119,11 +113,14 @@ export async function POST(req: Request) {
       });
     }
 
-    // Dispatch the emails in a batch
+    // Execute requests individually to guarantee strict adherence to "scheduled_at"
     if (emailsToSend.length > 0) {
-      // Resend handles the "scheduled_at" timestamps natively in the background!
-      const response = await resend.batch.send(emailsToSend);
-      if (response.error) throw new Error(response.error.message);
+      await Promise.all(
+        emailsToSend.map(async (emailPayload) => {
+          const { error } = await resend.emails.send(emailPayload);
+          if (error) console.error("Failed to send email to Resend:", error);
+        })
+      );
     }
 
     return NextResponse.json({ success: true, count: emailsToSend.length });
