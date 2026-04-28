@@ -191,6 +191,18 @@ export default function VIPInvitePage() {
         const updatedMeta = { ...prospectData.metadata, converted_profile_id: guardianId, conversion_date: today.toISOString(), form_progress: 'Fast-Tracked' };
         await supabase.from('prospects').update({ name: parentName, email: email, phone: phone, status: 'Converted (Won)', metadata: updatedMeta }).eq('id', inviteId);
 
+        fetch('/api/emails/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scenario: 'fast-track',
+            name: parentName,
+            email: email,
+            token: onboardingToken,
+            quoteId: quotationRecord.id
+          })
+        });
+        
         confetti({ particleCount: 300, spread: 120, origin: { y: 0.6 }, colors: ['#f59e0b', '#10b981', '#3b82f6'] });
 
       } else {
@@ -213,6 +225,17 @@ export default function VIPInvitePage() {
 
         await supabase.from('prospects').update({ name: parentName, email: email, phone: phone, status: 'Trial Active', metadata: updatedMeta }).eq('id', inviteId);
         
+        fetch('/api/emails/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scenario: 'trial',
+            name: parentName,
+            email: email,
+            quoteId: inviteId // Passing prospect ID so they can set up the trial
+          })
+        });
+
         confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 }, colors: ['#3b82f6', '#6366f1'] });
       }
 

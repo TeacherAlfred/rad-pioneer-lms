@@ -239,6 +239,18 @@ export default function InvitesCommandCenter() {
       // Mark Prospect as Won and save the new profile ID so referrals can find them later
       const updatedMeta = { ...p.metadata, converted_profile_id: guardianId, conversion_date: new Date().toISOString() };
       await supabase.from('prospects').update({ status: 'Converted (Won)', metadata: updatedMeta }).eq('id', p.id);
+      
+      fetch('/api/emails/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenario: 'manual-conversion',
+          name: p.name,
+          email: p.email,
+          token: onboardingToken,
+          quoteId: quotationRecord.id
+        })
+      });
 
       confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: ['#10b981', '#3b82f6'] });
       setShowConvertModal(null);
