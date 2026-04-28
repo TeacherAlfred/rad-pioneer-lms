@@ -130,7 +130,11 @@ export default function FinancePortal() {
 
     let openQuotesGP = 0;
     validQuotes.forEach(q => {
-      q.line_items?.forEach((li: any) => {
+      // FIX: Safely parse line_items if it's returned as a string from DB
+      let items = [];
+      try { items = typeof q.line_items === 'string' ? JSON.parse(q.line_items) : (q.line_items || []); } catch(e) {}
+      
+      items.forEach((li: any) => {
         const cost = itemCostMap[li.desc] || 0;
         const price = Number(li.price) || 0;
         const qty = Number(li.qty) || 0;
@@ -179,7 +183,11 @@ export default function FinancePortal() {
     const itemStats: Record<string, { qty: number, gp: number }> = {};
     invoices.forEach(inv => {
       if (inv.status === 'paid' || inv.status === 'settled') {
-        inv.line_items?.forEach((li: any) => {
+        // FIX: Safely parse line_items if it's returned as a string from DB
+        let items = [];
+        try { items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : (inv.line_items || []); } catch(e) {}
+        
+        items.forEach((li: any) => {
           const desc = li.desc;
           if (!itemStats[desc]) itemStats[desc] = { qty: 0, gp: 0 };
           const cost = itemCostMap[desc] || 0;

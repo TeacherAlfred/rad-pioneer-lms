@@ -6,8 +6,9 @@ import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Cpu, Gamepad2, Sparkles, CheckCircle2, AlertTriangle,
-  ChevronRight, ShieldCheck, Clock, Loader2, Target, Users, Plus, X,
-  ChevronDown, Star, MessageSquareHeart, ChevronLeft, Edit2, ArrowRight, Share2, Check
+  ChevronRight, ShieldCheck, Clock, Loader2, Target, Users, Plus, X, UserPlus,
+  ChevronDown, Star, MessageSquareHeart, ChevronLeft, Edit2, ArrowRight, Share2, Check,
+  CreditCard, GraduationCap, Zap, Mail, CalendarDays
 } from "lucide-react";
 import confetti from "canvas-confetti";
 
@@ -16,13 +17,19 @@ export default function VIPInvitePage() {
   const inviteId = params.id as string;
 
   const [loading, setLoading] = useState(true);
+  
+  // Data State
   const [prospectData, setProspectData] = useState<any>(null);
+  const [isReferral, setIsReferral] = useState(false);
 
-  // Wizard State
-  const [wizardStep, setWizardStep] = useState<0 | 1 | 2>(0);
+  // Wizard & Upsell State
+  const [wizardStep, setWizardStep] = useState<0 | 1 | 2 | 3>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
-  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [chosenPath, setChosenPath] = useState<'trial' | 'fast-track' | null>(null);
+  
+  // Dynamic Pricing State
+  const [activePricingTier, setActivePricingTier] = useState({ name: 'Tier 1', price: 250, id: 'b2aae4aa-0c84-4673-9fe1-3e61895626d1' });
 
   // Form State
   const [parentName, setParentName] = useState("");
@@ -47,12 +54,25 @@ export default function VIPInvitePage() {
 
   async function fetchInviteData() {
     try {
+      // 1. Fetch Invite
       const { data, error } = await supabase.from('prospects').select('*').eq('id', inviteId).single();
       if (error || !data) throw new Error("Invite not found");
+      
       setProspectData(data);
       setParentName(data.name || "");
       setEmail(data.email || "");
       setPhone(data.phone || "");
+
+      // 2. Silently calculate active tier based on converted leads
+      const { count } = await supabase.from('prospects').select('*', { count: 'exact', head: true }).eq('status', 'Converted (Won)');
+      const convertedCount = count || 0;
+      
+      if (convertedCount >= 10 && convertedCount < 20) {
+        setActivePricingTier({ name: 'Tier 2', price: 350, id: 'd696d727-3e94-4325-98d9-e8a89277338a' });
+      } else if (convertedCount >= 20) {
+        setActivePricingTier({ name: 'Tier 3', price: 450, id: 'd86b5577-a8ec-4bd8-a27d-b454e79ca742' });
+      }
+
     } catch (err) {
       console.error("Invite fetch error:", err);
     } finally {
@@ -76,63 +96,126 @@ export default function VIPInvitePage() {
     trackProgress('Form Opened');
   };
 
-  const handleNextStep = () => {
+  const handleNextStep1 = () => {
     if (!parentName || !email || !phone || numKids < 1) return alert("Please complete all guardian details.");
-    
     const newChildren = [...children];
     if (numKids > children.length) {
-      for (let i = children.length; i < numKids; i++) {
-        newChildren.push({ id: Date.now().toString() + i, name: '', dob: '', codingAtSchool: 'No' });
-      }
-    } else if (numKids < children.length) {
-      newChildren.splice(numKids);
-    }
+      for (let i = children.length; i < numKids; i++) newChildren.push({ id: Date.now().toString() + i, name: '', dob: '', codingAtSchool: 'No' });
+    } else if (numKids < children.length) newChildren.splice(numKids);
     setChildren(newChildren);
     setActiveChildTab(newChildren[0].id);
-
     setWizardStep(2);
     trackProgress('Guardian Details Completed');
+  };
+
+  const handleNextStep2 = () => {
+    const validChildren = children.filter(c => c.name.trim() !== "");
+    if (validChildren.length !== numKids) return alert("Please provide the names for all your children.");
+    setWizardStep(3); // Go to Upsell Step
+    trackProgress('Student Details Completed');
   };
 
   const updateChild = (id: string, field: 'name' | 'dob' | 'codingAtSchool', value: string) => {
     setChildren(children.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const validChildren = children.filter(c => c.name.trim() !== "");
-    if (validChildren.length !== numKids) return alert("Please provide the names for all your children.");
+  const generateToken = () => {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    return Array.from({length: 24}).map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
+  };
 
+  // --- THE MASTER SUBMISSION ENGINE (Handles both paths) ---
+  const handleFinalSubmit = async (isUpsellAccepted: boolean) => {
     setIsSubmitting(true);
+    const validChildren = children.filter(c => c.name.trim() !== "");
+
     try {
       const today = new Date();
-      const launchDate = new Date('2026-05-01T00:00:00');
-      const trialStart = today > launchDate ? today : launchDate;
-      let trialEnd = new Date(trialStart);
-      trialEnd.setDate(trialEnd.getDate() + 14);
       
-      if (prospectData?.metadata?.custom_trial_end) {
-        trialEnd = new Date(prospectData.metadata.custom_trial_end);
+      if (isUpsellAccepted) {
+        // ==========================================
+        // PATH A: UPGRADE & FAST-TRACK (PLG Conversion)
+        // ==========================================
+        setChosenPath('fast-track');
+
+        const guardianId = crypto.randomUUID();
+        const onboardingToken = generateToken();
+        
+        // 1. Create Guardian Profile
+        const guardianProfile = {
+          id: guardianId, role: 'guardian', display_name: parentName, onboarding_token: onboardingToken,
+          status: 'active', funnel_stage: 'Active (Paid Client)', payment_plan_preference: 'LMS Access',
+          metadata: JSON.stringify({ email: email, phone: phone, booking_credits: 0 })
+        };
+
+        // 2. Create Student Profiles
+        const studentProfiles = validChildren.map((c: any) => ({
+          id: crypto.randomUUID(), role: 'student', display_name: c.name, linked_parent_id: guardianId,
+          status: 'active', metadata: JSON.stringify({ date_of_birth: c.dob, school_coding: c.codingAtSchool === 'Yes' })
+        }));
+
+        // 3. Generate Quote
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + 1);
+        expiryDate.setHours(23, 59, 59, 999);
+        const invoiceNumber = Math.floor(Date.now() / 1000);
+        
+        const quotationRecord = {
+          id: crypto.randomUUID(), invoice_number: invoiceNumber, payment_reference: `2026${invoiceNumber}`,
+          guardian_id: guardianId, total_amount: (activePricingTier.price * numKids).toString(),
+          status: 'pending', doc_type: 'quote', expires_at: expiryDate.toISOString(), amount_paid: "0",
+          line_items: JSON.stringify([{
+            qty: numKids.toString(), desc: `LMS Access - ${activePricingTier.name}`, disc: 0, 
+            note: "Self-paced LMS Access License", price: activePricingTier.price.toString(), item_id: activePricingTier.id
+          }]),
+          metadata: JSON.stringify({ global_note: "Fast-Track Upgrade. Please pay this quote to officially secure your child's spot.", prospect_name: parentName, prospect_email: email })
+        };
+
+        // 4. Execute Referral Bonus
+        if (prospectData.metadata?.referred_by_id) {
+          const { data: refProspect } = await supabase.from('prospects').select('status, metadata').eq('id', prospectData.metadata.referred_by_id).single();
+          if (refProspect?.status === 'Converted (Won)' && refProspect.metadata?.converted_profile_id) {
+            const { data: refProfile } = await supabase.from('profiles').select('metadata').eq('id', refProspect.metadata.converted_profile_id).single();
+            if (refProfile) {
+              const refMeta = typeof refProfile.metadata === 'string' ? JSON.parse(refProfile.metadata) : (refProfile.metadata || {});
+              refMeta.booking_credits = (refMeta.booking_credits || 0) + 1;
+              await supabase.from('profiles').update({ metadata: JSON.stringify(refMeta) }).eq('id', refProspect.metadata.converted_profile_id);
+            }
+          }
+        }
+
+        // 5. Save to DB
+        await supabase.from('profiles').insert([guardianProfile, ...studentProfiles]);
+        await supabase.from('billing_records').insert([quotationRecord]);
+        
+        const updatedMeta = { ...prospectData.metadata, converted_profile_id: guardianId, conversion_date: today.toISOString(), form_progress: 'Fast-Tracked' };
+        await supabase.from('prospects').update({ name: parentName, email: email, phone: phone, status: 'Converted (Won)', metadata: updatedMeta }).eq('id', inviteId);
+
+        confetti({ particleCount: 300, spread: 120, origin: { y: 0.6 }, colors: ['#f59e0b', '#10b981', '#3b82f6'] });
+
+      } else {
+        // ==========================================
+        // PATH B: 14-DAY FREE TRIAL
+        // ==========================================
+        setChosenPath('trial');
+
+        const launchDate = new Date('2026-05-01T00:00:00');
+        const trialStart = today > launchDate ? today : launchDate;
+        let trialEnd = new Date(trialStart);
+        trialEnd.setDate(trialEnd.getDate() + 14);
+        
+        if (prospectData?.metadata?.custom_trial_end) trialEnd = new Date(prospectData.metadata.custom_trial_end);
+
+        const updatedMeta = { 
+          ...prospectData.metadata, children: validChildren, trial_start: trialStart.toISOString(),
+          trial_end: trialEnd.toISOString(), accepted_date: today.toISOString(), form_progress: 'Completed Trial'
+        };
+
+        await supabase.from('prospects').update({ name: parentName, email: email, phone: phone, status: 'Trial Active', metadata: updatedMeta }).eq('id', inviteId);
+        
+        confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 }, colors: ['#3b82f6', '#6366f1'] });
       }
 
-      const updatedMeta = { 
-        ...prospectData.metadata, 
-        children: validChildren,
-        trial_start: trialStart.toISOString(),
-        trial_end: trialEnd.toISOString(),
-        accepted_date: today.toISOString(),
-        form_progress: 'Completed'
-      };
-
-      await supabase.from('prospects').update({
-        name: parentName,
-        email: email,
-        phone: phone,
-        status: 'Trial Active',
-        metadata: updatedMeta
-      }).eq('id', inviteId);
-
-      confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: ['#3b82f6', '#6366f1', '#10b981'] });
       setIsSuccess(true);
       setWizardStep(0);
 
@@ -146,7 +229,6 @@ export default function VIPInvitePage() {
 
   const copyReferralLink = async () => {
     try {
-      // NOTE: Now explicitly pointing to the /referral/ route!
       await navigator.clipboard.writeText(`${window.location.origin}/referral/${inviteId}`);
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
@@ -155,9 +237,7 @@ export default function VIPInvitePage() {
     }
   };
 
-  const scrollToForm = () => {
-    document.getElementById('claim-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
+  const scrollToForm = () => document.getElementById('claim-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const faqs = [
     { q: "Do I need to enter credit card details for the trial?", a: "No! The 14-day trial is completely free and requires zero payment details. You only pay if you explicitly choose to upgrade after seeing the value." },
@@ -172,9 +252,6 @@ export default function VIPInvitePage() {
     "https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/reviews/review_sb.jpg",
     "https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/reviews/Screenshot_20260428_141204.jpg"
   ];
-
-  const handleNextReview = () => setCurrentReviewIndex((prev) => (prev + 1) % reviewImages.length);
-  const handlePrevReview = () => setCurrentReviewIndex((prev) => (prev - 1 + reviewImages.length) % reviewImages.length);
 
   if (loading) {
     return (
@@ -250,7 +327,7 @@ export default function VIPInvitePage() {
             <p className="text-[15px] sm:text-lg text-slate-600 font-medium leading-relaxed max-w-xl">
               With the rising cost of living, providing your child with premium education shouldn't have to suffer. We are turning screen time into skill time with our self-paced coding LMS.
             </p>
-            <button onClick={scrollToForm} className="w-full sm:w-auto mt-4 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 group">
+            <button onClick={handleOpenWizard} className="w-full sm:w-auto mt-4 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 group hover:-translate-y-1">
               Claim 14-Day Free Trial <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
             </button>
           </div>
@@ -334,15 +411,67 @@ export default function VIPInvitePage() {
               </>
             ) : (
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center space-y-6">
-                <div className="w-24 h-24 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner"><CheckCircle2 size={48} /></div>
-                <div>
-                  <h2 className="text-3xl font-black text-slate-900 tracking-tight italic uppercase">Access Secured!</h2>
-                  <p className="text-slate-500 font-medium leading-relaxed mt-2">Welcome to RAD Academy. We've locked in your VIP Trial. Keep an eye on your email (<strong className="text-slate-800">{email}</strong>) for your official login credentials!</p>
-                </div>
+                
+                {/* DYNAMIC SUCCESS SCREEN BASED ON PATH */}
+                {chosenPath === 'fast-track' ? (
+                  <>
+                    <div className="w-24 h-24 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner border border-amber-200"><Zap size={48} /></div>
+                    <div>
+                      <h2 className="text-3xl font-black text-slate-900 tracking-tight italic uppercase">Fast-Track Activated!</h2>
+                      <p className="text-slate-500 font-medium leading-relaxed mt-2">Welcome to RAD Academy. We have successfully secured your locked-in rate and created your platform profiles.</p>
+                    </div>
+
+                    <div className="text-left bg-slate-50 border border-slate-200 p-5 rounded-2xl space-y-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 border-b border-slate-200 pb-2">What happens next?</h4>
+                      
+                      <div className="flex items-start gap-3">
+                        <Mail size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">(1 of 3) Your RAD Quotation</p>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">Your discounted quote containing banking details to finalize payment.</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-start gap-3">
+                        <Mail size={16} className="text-blue-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">(2 of 3) Welcome to RAD Academy!</p>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">A secure link to set your parent password and unlock the learning portal.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <Mail size={16} className="text-fuchsia-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">(3 of 3) Book Your Free 1-on-1</p>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">A link to schedule your child's onboarding Teams session with a coach.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-24 h-24 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner"><CheckCircle2 size={48} /></div>
+                    <div>
+                      <h2 className="text-3xl font-black text-slate-900 tracking-tight italic uppercase">Trial Access Secured!</h2>
+                      <p className="text-slate-500 font-medium leading-relaxed mt-2">Welcome to RAD Academy. We've locked in your VIP Trial.</p>
+                    </div>
+
+                    <div className="text-left bg-slate-50 border border-slate-200 p-5 rounded-2xl space-y-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 border-b border-slate-200 pb-2">What happens next?</h4>
+                      
+                      <div className="flex items-start gap-3">
+                        <Mail size={16} className="text-blue-500 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-bold text-slate-900">(1 of 1) Trial Access Instructions</p>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">An email with a secure link to set up your child's username and PIN to begin their 14 days of exploration.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
                 <div className="space-y-3 pt-6 border-t border-slate-100">
-                  <button onClick={() => setShowReviewModal(true)} className="w-full py-4 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-sm">
-                    <Target size={14} /> Review My Submission
-                  </button>
                   <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-6 rounded-2xl text-white shadow-xl relative overflow-hidden mt-4 text-left">
                     <div className="absolute top-0 right-0 p-4 opacity-10"><Users size={80}/></div>
                     <div className="relative z-10">
@@ -362,70 +491,9 @@ export default function VIPInvitePage() {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-5 md:px-12 pb-24 mt-8">
-        <div className="flex justify-center mb-12">
-          <button onClick={() => setShowReviews(true)} className="group relative px-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 flex items-center gap-3 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-50 to-purple-50 opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="relative z-10 flex -space-x-2.5">
-              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-purple-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-purple-600 fill-purple-600"/></div>
-            </div>
-            <div className="relative z-10 flex items-center gap-2">
-              <span className="text-sm font-black text-slate-900 tracking-tight">See what parents are saying</span>
-              <MessageSquareHeart size={18} className="text-rose-500" />
-            </div>
-          </button>
-        </div>
-
-        <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-6 sm:p-8 md:p-10 rounded-[32px] md:rounded-[40px] text-white shadow-2xl relative overflow-hidden mb-12">
-          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none"><Target size={120}/></div>
-          <div className="relative z-10">
-            <span className="px-3 py-1 bg-white/10 border border-white/20 rounded-lg text-[9px] font-black uppercase tracking-widest text-blue-300 mb-4 inline-block">Action-Taker's Pricing</span>
-            <h3 className="text-xl sm:text-2xl font-black italic uppercase tracking-tight mb-4">Why is it so affordable?</h3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-6">
-              Those who get the most out of our platform are the ones who show up regularly. We are offering massive discounts, but they come with one condition: <strong className="text-white">Accountability.</strong>
-            </p>
-            <ul className="space-y-4">
-              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Start with a completely free <strong className="text-white">14-Day Full Access Trial</strong>.</span></li>
-              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Upgrade anytime during the trial. Your paid months only begin <strong className="text-white">after your trial ends</strong>.</span></li>
-              <li className="flex items-start gap-3"><AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Maintain an average of doing <strong className="text-white">1 lesson per week</strong> to avoid forfeiting the discount.</span></li>
-            </ul>
-            <div className="mt-8 p-4 bg-white/5 border border-white/10 rounded-2xl flex items-start sm:items-center gap-4">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center shrink-0 mt-1 sm:mt-0"><Sparkles size={16}/></div>
-              <div>
-                <p className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-blue-300 mb-1">Bonus Offer</p>
-                <p className="text-xs sm:text-sm font-bold text-white leading-tight">Pay for 4 months and get <span className="text-emerald-400">1 free 1-on-1 coaching session</span> PLUS get a <span className="text-emerald-400">1 month LMS Access gift voucher!</span></p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-black text-slate-900 italic uppercase tracking-tighter">Frequently Asked Questions</h2>
-        </div>
-        
-        <div className="space-y-4">
-          {faqs.map((faq, index) => (
-            <div key={index} className={`bg-white border rounded-2xl overflow-hidden transition-all duration-300 ${openFaq === index ? 'border-blue-500 shadow-lg shadow-blue-500/10' : 'border-slate-200 shadow-sm hover:border-slate-300'}`}>
-              <button onClick={() => setOpenFaq(openFaq === index ? null : index)} className="w-full flex items-center justify-between p-5 md:p-6 text-left">
-                <span className={`font-black tracking-tight pr-4 ${openFaq === index ? 'text-blue-600' : 'text-slate-900'}`}>{faq.q}</span>
-                <ChevronDown size={20} className={`shrink-0 transition-transform duration-300 ${openFaq === index ? 'rotate-180 text-blue-600' : 'text-slate-400'}`} />
-              </button>
-              <AnimatePresence>
-                {openFaq === index && (
-                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                    <div className="px-5 md:px-6 pb-6 pt-2 text-sm text-slate-600 leading-relaxed border-t border-slate-100">{faq.a}</div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ))}
-        </div>
-      </div>
-
+      {/* =========================================================
+          WIZARD MODAL (Multi-step Form with PLG Upsell)
+          ========================================================= */}
       <AnimatePresence>
         {wizardStep > 0 && (
           <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -433,17 +501,22 @@ export default function VIPInvitePage() {
             <motion.div initial={{ y: "100%", opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: "100%", opacity: 0 }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="relative w-full max-w-lg bg-white sm:rounded-[32px] rounded-t-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
               <div className="p-6 border-b border-slate-100 bg-slate-50 shrink-0">
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-black uppercase italic tracking-tighter text-slate-900">{wizardStep === 1 ? "Guardian Details" : "Student Details"}</h3>
+                  <h3 className="text-lg font-black uppercase italic tracking-tighter text-slate-900">
+                    {wizardStep === 1 ? "Guardian Details" : wizardStep === 2 ? "Student Details" : "Fast-Track Upgrade"}
+                  </h3>
                   <button onClick={() => setWizardStep(0)} className="p-2 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-600 transition-colors"><X size={14}/></button>
                 </div>
                 <div className="flex gap-2">
                   <div className="h-1.5 flex-1 bg-blue-600 rounded-full transition-all duration-500" />
-                  <div className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${wizardStep === 2 ? 'bg-blue-600' : 'bg-slate-200'}`} />
+                  <div className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${wizardStep >= 2 ? 'bg-blue-600' : 'bg-slate-200'}`} />
+                  <div className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${wizardStep === 3 ? 'bg-amber-400' : 'bg-slate-200'}`} />
                 </div>
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-2 text-right">Step {wizardStep} of 2</p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-2 text-right">Step {wizardStep} of 3</p>
               </div>
 
               <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-white">
+                
+                {/* STEP 1: PARENT DETAILS */}
                 {wizardStep === 1 && (
                   <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-4">
                     <p className="text-sm font-medium text-slate-500 mb-6">Review your details below. Tap the pencil icon to edit.</p>
@@ -454,11 +527,17 @@ export default function VIPInvitePage() {
                       <label className="text-[10px] font-black uppercase tracking-widest text-blue-700 block mb-2">How many children are you signing up?</label>
                       <input type="number" min="1" max="5" value={numKids} onChange={e => setNumKids(parseInt(e.target.value) || 1)} className="w-full bg-white border border-blue-200 rounded-lg px-4 py-3 text-lg font-black text-blue-900 text-center focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all shadow-sm" />
                     </div>
-                    <button onClick={handleNextStep} className="w-full mt-8 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all shadow-xl">
-                      Next: Student Details <ArrowRight size={16} />
-                    </button>
+                    
+                    <div className="flex gap-3 mt-8 pt-4 border-t border-slate-100">
+                      <button onClick={() => setWizardStep(0)} className="px-5 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-black uppercase tracking-widest text-xs transition-all">Cancel</button>
+                      <button onClick={handleNextStep1} className="flex-1 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all shadow-xl">
+                        Next: Student Details <ArrowRight size={16} />
+                      </button>
+                    </div>
                   </motion.div>
                 )}
+
+                {/* STEP 2: STUDENT DETAILS */}
                 {wizardStep === 2 && (
                   <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
                     <p className="text-sm font-medium text-slate-500 mb-2">Enter the details for your {numKids > 1 ? `${numKids} children` : 'child'}.</p>
@@ -493,42 +572,145 @@ export default function VIPInvitePage() {
                     </AnimatePresence>
                     <div className="flex gap-3 pt-4 border-t border-slate-100">
                       <button onClick={() => setWizardStep(1)} className="px-5 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-black uppercase tracking-widest text-xs transition-all">Back</button>
-                      <button onClick={handleSubmit} disabled={isSubmitting} className="flex-1 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all shadow-xl shadow-blue-600/20 disabled:opacity-50">
-                        {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Secure Trial Access
+                      <button onClick={handleNextStep2} className="flex-1 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all shadow-xl">
+                        Continue <ArrowRight size={16} />
                       </button>
                     </div>
                   </motion.div>
                 )}
+
+                {/* STEP 3: THE PLG UPSELL */}
+                {wizardStep === 3 && (
+                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-amber-200 shadow-inner">
+                        <Zap size={28} className="fill-amber-500/20" />
+                      </div>
+                      <h3 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900">Want to skip the trial limits?</h3>
+                      <p className="text-sm text-slate-500 mt-2 font-medium">Fast-track your setup today to lock in your discount instantly.</p>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none"><Sparkles size={80}/></div>
+                      
+                      <div className="relative z-10 space-y-4">
+                        <span className="px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[9px] font-black uppercase tracking-widest">Bonus Unlocked</span>
+                        <p className="font-bold text-sm leading-relaxed">Upgrade today and receive a bonus: <br/><span className="text-amber-400"> 1-on-1 Teams Session</span> to help get your child up and running.</p>
+                        
+                        <div className="bg-black/30 rounded-xl border border-white/10 overflow-hidden mt-4">
+                          <table className="w-full text-left">
+                            <thead className="bg-black/20 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                              <tr>
+                                <th className="px-4 py-2">Item</th>
+                                <th className="px-4 py-2 text-center">Qty</th>
+                                <th className="px-4 py-2 text-right">Total/mo</th>
+                              </tr>
+                            </thead>
+                            <tbody className="text-sm font-bold">
+                              <tr>
+                                <td className="px-4 py-3 border-b border-white/5">LMS Access - {activePricingTier.name}<br/><span className="text-[10px] text-slate-400 font-normal">R{activePricingTier.price} per student per month</span></td>
+                                <td className="px-4 py-3 border-b border-white/5 text-center">{numKids}</td>
+                                <td className="px-4 py-3 border-b border-white/5 text-right text-emerald-400">R{activePricingTier.price * numKids}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      <button 
+                        onClick={() => handleFinalSubmit(true)}
+                        disabled={isSubmitting}
+                        className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 group disabled:opacity-50"
+                      >
+                        {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <><Zap size={16} className="fill-white/20"/> Yes, Upgrade & Fast-Track</>}
+                      </button>
+                      
+                      <button 
+                        onClick={() => handleFinalSubmit(false)}
+                        disabled={isSubmitting}
+                        className="w-full py-4 bg-white border-2 border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700 rounded-xl font-black uppercase tracking-widest text-xs transition-all flex items-center justify-center disabled:opacity-50"
+                      >
+                        No thanks, I'll stick to the free trial
+                      </button>
+
+                      <button 
+                        onClick={() => setWizardStep(2)}
+                        disabled={isSubmitting}
+                        className="w-full py-3 mt-2 text-slate-400 hover:text-slate-600 font-black uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                        <ChevronLeft size={14} /> Back to Student Details
+                      </button>
+                    </div>
+
+                  </motion.div>
+                )}
+
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {showReviewModal && (
-          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowReviewModal(false)} className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-sm bg-white rounded-[32px] shadow-2xl overflow-hidden p-8 text-center">
-              <button onClick={() => setShowReviewModal(false)} className="absolute top-6 right-6 p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-500 transition-colors"><X size={14}/></button>
-              <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4"><ShieldCheck size={30} /></div>
-              <h3 className="text-xl font-black uppercase italic tracking-tighter text-slate-900 mb-6">Submission Record</h3>
-              <div className="text-left space-y-4 bg-slate-50 p-5 rounded-2xl border border-slate-100">
-                <div><p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Guardian</p><p className="text-sm font-bold text-slate-800">{parentName}</p></div>
-                <div><p className="text-[9px] font-black uppercase tracking-widest text-slate-400">Contact</p><p className="text-sm font-bold text-slate-800">{email}</p><p className="text-xs font-bold text-slate-500">{phone}</p></div>
-                <div className="pt-3 border-t border-slate-200">
-                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Registered Students ({children.length})</p>
-                  {children.map((c, i) => (
-                    <div key={i} className="mb-2 last:mb-0 bg-white p-2 rounded-lg border border-slate-100">
-                      <p className="text-xs font-bold text-slate-800">{c.name} <span className="text-[10px] text-slate-400 font-normal ml-1">({c.codingAtSchool === 'Yes' ? 'Codes at school' : 'No school coding'})</span></p>
-                    </div>
-                  ))}
-                </div>
+      <div className="max-w-3xl mx-auto px-5 md:px-12 pb-24 mt-8">
+        <div className="flex justify-center mb-12">
+          <button onClick={() => setShowReviews(true)} className="group relative px-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 flex items-center gap-3 overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-50 to-purple-50 opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative z-10 flex -space-x-2.5">
+              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
+              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
+              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
+              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
+              <div className="w-8 h-8 rounded-full bg-purple-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-purple-600 fill-purple-600"/></div>
+            </div>
+            <div className="relative z-10 flex items-center gap-2">
+              <span className="text-sm font-black text-slate-900 tracking-tight">See what parents are saying</span>
+              <MessageSquareHeart size={18} className="text-rose-500" />
+            </div>
+          </button>
+        </div>
+
+        <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-6 sm:p-8 md:p-10 rounded-[32px] md:rounded-[40px] text-white shadow-2xl relative overflow-hidden mb-12">
+          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none"><Target size={120}/></div>
+          <div className="relative z-10">
+            <span className="px-3 py-1 bg-white/10 border border-white/20 rounded-lg text-[9px] font-black uppercase tracking-widest text-blue-300 mb-4 inline-block">Action-Taker's Pricing</span>
+            <h3 className="text-xl sm:text-2xl font-black italic uppercase tracking-tight mb-4">Why is it so affordable?</h3>
+            <p className="text-slate-300 text-sm leading-relaxed mb-6">Those who get the most out of our platform are the ones who show up regularly. We are offering massive discounts, but they come with one condition: <strong className="text-white">Accountability.</strong></p>
+            <ul className="space-y-4">
+              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Start with a completely free <strong className="text-white">14-Day Full Access Trial</strong>.</span></li>
+              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Upgrade anytime during the trial. Your paid months only begin <strong className="text-white">after your trial ends</strong>.</span></li>
+              <li className="flex items-start gap-3"><AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Maintain an average of doing <strong className="text-white">1 lesson per week</strong> to avoid forfeiting the discount.</span></li>
+            </ul>
+            <div className="mt-8 p-4 bg-white/5 border border-white/10 rounded-2xl flex items-start sm:items-center gap-4">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center shrink-0 mt-1 sm:mt-0"><Sparkles size={16}/></div>
+              <div>
+                <p className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-blue-300 mb-1">Bonus Offer</p>
+                <p className="text-xs sm:text-sm font-bold text-white leading-tight">Pay for 4 months and get <span className="text-emerald-400">1 free 1-on-1 coaching session</span> PLUS get a <span className="text-emerald-400">1 month LMS Access gift voucher!</span></p>
               </div>
-            </motion.div>
+            </div>
           </div>
-        )}
-      </AnimatePresence>
+        </div>
+
+        <div className="text-center mb-8"><h2 className="text-3xl font-black text-slate-900 italic uppercase tracking-tighter">Frequently Asked Questions</h2></div>
+        <div className="space-y-4">
+          {faqs.map((faq, index) => (
+            <div key={index} className={`bg-white border rounded-2xl overflow-hidden transition-all duration-300 ${openFaq === index ? 'border-blue-500 shadow-lg shadow-blue-500/10' : 'border-slate-200 shadow-sm hover:border-slate-300'}`}>
+              <button onClick={() => setOpenFaq(openFaq === index ? null : index)} className="w-full flex items-center justify-between p-5 md:p-6 text-left">
+                <span className={`font-black tracking-tight pr-4 ${openFaq === index ? 'text-blue-600' : 'text-slate-900'}`}>{faq.q}</span>
+                <ChevronDown size={20} className={`shrink-0 transition-transform duration-300 ${openFaq === index ? 'rotate-180 text-blue-600' : 'text-slate-400'}`} />
+              </button>
+              <AnimatePresence>
+                {openFaq === index && (
+                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                    <div className="px-5 md:px-6 pb-6 pt-2 text-sm text-slate-600 leading-relaxed border-t border-slate-100">{faq.a}</div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <AnimatePresence>
         {showReviews && (
@@ -540,8 +722,8 @@ export default function VIPInvitePage() {
                 <button onClick={() => setShowReviews(false)} className="p-2 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-600 transition-colors"><X size={16}/></button>
               </div>
               <div className="relative group flex-1 bg-slate-100 p-6 flex items-center justify-center overflow-hidden">
-                <button onClick={handlePrevReview} className="absolute left-4 z-10 p-3 bg-white/80 backdrop-blur-sm rounded-full shadow-lg text-slate-600 hover:bg-white hover:text-blue-600 transition-all opacity-0 group-hover:opacity-100"><ChevronLeft size={20} /></button>
-                <button onClick={handleNextReview} className="absolute right-4 z-10 p-3 bg-white/80 backdrop-blur-sm rounded-full shadow-lg text-slate-600 hover:bg-white hover:text-blue-600 transition-all opacity-0 group-hover:opacity-100"><ChevronRight size={20} /></button>
+                <button onClick={() => setCurrentReviewIndex((prev) => (prev - 1 + reviewImages.length) % reviewImages.length)} className="absolute left-4 z-10 p-3 bg-white/80 backdrop-blur-sm rounded-full shadow-lg text-slate-600 hover:bg-white hover:text-blue-600 transition-all opacity-0 group-hover:opacity-100"><ChevronLeft size={20} /></button>
+                <button onClick={() => setCurrentReviewIndex((prev) => (prev + 1) % reviewImages.length)} className="absolute right-4 z-10 p-3 bg-white/80 backdrop-blur-sm rounded-full shadow-lg text-slate-600 hover:bg-white hover:text-blue-600 transition-all opacity-0 group-hover:opacity-100"><ChevronRight size={20} /></button>
                 <AnimatePresence mode="wait">
                   <motion.img key={currentReviewIndex} src={reviewImages[currentReviewIndex]} alt={`Parent Review ${currentReviewIndex + 1}`} initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} transition={{ duration: 0.3 }} className="max-w-full max-h-full object-contain rounded-2xl shadow-md" />
                 </AnimatePresence>

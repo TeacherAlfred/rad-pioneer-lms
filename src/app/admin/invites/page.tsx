@@ -7,7 +7,8 @@ import {
   Send, Users, CheckCircle2, AlertTriangle, Clock, 
   Plus, Search, Copy, MessageSquare, Mail, Linkedin, 
   Eye, X, Loader2, ArrowRight, Sparkles, TrendingUp, Calendar, UserPlus, CalendarClock,
-  ArrowLeft, Share2, Activity, ShieldCheck, CheckSquare, Square, Trash2
+  ArrowLeft, Share2, Activity, ShieldCheck, CheckSquare, Square, Trash2, Check,
+  CreditCard, GraduationCap
 } from "lucide-react";
 import Link from "next/link";
 import confetti from "canvas-confetti";
@@ -22,16 +23,13 @@ export default function InvitesCommandCenter() {
   const [showShareModal, setShowShareModal] = useState<any>(null);
   const [showPreviewModal, setShowPreviewModal] = useState<string | null>(null);
   const [selectedLeadModal, setSelectedLeadModal] = useState<any>(null);
+  const [showConvertModal, setShowConvertModal] = useState<any>(null); // NEW: Conversion Modal
 
   // Bulk Generate Form State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inviteMode, setInviteMode] = useState<'existing' | 'new'>('new');
-  
-  // Existing Bulk State
   const [selectedProspectIds, setSelectedProspectIds] = useState<string[]>([]);
   const [modalSearchQuery, setModalSearchQuery] = useState("");
-  
-  // New Bulk State
   const [bulkNewLeads, setBulkNewLeads] = useState([{ id: '1', name: '', email: '', phone: '' }]);
 
   // Global Cohort Dates
@@ -43,10 +41,13 @@ export default function InvitesCommandCenter() {
   const [shareTab, setShareTab] = useState<'whatsapp' | 'email' | 'linkedin'>('whatsapp');
   const [copied, setCopied] = useState(false);
 
+  // Conversion State
+  const [isConverting, setIsConverting] = useState(false);
+  const [selectedTierOverride, setSelectedTierOverride] = useState<string>("auto");
+
   useEffect(() => {
     fetchProspects();
     
-    // Default Dates
     const today = new Date();
     const launchDate = new Date('2026-05-01T00:00:00');
     
@@ -64,9 +65,8 @@ export default function InvitesCommandCenter() {
     setTrialExpiry(defaultTrialEnd.toISOString().split('T')[0]);
     setInviteExpiry(defaultInviteExpiry.toISOString().split('T')[0]);
 
-    // REAL-TIME AUTO-UPDATE ENGINE
     const channel = supabase.channel('prospects-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'prospects' }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'prospects' }, () => {
         fetchProspects(false);
       })
       .subscribe();
@@ -77,11 +77,7 @@ export default function InvitesCommandCenter() {
   async function fetchProspects(showLoading = true) {
     if (showLoading) setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('prospects')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
+      const { data, error } = await supabase.from('prospects').select('*').order('created_at', { ascending: false });
       if (error) throw error;
       setProspects(data || []);
       
@@ -130,6 +126,132 @@ export default function InvitesCommandCenter() {
     return { planned, sent, accepted, converted, expiredUnclaimed, expiredTrial };
   }, [prospects]);
 
+  // --- Utility Generators ---
+  const generateToken = () => {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    return Array.from({length: 24}).map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
+  };
+
+  // --- Execution: Convert to Paid Student ---
+  const executeConversion = async () => {
+    const p = showConvertModal;
+    if (!p) return;
+
+    setIsConverting(true);
+    try {
+      // 1. Determine Tier Pricing
+      let activeTier = selectedTierOverride;
+      if (activeTier === "auto") {
+        if (metrics.converted < 10) activeTier = "tier1";
+        else if (metrics.converted < 20) activeTier = "tier2";
+        else activeTier = "tier3";
+      }
+
+      const tiers = {
+        tier1: { id: "b2aae4aa-0c84-4673-9fe1-3e61895626d1", price: 250, desc: "LMS Access - Tier 1" },
+        tier2: { id: "d696d727-3e94-4325-98d9-e8a89277338a", price: 350, desc: "LMS Access - Tier 2" },
+        tier3: { id: "d86b5577-a8ec-4bd8-a27d-b454e79ca742", price: 450, desc: "LMS Access - Tier 3" }
+      };
+      const selectedPricing = tiers[activeTier as keyof typeof tiers];
+
+      // 2. Generate Profile Data
+      const guardianId = crypto.randomUUID();
+      const onboardingToken = generateToken();
+      
+      const guardianProfile = {
+        id: guardianId,
+        role: 'guardian',
+        display_name: p.name,
+        onboarding_token: onboardingToken,
+        status: 'active',
+        funnel_stage: 'Active (Paid Client)',
+        payment_plan_preference: 'LMS Access',
+        metadata: JSON.stringify({ email: p.email, phone: p.phone, booking_credits: 0 })
+      };
+
+      const numChildren = p.metadata?.children?.length || 1;
+      const studentProfiles = (p.metadata?.children || [{name: 'Student', dob: '', codingAtSchool: 'No'}]).map((c: any) => ({
+        id: crypto.randomUUID(),
+        role: 'student',
+        display_name: c.name,
+        linked_parent_id: guardianId,
+        status: 'active',
+        metadata: JSON.stringify({ date_of_birth: c.dob, school_coding: c.codingAtSchool === 'Yes' })
+      }));
+
+      // 3. Generate Quote Data (Expires midnight tomorrow)
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + 1);
+      expiryDate.setHours(23, 59, 59, 999);
+      
+      const invoiceNumber = Math.floor(Date.now() / 1000); // Rough timestamp for unique quote num
+      
+      const quotationRecord = {
+        id: crypto.randomUUID(),
+        invoice_number: invoiceNumber,
+        payment_reference: `2026${invoiceNumber}`,
+        guardian_id: guardianId,
+        total_amount: (selectedPricing.price * numChildren).toString(),
+        status: 'pending',
+        doc_type: 'quote',
+        expires_at: expiryDate.toISOString(),
+        amount_paid: "0",
+        line_items: JSON.stringify([{
+          qty: numChildren.toString(), 
+          desc: selectedPricing.desc, 
+          disc: 0, 
+          note: "Self-paced LMS Access License", 
+          price: selectedPricing.price.toString(),
+          item_id: selectedPricing.id
+        }]),
+        metadata: JSON.stringify({ 
+          global_note: "Your VIP Access trial has concluded. Please pay this quote to officially secure your child's spot.", 
+          prospect_name: p.name, 
+          prospect_email: p.email 
+        })
+      };
+
+      // 4. Referral Bonus Logic
+      if (p.metadata?.referred_by_id) {
+        // Fetch the person who referred them
+        const { data: referrerProspect } = await supabase.from('prospects').select('status, metadata').eq('id', p.metadata.referred_by_id).single();
+        
+        // If the referrer is ALSO converted, they get a credit!
+        if (referrerProspect?.status === 'Converted (Won)' && referrerProspect.metadata?.converted_profile_id) {
+          const refProfileId = referrerProspect.metadata.converted_profile_id;
+          const { data: refProfile } = await supabase.from('profiles').select('metadata').eq('id', refProfileId).single();
+          
+          if (refProfile) {
+            const refMeta = typeof refProfile.metadata === 'string' ? JSON.parse(refProfile.metadata) : (refProfile.metadata || {});
+            const newCredits = (refMeta.booking_credits || 0) + 1;
+            refMeta.booking_credits = newCredits;
+            
+            // Give the referrer their credit
+            await supabase.from('profiles').update({ metadata: JSON.stringify(refMeta) }).eq('id', refProfileId);
+          }
+        }
+      }
+
+      // 5. Execute DB Transaction (Sequential for safety)
+      await supabase.from('profiles').insert([guardianProfile, ...studentProfiles]);
+      await supabase.from('billing_records').insert([quotationRecord]);
+      
+      // Mark Prospect as Won and save the new profile ID so referrals can find them later
+      const updatedMeta = { ...p.metadata, converted_profile_id: guardianId, conversion_date: new Date().toISOString() };
+      await supabase.from('prospects').update({ status: 'Converted (Won)', metadata: updatedMeta }).eq('id', p.id);
+
+      confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: ['#10b981', '#3b82f6'] });
+      setShowConvertModal(null);
+      fetchProspects(false);
+
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Failed to convert prospect.");
+    } finally {
+      setIsConverting(false);
+    }
+  };
+
   // --- Bulk Generation Action ---
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,40 +270,23 @@ export default function InvitesCommandCenter() {
 
       if (inviteMode === 'existing') {
         if (selectedProspectIds.length === 0) throw new Error("Please select at least one prospect to invite.");
-        
-        // Execute updates in parallel
         const updatePromises = selectedProspectIds.map(id => {
           const existing = prospects.find(p => p.id === id);
-          return supabase.from('prospects')
-            .update({ status: targetStatus, metadata: { ...existing.metadata, ...metadataAdditions } })
-            .eq('id', id);
+          return supabase.from('prospects').update({ status: targetStatus, metadata: { ...existing.metadata, ...metadataAdditions } }).eq('id', id);
         });
-
         await Promise.all(updatePromises);
-
       } else {
-        // Filter out empty rows
         const validLeads = bulkNewLeads.filter(l => l.name.trim() !== "" && l.email.trim() !== "");
         if (validLeads.length === 0) throw new Error("Please fill out Name and Email for at least one lead.");
-
-        // Bulk insert payload
         const insertPayload = validLeads.map(l => ({
-          name: l.name,
-          email: l.email,
-          phone: l.phone,
-          status: targetStatus,
-          source: 'Direct Invite',
-          metadata: metadataAdditions
+          name: l.name, email: l.email, phone: l.phone, status: targetStatus, source: 'Direct Invite', metadata: metadataAdditions
         }));
-
         const { error } = await supabase.from('prospects').insert(insertPayload);
         if (error) throw error;
       }
 
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
       setShowGenerateModal(false);
-      
-      // Reset Form States
       setSelectedProspectIds([]);
       setBulkNewLeads([{ id: '1', name: '', email: '', phone: '' }]);
 
@@ -192,21 +297,13 @@ export default function InvitesCommandCenter() {
     }
   };
 
-  // Bulk Row Handlers
-  const addBulkRow = () => {
-    setBulkNewLeads([...bulkNewLeads, { id: Date.now().toString(), name: '', email: '', phone: '' }]);
-  };
-
-  const updateBulkRow = (id: string, field: 'name' | 'email' | 'phone', value: string) => {
-    setBulkNewLeads(bulkNewLeads.map(l => l.id === id ? { ...l, [field]: value } : l));
-  };
-
+  const addBulkRow = () => setBulkNewLeads([...bulkNewLeads, { id: Date.now().toString(), name: '', email: '', phone: '' }]);
+  const updateBulkRow = (id: string, field: 'name' | 'email' | 'phone', value: string) => setBulkNewLeads(bulkNewLeads.map(l => l.id === id ? { ...l, [field]: value } : l));
   const removeBulkRow = (id: string) => {
     if (bulkNewLeads.length === 1) return;
     setBulkNewLeads(bulkNewLeads.filter(l => l.id !== id));
   };
 
-  // --- Share Logic ---
   const getShareCopy = (type: 'whatsapp' | 'email' | 'linkedin', p: any) => {
     if (!p) return "";
     const firstName = p.name.split(' ')[0];
@@ -347,19 +444,17 @@ export default function InvitesCommandCenter() {
                     const isReferred = p.source === 'Referral' || p.metadata?.referred_by_id;
                     const progress = p.metadata?.form_progress || 'Unopened';
                     const lastActive = p.metadata?.last_active;
+                    
+                    // Show Convert button if they are in Trial Active phase
+                    const canConvert = p.status === 'Trial Active' || (p.source === 'Referral' && p.status === 'New Lead');
 
-                    // Progress Badge Styling
                     let progressColor = "text-slate-500 bg-slate-800 border-slate-700";
                     if (progress === 'Form Opened') progressColor = "text-blue-400 bg-blue-500/10 border-blue-500/20";
                     if (progress === 'Guardian Details Completed') progressColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
                     if (progress === 'Completed') progressColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
 
                     return (
-                      <tr 
-                        key={p.id} 
-                        onClick={() => setSelectedLeadModal(p)}
-                        className="hover:bg-white/[0.02] transition-colors group cursor-pointer"
-                      >
+                      <tr key={p.id} onClick={() => setSelectedLeadModal(p)} className="hover:bg-white/[0.02] transition-colors group cursor-pointer">
                         <td className="px-6 py-4">
                           <p className="font-black text-sm text-white group-hover:text-blue-400 transition-colors">{p.name}</p>
                           <p className="text-[10px] text-slate-400 mt-0.5">{p.email}</p>
@@ -392,18 +487,17 @@ export default function InvitesCommandCenter() {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end items-center gap-2">
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); setShowPreviewModal(`${window.location.origin}/invite/${p.id}`); }}
-                              className="p-2 bg-white/5 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors border border-white/5"
-                              title="Preview Live Page"
-                            >
-                              <Eye size={14} />
-                            </button>
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); setShowShareModal(p); }}
-                              className={`p-2 rounded-lg transition-colors border ${p.status === 'Invite Planned' ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-600 hover:text-white border-purple-500/20' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-600 hover:text-white border-blue-500/20'}`}
-                              title={p.status === 'Invite Planned' ? 'Send Invite Now' : 'Share Invite'}
-                            >
+                            {canConvert && (
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); setShowConvertModal(p); }}
+                                className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-500 text-emerald-400 hover:text-white rounded-lg transition-all border border-emerald-500/30 text-[10px] font-black uppercase tracking-widest shadow-sm flex items-center gap-1.5"
+                                title="Convert to Paid Profile"
+                              >
+                                <CheckCircle2 size={14} /> Convert
+                              </button>
+                            )}
+                            <button onClick={(e) => { e.stopPropagation(); setShowPreviewModal(`${window.location.origin}/invite/${p.id}`); }} className="p-2 bg-white/5 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors border border-white/5"><Eye size={14} /></button>
+                            <button onClick={(e) => { e.stopPropagation(); setShowShareModal(p); }} className={`p-2 rounded-lg transition-colors border ${p.status === 'Invite Planned' ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-600 hover:text-white border-purple-500/20' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-600 hover:text-white border-blue-500/20'}`}>
                               {p.status === 'Invite Planned' ? <Send size={14} /> : <Share2 size={14} />}
                             </button>
                           </div>
@@ -445,7 +539,6 @@ export default function InvitesCommandCenter() {
 
               <div className="p-6 overflow-y-auto custom-scrollbar space-y-6">
                 
-                {/* REFERRAL BADGE */}
                 {(selectedLeadModal.source === 'Referral' || selectedLeadModal.metadata?.referred_by_id) && (
                   <div className="bg-fuchsia-500/10 border border-fuchsia-500/20 rounded-2xl p-4 flex items-center gap-3">
                     <div className="w-10 h-10 bg-fuchsia-500/20 text-fuchsia-400 rounded-xl flex items-center justify-center shrink-0"><UserPlus size={18}/></div>
@@ -456,7 +549,6 @@ export default function InvitesCommandCenter() {
                   </div>
                 )}
 
-                {/* TELEMETRY TIMELINE */}
                 <div>
                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2"><Activity size={12}/> Activity X-Ray</h4>
                   <div className="bg-[#020617] border border-white/5 rounded-2xl p-5 shadow-inner space-y-4 relative before:absolute before:inset-y-5 before:left-[27px] before:w-px before:bg-white/10">
@@ -499,6 +591,16 @@ export default function InvitesCommandCenter() {
                       </div>
                     )}
 
+                    {selectedLeadModal.status === 'Converted (Won)' && (
+                      <div className="flex gap-4 relative z-10">
+                        <div className="w-4 h-4 rounded-full bg-indigo-900 border-2 border-indigo-500 shrink-0 mt-1 shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+                        <div>
+                          <p className="text-sm font-black text-indigo-400">Converted to Pioneer</p>
+                          <p className="text-xs text-slate-500">Official Profile & Quote Generated</p>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="pt-2 pl-8">
                       <p className="text-[10px] font-bold text-slate-500 flex items-center gap-1.5 bg-white/5 w-fit px-2 py-1 rounded">
                         <Clock size={12}/> Last active ping: {selectedLeadModal.metadata?.last_active ? new Date(selectedLeadModal.metadata.last_active).toLocaleString() : 'Never'}
@@ -507,7 +609,6 @@ export default function InvitesCommandCenter() {
                   </div>
                 </div>
 
-                {/* IMPORTANT DATES */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-[#020617] border border-white/5 rounded-2xl p-4">
                     <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1">Invite Expiry</p>
@@ -519,7 +620,6 @@ export default function InvitesCommandCenter() {
                   </div>
                 </div>
 
-                {/* REGISTERED CHILDREN */}
                 {selectedLeadModal.metadata?.children && selectedLeadModal.metadata.children.length > 0 && (
                   <div>
                     <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4">Captured Student Data</h4>
@@ -545,7 +645,75 @@ export default function InvitesCommandCenter() {
         )}
       </AnimatePresence>
 
-      {/* 1. BULK GENERATOR MODAL */}
+      {/* CONVERSION MODAL */}
+      <AnimatePresence>
+        {showConvertModal && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowConvertModal(null)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
+            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-lg bg-[#0f172a] border border-emerald-500/30 rounded-[32px] shadow-2xl p-8 flex flex-col">
+              <button onClick={() => setShowConvertModal(null)} className="absolute top-6 right-6 p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"><X size={16}/></button>
+              
+              <div className="mb-6 flex items-center gap-4">
+                <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-xl flex items-center justify-center shrink-0 border border-emerald-500/30"><CheckCircle2 size={24}/></div>
+                <div>
+                  <h3 className="text-2xl font-black uppercase italic tracking-tighter text-white">Execute Conversion</h3>
+                  <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Converting: {showConvertModal.name}</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                
+                {/* TIER SELECTION */}
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-2 block">Select Access Tier</label>
+                  <select 
+                    value={selectedTierOverride} 
+                    onChange={e => setSelectedTierOverride(e.target.value)}
+                    className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-blue-500 appearance-none"
+                  >
+                    <option value="auto">Auto-Calculate (Currently {metrics.converted < 10 ? 'Tier 1' : metrics.converted < 20 ? 'Tier 2' : 'Tier 3'})</option>
+                    <option value="tier1">Tier 1 - First 10 (R250/mo)</option>
+                    <option value="tier2">Tier 2 - Next 10 (R350/mo)</option>
+                    <option value="tier3">Tier 3 - Standard (R450/mo)</option>
+                  </select>
+                  <p className="text-[9px] text-slate-500 mt-2 ml-1">This generates the quotation for {showConvertModal.metadata?.children?.length || 1} student(s) expiring tomorrow at 23:59.</p>
+                </div>
+
+                <div className="bg-[#020617] border border-white/5 rounded-2xl p-5 space-y-4">
+                  <h4 className="text-[10px] font-black uppercase tracking-widest text-emerald-400 border-b border-white/5 pb-2">Actions to be executed:</h4>
+                  <ul className="space-y-3">
+                    <li className="flex items-start gap-3 text-xs text-slate-300 font-medium">
+                      <UserPlus size={14} className="text-emerald-500 shrink-0" /> Creates 1 Guardian profile with secure Welcome Token.
+                    </li>
+                    <li className="flex items-start gap-3 text-xs text-slate-300 font-medium">
+                      <GraduationCap size={14} className="text-emerald-500 shrink-0" /> Creates {showConvertModal.metadata?.children?.length || 1} Student profile(s) linked to Guardian.
+                    </li>
+                    <li className="flex items-start gap-3 text-xs text-slate-300 font-medium">
+                      <CreditCard size={14} className="text-emerald-500 shrink-0" /> Generates Billing Quotation for selected tier.
+                    </li>
+                    {showConvertModal.metadata?.referred_by_id && (
+                      <li className="flex items-start gap-3 text-xs text-fuchsia-300 font-bold bg-fuchsia-500/10 p-2 rounded-lg border border-fuchsia-500/20 mt-2">
+                        <Sparkles size={14} className="shrink-0" /> If referrer is active, instantly issues +1 Coaching Credit!
+                      </li>
+                    )}
+                  </ul>
+                </div>
+
+                <button 
+                  onClick={executeConversion}
+                  disabled={isConverting} 
+                  className="w-full bg-emerald-600 text-white rounded-xl py-4 text-xs font-black uppercase tracking-widest hover:bg-emerald-500 flex items-center justify-center gap-2 transition-all shadow-xl shadow-emerald-600/20 disabled:opacity-50"
+                >
+                  {isConverting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Execute Official Conversion
+                </button>
+              </div>
+
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BULK GENERATOR MODAL */}
       <AnimatePresence>
         {showGenerateModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -565,23 +733,16 @@ export default function InvitesCommandCenter() {
 
               <form onSubmit={handleGenerate} className="flex flex-col flex-1 overflow-hidden min-h-0">
                 
-                {/* DYNAMIC SCROLLABLE AREA */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 mb-6">
                   {inviteMode === 'existing' ? (
                     <div className="space-y-3">
-                      
-                      {/* STICKY HEADER WITH SEARCH */}
                       <div className="sticky top-0 bg-[#0f172a] pt-1 pb-3 z-10 space-y-3 border-b border-white/5 mb-2">
                         <div className="flex items-center justify-between">
                           <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
                             Select prospects ({selectedProspectIds.length} chosen)
                           </p>
                           {selectedProspectIds.length > 0 && (
-                            <button 
-                              type="button" 
-                              onClick={() => setSelectedProspectIds([])} 
-                              className="text-[9px] text-blue-500 hover:text-blue-400 font-bold uppercase tracking-widest transition-colors"
-                            >
+                            <button type="button" onClick={() => setSelectedProspectIds([])} className="text-[9px] text-blue-500 hover:text-blue-400 font-bold uppercase tracking-widest transition-colors">
                               Clear Selection
                             </button>
                           )}
@@ -596,7 +757,6 @@ export default function InvitesCommandCenter() {
                         </div>
                       </div>
 
-                      {/* FILTERED GRID */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         {prospects
                           .filter(p => !['Trial Active', 'Converted (Won)'].includes(p.status))
@@ -607,45 +767,18 @@ export default function InvitesCommandCenter() {
                             const sentDate = p.metadata?.invite_generated_at ? new Date(p.metadata.invite_generated_at).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' }) : null;
 
                             return (
-                              <div 
-                                key={p.id} 
-                                onClick={() => {
-                                  if (isSelected) setSelectedProspectIds(prev => prev.filter(id => id !== p.id));
-                                  else setSelectedProspectIds(prev => [...prev, p.id]);
-                                }}
-                                className={`p-3 rounded-xl border cursor-pointer relative flex items-center gap-3 transition-all ${
-                                  isSelected 
-                                    ? 'bg-blue-600/10 border-blue-500/30' 
-                                    : hasInvite 
-                                      ? 'bg-white/5 border-transparent opacity-60 hover:opacity-100 hover:border-white/10' 
-                                      : 'bg-[#020617] border-white/5 hover:border-white/10'
-                                }`}
-                              >
-                                {/* STATUS BADGE */}
-                                <div className={`absolute top-2 right-2 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${
-                                  p.status === 'New Lead' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                                  p.status === 'Warm (Pending Close)' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                                  p.status === 'Lost' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
-                                  'bg-slate-800 text-slate-400 border-slate-700'
-                                }`}>
+                              <div key={p.id} onClick={() => { if (isSelected) setSelectedProspectIds(prev => prev.filter(id => id !== p.id)); else setSelectedProspectIds(prev => [...prev, p.id]); }} className={`p-3 rounded-xl border cursor-pointer relative flex items-center gap-3 transition-all ${isSelected ? 'bg-blue-600/10 border-blue-500/30' : hasInvite ? 'bg-white/5 border-transparent opacity-60 hover:opacity-100 hover:border-white/10' : 'bg-[#020617] border-white/5 hover:border-white/10'}`}>
+                                <div className={`absolute top-2 right-2 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${p.status === 'New Lead' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : p.status === 'Warm (Pending Close)' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : p.status === 'Lost' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
                                   {p.status}
                                 </div>
-
                                 <div className={`${isSelected ? 'text-blue-500' : 'text-slate-600'} shrink-0`}>
                                   {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
                                 </div>
-                                
                                 <div className="overflow-hidden pr-16 flex-1">
-                                  <p className={`text-sm font-bold truncate ${isSelected ? 'text-blue-100' : (hasInvite ? 'text-slate-400' : 'text-slate-300')}`}>
-                                    {p.name}
-                                  </p>
+                                  <p className={`text-sm font-bold truncate ${isSelected ? 'text-blue-100' : (hasInvite ? 'text-slate-400' : 'text-slate-300')}`}>{p.name}</p>
                                   <div className="flex items-center gap-2 mt-0.5">
                                     <p className="text-[10px] text-slate-500 truncate">{p.email}</p>
-                                    {hasInvite && sentDate && (
-                                      <span className="text-[8px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded whitespace-nowrap">
-                                        Sent: {sentDate}
-                                      </span>
-                                    )}
+                                    {hasInvite && sentDate && <span className="text-[8px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded whitespace-nowrap">Sent: {sentDate}</span>}
                                   </div>
                                 </div>
                               </div>
@@ -658,37 +791,20 @@ export default function InvitesCommandCenter() {
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 sticky top-0 bg-[#0f172a] pb-2">Batch Lead Data</p>
                       <AnimatePresence>
                         {bulkNewLeads.map((lead, idx) => (
-                          <motion.div 
-                            key={lead.id}
-                            initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, height: 0 }}
-                            className="flex flex-col md:flex-row gap-3 bg-[#020617] p-3 rounded-xl border border-white/5 relative group"
-                          >
+                          <motion.div key={lead.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, height: 0 }} className="flex flex-col md:flex-row gap-3 bg-[#020617] p-3 rounded-xl border border-white/5 relative group">
                             <div className="absolute -left-2 -top-2 w-5 h-5 bg-slate-800 text-slate-400 rounded-full flex items-center justify-center text-[9px] font-black">{idx + 1}</div>
                             <input type="text" required placeholder="Lead Name *" value={lead.name} onChange={e => updateBulkRow(lead.id, 'name', e.target.value)} className="flex-1 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
                             <input type="email" required placeholder="Email Address *" value={lead.email} onChange={e => updateBulkRow(lead.id, 'email', e.target.value)} className="flex-1 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
                             <input type="tel" placeholder="Phone Number" value={lead.phone} onChange={e => updateBulkRow(lead.id, 'phone', e.target.value)} className="w-full md:w-32 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
-                            <button 
-                              type="button" 
-                              onClick={() => removeBulkRow(lead.id)}
-                              className={`p-2 rounded-lg transition-colors ${bulkNewLeads.length === 1 ? 'opacity-20 cursor-not-allowed text-slate-600' : 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-500'}`}
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            <button type="button" onClick={() => removeBulkRow(lead.id)} className={`p-2 rounded-lg transition-colors ${bulkNewLeads.length === 1 ? 'opacity-20 cursor-not-allowed text-slate-600' : 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-500'}`}><Trash2 size={16} /></button>
                           </motion.div>
                         ))}
                       </AnimatePresence>
-                      <button 
-                        type="button" 
-                        onClick={addBulkRow}
-                        className="w-full py-3 border border-dashed border-white/20 rounded-xl text-slate-400 text-xs font-black uppercase tracking-widest hover:border-blue-500 hover:text-blue-400 transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Plus size={14} /> Add Another Row
-                      </button>
+                      <button type="button" onClick={addBulkRow} className="w-full py-3 border border-dashed border-white/20 rounded-xl text-slate-400 text-xs font-black uppercase tracking-widest hover:border-blue-500 hover:text-blue-400 transition-colors flex items-center justify-center gap-2"><Plus size={14} /> Add Another Row</button>
                     </div>
                   )}
                 </div>
 
-                {/* COHORT DATES (Fixed at bottom) */}
                 <div className="pt-4 border-t border-white/10 shrink-0">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Global Cohort Schedule</p>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -718,7 +834,7 @@ export default function InvitesCommandCenter() {
         )}
       </AnimatePresence>
 
-      {/* 2. SHARE MODAL */}
+      {/* SHARE MODAL */}
       <AnimatePresence>
         {showShareModal && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
@@ -733,43 +849,32 @@ export default function InvitesCommandCenter() {
               </div>
 
               <div className="p-6 flex-1 overflow-y-auto custom-scrollbar space-y-6">
-                
                 <div className="p-4 bg-[#020617] border border-white/10 rounded-2xl flex items-center justify-between gap-4">
                   <p className="text-sm font-mono text-blue-400 truncate select-all">{`${window.location.origin}/invite/${showShareModal.id}`}</p>
                   <button onClick={() => copyToClipboard(`${window.location.origin}/invite/${showShareModal.id}`)} className="p-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-md shrink-0">
                     {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}
                   </button>
                 </div>
-
                 <div>
                   <div className="flex gap-2 border-b border-white/5 pb-2">
                     <button onClick={() => setShareTab('whatsapp')} className={`px-4 py-2 rounded-t-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-colors ${shareTab === 'whatsapp' ? 'bg-emerald-500/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}><MessageSquare size={14}/> WhatsApp</button>
                     <button onClick={() => setShareTab('email')} className={`px-4 py-2 rounded-t-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-colors ${shareTab === 'email' ? 'bg-blue-500/10 text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}><Mail size={14}/> Email</button>
                     <button onClick={() => setShareTab('linkedin')} className={`px-4 py-2 rounded-t-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-colors ${shareTab === 'linkedin' ? 'bg-indigo-500/10 text-indigo-400 border-b-2 border-indigo-500' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}><Linkedin size={14}/> LinkedIn</button>
                   </div>
-                  
                   <div className="pt-4 relative group">
-                    <textarea 
-                      readOnly
-                      value={getShareCopy(shareTab, showShareModal)}
-                      className="w-full h-64 bg-[#020617] border border-white/10 rounded-2xl p-5 text-sm text-slate-300 font-medium resize-none focus:outline-none custom-scrollbar"
-                    />
-                    <button 
-                      onClick={() => copyToClipboard(getShareCopy(shareTab, showShareModal))}
-                      className="absolute bottom-6 right-6 px-4 py-2 bg-white/10 hover:bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-2 border border-white/10 hover:border-transparent opacity-0 group-hover:opacity-100"
-                    >
+                    <textarea readOnly value={getShareCopy(shareTab, showShareModal)} className="w-full h-64 bg-[#020617] border border-white/10 rounded-2xl p-5 text-sm text-slate-300 font-medium resize-none focus:outline-none custom-scrollbar" />
+                    <button onClick={() => copyToClipboard(getShareCopy(shareTab, showShareModal))} className="absolute bottom-6 right-6 px-4 py-2 bg-white/10 hover:bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-2 border border-white/10 hover:border-transparent opacity-0 group-hover:opacity-100">
                       {copied ? <><CheckCircle2 size={14}/> Copied</> : <><Copy size={14}/> Copy Text</>}
                     </button>
                   </div>
                 </div>
-
               </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
 
-      {/* 3. PREVIEW MODAL (IFRAME) */}
+      {/* PREVIEW MODAL (IFRAME) */}
       <AnimatePresence>
         {showPreviewModal && (
           <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 md:p-8">
@@ -784,11 +889,7 @@ export default function InvitesCommandCenter() {
                 </div>
                 <button onClick={() => setShowPreviewModal(null)} className="p-2 bg-white/5 hover:bg-rose-500 text-slate-400 hover:text-white rounded-full transition-colors"><X size={16}/></button>
               </div>
-              <iframe 
-                src={showPreviewModal} 
-                className="w-full flex-1 bg-white"
-                title="Invite Preview"
-              />
+              <iframe src={showPreviewModal} className="w-full flex-1 bg-white" title="Invite Preview" />
             </motion.div>
           </div>
         )}
