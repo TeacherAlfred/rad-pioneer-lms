@@ -6,7 +6,7 @@ import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import PioneerXPBar from "@/components/ui/PioneerXPBar";
 import { 
   Play, Rocket, UserCheck, Loader2, ArrowUpRight,
-  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle, BookOpen, ChevronRight, ChevronLeft, User, Calendar, MapPin, Video, Mail, MessageCircle, Shield, Gift, BatteryCharging, Check
+  Map, Zap, BarChart3, ShieldCheck, Sparkles, X, MonitorPlay, AlertTriangle, BookOpen, ChevronRight, ChevronLeft, User, Calendar, MapPin, Video, Mail, MessageCircle, Shield, Gift, BatteryCharging, Check, Lock, ShieldAlert
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -53,6 +53,12 @@ export default function DashboardPage() {
   const [showGuideModal, setShowGuideModal] = useState(false);
   const [isConfirmingDisable, setIsConfirmingDisable] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  
+  // --- NEW: 2x XP Event Modal State ---
+  const [showXpEventModal, setShowXpEventModal] = useState(false);
+
+  // FOMO Timer State
+  const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
 
   const handleDisableGuide = async () => {
     if (!userProfile) return;
@@ -238,14 +244,64 @@ export default function DashboardPage() {
     initializeDashboard();
   }, [router]);
 
+  // FOMO Countdown Timer Logic
+  useEffect(() => {
+    const targetDate = new Date("2026-05-01T10:00:00+02:00").getTime();
+    
+    const interval = setInterval(() => {
+      const now = new Date().getTime();
+      const difference = targetDate - now;
+
+      if (difference > 0) {
+        setTimeLeft({
+          days: Math.floor(difference / (1000 * 60 * 60 * 24)),
+          hours: Math.floor((difference / (1000 * 60 * 60)) % 24),
+          minutes: Math.floor((difference / 1000 / 60) % 60),
+          seconds: Math.floor((difference / 1000) % 60)
+        });
+      } else {
+        clearInterval(interval);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const metadata = useMemo(() => {
     if (!userProfile?.metadata) return {};
     try {
-      return typeof userProfile.metadata === 'string' ? JSON.parse(userProfile.metadata) : userProfile.metadata;
+      let parsed = userProfile.metadata;
+      // Handle potential double-stringification from Supabase JSONB inserts
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      return parsed;
     } catch (e) {
       return {};
     }
   }, [userProfile]);
+
+  // Identify LMS-Only Students vs Full Active Students
+  const isLmsOnly = !metadata.account_tier || metadata.account_tier !== 'full';
+  
+  // They only see the lockdown if they are LMS-only AND it is before May 1st
+  const isPreLaunchLms = isLmsOnly && new Date() < new Date("2026-05-01T10:00:00+02:00");
+
+  // --- NEW: Trigger 2x XP Modal for Full-Tier Learners Only ---
+  useEffect(() => {
+    if (!loading && !isLmsOnly) {
+      const hasSeenEvent = sessionStorage.getItem("xp_event_may_2026");
+      if (!hasSeenEvent) {
+        // Slight delay so the dashboard renders beautifully before the modal drops in
+        const timer = setTimeout(() => setShowXpEventModal(true), 1200);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [loading, isLmsOnly]);
+
+  const closeXpModal = () => {
+    setShowXpEventModal(false);
+    sessionStorage.setItem("xp_event_may_2026", "true");
+  };
 
   const dynamicNextLesson = useMemo(() => {
     let allLessons: any[] = [];
@@ -294,9 +350,22 @@ export default function DashboardPage() {
   const isEngineer = currentXP >= 1000;
   const stats = { xp: currentXP, level: isEngineer ? 2 : 1, currentLevel: { name: isEngineer ? "Engineer" : "Technician", floor: isEngineer ? 1000 : 0 }, nextLevel: { xpRequired: 2500 } };
 
+  const TimeUnit = ({ label, value }: { label: string, value: number }) => (
+    <div className="bg-black/60 border border-amber-500/20 rounded-2xl p-4 md:p-6 flex flex-col items-center justify-center shadow-inner relative overflow-hidden group w-full">
+      <div className="absolute inset-0 bg-gradient-to-b from-amber-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+      <span className="text-4xl md:text-6xl font-black italic tracking-tighter text-amber-500 leading-none drop-shadow-[0_0_15px_rgba(245,158,11,0.5)]">
+        {value.toString().padStart(2, '0')}
+      </span>
+      <span className="text-[9px] md:text-xs font-black text-amber-500/50 uppercase tracking-[0.2em] mt-2">
+        {label}
+      </span>
+    </div>
+  );
+
   return (
     <DashboardClientWrapper initialStats={stats}>
-      <main className="min-h-screen lg:mr-80 relative overflow-hidden text-left bg-[#020617]">
+      {/* Conditionally remove the lg:mr-80 margin if pre-launch so the dashboard centers completely */}
+      <main className={`min-h-screen relative overflow-hidden text-left bg-[#020617] ${isPreLaunchLms ? '' : 'lg:mr-80'}`}>
         <div className="max-w-4xl lg:max-w-5xl mx-auto p-4 sm:p-6 md:p-12 space-y-8 md:space-y-12 relative z-10 pb-12 md:pb-20">
           
           {/* =========================================
@@ -360,6 +429,56 @@ export default function DashboardPage() {
               </div>
             </div>
           </header>
+
+          {/* =========================================
+              MASSIVE FOMO COUNTDOWN (LMS ONLY)
+              ========================================= */}
+          {isPreLaunchLms && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-gradient-to-br from-amber-900/40 via-[#020617] to-[#020617] border border-amber-500/30 rounded-[32px] md:rounded-[48px] p-8 md:p-12 mb-8 relative overflow-hidden shadow-[0_0_50px_rgba(245,158,11,0.15)] flex flex-col items-center text-center"
+            >
+              {/* Background Ambience */}
+              <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-transparent via-amber-500 to-transparent animate-pulse shadow-[0_0_20px_rgba(245,158,11,1)]" />
+              
+              <motion.div 
+                animate={{ scale: [1, 1.05, 1], opacity: [0.8, 1, 0.8] }}
+                transition={{ duration: 3, repeat: Infinity }}
+                className="w-20 h-20 md:w-24 md:h-24 bg-amber-500/10 border border-amber-500/40 rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(245,158,11,0.2)] mb-6"
+              >
+                <Lock size={40} className="text-amber-400" />
+              </motion.div>
+
+              <h2 className="text-[10px] md:text-[12px] font-black text-amber-500 uppercase tracking-[0.3em] mb-3 flex items-center justify-center gap-2">
+                <ShieldAlert size={16} /> Premium Access Secured
+              </h2>
+              <h3 className="text-3xl md:text-5xl font-black text-white italic uppercase tracking-tighter leading-tight drop-shadow-md mb-8">
+                Global Launch Sequence <br className="hidden md:block"/> Initiated
+              </h3>
+
+              {/* The Timer Grid */}
+              <div className="grid grid-cols-4 gap-2 md:gap-6 w-full max-w-3xl mb-8">
+                <TimeUnit label="Days" value={timeLeft.days} />
+                <TimeUnit label="Hours" value={timeLeft.hours} />
+                <TimeUnit label="Minutes" value={timeLeft.minutes} />
+                <TimeUnit label="Seconds" value={timeLeft.seconds} />
+              </div>
+
+              {/* FOMO Incentive Card */}
+              <div className="bg-gradient-to-br from-amber-500/10 to-transparent border border-amber-500/20 p-5 md:p-6 rounded-2xl w-full max-w-3xl text-left relative overflow-hidden">
+                <Zap className="absolute -right-4 -bottom-4 w-24 h-24 text-amber-500/10" />
+                <div className="relative z-10">
+                  <span className="px-3 py-1 bg-amber-500 text-black text-[9px] font-black uppercase tracking-widest rounded mb-3 inline-block">
+                    Priority Objective
+                  </span>
+                  <p className="text-sm font-bold text-amber-100 leading-relaxed">
+                    The first 50 Pioneers to log in and deploy a mission on launch day will receive an exclusive <span className="text-amber-400 font-black">500 XP Head Start Bonus.</span>
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
 
           {/* =========================================
               UNIFIED COMMAND HUD (RANK + LOGISTICS FOOTER)
@@ -598,38 +717,45 @@ export default function DashboardPage() {
                               </h3>
 
                               {/* ABA: Errorless Learning - MASSIVE, pulsing, unmissable button */}
-<Link 
-  href={courseData.title === 'Robotics Pioneer Bootcamp' ? '/student/bootcamp' : activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`} 
-  className={`w-full py-5 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl ${
-    courseData.title === 'Robotics Pioneer Bootcamp'
-      ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-black hover:shadow-[0_0_40px_rgba(16,185,129,0.6)]'
-      : activeTask.type === 'checkpoint' 
-        ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black hover:shadow-[0_0_40px_rgba(245,158,11,0.6)]' 
-        : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:shadow-[0_0_40px_rgba(59,130,246,0.6)]'
-  }`}
->
-  {/* Light sweep animation */}
-  <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12" />
-  
-  {courseData.title === 'Robotics Pioneer Bootcamp' ? (
-    <>
-      <Zap className="w-6 h-6 animate-pulse" />
-      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Enter Logic Lab</span>
-    </>
-  ) : activeTask.type === 'checkpoint' ? (
-    <>
-      <ShieldCheck className="w-6 h-6 animate-pulse" />
-      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Boss Level</span>
-    </>
-  ) : (
-    <>
-      <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-        <Play fill="currentColor" className="w-4 h-4 ml-1" />
-      </div>
-      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Mission</span>
-    </>
-  )}
-</Link>
+                              {isPreLaunchLms ? (
+                                <div className="w-full py-5 px-6 rounded-2xl flex items-center justify-center gap-3 bg-slate-800/80 text-slate-500 border border-slate-700 cursor-not-allowed shadow-inner">
+                                  <Shield className="w-6 h-6" />
+                                  <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Unlocks May 1st @ 10AM</span>
+                                </div>
+                              ) : (
+                                <Link 
+                                  href={courseData.title === 'Robotics Pioneer Bootcamp' ? '/student/bootcamp' : activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`} 
+                                  className={`w-full py-5 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl ${
+                                    courseData.title === 'Robotics Pioneer Bootcamp'
+                                      ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-black hover:shadow-[0_0_40px_rgba(16,185,129,0.6)]'
+                                      : activeTask.type === 'checkpoint' 
+                                        ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black hover:shadow-[0_0_40px_rgba(245,158,11,0.6)]' 
+                                        : 'bg-gradient-to-r from-blue-500 to-indigo-500 text-white hover:shadow-[0_0_40px_rgba(59,130,246,0.6)]'
+                                  }`}
+                                >
+                                  {/* Light sweep animation */}
+                                  <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12" />
+                                  
+                                  {courseData.title === 'Robotics Pioneer Bootcamp' ? (
+                                    <>
+                                      <Zap className="w-6 h-6 animate-pulse" />
+                                      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Enter Logic Lab</span>
+                                    </>
+                                  ) : activeTask.type === 'checkpoint' ? (
+                                    <>
+                                      <ShieldCheck className="w-6 h-6 animate-pulse" />
+                                      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Boss Level</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                        <Play fill="currentColor" className="w-4 h-4 ml-1" />
+                                      </div>
+                                      <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Mission</span>
+                                    </>
+                                  )}
+                                </Link>
+                              )}
                             </div>
                           </>
                         ) : (
@@ -744,57 +870,134 @@ export default function DashboardPage() {
         )}
       </AnimatePresence>
 
-      {/* --- DESKTOP SIDEBAR --- */}
-      <div className="hidden lg:block">
-        <ProfileSidebar />
-      </div>
-
-      {/* --- MOBILE SIDE TAB --- */}
-      {!isMobileSidebarOpen && (
-        <div className="lg:hidden fixed top-1/2 right-0 -translate-y-1/2 z-40">
-          <button
-            onClick={() => setIsMobileSidebarOpen(true)}
-            className="flex items-center justify-center p-3 pl-4 bg-blue-600/20 backdrop-blur-xl border border-r-0 border-blue-500/30 rounded-l-2xl shadow-[-5px_0_20px_rgba(59,130,246,0.15)] text-blue-400 hover:text-white hover:bg-blue-500/30 transition-all group"
-          >
-            <div className="flex flex-col items-center gap-1">
-              <ChevronLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
-              <User size={18} />
-            </div>
-          </button>
-        </div>
-      )}
-
-      {/* --- MOBILE SIDEBAR DRAWER --- */}
+      {/* --- NEW: 2X XP FOMO EVENT MODAL (FULL STUDENTS ONLY) --- */}
       <AnimatePresence>
-        {isMobileSidebarOpen && (
-          <>
+        {showXpEventModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 md:p-6">
             <motion.div 
               initial={{ opacity: 0 }} 
               animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }} 
-              onClick={() => setIsMobileSidebarOpen(false)}
-              className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm lg:hidden"
+              exit={{ opacity: 0 }}
+              onClick={closeXpModal}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md" 
             />
+            
             <motion.div 
-              initial={{ x: "100%" }} 
-              animate={{ x: 0 }} 
-              exit={{ x: "100%" }} 
-              transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed top-0 right-0 bottom-0 z-[110] w-[85%] max-w-sm bg-[#0f172a] shadow-2xl border-l border-white/10 lg:hidden flex flex-col"
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-md bg-gradient-to-br from-[#0f172a] to-[#020617] border border-amber-500/30 rounded-[32px] overflow-hidden shadow-[0_0_50px_rgba(245,158,11,0.2)] text-center p-8 md:p-10"
             >
-              <div className="p-6 border-b border-white/10 flex items-center justify-between">
-                <span className="text-xs font-black uppercase tracking-widest text-slate-400">Pioneer Status</span>
-                <button onClick={() => setIsMobileSidebarOpen(false)} className="p-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors text-white">
-                  <X size={20} />
-                </button>
+              <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-transparent via-amber-500 to-transparent animate-pulse" />
+              
+              <button onClick={closeXpModal} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors">
+                <X size={20} />
+              </button>
+
+              <div className="w-20 h-20 mx-auto bg-amber-500/10 border border-amber-500/30 rounded-full flex items-center justify-center mb-6 shadow-inner relative">
+                 <div className="absolute inset-0 bg-amber-500/20 blur-xl rounded-full animate-pulse" />
+                 <Zap className="w-10 h-10 text-amber-400 relative z-10" />
               </div>
-              <div className="flex-1 overflow-y-auto no-scrollbar relative">
-                 <ProfileSidebar />
+
+              <span className="px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-[10px] font-black uppercase tracking-widest mb-4 inline-block">
+                Special LMS Launch Event
+              </span>
+              
+              <h3 className="text-4xl font-black text-white uppercase italic tracking-tighter leading-tight mb-4">
+                DOUBLE <span className="text-amber-400">XP</span> <br/> WEEKEND!
+              </h3>
+              
+              <p className="text-slate-300 text-sm font-medium leading-relaxed mb-6">
+                Get ready! From <strong className="text-white">May 1st - 3rd</strong>, all missions and daily claims yield <strong className="text-amber-400 font-black">2x XP</strong>. Rack up points and dominate the leaderboard!
+              </p>
+
+              {/* Mini Countdown Timer inside the Modal */}
+              <div className="grid grid-cols-4 gap-2 w-full mb-8">
+                {[
+                  { label: 'Days', value: timeLeft.days },
+                  { label: 'Hrs', value: timeLeft.hours },
+                  { label: 'Min', value: timeLeft.minutes },
+                  { label: 'Sec', value: timeLeft.seconds }
+                ].map((t, i) => (
+                  <div key={i} className="bg-black/40 border border-amber-500/20 rounded-xl p-2 md:p-3 flex flex-col items-center shadow-inner">
+                    <span className="text-xl md:text-2xl font-black italic text-amber-500 leading-none mb-1">
+                      {t.value.toString().padStart(2, '0')}
+                    </span>
+                    <span className="text-[8px] font-black text-amber-500/50 uppercase tracking-widest">
+                      {t.label}
+                    </span>
+                  </div>
+                ))}
               </div>
+
+              <button 
+                onClick={closeXpModal}
+                className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black rounded-2xl font-black uppercase tracking-widest text-[12px] transition-all shadow-[0_0_20px_rgba(245,158,11,0.4)]"
+              >
+                I'm Ready!
+              </button>
             </motion.div>
-          </>
+          </div>
         )}
       </AnimatePresence>
+
+      {/* --- CONDITIONAL SIDEBARS --- */}
+      {/* Hide all sidebars completely if the user is an LMS-only pre-launch student */}
+      {!isPreLaunchLms && (
+        <>
+          {/* DESKTOP SIDEBAR */}
+          <div className="hidden lg:block">
+            <ProfileSidebar />
+          </div>
+
+          {/* MOBILE SIDE TAB */}
+          {!isMobileSidebarOpen && (
+            <div className="lg:hidden fixed top-1/2 right-0 -translate-y-1/2 z-40">
+              <button
+                onClick={() => setIsMobileSidebarOpen(true)}
+                className="flex items-center justify-center p-3 pl-4 bg-blue-600/20 backdrop-blur-xl border border-r-0 border-blue-500/30 rounded-l-2xl shadow-[-5px_0_20px_rgba(59,130,246,0.15)] text-blue-400 hover:text-white hover:bg-blue-500/30 transition-all group"
+              >
+                <div className="flex flex-col items-center gap-1">
+                  <ChevronLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
+                  <User size={18} />
+                </div>
+              </button>
+            </div>
+          )}
+
+          {/* MOBILE SIDEBAR DRAWER */}
+          <AnimatePresence>
+            {isMobileSidebarOpen && (
+              <>
+                <motion.div 
+                  initial={{ opacity: 0 }} 
+                  animate={{ opacity: 1 }} 
+                  exit={{ opacity: 0 }} 
+                  onClick={() => setIsMobileSidebarOpen(false)}
+                  className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm lg:hidden"
+                />
+                <motion.div 
+                  initial={{ x: "100%" }} 
+                  animate={{ x: 0 }} 
+                  exit={{ x: "100%" }} 
+                  transition={{ type: "spring", damping: 25, stiffness: 200 }}
+                  className="fixed top-0 right-0 bottom-0 z-[110] w-[85%] max-w-sm bg-[#0f172a] shadow-2xl border-l border-white/10 lg:hidden flex flex-col"
+                >
+                  <div className="p-6 border-b border-white/10 flex items-center justify-between">
+                    <span className="text-xs font-black uppercase tracking-widest text-slate-400">Pioneer Status</span>
+                    <button onClick={() => setIsMobileSidebarOpen(false)} className="p-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors text-white">
+                      <X size={20} />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto no-scrollbar relative">
+                     <ProfileSidebar />
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </>
+      )}
 
       <style>{`
         @keyframes shimmer {
