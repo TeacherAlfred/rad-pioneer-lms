@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { 
   ArrowLeft, Building2, User, Phone, Mail, FileText, BarChart3,
   Receipt, Plus, MessageSquare, Download, AlertTriangle, 
-  CheckCircle2, Clock, Loader2, ArrowRight, Wallet
+  CheckCircle2, Clock, Loader2, ArrowRight, Wallet, Send
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -116,6 +116,31 @@ export default function CorporateClientProfile() {
     }
   };
 
+  // --- NEW: WhatsApp Single Document Action ---
+  const handleShareDocument = (doc: any, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const isQuote = doc.doc_type === 'quote';
+    const docTypeLabel = isQuote ? 'Quote' : 'Invoice';
+    const docNumber = isQuote ? `QUO-${doc.quote_number}` : `INV-${doc.invoice_number}`;
+    const amountStr = `R ${Number(doc.total_amount).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    
+    const link = `${window.location.origin}/${isQuote ? 'quote' : 'invoice'}/${doc.id}`;
+    const firstName = clientData.contact_person.split(' ')[0] || 'Client';
+    
+    const msg = `Dear ${firstName},\n\nPlease find your latest ${docTypeLabel} (${docNumber}) for the amount of ${amountStr} at the link below.\n\nView Document: ${link}\n\nRegards,\nRAD Academy Team`;
+    
+    let phoneParam = "";
+    if (clientData.phone) {
+        let cleanPhone = clientData.phone.replace(/\D/g, '');
+        if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+        phoneParam = cleanPhone;
+    }
+    
+    window.open(`https://wa.me/${phoneParam}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
   if (loading) {
     return (
       <div className="h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
@@ -158,15 +183,15 @@ export default function CorporateClientProfile() {
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
-            {/* These buttons will route to the updated generator in our next step */}
+            {/* These buttons route to the unified generator */}
             <Link 
-              href={`/admin/finance/generator?client_id=${clientId}&type=quote`}
+              href={`/admin/finance/composer?client_id=${clientId}&type=quote`}
               className="px-6 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shrink-0"
             >
               <FileText size={14} /> New Quote
             </Link>
             <Link 
-              href={`/admin/finance/generator?client_id=${clientId}&type=invoice`}
+              href={`/admin/finance/composer?client_id=${clientId}&type=invoice`}
               className="px-6 py-3.5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 shrink-0"
             >
               <Receipt size={14} /> Create Invoice
@@ -273,7 +298,7 @@ export default function CorporateClientProfile() {
                   <th className="px-6 py-4">Description</th>
                   <th className="px-6 py-4 text-right">Amount</th>
                   <th className="px-6 py-4 text-center">Status</th>
-                  <th className="px-6 py-4"></th>
+                  <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -326,14 +351,25 @@ export default function CorporateClientProfile() {
                           </span>
                         </td>
                         <td className="px-6 py-5 text-right">
-                          <Link 
-                            href={isQuote ? `/quote/${doc.id}` : `/invoice/${doc.id}`}
-                            target="_blank"
-                            className="inline-flex p-2 bg-white/5 hover:bg-blue-600 text-slate-400 hover:text-white rounded-lg border border-white/5 transition-all shadow-sm group-hover:border-blue-500/30"
-                            title="View Document"
-                          >
-                            <ArrowRight size={14} />
-                          </Link>
+                          <div className="flex justify-end items-center gap-2">
+                            {/* NEW: WHATSAPP SHARE BUTTON */}
+                            <button 
+                              onClick={(e) => handleShareDocument(doc, e)}
+                              className="inline-flex p-2 bg-emerald-500/10 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded-lg border border-emerald-500/20 transition-all shadow-sm group-hover:border-emerald-500/40"
+                              title="Send via WhatsApp"
+                            >
+                              <MessageSquare size={14} />
+                            </button>
+
+                            <Link 
+                              href={isQuote ? `/quote/${doc.id}` : `/invoice/${doc.id}`}
+                              target="_blank"
+                              className="inline-flex p-2 bg-white/5 hover:bg-blue-600 text-slate-400 hover:text-white rounded-lg border border-white/5 transition-all shadow-sm group-hover:border-blue-500/30"
+                              title="View Document"
+                            >
+                              <ArrowRight size={14} />
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     );
