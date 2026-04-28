@@ -16,8 +16,10 @@ export async function POST(req: Request) {
     }
 
     const firstName = name ? name.split(' ')[0] : 'Parent';
-    // Fallback URL for local testing vs production
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+    
+    // NEW: Dynamically grab the exact live URL (or localhost) from the request itself
+    const requestUrl = new URL(req.url);
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${requestUrl.protocol}//${requestUrl.host}`;
 
     let emailsToSend = [];
 
