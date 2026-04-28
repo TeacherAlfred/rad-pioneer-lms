@@ -96,8 +96,23 @@ export default function VIPInvitePage() {
     trackProgress('Form Opened');
   };
 
-  const handleNextStep1 = () => {
+  const handleNextStep1 = async () => {
     if (!parentName || !email || !phone || numKids < 1) return alert("Please complete all guardian details.");
+
+    try {
+      const updatedMeta = { ...prospectData.metadata, form_progress: 'Guardian Details Completed', last_active: new Date().toISOString() };
+      await supabase.from('prospects').update({ 
+        name: parentName, 
+        email: email, 
+        phone: phone,
+        metadata: updatedMeta
+      }).eq('id', inviteId);
+      
+      setProspectData({ ...prospectData, name: parentName, email: email, phone: phone, metadata: updatedMeta });
+    } catch (e) {
+      console.error("Auto-save failed", e);
+    }
+
     const newChildren = [...children];
     if (numKids > children.length) {
       for (let i = children.length; i < numKids; i++) newChildren.push({ id: Date.now().toString() + i, name: '', dob: '', codingAtSchool: 'No' });
@@ -105,7 +120,6 @@ export default function VIPInvitePage() {
     setChildren(newChildren);
     setActiveChildTab(newChildren[0].id);
     setWizardStep(2);
-    trackProgress('Guardian Details Completed');
   };
 
   const handleNextStep2 = () => {
