@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "RAD Pioneer | Mission Control",
-  description: "Gaming the future of learning.",
+  title: "RAD Academy LMS",
+  description: "Redefining African Dreams: A cutting-edge LMS for tech education, empowering the next generation of African innovators with immersive learning, real-world projects, and a vibrant community.",
 };
 
 export default function RootLayout({
