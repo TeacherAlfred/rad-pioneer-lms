@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Plus, Trash2, Save, Send, User, ArrowRight,
-  Search, Package, Calculator, ArrowLeft, ChevronDown, Eye, X, Shield, Printer, CreditCard, Loader2, Calendar, FileText, Download, CheckCircle2 
+  Search, Package, Calculator, ArrowLeft, ChevronDown, Eye, X, Shield, Printer, CreditCard, Loader2, Calendar, FileText, Download, CheckCircle2, Building2 
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -24,6 +24,7 @@ function BillingComposer() {
   const searchParams = useSearchParams();
   
   const initialLeadId = searchParams.get('leadId');
+  const initialClientId = searchParams.get('client_id'); // NEW: For B2B
   const prospectName = searchParams.get('prospectName');
   const prospectEmail = searchParams.get('prospectEmail');
   const prospectPhone = searchParams.get('prospectPhone');
@@ -31,6 +32,7 @@ function BillingComposer() {
   const initialType = (searchParams.get('mode') as 'invoice' | 'quote') || (searchParams.get('type') as 'invoice' | 'quote') || 'invoice';
 
   const [docType, setDocType] = useState<'invoice' | 'quote'>(initialType);
+  const [clientMode, setClientMode] = useState<'b2c' | 'b2b'>(initialClientId ? 'b2b' : 'b2c'); // NEW: Toggle state
   const [expiryDate, setExpiryDate] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -39,13 +41,14 @@ function BillingComposer() {
   const [isIframe, setIsIframe] = useState(false);
 
   const [dbItems, setDbItems] = useState<any[]>([]);
+  const [corporateClients, setCorporateClients] = useState<any[]>([]); // NEW: B2B Database
   const [nextInvNum, setNextInvNum] = useState(1100);
 
   const [guardianSearch, setGuardianSearch] = useState("");
-  const [selectedGuardian, setSelectedGuardian] = useState<any>(null);
+  const [selectedGuardian, setSelectedGuardian] = useState<any>(null); // Acts as universal recipient
   const [suggestedGuardians, setSuggestedGuardians] = useState<any[]>([]);
 
-  // UPDATED STATE: Include disc_type and disc_rand for feature parity
+  // Include disc_type and disc_rand for feature parity
   const [lineItems, setLineItems] = useState<any[]>([{ desc: '', note: '', qty: 1, price: 0, disc: 0, disc_type: 'pct', disc_rand: "0.00" }]);
   const [globalDisc, setGlobalDisc] = useState(0);
   const [globalNote, setGlobalNote] = useState("");
@@ -70,6 +73,8 @@ function BillingComposer() {
     
     if (convertFromQuoteId) {
         fetchQuoteToConvert(convertFromQuoteId);
+    } else if (initialClientId) {
+      fetchSpecificCorporate(initialClientId);
     } else if (initialLeadId) {
       fetchSpecificLead(initialLeadId);
     } else if (prospectName) {
@@ -87,10 +92,10 @@ function BillingComposer() {
         nextWeek.setDate(nextWeek.getDate() + 7);
         setExpiryDate(nextWeek.toISOString().split('T')[0]);
     }
-  }, [initialLeadId, prospectName, prospectEmail, initialType, convertFromQuoteId]);
+  }, [initialLeadId, initialClientId, prospectName, prospectEmail, initialType, convertFromQuoteId]);
 
   useEffect(() => {
-    if (guardianSearch.length > 2) {
+    if (clientMode === 'b2c' && guardianSearch.length > 2) {
       const searchGuardians = async () => {
         const { data } = await supabase
           .from('profiles')
@@ -103,11 +108,15 @@ function BillingComposer() {
     } else {
       setSuggestedGuardians([]);
     }
-  }, [guardianSearch]);
+  }, [guardianSearch, clientMode]);
 
   async function fetchInitialData() {
     const { data: items } = await supabase.from('billing_items').select('*').eq('is_active', true);
     if (items) setDbItems(items);
+
+    // Fetch corporate clients for the dropdown
+    const { data: corps } = await supabase.from('corporate_clients').select('*').order('company_name');
+    if (corps) setCorporateClients(corps);
 
     const { data: lastRec } = await supabase
       .from('billing_records')
@@ -125,11 +134,25 @@ function BillingComposer() {
     if (data) setSelectedGuardian(data);
   }
 
+  async function fetchSpecificCorporate(id: string) {
+    const { data } = await supabase.from('corporate_clients').select('*').eq('id', id).single();
+    if (data) {
+      // Map B2B structure to existing B2C interface so the rest of the app doesn't break
+      setSelectedGuardian({
+        id: data.id,
+        isB2B: true,
+        display_name: data.company_name,
+        email: data.email,
+        phone: data.phone,
+        metadata: { email: data.email, phone: data.phone, contact_person: data.contact_person }
+      });
+    }
+  }
+
   async function fetchQuoteToConvert(quoteId: string) {
-     const { data: quote } = await supabase.from('billing_records').select('*, profiles(*)').eq('id', quoteId).single();
+     const { data: quote } = await supabase.from('billing_records').select('*, profiles(*), corporate_clients(*)').eq('id', quoteId).single();
      if (quote) {
         setDocType('invoice'); 
-        // Map existing quote lines to ensure they have the new disc fields
         const mappedItems = (quote.line_items || []).map((item: any) => ({
            ...item,
            disc_type: 'pct',
@@ -137,7 +160,18 @@ function BillingComposer() {
         }));
         setLineItems(mappedItems);
         setGlobalNote(quote.metadata?.global_note || '');
-        if (quote.profiles) {
+        
+        if (quote.corporate_clients) {
+          setClientMode('b2b');
+          setSelectedGuardian({
+            id: quote.corporate_clients.id,
+            isB2B: true,
+            display_name: quote.corporate_clients.company_name,
+            email: quote.corporate_clients.email,
+            phone: quote.corporate_clients.phone,
+            metadata: { email: quote.corporate_clients.email, phone: quote.corporate_clients.phone, contact_person: quote.corporate_clients.contact_person }
+          });
+        } else if (quote.profiles) {
             setSelectedGuardian(quote.profiles);
         }
         
@@ -153,7 +187,10 @@ function BillingComposer() {
     setIsProcessing(true);
     try {
       const isTempProspect = selectedGuardian.id?.toString().startsWith('prospect-');
-      const dbGuardianId = isTempProspect ? null : selectedGuardian.id;
+      const isB2B = selectedGuardian.isB2B;
+      
+      const dbGuardianId = (isTempProspect || isB2B) ? null : selectedGuardian.id;
+      const dbCorporateId = isB2B ? selectedGuardian.id : null;
 
       const metadataToSave: any = { 
         global_note: globalNote,
@@ -166,7 +203,6 @@ function BillingComposer() {
           metadataToSave.converted_from_quote = convertFromQuoteId;
       }
 
-      // Clean line items for DB save (remove ephemeral calculation fields)
       const cleanLineItems = lineItems.map(item => ({
          desc: item.desc,
          note: item.note,
@@ -181,6 +217,7 @@ function BillingComposer() {
           invoice_number: nextInvNum,
           payment_reference: paymentReference,
           guardian_id: dbGuardianId, 
+          corporate_client_id: dbCorporateId, // NEW: Saves to correct CRM
           total_amount: grandTotal,
           line_items: cleanLineItems,
           status: 'pending',
@@ -198,7 +235,7 @@ function BillingComposer() {
           if (oldQuote) {
               await supabase.from('billing_records').update({
                   metadata: { ...oldQuote.metadata, converted_to_invoice: true },
-                  status: 'invoiced' // CRITICAL: Updates the pipeline status!
+                  status: 'invoiced'
               }).eq('id', convertFromQuoteId);
           }
       }
@@ -282,7 +319,12 @@ function BillingComposer() {
         if (isIframe) {
           window.location.reload(); 
         } else {
-          router.push('/admin/finance');
+          // Route intelligently back to B2B profile or general finance ledger
+          if (isB2B && dbCorporateId) {
+            router.push(`/admin/consulting/${dbCorporateId}`);
+          } else {
+            router.push('/admin/finance');
+          }
         }
       }, 2000);
       
@@ -304,7 +346,6 @@ function BillingComposer() {
   const addLine = () => setLineItems([...lineItems, { desc: '', note: '', qty: 1, price: 0, disc: 0, disc_type: 'pct', disc_rand: "0.00" }]);
   const removeLine = (idx: number) => setLineItems(lineItems.filter((_, i) => i !== idx));
   
-  // UPDATED LINE LOGIC TO AUTO-CALCULATE DISCOUNTS
   const updateLine = (idx: number, field: string, val: any) => {
     const next = [...lineItems];
     
@@ -331,7 +372,6 @@ function BillingComposer() {
     } else {
       next[idx][field] = val;
       
-      // Recalculate opposing field if price or qty changes
       const newPrice = Number(next[idx].price) || 0;
       const newQty = Number(next[idx].qty) || 0;
       const totalValue = newPrice * newQty;
@@ -356,9 +396,9 @@ function BillingComposer() {
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
           <div className="space-y-4">
             {!isIframe && (
-              <Link href="/admin/finance" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2">
-                <ArrowLeft size={14}/> Back to Ledger
-              </Link>
+              <button onClick={() => router.back()} className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2 transition-colors">
+                <ArrowLeft size={14}/> Back
+              </button>
             )}
             <h1 className="text-5xl font-black tracking-tighter italic uppercase leading-none">
               Gen_<span className={docType === 'quote' ? 'text-purple-500' : 'text-emerald-500'}>{docType}</span>
@@ -369,7 +409,7 @@ function BillingComposer() {
                 <span>Pay_Ref: {paymentReference}</span>
                 <div className={`flex items-center gap-2 px-3 py-1 rounded-lg border ${docType === 'quote' ? 'text-purple-400 bg-purple-500/10 border-purple-500/20' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'}`}>
                   <Calendar size={12}/> Due Date: 
-                  <input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className="bg-transparent outline-none cursor-pointer font-bold ml-1" />
+                  <input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className="bg-transparent outline-none cursor-pointer font-bold ml-1 [color-scheme:dark]" />
                 </div>
             </div>
           </div>
@@ -499,29 +539,74 @@ function BillingComposer() {
           <div className="space-y-8">
             <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-6">
               <h3 className="text-sm font-black uppercase tracking-widest text-white border-b border-white/5 pb-4">Recipient_Sector</h3>
-              {!selectedGuardian ? (
-                <div className="space-y-2 relative">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
-                    <input value={guardianSearch} onChange={(e) => setGuardianSearch(e.target.value)} placeholder="Search Client..." className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl py-3 pl-10 text-xs outline-none focus:border-blue-500" />
-                  </div>
-                  {suggestedGuardians.length > 0 && (
-                    <div className="absolute top-full left-0 w-full mt-2 bg-[#0f172a] border border-white/10 rounded-2xl overflow-hidden z-10 shadow-2xl">
-                        {suggestedGuardians.map(g => (
-                            <button key={g.id} onClick={() => { setSelectedGuardian(g); setGuardianSearch(""); }} className="w-full text-left p-4 hover:bg-blue-500/10 border-b border-white/5 text-xs font-bold transition-colors">
-                                {g.display_name} <span className="text-[9px] text-slate-500 ml-2 uppercase">({g.id.split('-')[0]})</span>
-                            </button>
-                        ))}
-                    </div>
-                  )}
+              
+              {/* NEW: B2B vs B2C Toggle */}
+              {!selectedGuardian && (
+                <div className="flex bg-[#020617] p-1 rounded-xl border border-white/10 mb-4">
+                  <button 
+                    onClick={() => { setClientMode('b2c'); setSelectedGuardian(null); }}
+                    className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all flex items-center justify-center gap-1.5 ${clientMode === 'b2c' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    <User size={12}/> Household
+                  </button>
+                  <button 
+                    onClick={() => { setClientMode('b2b'); setSelectedGuardian(null); }}
+                    className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all flex items-center justify-center gap-1.5 ${clientMode === 'b2b' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    <Building2 size={12}/> Corporate
+                  </button>
                 </div>
+              )}
+
+              {!selectedGuardian ? (
+                clientMode === 'b2c' ? (
+                  <div className="space-y-2 relative">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                      <input value={guardianSearch} onChange={(e) => setGuardianSearch(e.target.value)} placeholder="Search Household..." className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl py-3 pl-10 text-xs outline-none focus:border-blue-500" />
+                    </div>
+                    {suggestedGuardians.length > 0 && (
+                      <div className="absolute top-full left-0 w-full mt-2 bg-[#0f172a] border border-white/10 rounded-2xl overflow-hidden z-10 shadow-2xl">
+                          {suggestedGuardians.map(g => (
+                              <button key={g.id} onClick={() => { setSelectedGuardian(g); setGuardianSearch(""); }} className="w-full text-left p-4 hover:bg-blue-500/10 border-b border-white/5 text-xs font-bold transition-colors">
+                                  {g.display_name} <span className="text-[9px] text-slate-500 ml-2 uppercase">({g.id.split('-')[0]})</span>
+                              </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2 relative">
+                    <select 
+                      onChange={(e) => {
+                        const corp = corporateClients.find(c => c.id === e.target.value);
+                        if (corp) {
+                          setSelectedGuardian({
+                            id: corp.id,
+                            isB2B: true,
+                            display_name: corp.company_name,
+                            email: corp.email,
+                            phone: corp.phone,
+                            metadata: { email: corp.email, phone: corp.phone, contact_person: corp.contact_person }
+                          });
+                        }
+                      }}
+                      defaultValue=""
+                      className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-blue-500 appearance-none"
+                    >
+                      <option value="" disabled>Select Corporate Client...</option>
+                      {corporateClients.map(c => <option key={c.id} value={c.id}>{c.company_name}</option>)}
+                    </select>
+                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" size={14}/>
+                  </div>
+                )
               ) : (
                 <div className="p-5 bg-blue-500/10 border border-blue-500/30 rounded-3xl relative group">
-                    {!convertFromQuoteId && (
+                    {!convertFromQuoteId && !initialClientId && (
                       <button onClick={() => setSelectedGuardian(null)} className="absolute -top-2 -right-2 p-1.5 bg-rose-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
                     )}
-                    <p className="text-[9px] font-black text-blue-500 uppercase mb-1 tracking-widest">
-                      {selectedGuardian.id?.toString().startsWith('prospect') ? 'Temporary_Prospect' : 'Selected_Recipient'}
+                    <p className="text-[9px] font-black text-blue-500 uppercase mb-1 tracking-widest flex items-center gap-1.5">
+                      {selectedGuardian.isB2B ? <><Building2 size={10}/> B2B_Corporate</> : selectedGuardian.id?.toString().startsWith('prospect') ? 'Temporary_Prospect' : <><User size={10}/> B2C_Household</>}
                     </p>
                     <p className="text-xl font-black uppercase italic leading-none">{selectedGuardian.display_name}</p>
                     <p className="text-[10px] text-slate-400 mt-2">{selectedGuardian.metadata?.email || selectedGuardian.email || 'No Email'}</p>
@@ -642,9 +727,6 @@ function BillingComposer() {
   );
 }
 
-// ---------------------------------------------------------
-// SUCCESS MODAL NOTIFICATION WIDGET
-// ---------------------------------------------------------
 function SuccessModal({ message, onClose }: { message: string | null, onClose: () => void }) {
   useEffect(() => {
     if (message) {

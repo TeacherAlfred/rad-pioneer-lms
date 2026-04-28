@@ -6,7 +6,7 @@ import {
   CheckCircle2, CreditCard, ChevronRight, Loader2, 
   Target, TrendingUp, DollarSign, Clock, X, ArrowUpRight,
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
-  GraduationCap, Eye, Bell, CalendarDays 
+  GraduationCap, Eye, Bell, CalendarDays, Building2
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -203,6 +203,7 @@ export default function AdminDashboard() {
                   { label: 'Pioneer Ledger', icon: Users, path: '/admin/pioneers', color: 'hover:border-purple-500' },
                   { label: 'CRM Database', icon: Users, path: '/admin/directory', color: 'hover:border-purple-500' },
                   { label: 'Finance Hub', icon: CreditCard, path: '/admin/finance', color: 'hover:border-emerald-500' },
+                  { label: 'B2B Consulting', icon: Building2, path: '/admin/consulting', color: 'hover:border-indigo-500' }, // NEW
                   { label: 'Core Agreements', icon: ShieldCheck, path: '/admin/agreements', color: 'hover:border-emerald-400' },
                   { label: 'Growth Plan', icon: LayoutDashboard, path: '/admin/blueprint', color: 'hover:border-fuchsia-500' },
                   { label: 'Comms Center', icon: Activity, path: '/admin/communications', color: 'hover:border-orange-500' },

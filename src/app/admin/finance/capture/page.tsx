@@ -19,7 +19,10 @@ export default function PaymentCapturePage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Data State
+  const [clientMode, setClientMode] = useState<'b2c' | 'b2b'>('b2c');
   const [guardians, setGuardians] = useState<any[]>([]);
+  const [corporateClients, setCorporateClients] = useState<any[]>([]);
+  
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGuardian, setSelectedGuardian] = useState<any | null>(null);
   
@@ -33,18 +36,18 @@ export default function PaymentCapturePage() {
   const [paymentDate, setPaymentDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
-    fetchGuardians();
+    fetchClients();
   }, []);
 
-  async function fetchGuardians() {
+  async function fetchClients() {
     try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, display_name, metadata')
-        .in('role', ['guardian', 'admin'])
-        .order('display_name', { ascending: true });
+      const [guardiansRes, corporateRes] = await Promise.all([
+        supabase.from('profiles').select('id, display_name, metadata').in('role', ['guardian', 'admin']).order('display_name', { ascending: true }),
+        supabase.from('corporate_clients').select('*').order('company_name', { ascending: true })
+      ]);
       
-      if (data) setGuardians(data);
+      if (guardiansRes.data) setGuardians(guardiansRes.data);
+      if (corporateRes.data) setCorporateClients(corporateRes.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -63,10 +66,13 @@ export default function PaymentCapturePage() {
     async function loadInvoices() {
       setIsLoadingInvoices(true);
       try {
+        // Query intelligently based on whether it's a household or a company
+        const columnToQuery = selectedGuardian.isB2B ? 'corporate_client_id' : 'guardian_id';
+
         const { data } = await supabase
           .from('billing_records')
           .select('*')
-          .eq('guardian_id', selectedGuardian.id)
+          .eq(columnToQuery, selectedGuardian.id)
           .eq('doc_type', 'invoice')
           .in('status', ['pending', 'overdue', 'partially_paid'])
           .order('created_at', { ascending: true }); 
@@ -108,6 +114,22 @@ export default function PaymentCapturePage() {
   }, [totalOutstanding, totalAllocated]);
 
   // --- ENGINE ACTIONS ---
+  const handleSelectClient = (client: any, isB2B: boolean) => {
+    if (isB2B) {
+      setSelectedGuardian({
+        id: client.id,
+        isB2B: true,
+        display_name: client.company_name,
+        contact_person: client.contact_person,
+        phone: client.phone,
+        email: client.email,
+        metadata: { email: client.email, phone: client.phone }
+      });
+    } else {
+      setSelectedGuardian({ ...client, isB2B: false });
+    }
+  };
+
   const handleAutoAllocate = () => {
     let remainingToAllocate = Number(totalReceived) || 0;
     const newAllocations: Record<string, number> = {};
@@ -145,19 +167,19 @@ export default function PaymentCapturePage() {
 
     setIsProcessing(true);
     try {
-      // Convert the HTML date input to a clean ISO string
       const parsedDate = new Date(paymentDate).toISOString();
 
-      // 1. Create the Master Payment Record
+      // 1. Create the Master Payment Record (Dynamic ID target)
       const { data: paymentRecord, error: payErr } = await supabase
         .from('payments')
         .insert([{
-          parent_id: selectedGuardian.id,
+          parent_id: selectedGuardian.isB2B ? null : selectedGuardian.id,
+          corporate_client_id: selectedGuardian.isB2B ? selectedGuardian.id : null,
           amount: rcvAmt,
           status: 'completed',
           description: paymentRef ? `Payment Ref: ${paymentRef}${unallocatedCredit > 0 ? ` (Incl. R${unallocatedCredit} Credit)` : ''}` : `Manual Allocation${unallocatedCredit > 0 ? ` (Incl. R${unallocatedCredit} Credit)` : ''}`,
           paid_at: parsedDate,
-          created_at: parsedDate // Override creation date for accurate historical reporting
+          created_at: parsedDate
         }])
         .select('id')
         .single();
@@ -170,7 +192,6 @@ export default function PaymentCapturePage() {
 
       for (const [invId, allocAmt] of Object.entries(allocations)) {
         if (allocAmt > 0) {
-          
           allocationPromises.push(
             supabase.from('payment_allocations').insert([{
               payment_id: paymentRecord.id,
@@ -199,14 +220,18 @@ export default function PaymentCapturePage() {
 
       // 3. WHATSAPP NOTIFICATION LOGIC
       if (sendWhatsApp) {
-        const firstName = selectedGuardian.display_name.split(' ')[0];
+        // Address contact person if B2B, otherwise guardian
+        const firstName = selectedGuardian.isB2B 
+            ? selectedGuardian.contact_person.split(' ')[0] 
+            : selectedGuardian.display_name.split(' ')[0];
+            
         const amountStr = `R ${rcvAmt.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         const balanceStr = `R ${projectedBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
         
         const msg = `Dear ${firstName},\n\nThank you for your payment that has been received today.\n\nAn amount of ${amountStr} has been received and will be allocated to your account. Leaving your balance at ${balanceStr}.\n\nRegards,\nRAD Academy Team`;
         
         let phoneParam = "";
-        const phoneRaw = selectedGuardian.metadata?.phone;
+        const phoneRaw = selectedGuardian.metadata?.phone || selectedGuardian.phone;
         if (phoneRaw) {
             let cleanPhone = phoneRaw.replace(/\D/g, '');
             if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
@@ -236,14 +261,22 @@ export default function PaymentCapturePage() {
   };
 
   // --- RENDERING ---
-  const filteredGuardians = useMemo(() => {
-    if (!searchQuery) return guardians;
+  const filteredClients = useMemo(() => {
+    if (!searchQuery) return clientMode === 'b2c' ? guardians : corporateClients;
     const lower = searchQuery.toLowerCase();
-    return guardians.filter(g => 
-      g.display_name.toLowerCase().includes(lower) || 
-      (g.metadata?.email || "").toLowerCase().includes(lower)
-    );
-  }, [guardians, searchQuery]);
+    
+    if (clientMode === 'b2c') {
+      return guardians.filter(g => 
+        g.display_name.toLowerCase().includes(lower) || 
+        (g.metadata?.email || "").toLowerCase().includes(lower)
+      );
+    } else {
+      return corporateClients.filter(c => 
+        c.company_name.toLowerCase().includes(lower) || 
+        c.contact_person.toLowerCase().includes(lower)
+      );
+    }
+  }, [guardians, corporateClients, searchQuery, clientMode]);
 
   if (loading) {
     return (
@@ -279,18 +312,34 @@ export default function PaymentCapturePage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* LEFT COLUMN: GUARDIAN SELECTION */}
+          {/* LEFT COLUMN: CLIENT SELECTION */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col h-[600px]">
-              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
+              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-6 flex items-center gap-2 border-b border-slate-100 pb-4">
                 <User size={16} className="text-blue-500"/> 1. Select Account
               </h3>
               
+              {/* B2C vs B2B Toggle */}
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 mb-4 shrink-0">
+                <button 
+                  onClick={() => { setClientMode('b2c'); setSelectedGuardian(null); setSearchQuery(""); }}
+                  className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 ${clientMode === 'b2c' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  <User size={12}/> Household
+                </button>
+                <button 
+                  onClick={() => { setClientMode('b2b'); setSelectedGuardian(null); setSearchQuery(""); }}
+                  className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 ${clientMode === 'b2b' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  <Building2 size={12}/> Corporate
+                </button>
+              </div>
+
               <div className="relative mb-4 group shrink-0">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors" size={16} />
                 <input 
                   type="text" 
-                  placeholder="Search parent..." 
+                  placeholder={`Search ${clientMode === 'b2c' ? 'parent' : 'company'}...`} 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-10 pr-4 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-inner"
@@ -298,22 +347,28 @@ export default function PaymentCapturePage() {
               </div>
 
               <div className="flex-1 overflow-y-auto pr-2 space-y-2 custom-scrollbar">
-                {filteredGuardians.map(g => (
-                  <div 
-                    key={g.id}
-                    onClick={() => setSelectedGuardian(g)}
-                    className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                      selectedGuardian?.id === g.id 
-                      ? 'bg-blue-50 border-blue-300 shadow-md ring-1 ring-blue-500' 
-                      : 'bg-white border-slate-100 hover:border-blue-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <p className={`font-black text-sm leading-tight ${selectedGuardian?.id === g.id ? 'text-blue-700' : 'text-slate-900'}`}>
-                      {g.display_name}
-                    </p>
-                    <p className="text-[10px] font-bold text-slate-400 truncate mt-1">{g.metadata?.email || "No email"}</p>
-                  </div>
-                ))}
+                {filteredClients.map(c => {
+                  const isSelected = selectedGuardian?.id === c.id;
+                  const displayName = clientMode === 'b2c' ? c.display_name : c.company_name;
+                  const subText = clientMode === 'b2c' ? (c.metadata?.email || "No email") : c.contact_person;
+
+                  return (
+                    <div 
+                      key={c.id}
+                      onClick={() => handleSelectClient(c, clientMode === 'b2b')}
+                      className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                        isSelected 
+                        ? 'bg-blue-50 border-blue-300 shadow-md ring-1 ring-blue-500' 
+                        : 'bg-white border-slate-100 hover:border-blue-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <p className={`font-black text-sm leading-tight ${isSelected ? 'text-blue-700' : 'text-slate-900'}`}>
+                        {displayName}
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-400 truncate mt-1">{subText}</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -323,8 +378,8 @@ export default function PaymentCapturePage() {
             <AnimatePresence mode="wait">
               {!selectedGuardian ? (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-[600px] flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-[32px] bg-white/50">
-                  <Building2 size={48} className="text-slate-300 mb-4" />
-                  <p className="text-slate-500 font-bold">Select an account from the left to view pending invoices.</p>
+                  <Wallet size={48} className="text-slate-300 mb-4" />
+                  <p className="text-slate-500 font-bold">Select an account from the left to capture a payment.</p>
                 </motion.div>
               ) : (
                 <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
