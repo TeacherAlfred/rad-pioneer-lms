@@ -6,7 +6,7 @@ import {
   ArrowLeft, Search, Filter, TrendingUp, Wallet, Receipt, 
   Clock, AlertTriangle, CheckCircle2, ChevronRight, BarChart3, FileText, 
   Users, Activity, ArrowDownToLine, ArrowUpRight, DollarSign, LayoutDashboard,
-  Loader2, Target, ChevronDown, ChevronUp, Save, Settings
+  Loader2, Target, ChevronDown, ChevronUp, Save, Settings, MessageSquare
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -18,6 +18,9 @@ export default function FinanceLedgerPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'ledger' | 'cashflow'>('ledger');
   
+  // ADDED: Current User State to track the Admin making the changes
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
   // Ledger Filters
   const [searchQuery, setSearchQuery] = useState("");
   const [planFilter, setPlanFilter] = useState<'all' | 'term' | 'bootcamp'>('all');
@@ -45,6 +48,14 @@ export default function FinanceLedgerPage() {
   async function fetchLedgerData() {
     setLoading(true);
     try {
+      // ADDED: Fetch the logged-in admin's profile
+      const sessionData = localStorage.getItem("pioneer_session");
+      if (sessionData) {
+        const localUser = JSON.parse(sessionData);
+        const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
+        if (profile) setCurrentUser(profile);
+      }
+
       const [profilesRes, enrollmentsRes, billingRes] = await Promise.all([
         supabase.from('profiles').select('id, display_name, role, linked_parent_id, metadata'),
         supabase.from('enrollments').select('student_id, courses(title)'),
@@ -213,12 +224,14 @@ export default function FinanceLedgerPage() {
         return {
           id: guardian.id,
           name: guardian.display_name,
+          phone: gMeta.phone || "", // Extracted for WhatsApp
           kids: myKids.length,
           plan,
           billingFrequency: billingSchedule.frequency || "monthly",
           rawNextDateStr,
           balance: accBalance,
           history: currentYearHistory,
+          lastStatementSent: gMeta.last_statement_sent || null,
           lastInv: lastInv ? {
             date: new Date(lastInv.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }),
             amount: lastAmount,
@@ -559,10 +572,56 @@ export default function FinanceLedgerPage() {
                                         </div>
 
                                         {/* RIGHT: Financial History Log */}
-                                        <div className="xl:col-span-2 bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm">
+                                        <div className="xl:col-span-2 bg-white p-6 rounded-[24px] border border-slate-200 shadow-sm flex flex-col">
                                           <h4 className="text-xs font-black uppercase tracking-widest text-slate-900 mb-6 flex items-center justify-between border-b border-slate-100 pb-3">
                                             <span className="flex items-center gap-2"><Receipt size={14} className="text-emerald-500" /> Account History</span>
                                             <div className="flex items-center gap-3">
+                                              
+                                              {/* UPDATED: WHATSAPP STATEMENT NOTIFICATION BUTTON */}
+                                              <button 
+                                                onClick={async (e) => {
+                                                  e.stopPropagation();
+                                                  const firstName = client.name.split(' ')[0];
+                                                  const today = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'long', year: 'numeric' });
+                                                  const amountStr = `R ${client.balance.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                                  const link = `${window.location.origin}/statement/${client.id}`;
+                                                  
+                                                  const msg = `Dear ${firstName},\n\nFind below a link to your latest statement as at ${today}, showing an amount of ${amountStr} that is outstanding.\nWe are in the process of moving our invoicing system and may have missed a payment. If so, please let us know ASAP.\n\n${link}\n\nRegards,\nRAD Academy`;
+                                                  
+                                                  let phoneParam = "";
+                                                  if (client.phone) {
+                                                      let cleanPhone = client.phone.replace(/\D/g, '');
+                                                      if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+                                                      phoneParam = cleanPhone;
+                                                  }
+                                                  
+                                                  // 1. Open WhatsApp
+                                                  window.open(`https://wa.me/${phoneParam}?text=${encodeURIComponent(msg)}`, '_blank');
+
+                                                  // 2. Log the action to the DB and update the UI
+                                                  try {
+                                                    const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', client.id).single();
+                                                    if (profile) {
+                                                      const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+                                                      meta.last_statement_sent = {
+                                                        date: today,
+                                                        amount: amountStr,
+                                                        admin: currentUser?.display_name?.split(' ')[0] || 'Admin'
+                                                      };
+                                                      await supabase.from('profiles').update({ metadata: meta }).eq('id', client.id);
+
+                                                      // Update local state directly so the footer appears instantly without refetching
+                                                      setClients(prev => prev.map(c => c.id === client.id ? { ...c, lastStatementSent: meta.last_statement_sent } : c));
+                                                    }
+                                                  } catch (err) {
+                                                    console.error("Failed to log statement send", err);
+                                                  }
+                                                }}
+                                                className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white rounded-lg transition-colors border border-emerald-100 shadow-sm"
+                                              >
+                                                <MessageSquare size={12} /> <span className="text-[9px] font-black uppercase tracking-widest">WhatsApp</span>
+                                              </button>
+
                                               <Link 
                                                 href={`/statement/${client.id}`} 
                                                 target="_blank"
@@ -573,7 +632,8 @@ export default function FinanceLedgerPage() {
                                               <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">Current Year</span>
                                             </div>
                                           </h4>
-                                          <div className="max-h-[300px] overflow-y-auto custom-scrollbar pr-2 space-y-2">
+
+                                          <div className="flex-1 max-h-[300px] overflow-y-auto custom-scrollbar pr-2 space-y-2 mb-4">
                                             {client.history.length === 0 ? (
                                               <p className="text-slate-400 text-xs italic text-center py-8">No invoices generated for this year.</p>
                                             ) : (
@@ -601,12 +661,22 @@ export default function FinanceLedgerPage() {
                                                     <div className="text-right w-24">
                                                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-0.5">Clearance</p>
                                                       <p className="text-xs font-bold text-slate-700">{hist.paidDate}</p>
-                                                      </div>
+                                                    </div>
                                                   </div>
                                                 </div>
                                               ))
                                             )}
                                           </div>
+
+                                          {/* NEW: STATEMENT AUDIT LOG FOOTER */}
+                                          {client.lastStatementSent && (
+                                            <div className="mt-auto pt-4 border-t border-slate-100 flex items-center justify-between bg-slate-50 p-3 rounded-xl">
+                                              <p className="text-[10px] font-bold text-slate-500 flex items-center gap-1.5">
+                                                <CheckCircle2 size={12} className="text-emerald-500" />
+                                                Statement sent on <span className="text-slate-900">{client.lastStatementSent.date}</span> for <span className="text-rose-600 font-black">{client.lastStatementSent.amount}</span> by <span className="text-slate-900">{client.lastStatementSent.admin}</span>
+                                              </p>
+                                            </div>
+                                          )}
                                         </div>
 
                                       </div>
