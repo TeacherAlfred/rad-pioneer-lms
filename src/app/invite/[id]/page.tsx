@@ -164,11 +164,15 @@ export default function VIPInvitePage() {
           id: crypto.randomUUID(), invoice_number: invoiceNumber, payment_reference: `2026${invoiceNumber}`,
           guardian_id: guardianId, total_amount: (activePricingTier.price * numKids).toString(),
           status: 'pending', doc_type: 'quote', expires_at: expiryDate.toISOString(), amount_paid: "0",
-          line_items: JSON.stringify([{
+          line_items: [{ // <-- Removed JSON.stringify
             qty: numKids.toString(), desc: `LMS Access - ${activePricingTier.name}`, disc: 0, 
             note: "Self-paced LMS Access License", price: activePricingTier.price.toString(), item_id: activePricingTier.id
-          }]),
-          metadata: JSON.stringify({ global_note: "Fast-Track Upgrade. Please pay this quote to officially secure your child's spot.", prospect_name: parentName, prospect_email: email })
+          }],
+          metadata: { // <-- Removed JSON.stringify
+            global_note: "Fast-Track Upgrade. Please pay this quote to officially secure your child's spot.", 
+            prospect_name: parentName, 
+            prospect_email: email 
+          }
         };
 
         // 4. Execute Referral Bonus

@@ -196,19 +196,19 @@ export default function InvitesCommandCenter() {
         doc_type: 'quote',
         expires_at: expiryDate.toISOString(),
         amount_paid: "0",
-        line_items: JSON.stringify([{
+        line_items: [{ // <-- Removed JSON.stringify
           qty: numChildren.toString(), 
           desc: selectedPricing.desc, 
           disc: 0, 
           note: "Self-paced LMS Access License", 
           price: selectedPricing.price.toString(),
           item_id: selectedPricing.id
-        }]),
-        metadata: JSON.stringify({ 
+        }],
+        metadata: { // <-- Removed JSON.stringify
           global_note: "Your VIP Access trial has concluded. Please pay this quote to officially secure your child's spot.", 
           prospect_name: p.name, 
           prospect_email: p.email 
-        })
+        }
       };
 
       // 4. Referral Bonus Logic
