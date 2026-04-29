@@ -831,13 +831,13 @@ export default function VIPInvitePage() {
                          
                          <ul className="mt-5 space-y-2.5 mb-6">
                            <li className="flex items-start gap-2.5 text-[11px] font-bold text-slate-300">
-                             <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5"/> Instant Platform Access
+                             <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5"/> Priority Platform Access
                            </li>
                            <li className="flex items-start gap-2.5 text-[11px] font-bold text-slate-300">
-                             <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5"/> Permanent Tier Discount
+                             <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5"/> Permanent LMS Access Discount*
                            </li>
                            <li className="flex items-start gap-2.5 text-[11px] font-bold text-amber-400 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
-                             <Sparkles size={14} className="text-amber-500 shrink-0 mt-0.5"/> BONUS: Free 1-on-1 Teams Setup Session!
+                             <Sparkles size={14} className="text-amber-500 shrink-0 mt-0.5"/> BONUS: Free 1-on-1 Getting started session! (online)
                            </li>
                          </ul>
 
