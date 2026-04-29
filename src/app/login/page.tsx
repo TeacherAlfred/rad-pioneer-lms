@@ -129,11 +129,7 @@ export default function LoginPage() {
             ? JSON.parse(dbUser.metadata) 
             : dbUser.metadata;
 
-          if (meta && meta.grade) {
-            router.push("/math");
-          } else {
-            router.push("/student/dashboard");
-          }
+          router.push("/student/dashboard");
           
         } else {
           setError("Oops! That Secret Code didn't work.");
