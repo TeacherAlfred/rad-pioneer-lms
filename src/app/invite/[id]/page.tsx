@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Cpu, Gamepad2, Sparkles, CheckCircle2, AlertTriangle,
-  ChevronRight, ShieldCheck, Clock, Loader2, Target, Users, Plus, X, UserPlus,
-  ChevronDown, Star, MessageSquareHeart, ChevronLeft, Edit2, ArrowRight, Share2, Check,
+  Cpu, Gamepad2, Sparkles, CheckCircle2, AlertTriangle, Lock,
+  ChevronRight, ShieldCheck, Clock, Loader2, Target, Users, Minus, Plus, X, UserPlus,
+  ChevronDown, ChevronUp, Star, MessageSquareHeart, ChevronLeft, Edit2, ArrowRight, Share2, Check,
   CreditCard, GraduationCap, Zap, Mail, CalendarDays
 } from "lucide-react";
 import confetti from "canvas-confetti";
@@ -25,6 +25,7 @@ export default function VIPInvitePage() {
   // Wizard & Upsell State
   const [wizardStep, setWizardStep] = useState<0 | 1 | 2 | 3>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [chosenPath, setChosenPath] = useState<'trial' | 'fast-track' | null>(null);
   
@@ -37,6 +38,11 @@ export default function VIPInvitePage() {
   const [phone, setPhone] = useState("");
   const [numKids, setNumKids] = useState<number>(1);
   const [editingField, setEditingField] = useState<'name' | 'email' | 'phone' | null>(null);
+  
+  // Scroll States
+  const [isAtBottomStep1, setIsAtBottomStep1] = useState(false);
+  const [step3ScrollPos, setStep3ScrollPos] = useState({ isTop: true, isBottom: false });
+  const step3ScrollRef = useRef<HTMLDivElement>(null);
 
   // Multi-Child State
   const [children, setChildren] = useState([{ id: '1', name: '', dob: '', codingAtSchool: 'No' }]);
@@ -125,7 +131,10 @@ export default function VIPInvitePage() {
   const handleNextStep2 = () => {
     const validChildren = children.filter(c => c.name.trim() !== "");
     if (validChildren.length !== numKids) return alert("Please provide the names for all your children.");
-    setWizardStep(3); // Go to Upsell Step
+    
+    // Reset scroll state for Step 3
+    setStep3ScrollPos({ isTop: true, isBottom: false });
+    setWizardStep(3); 
     trackProgress('Student Details Completed');
   };
 
@@ -138,15 +147,28 @@ export default function VIPInvitePage() {
     return Array.from({length: 24}).map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
   };
 
+  // Scroll Controllers for Step 3
+  const scrollStep3Down = () => {
+    if (step3ScrollRef.current) {
+      step3ScrollRef.current.scrollBy({ top: 180, behavior: 'smooth' });
+    }
+  };
+
+  const scrollStep3Up = () => {
+    if (step3ScrollRef.current) {
+      step3ScrollRef.current.scrollBy({ top: -180, behavior: 'smooth' });
+    }
+  };
+
   // --- THE MASTER SUBMISSION ENGINE (Handles both paths) ---
-  const handleFinalSubmit = async (isUpsellAccepted: boolean) => {
-    setIsSubmitting(true);
+  const handleComplete = async (path: 'fast-track' | 'trial') => {
+    setIsCompleting(true);
     const validChildren = children.filter(c => c.name.trim() !== "");
 
     try {
       const today = new Date();
       
-      if (isUpsellAccepted) {
+      if (path === 'fast-track') {
         // ==========================================
         // PATH A: UPGRADE & FAST-TRACK (PLG Conversion)
         // ==========================================
@@ -178,11 +200,11 @@ export default function VIPInvitePage() {
           id: crypto.randomUUID(), invoice_number: invoiceNumber, payment_reference: `2026${invoiceNumber}`,
           guardian_id: guardianId, total_amount: (activePricingTier.price * numKids).toString(),
           status: 'pending', doc_type: 'quote', expires_at: expiryDate.toISOString(), amount_paid: "0",
-          line_items: [{ // <-- Removed JSON.stringify
+          line_items: [{
             qty: numKids.toString(), desc: `LMS Access - ${activePricingTier.name}`, disc: 0, 
             note: "Self-paced LMS Access License", price: activePricingTier.price.toString(), item_id: activePricingTier.id
           }],
-          metadata: { // <-- Removed JSON.stringify
+          metadata: {
             global_note: "Fast-Track Upgrade. Please pay this quote to officially secure your child's spot.", 
             prospect_name: parentName, 
             prospect_email: email 
@@ -206,7 +228,7 @@ export default function VIPInvitePage() {
         await supabase.from('profiles').insert([guardianProfile, ...studentProfiles]);
         await supabase.from('billing_records').insert([quotationRecord]);
         
-        const updatedMeta = { ...prospectData.metadata, converted_profile_id: guardianId, conversion_date: today.toISOString(), form_progress: 'Fast-Tracked' };
+        const updatedMeta = { ...prospectData.metadata, children_data: children, converted_profile_id: guardianId, conversion_date: today.toISOString(), form_progress: 'Fast-Tracked' };
         await supabase.from('prospects').update({ name: parentName, email: email, phone: phone, status: 'Converted (Won)', metadata: updatedMeta }).eq('id', inviteId);
 
         fetch('/api/emails/dispatch', {
@@ -237,7 +259,7 @@ export default function VIPInvitePage() {
         if (prospectData?.metadata?.custom_trial_end) trialEnd = new Date(prospectData.metadata.custom_trial_end);
 
         const updatedMeta = { 
-          ...prospectData.metadata, children: validChildren, trial_start: trialStart.toISOString(),
+          ...prospectData.metadata, children_data: children, children: validChildren, trial_start: trialStart.toISOString(),
           trial_end: trialEnd.toISOString(), accepted_date: today.toISOString(), form_progress: 'Completed Trial'
         };
 
@@ -264,7 +286,7 @@ export default function VIPInvitePage() {
       console.error(err);
       alert("Something went wrong. Please try again or contact support.");
     } finally {
-      setIsSubmitting(false);
+      setIsCompleting(false);
     }
   };
 
@@ -313,34 +335,6 @@ export default function VIPInvitePage() {
       </div>
     );
   }
-
-  const InlineEditField = ({ label, value, field, type = "text" }: { label: string, value: string, field: 'name'|'email'|'phone', type?: string }) => (
-    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between group transition-colors hover:bg-slate-100">
-      <div className="flex-1">
-        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{label}</p>
-        {editingField === field ? (
-          <input 
-            autoFocus type={type} value={value}
-            onChange={(e) => {
-              if(field === 'name') setParentName(e.target.value);
-              if(field === 'email') setEmail(e.target.value);
-              if(field === 'phone') setPhone(e.target.value);
-            }}
-            onKeyDown={(e) => e.key === 'Enter' && setEditingField(null)}
-            className="w-full bg-transparent font-bold text-slate-900 focus:outline-none border-b border-blue-500 pb-0.5"
-          />
-        ) : (
-          <p className={`font-bold ${value ? 'text-slate-900' : 'text-slate-400 italic'}`}>{value || `Tap to add ${label.toLowerCase()}`}</p>
-        )}
-      </div>
-      <button 
-        type="button" onClick={() => setEditingField(editingField === field ? null : field)}
-        className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 hover:text-blue-600 hover:border-blue-300 transition-all shadow-sm shrink-0"
-      >
-        {editingField === field ? <Check size={14} className="text-emerald-500"/> : <Edit2 size={14} />}
-      </button>
-    </div>
-  );
 
   return (
     <div className="min-h-screen bg-[#fafcff] text-slate-900 font-sans selection:bg-blue-500/30 overflow-x-hidden pb-12">
@@ -537,158 +531,363 @@ export default function VIPInvitePage() {
           ========================================================= */}
       <AnimatePresence>
         {wizardStep > 0 && (
-          <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setWizardStep(0)} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-            <motion.div initial={{ y: "100%", opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: "100%", opacity: 0 }} transition={{ type: "spring", damping: 25, stiffness: 300 }} className="relative w-full max-w-lg bg-white sm:rounded-[32px] rounded-t-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-              <div className="p-6 border-b border-slate-100 bg-slate-50 shrink-0">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-black uppercase italic tracking-tighter text-slate-900">
-                    {wizardStep === 1 ? "Guardian Details" : wizardStep === 2 ? "Student Details" : "Fast-Track Upgrade"}
-                  </h3>
-                  <button onClick={() => setWizardStep(0)} className="p-2 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-600 transition-colors"><X size={14}/></button>
-                </div>
-                <div className="flex gap-2">
-                  <div className="h-1.5 flex-1 bg-blue-600 rounded-full transition-all duration-500" />
-                  <div className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${wizardStep >= 2 ? 'bg-blue-600' : 'bg-slate-200'}`} />
-                  <div className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${wizardStep === 3 ? 'bg-amber-400' : 'bg-slate-200'}`} />
-                </div>
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-2 text-right">Step {wizardStep} of 3</p>
-              </div>
-
-              <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-white">
-                
-                {/* STEP 1: PARENT DETAILS */}
-                {wizardStep === 1 && (
-                  <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-4">
-                    <p className="text-sm font-medium text-slate-500 mb-6">Review your details below. Tap the pencil icon to edit.</p>
-                    <InlineEditField label="Full Name" value={parentName} field="name" />
-                    <InlineEditField label="Email Address" value={email} field="email" type="email" />
-                    <InlineEditField label="Phone Number" value={phone} field="phone" type="tel" />
-                    <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mt-6">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-blue-700 block mb-2">How many children are you signing up?</label>
-                      <input type="number" min="1" max="5" value={numKids} onChange={e => setNumKids(parseInt(e.target.value) || 1)} className="w-full bg-white border border-blue-200 rounded-lg px-4 py-3 text-lg font-black text-blue-900 text-center focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all shadow-sm" />
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+            <motion.div 
+              key={`step${wizardStep}`}
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: -20 }}
+              className="flex flex-col relative w-full max-w-md bg-white rounded-[32px] shadow-2xl overflow-hidden max-h-[85vh]"
+            >
+              
+              {/* =========================================
+                  STEP 1: GUARDIAN DETAILS
+                  ========================================= */}
+              {wizardStep === 1 && (
+                <>
+                  <div className="shrink-0 pt-8 px-8 pb-4 bg-white z-20">
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <div className="inline-flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 text-amber-600 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest mb-3">
+                          <Lock size={10} /> VIP Spot Temporarily Reserved
+                        </div>
+                        <h2 className="text-2xl font-black italic tracking-tighter text-slate-900 leading-none uppercase">
+                          Identity Verification
+                        </h2>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded-md">Step 1/3</span>
+                      </div>
                     </div>
-                    
-                    <div className="flex gap-3 mt-8 pt-4 border-t border-slate-100">
-                      <button onClick={() => setWizardStep(0)} className="px-5 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-black uppercase tracking-widest text-xs transition-all">Cancel</button>
-                      <button onClick={handleNextStep1} className="flex-1 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all shadow-xl">
-                        Next: Student Details <ArrowRight size={16} />
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
+                  </div>
 
-                {/* STEP 2: STUDENT DETAILS */}
-                {wizardStep === 2 && (
-                  <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-                    <p className="text-sm font-medium text-slate-500 mb-2">Enter the details for your {numKids > 1 ? `${numKids} children` : 'child'}.</p>
-                    {numKids > 1 && (
-                      <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-                        {children.map((child, i) => (
-                          <button key={child.id} onClick={() => setActiveChildTab(child.id)} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border ${activeChildTab === child.id ? 'bg-slate-900 text-white border-slate-900 shadow-md' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}`}>
-                            Child {i + 1} {child.name ? `- ${child.name.split(' ')[0]}` : ''}
+                  <div 
+                    className="flex-1 overflow-y-auto no-scrollbar px-8 pb-24 relative"
+                    onScroll={(e) => {
+                      const target = e.target as HTMLElement;
+                      setIsAtBottomStep1(target.scrollHeight - target.scrollTop <= target.clientHeight + 20);
+                    }}
+                  >
+                    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mb-5">
+                      <div className="relative group focus-within:bg-blue-50/30 transition-colors border-b border-slate-100 p-3 pl-4">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-focus-within:text-blue-600 mb-0.5 block transition-colors">
+                          Legal Guardian Name
+                        </label>
+                        <input 
+                          type="text" 
+                          value={parentName} 
+                          onChange={e => setParentName(e.target.value)}
+                          className="w-full bg-transparent text-sm font-bold text-slate-900 focus:outline-none placeholder:text-slate-300 placeholder:font-medium"
+                          placeholder="As it appears on official documents"
+                        />
+                      </div>
+                      <div className="relative group focus-within:bg-blue-50/30 transition-colors border-b border-slate-100 p-3 pl-4">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-focus-within:text-blue-600 mb-0.5 block transition-colors">
+                          Secure Email Address
+                        </label>
+                        <input 
+                          type="email" 
+                          value={email} 
+                          onChange={e => setEmail(e.target.value)}
+                          className="w-full bg-transparent text-sm font-bold text-slate-900 focus:outline-none placeholder:text-slate-300 placeholder:font-medium"
+                          placeholder="For billing & portal access"
+                        />
+                      </div>
+                      <div className="relative group focus-within:bg-blue-50/30 transition-colors p-3 pl-4">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-focus-within:text-blue-600 mb-0.5 block transition-colors">
+                          Mobile Number
+                        </label>
+                        <input 
+                          type="tel" 
+                          value={phone} 
+                          onChange={e => setPhone(e.target.value)}
+                          className="w-full bg-transparent text-sm font-bold text-slate-900 focus:outline-none placeholder:text-slate-300 placeholder:font-medium"
+                          placeholder="For urgent portal SMS updates"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex items-center justify-between mb-8">
+                      <div>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Student Profiles</p>
+                        <p className="text-xs font-bold text-slate-900 mt-0.5">Licenses required?</p>
+                        <p className="text-[9px] font-bold text-blue-500 mt-1 bg-blue-500/10 w-fit px-1.5 py-0.5 rounded">1 License = 1 Child</p>
+                      </div>
+                      <div className="flex items-center gap-4 bg-white border border-slate-200 rounded-xl p-1 shadow-sm shrink-0">
+                        <button 
+                          type="button" 
+                          onClick={() => setNumKids(Math.max(1, numKids - 1))}
+                          disabled={numKids <= 1}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-30 transition-colors"
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <span className="w-3 text-center font-black text-slate-900 text-sm">{numKids}</span>
+                        <button 
+                          type="button" 
+                          onClick={() => setNumKids(Math.min(5, numKids + 1))}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg text-blue-600 hover:bg-blue-50 transition-colors"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className={`absolute bottom-[100px] left-0 right-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none flex items-end justify-center pb-2 transition-opacity duration-300 z-10 ${isAtBottomStep1 ? 'opacity-0' : 'opacity-100'}`}>
+                    <div className="bg-white/80 backdrop-blur-sm p-1.5 rounded-full shadow-sm border border-slate-100 animate-bounce text-slate-400">
+                      <ChevronDown size={16} />
+                    </div>
+                  </div>
+
+                  <div className="absolute bottom-0 left-0 right-0 p-6 pt-4 bg-gradient-to-t from-white via-white to-white/90 backdrop-blur-sm z-20 flex gap-3">
+                    <button 
+                      onClick={() => setWizardStep(0)}
+                      className="w-14 h-[52px] bg-slate-100 text-slate-500 rounded-2xl flex items-center justify-center hover:bg-slate-200 transition-colors shrink-0"
+                    >
+                      <X size={20} />
+                    </button>
+                    <button 
+                      onClick={handleNextStep1}
+                      className="flex-1 bg-slate-900 text-white rounded-2xl h-[52px] text-xs font-black uppercase tracking-widest hover:bg-slate-800 flex items-center justify-center gap-2 transition-all shadow-xl shadow-slate-900/20 active:scale-[0.98]"
+                    >
+                      Confirm Identity & Continue <ArrowRight size={16} />
+                    </button>
+                  </div>
+                  <div className="absolute bottom-1 left-0 right-0 flex justify-center items-center gap-1.5 pb-2 text-slate-400 z-20 pointer-events-none">
+                    <ShieldCheck size={12} />
+                    <span className="text-[8px] font-black uppercase tracking-[0.2em]">Secure 256-Bit SSL Encryption</span>
+                  </div>
+                </>
+              )}
+
+              {/* =========================================
+                  STEP 2: STUDENT DETAILS
+                  ========================================= */}
+              {wizardStep === 2 && (
+                <>
+                  <div className="shrink-0 pt-8 px-8 pb-4 bg-white z-20">
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <div className="inline-flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 text-blue-600 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest mb-3">
+                          <Sparkles size={10} /> Personalize Experience
+                        </div>
+                        <h2 className="text-2xl font-black italic tracking-tighter text-slate-900 leading-none uppercase">
+                          Student Details
+                        </h2>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded-md">Step 2/3</span>
+                      </div>
+                    </div>
+
+                    {children.length > 1 && (
+                      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+                        {children.map((c, i) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setActiveChildTab(c.id)}
+                            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all ${activeChildTab === c.id ? 'bg-slate-900 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                          >
+                            Student {i + 1}
                           </button>
                         ))}
                       </div>
                     )}
-                    <AnimatePresence mode="wait">
-                      <motion.div key={activeChildTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4 bg-slate-50 p-5 rounded-2xl border border-slate-100">
-                        <div>
-                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1">First Name *</label>
-                          <input autoFocus required type="text" placeholder="e.g. Leo" value={children.find(c => c.id === activeChildTab)?.name || ''} onChange={e => updateChild(activeChildTab, 'name', e.target.value)} className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 shadow-sm" />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1">Date of Birth (Optional)</label>
-                          <input type="date" value={children.find(c => c.id === activeChildTab)?.dob || ''} onChange={e => updateChild(activeChildTab, 'dob', e.target.value)} className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 shadow-sm" />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 block mb-2">Do they do coding at school?</label>
-                          <div className="flex bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
-                            {['Yes', 'No'].map(opt => (
-                              <button key={opt} type="button" onClick={() => updateChild(activeChildTab, 'codingAtSchool', opt)} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${children.find(c => c.id === activeChildTab)?.codingAtSchool === opt ? 'bg-blue-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100'}`}>{opt}</button>
-                            ))}
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-24 relative">
+                    {children.map((child, index) => child.id === activeChildTab && (
+                      <div key={child.id} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
+                        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                          <div className="relative group focus-within:bg-blue-50/30 transition-colors border-b border-slate-100 p-3 pl-4">
+                            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-focus-within:text-blue-600 mb-0.5 block transition-colors">
+                              First Name *
+                            </label>
+                            <input 
+                              type="text" 
+                              value={child.name} 
+                              onChange={e => {
+                                const newChildren = [...children];
+                                newChildren[index].name = e.target.value;
+                                setChildren(newChildren);
+                              }}
+                              className="w-full bg-transparent text-sm font-bold text-slate-900 focus:outline-none placeholder:text-slate-300 placeholder:font-medium"
+                              placeholder="e.g. Leo"
+                            />
+                          </div>
+                          <div className="relative group focus-within:bg-blue-50/30 transition-colors p-3 pl-4">
+                            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-focus-within:text-blue-600 mb-0.5 block transition-colors">
+                              Date of Birth (Optional)
+                            </label>
+                            <input 
+                              type="date" 
+                              value={child.dob} 
+                              onChange={e => {
+                                const newChildren = [...children];
+                                newChildren[index].dob = e.target.value;
+                                setChildren(newChildren);
+                              }}
+                              className="w-full bg-transparent text-sm font-bold text-slate-900 focus:outline-none placeholder:text-slate-300 [color-scheme:light]"
+                            />
                           </div>
                         </div>
-                      </motion.div>
-                    </AnimatePresence>
-                    <div className="flex gap-3 pt-4 border-t border-slate-100">
-                      <button onClick={() => setWizardStep(1)} className="px-5 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-black uppercase tracking-widest text-xs transition-all">Back</button>
-                      <button onClick={handleNextStep2} className="flex-1 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all shadow-xl">
-                        Continue <ArrowRight size={16} />
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
 
-                {/* STEP 3: THE PLG UPSELL */}
-                {wizardStep === 3 && (
-                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
-                    <div className="text-center">
-                      <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-amber-200 shadow-inner">
-                        <Zap size={28} className="fill-amber-500/20" />
-                      </div>
-                      <h3 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900">Want to skip the trial limits?</h3>
-                      <p className="text-sm text-slate-500 mt-2 font-medium">Fast-track your setup today to lock in your discount instantly.</p>
-                    </div>
-
-                    <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden">
-                      <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none"><Sparkles size={80}/></div>
-                      
-                      <div className="relative z-10 space-y-4">
-                        <span className="px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded text-[9px] font-black uppercase tracking-widest">Bonus Unlocked</span>
-                        <p className="font-bold text-sm leading-relaxed">Upgrade today and receive a bonus: <br/><span className="text-amber-400"> 1-on-1 Teams Session</span> to help get your child up and running.</p>
-                        
-                        <div className="bg-black/30 rounded-xl border border-white/10 overflow-hidden mt-4">
-                          <table className="w-full text-left">
-                            <thead className="bg-black/20 text-[9px] font-black uppercase tracking-widest text-slate-400">
-                              <tr>
-                                <th className="px-4 py-2">Item</th>
-                                <th className="px-4 py-2 text-center">Qty</th>
-                                <th className="px-4 py-2 text-right">Total/mo</th>
-                              </tr>
-                            </thead>
-                            <tbody className="text-sm font-bold">
-                              <tr>
-                                <td className="px-4 py-3 border-b border-white/5">LMS Access - {activePricingTier.name}<br/><span className="text-[10px] text-slate-400 font-normal">R{activePricingTier.price} per student per month</span></td>
-                                <td className="px-4 py-3 border-b border-white/5 text-center">{numKids}</td>
-                                <td className="px-4 py-3 border-b border-white/5 text-right text-emerald-400">R{activePricingTier.price * numKids}</td>
-                              </tr>
-                            </tbody>
-                          </table>
+                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 shadow-sm">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-3 text-center">Does this student do coding at school?</p>
+                          <div className="flex bg-slate-200/60 p-1 rounded-xl">
+                            <button
+                              onClick={() => {
+                                const newChildren = [...children];
+                                newChildren[index].codingAtSchool = 'Yes';
+                                setChildren(newChildren);
+                              }}
+                              className={`flex-1 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${child.codingAtSchool === 'Yes' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                              Yes
+                            </button>
+                            <button
+                              onClick={() => {
+                                const newChildren = [...children];
+                                newChildren[index].codingAtSchool = 'No';
+                                setChildren(newChildren);
+                              }}
+                              className={`flex-1 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${child.codingAtSchool === 'No' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                              No
+                            </button>
+                          </div>
                         </div>
                       </div>
+                    ))}
+                  </div>
+
+                  <div className="absolute bottom-0 left-0 right-0 p-6 pt-4 bg-gradient-to-t from-white via-white to-white/90 backdrop-blur-sm z-20 flex gap-3">
+                    <button 
+                      onClick={() => setWizardStep(1)}
+                      className="w-14 h-[52px] bg-slate-100 text-slate-500 rounded-2xl flex items-center justify-center hover:bg-slate-200 transition-colors shrink-0"
+                    >
+                      <ChevronLeft size={20} />
+                    </button>
+                    <button 
+                      onClick={handleNextStep2}
+                      className="flex-1 bg-slate-900 text-white rounded-2xl h-[52px] text-xs font-black uppercase tracking-widest hover:bg-slate-800 flex items-center justify-center gap-2 transition-all shadow-xl shadow-slate-900/20 active:scale-[0.98]"
+                    >
+                      Save & Continue <ArrowRight size={16} />
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* =========================================
+                  STEP 3: FINAL SELECTION (RE-ENGINEERED)
+                  ========================================= */}
+              {wizardStep === 3 && (
+                <>
+                  <div className="shrink-0 pt-8 px-8 pb-4 bg-white z-20">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <div className="inline-flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest mb-3">
+                          <CheckCircle2 size={10} /> Final Step
+                        </div>
+                        <h2 className="text-2xl font-black italic tracking-tighter text-slate-900 leading-none uppercase">
+                          Select Access Path
+                        </h2>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded-md">Step 3/3</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Scroll Up Button Indicator */}
+                  <div className={`absolute top-28 left-0 right-0 h-16 bg-gradient-to-b from-white to-transparent pointer-events-none flex items-start justify-center pt-2 transition-opacity duration-300 z-30 ${step3ScrollPos.isTop ? 'opacity-0' : 'opacity-100'}`}>
+                    <button onClick={scrollStep3Up} className="pointer-events-auto bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-md border border-slate-200 text-slate-500 hover:text-blue-600 transition-colors">
+                      <ChevronUp size={16} />
+                    </button>
+                  </div>
+
+                  {/* Scrollable Form Content */}
+                  <div 
+                    ref={step3ScrollRef}
+                    onScroll={(e) => {
+                      const target = e.currentTarget;
+                      setStep3ScrollPos({
+                        isTop: target.scrollTop <= 10,
+                        isBottom: target.scrollHeight - target.scrollTop <= target.clientHeight + 20
+                      });
+                    }}
+                    className="flex-1 overflow-y-auto no-scrollbar px-8 pb-10 relative space-y-4"
+                  >
+                    
+                    {/* FAST TRACK CARD (The "Pro" Tier) */}
+                    <div className="bg-slate-900 rounded-3xl p-1 relative overflow-hidden shadow-2xl shadow-slate-900/20 mt-2">
+                      <div className="absolute top-0 right-0 bg-amber-500 text-slate-900 text-[8px] font-black uppercase tracking-widest px-3 py-1.5 rounded-bl-xl z-10 shadow-sm">
+                        Most Popular
+                      </div>
+                      <div className="bg-slate-800/60 rounded-[28px] p-6 border border-slate-700">
+                         <h3 className="text-white font-black italic text-xl uppercase tracking-tighter">Fast-Track Upgrade</h3>
+                         <p className="text-slate-400 text-[11px] font-medium mt-1 leading-relaxed">Skip the trial line and permanently lock in the discounted pioneer tier.</p>
+                         
+                         <ul className="mt-5 space-y-2.5 mb-6">
+                           <li className="flex items-start gap-2.5 text-[11px] font-bold text-slate-300">
+                             <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5"/> Instant Platform Access
+                           </li>
+                           <li className="flex items-start gap-2.5 text-[11px] font-bold text-slate-300">
+                             <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5"/> Permanent Tier Discount
+                           </li>
+                           <li className="flex items-start gap-2.5 text-[11px] font-bold text-amber-400 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
+                             <Sparkles size={14} className="text-amber-500 shrink-0 mt-0.5"/> BONUS: Free 1-on-1 Teams Setup Session!
+                           </li>
+                         </ul>
+
+                         {/* Upgraded CTA */}
+                         <button 
+                           onClick={() => handleComplete('fast-track')} 
+                           disabled={isCompleting} 
+                           className="w-full bg-amber-500 text-slate-900 rounded-xl py-4 text-xs font-black uppercase tracking-widest hover:bg-amber-400 transition-colors flex justify-center items-center gap-2 shadow-[0_0_15px_rgba(245,158,11,0.4)] active:scale-[0.98]"
+                         >
+                           {isCompleting ? <Loader2 className="animate-spin" size={18}/> : 'Unlock Fast-Track & Claim Bonuses'}
+                         </button>
+                      </div>
                     </div>
 
-                    <div className="space-y-3 pt-2">
-                      <button 
-                        onClick={() => handleFinalSubmit(true)}
-                        disabled={isSubmitting}
-                        className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-white rounded-xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-emerald-500/20 flex items-center justify-center gap-2 group disabled:opacity-50"
-                      >
-                        {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <><Zap size={16} className="fill-white/20"/> Yes, Upgrade & Fast-Track</>}
-                      </button>
-                      
-                      <button 
-                        onClick={() => handleFinalSubmit(false)}
-                        disabled={isSubmitting}
-                        className="w-full py-4 bg-white border-2 border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700 rounded-xl font-black uppercase tracking-widest text-xs transition-all flex items-center justify-center disabled:opacity-50"
-                      >
-                        No thanks, I'll stick to the free trial
-                      </button>
+                    {/* STANDARD TRIAL CARD (Repositioned as the downgrade option) */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 mt-4">
+                       <h3 className="text-slate-600 font-black italic text-sm uppercase tracking-tighter">14-Day Free Trial</h3>
+                       <p className="text-slate-500 text-[10px] font-medium mt-1 mb-4 leading-relaxed">Get 14 days of full platform access to test the waters before deciding. Standard rates apply post-trial.</p>
+                       
+                       <button 
+                         onClick={() => handleComplete('trial')} 
+                         disabled={isCompleting} 
+                         className="w-full bg-white border border-slate-300 text-slate-600 rounded-xl py-3 text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-colors flex justify-center items-center gap-2 active:scale-[0.98]"
+                       >
+                         {isCompleting ? <Loader2 className="animate-spin" size={14}/> : 'Start Free Trial Instead'}
+                       </button>
+                    </div>
 
+                    {/* Simple text back button */}
+                    <div className="pt-2 pb-6 text-center">
                       <button 
-                        onClick={() => setWizardStep(2)}
-                        disabled={isSubmitting}
-                        className="w-full py-3 mt-2 text-slate-400 hover:text-slate-600 font-black uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                        onClick={() => setWizardStep(2)} 
+                        className="text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 flex items-center justify-center gap-1 mx-auto transition-colors"
                       >
-                        <ChevronLeft size={14} /> Back to Student Details
+                        <ChevronLeft size={12}/> Back to Student Details
                       </button>
                     </div>
 
-                  </motion.div>
-                )}
+                  </div>
 
-              </div>
+                  {/* Scroll Down Button Indicator */}
+                  <div className={`absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-white via-white to-transparent pointer-events-none flex items-end justify-center pb-6 transition-opacity duration-300 z-30 ${step3ScrollPos.isBottom ? 'opacity-0' : 'opacity-100'}`}>
+                    <button onClick={scrollStep3Down} className="pointer-events-auto bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-md border border-slate-200 animate-bounce text-slate-500 hover:text-blue-600 transition-colors">
+                      <ChevronDown size={16} />
+                    </button>
+                  </div>
+
+                </>
+              )}
+
             </motion.div>
           </div>
         )}

@@ -879,6 +879,31 @@ export default function InvitesCommandCenter() {
                       {copied ? <><CheckCircle2 size={14}/> Copied</> : <><Copy size={14}/> Copy Text</>}
                     </button>
                   </div>
+
+                  {/* --- NEW: DIRECT WHATSAPP LAUNCHER --- */}
+                  {shareTab === 'whatsapp' && (
+                    <button
+                      onClick={() => {
+                        const text = getShareCopy('whatsapp', showShareModal);
+                        let phone = showShareModal?.phone ? showShareModal.phone.replace(/\D/g, '') : '';
+                        
+                        // Auto-format local ZA numbers (082... -> 2782...) for WhatsApp API reliability
+                        if (phone.startsWith('0')) {
+                          phone = '27' + phone.substring(1);
+                        }
+
+                        const url = phone 
+                          ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}` 
+                          : `https://wa.me/?text=${encodeURIComponent(text)}`;
+                          
+                        window.open(url, '_blank');
+                      }}
+                      className="w-full mt-4 py-4 bg-[#25D366] hover:bg-[#1DA851] text-white rounded-2xl font-black uppercase tracking-widest text-[11px] flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(37,211,102,0.3)]"
+                    >
+                      <MessageSquare size={16} /> Open in WhatsApp
+                    </button>
+                  )}
+
                 </div>
               </div>
             </motion.div>
