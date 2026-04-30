@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, DollarSign, Clock, X, ArrowUpRight,
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
   GraduationCap, Eye, Bell, CalendarDays, Building2, Send, 
-  Inbox, Calculator, Key
+  Inbox, Calculator, Key, Brain, Cpu, Trophy
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -25,6 +25,14 @@ export default function AdminDashboard() {
   const [activeMetricTab, setActiveMetricTab] = useState<'overview' | 'leads' | 'finance' | 'learning'>('overview');
   const [activeSectorTab, setActiveSectorTab] = useState<'growth' | 'core' | 'admin'>('growth');
 
+  // Unified Registration Alerts
+  const [newRegistrations, setNewRegistrations] = useState<any[]>([]);
+
+  // NEW: XP Settings State
+  const [isXpModalOpen, setIsXpModalOpen] = useState(false);
+  const [xpConfig, setXpConfig] = useState({ multiplier: 1.0, start_date: "", end_date: "" });
+  const [isSavingXp, setIsSavingXp] = useState(false);
+
   // Stats State
   const [stats, setStats] = useState({
     totalStudents: 0,
@@ -36,7 +44,6 @@ export default function AdminDashboard() {
     newLeads: 0,
     warmLeads: 0,
     wonProspects: 0,
-    // Growth Engine Specific
     invitesSent: 0,
     trialsActive: 0,
     trialsConverted: 0,
@@ -47,7 +54,7 @@ export default function AdminDashboard() {
     fetchHeartbeat();
   }, []);
 
-  // Real-time Notification Listener (Admin Scope)
+  // --- 1. EXISTING LISTENER: Coach Messages ---
   useEffect(() => {
     if (!currentUser) return;
 
@@ -70,6 +77,39 @@ export default function AdminDashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [currentUser]);
 
+  // --- 2. REGISTRATIONS LISTENER: Fetch Initial ---
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      const { data } = await supabase
+        .from('registrations')
+        .select('*')
+        .eq('is_acknowledged', false)
+        .order('created_at', { ascending: false });
+      
+      if (data) setNewRegistrations(data);
+    };
+
+    fetchAlerts();
+  }, []);
+
+  // --- 3. REGISTRATIONS LISTENER: Realtime Subscription ---
+  useEffect(() => {
+    const channel = supabase.channel('admin-registration-alerts')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'registrations' },
+        (payload) => {
+          setNewRegistrations((curr) => [payload.new, ...curr]);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // --- HEARTBEAT DATA FETCH ---
   async function fetchHeartbeat() {
     setLoading(true);
     try {
@@ -80,22 +120,28 @@ export default function AdminDashboard() {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
       if (profile) setCurrentUser(profile);
 
-      // 1. Academy Stats
+      // NEW: Fetch Global XP Config
+      const { data: xpData } = await supabase.from('system_settings').select('*').eq('id', 1).single();
+      if (xpData) {
+         setXpConfig({
+            multiplier: xpData.xp_multiplier || 1.0,
+            start_date: xpData.xp_start_date ? new Date(xpData.xp_start_date).toISOString().slice(0, 16) : "",
+            end_date: xpData.xp_end_date ? new Date(xpData.xp_end_date).toISOString().slice(0, 16) : ""
+         });
+      }
+
       const { count: studentCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student');
       const { count: requestCount } = await supabase.from('registrations').select('*', { count: 'exact', head: true }).eq('status', 'new');
       
-      // 2. Revenue Stats
       const { data: paidRecords } = await supabase.from('billing_records').select('total_amount').in('status', ['paid', 'settled']);
       const totalRevenue = paidRecords?.reduce((acc, curr) => acc + Number(curr.total_amount), 0) || 0;
       
-      // 3. Lead & Conversion Logic
       const { data: prospectStats } = await supabase.from('prospects').select('*');
       
       const total = prospectStats?.length || 0;
       const won = prospectStats?.filter(p => p.status === 'Converted (Won)').length || 0;
       const actualConvRate = total > 0 ? Math.round((won / total) * 100) : 0;
 
-      // 4. Growth Engine / Invite Logic
       const now = new Date().getTime();
       let sent = 0, activeTrials = 0, inviteConverted = 0, expired = 0;
       
@@ -137,6 +183,34 @@ export default function AdminDashboard() {
     }
   }
 
+  // --- NEW: SAVE XP HANDLER ---
+  const handleSaveXpConfig = async () => {
+      setIsSavingXp(true);
+      try {
+          const payload = {
+              xp_multiplier: xpConfig.multiplier,
+              xp_start_date: xpConfig.start_date ? new Date(xpConfig.start_date).toISOString() : null,
+              xp_end_date: xpConfig.end_date ? new Date(xpConfig.end_date).toISOString() : null
+          };
+          await supabase.from('system_settings').upsert({ id: 1, ...payload });
+          setIsXpModalOpen(false);
+      } catch (err) {
+          alert("Failed to update XP Configuration.");
+      } finally {
+          setIsSavingXp(false);
+      }
+  };
+
+  // --- SIMPLE ACKNOWLEDGE HANDLER ---
+  const handleAcknowledge = async (id: string) => {
+    setNewRegistrations((current) => current.filter(item => item.id !== id));
+
+    await supabase
+      .from('registrations')
+      .update({ is_acknowledged: true })
+      .eq('id', id);
+  };
+
   const handleLogout = async () => {
     localStorage.removeItem("pioneer_session");
     await supabase.auth.signOut();
@@ -168,7 +242,6 @@ export default function AdminDashboard() {
     </motion.div>
   );
 
-  // Grouped Sectors Data
   const groupedSectors = {
     growth: {
       title: "Growth & Acquisition",
@@ -210,8 +283,89 @@ export default function AdminDashboard() {
     }
   };
 
+  // --- NEW: PREVENT FLASHING (Guard Clause) ---
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
+        <Loader2 className="animate-spin text-blue-500" size={40} />
+        <p className="text-blue-400 font-black uppercase tracking-widest text-[10px]">Loading Pulse...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans overflow-x-hidden text-left">
+    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans overflow-x-hidden text-left relative">
+      
+      {/* --- SIMPLIFIED UNIFIED NOTIFICATION PANEL --- */}
+      <AnimatePresence>
+        {newRegistrations.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="fixed bottom-6 right-6 lg:bottom-10 lg:right-10 z-[150] w-[calc(100%-3rem)] max-w-[360px] flex flex-col gap-4 pointer-events-none"
+          >
+            {newRegistrations.map((item) => {
+              // Read the unified flag!
+              const isMath = item.interested_programs?.[0] === "Free Math Lab";
+
+              return (
+                <motion.div 
+                  key={item.id} 
+                  layout
+                  className={`bg-[#0f172a]/95 backdrop-blur-xl border p-5 rounded-3xl flex flex-col gap-3 pointer-events-auto ${
+                    isMath 
+                      ? 'border-emerald-500/40 shadow-[0_0_40px_rgba(16,185,129,0.15)]' 
+                      : 'border-blue-500/40 shadow-[0_0_40px_rgba(37,99,235,0.15)]'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className={`flex items-center gap-2 ${isMath ? 'text-emerald-400' : 'text-blue-400'}`}>
+                      {isMath ? <Brain size={16} className="animate-pulse" /> : <Cpu size={16} className="animate-pulse" />}
+                      <span className="text-[10px] font-black uppercase tracking-widest">
+                        {isMath ? 'Math Setup' : 'Robotics Lead'}
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-slate-400 uppercase font-bold tracking-widest bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                      {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+
+                  <div>
+                    <p className="font-bold text-lg text-white leading-tight">{item.parent_name}</p>
+                    <p className="text-xs text-slate-300 mt-1">{item.email}</p>
+                    <p className="text-xs text-slate-300 mt-0.5">{item.phone}</p>
+
+                    {isMath && item.metadata?.pioneer_username && (
+                      <p className="text-xs text-emerald-300 mt-2 font-bold">Pioneer ID: {item.metadata.pioneer_username}</p>
+                    )}
+
+                    {item.interested_programs && item.interested_programs.length > 0 && (
+                      <div className={`mt-3 inline-block border px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${
+                        isMath 
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                        : 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                      }`}>
+                        {item.interested_programs[0]}
+                      </div>
+                    )}
+                  </div>
+
+                  <button 
+                    onClick={() => handleAcknowledge(item.id)}
+                    className={`mt-2 w-full py-3 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 hover:scale-[1.02] ${
+                      isMath ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'
+                    }`}
+                  >
+                    <ShieldCheck size={14} /> Acknowledge & Close
+                  </button>
+                </motion.div>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="max-w-7xl mx-auto space-y-12">
         
         {/* HEADER */}
@@ -227,22 +381,18 @@ export default function AdminDashboard() {
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
-            
-            {/* PROMINENT INVITE BUTTON */}
-            <Link 
-              href="/admin/invites" 
-              className="px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-[0_0_20px_rgba(79,70,229,0.4)] flex items-center gap-2 group"
-            >
+            {/* NEW: XP CONFIG BUTTON */}
+            <button onClick={() => setIsXpModalOpen(true)} className="px-6 py-4 bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg flex items-center gap-2">
+              <Trophy size={14} /> XP Events
+            </button>
+
+            <Link href="/admin/invites" className="px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-[0_0_20px_rgba(79,70,229,0.4)] flex items-center gap-2 group">
               <Send size={14} className="group-hover:-translate-y-0.5 group-hover:translate-x-0.5 transition-transform" /> Invite Leads
             </Link>
-
             <Link href="/admin/leads" className="px-6 py-4 bg-white/5 border border-white/10 hover:bg-white/10 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all">
               Inbox <span className="ml-2 px-2 py-0.5 bg-slate-700 rounded-full text-white">{stats.pendingRequests}</span>
             </Link>
-            
             <div className="w-px h-10 bg-white/10 mx-2 hidden md:block" />
-
-            {/* NOTIFICATION BELL */}
             <Link href="/admin/communications" className="relative p-4 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/5 rounded-2xl transition-all shadow-sm">
               <Bell size={18} />
               {unreadCount > 0 && (
@@ -251,12 +401,7 @@ export default function AdminDashboard() {
                 </span>
               )}
             </Link>
-
-            <button 
-              onClick={handleLogout} 
-              className="p-4 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-2xl transition-all"
-              title="Log Out"
-            >
+            <button onClick={handleLogout} className="p-4 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 rounded-2xl transition-all" title="Log Out">
               <LogOut size={18} />
             </button>
           </div>
@@ -265,30 +410,10 @@ export default function AdminDashboard() {
         {/* TABBED METRICS SECTION */}
         <div className="space-y-6">
           <div className="flex flex-wrap gap-2 bg-[#0f172a] p-1.5 rounded-2xl border border-white/10 w-fit">
-            <button 
-              onClick={() => setActiveMetricTab('overview')} 
-              className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeMetricTab === 'overview' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-            >
-              General Overview
-            </button>
-            <button 
-              onClick={() => setActiveMetricTab('leads')} 
-              className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-1.5 ${activeMetricTab === 'leads' ? 'bg-blue-600/20 text-blue-400 shadow-sm border border-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-            >
-              <Target size={12}/> Leads Engine
-            </button>
-            <button 
-              onClick={() => setActiveMetricTab('finance')} 
-              className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-1.5 ${activeMetricTab === 'finance' ? 'bg-emerald-600/20 text-emerald-400 shadow-sm border border-emerald-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-            >
-              <DollarSign size={12}/> Finance Engine
-            </button>
-            <button 
-              onClick={() => setActiveMetricTab('learning')} 
-              className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-1.5 ${activeMetricTab === 'learning' ? 'bg-fuchsia-600/20 text-fuchsia-400 shadow-sm border border-fuchsia-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-            >
-              <BookOpen size={12}/> Learning Engine
-            </button>
+            <button onClick={() => setActiveMetricTab('overview')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeMetricTab === 'overview' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>General Overview</button>
+            <button onClick={() => setActiveMetricTab('leads')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-1.5 ${activeMetricTab === 'leads' ? 'bg-blue-600/20 text-blue-400 shadow-sm border border-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}><Target size={12}/> Leads Engine</button>
+            <button onClick={() => setActiveMetricTab('finance')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-1.5 ${activeMetricTab === 'finance' ? 'bg-emerald-600/20 text-emerald-400 shadow-sm border border-emerald-500/20' : 'text-slate-500 hover:text-slate-300'}`}><DollarSign size={12}/> Finance Engine</button>
+            <button onClick={() => setActiveMetricTab('learning')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-1.5 ${activeMetricTab === 'learning' ? 'bg-fuchsia-600/20 text-fuchsia-400 shadow-sm border border-fuchsia-500/20' : 'text-slate-500 hover:text-slate-300'}`}><BookOpen size={12}/> Learning Engine</button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -331,35 +456,16 @@ export default function AdminDashboard() {
 
         {/* SECTORS HUB (TABBED) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-8 border-t border-white/10">
-          
           <div className="lg:col-span-2 space-y-6">
             <div className="flex bg-[#0f172a] p-1.5 rounded-2xl border border-white/10 w-fit">
-              <button 
-                onClick={() => setActiveSectorTab('growth')} 
-                className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'growth' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                Growth & Acquisition
-              </button>
-              <button 
-                onClick={() => setActiveSectorTab('core')} 
-                className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'core' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                Core Operations
-              </button>
-              <button 
-                onClick={() => setActiveSectorTab('admin')} 
-                className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'admin' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                Admin & Infrastructure
-              </button>
+              <button onClick={() => setActiveSectorTab('growth')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'growth' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>Growth & Acquisition</button>
+              <button onClick={() => setActiveSectorTab('core')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'core' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>Core Operations</button>
+              <button onClick={() => setActiveSectorTab('admin')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'admin' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>Admin & Infrastructure</button>
             </div>
 
             <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 md:p-10 min-h-[400px]">
               <AnimatePresence mode="wait">
-                <motion.div 
-                  key={activeSectorTab}
-                  initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-                >
+                <motion.div key={activeSectorTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
                   <div className="mb-8">
                     <h3 className="text-xl font-black italic uppercase text-white tracking-tight">{groupedSectors[activeSectorTab].title}</h3>
                     <p className="text-slate-500 text-xs mt-1 font-medium">{groupedSectors[activeSectorTab].desc}</p>
@@ -399,10 +505,10 @@ export default function AdminDashboard() {
 
       </div>
 
-      {/* STAT DETAIL MODAL (Deep Dive Info) */}
+      {/* STAT DETAIL MODAL */}
       <AnimatePresence>
         {selectedStat && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedStat(null)} className="absolute inset-0 bg-black/90 backdrop-blur-xl" />
             <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-lg bg-[#0f172a] border border-white/10 rounded-[40px] p-10 shadow-2xl overflow-hidden">
               <Zap className="absolute -right-8 -top-8 size-48 opacity-[0.02] text-blue-500" />
@@ -415,12 +521,7 @@ export default function AdminDashboard() {
                    selectedStat === 'growth' || selectedStat === 'won' ? 'Conversion_Stats' :
                    selectedStat === 'sent' || selectedStat === 'trials' || selectedStat === 'converted' || selectedStat === 'expired' ? 'Growth_Engine' : 'Stats'}
                 </h2>
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setSelectedStat(null); }} 
-                  className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all z-50 relative"
-                >
-                  <X size={20}/>
-                </button>
+                <button onClick={(e) => { e.stopPropagation(); setSelectedStat(null); }} className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all z-50 relative"><X size={20}/></button>
               </div>
 
               {(selectedStat === 'leads' || selectedStat === 'growth' || selectedStat === 'won') ? (
@@ -470,6 +571,45 @@ export default function AdminDashboard() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* --- NEW: GLOBAL XP SETTINGS MODAL --- */}
+      <AnimatePresence>
+        {isXpModalOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsXpModalOpen(false)} className="absolute inset-0 bg-black/90 backdrop-blur-xl" />
+            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-md bg-[#0f172a] border border-white/10 rounded-[40px] p-8 shadow-2xl overflow-hidden">
+              <h3 className="text-2xl font-black italic uppercase tracking-tighter text-white mb-2 flex items-center gap-3"><Trophy className="text-purple-500" /> XP Events Manager</h3>
+              <p className="text-slate-400 text-xs mb-6">Set a global multiplier for all automated and manual XP awarded across the platform.</p>
+              
+              <div className="space-y-4 mb-8">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Multiplier (Factor)</label>
+                  <input type="number" step="0.1" min="1" value={xpConfig.multiplier} onChange={e => setXpConfig({...xpConfig, multiplier: Number(e.target.value)})} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-purple-500" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Start Time</label>
+                    <input type="datetime-local" value={xpConfig.start_date} onChange={e => setXpConfig({...xpConfig, start_date: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-purple-500" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">End Time</label>
+                    <input type="datetime-local" value={xpConfig.end_date} onChange={e => setXpConfig({...xpConfig, end_date: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-purple-500" />
+                  </div>
+                </div>
+                <p className="text-[9px] text-slate-500 font-bold italic mt-2 text-center">If dates are empty or expired, the system defaults to standard 1.0x XP.</p>
+              </div>
+
+              <div className="flex gap-4">
+                <button onClick={() => setIsXpModalOpen(false)} className="flex-1 py-4 bg-white/5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:text-white text-slate-400 transition-colors">Cancel</button>
+                <button onClick={handleSaveXpConfig} disabled={isSavingXp} className="flex-1 py-4 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest text-center flex items-center justify-center gap-2 shadow-lg shadow-purple-900/20 transition-all">
+                   {isSavingXp ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Save Event
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }

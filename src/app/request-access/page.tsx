@@ -13,38 +13,33 @@ import { supabase } from "@/lib/supabase";
 
 type Intent = "math" | "robotics" | null;
 
-// 1. Rename your main function to Content
 function RequestAccessContent() {
   const router = useRouter();
-  const searchParams = useSearchParams(); // Added URL parameter hook
+  const searchParams = useSearchParams(); 
   
-  // Routing & Flow State
   const [intent, setIntent] = useState<Intent>(null);
   const [step, setStep] = useState(0); 
   
-  // Loading & Error State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
-  // Form State
   const [formData, setFormData] = useState({
     parentName: "",
     email: "",
     phone: "",
     studentName: "",
     studentAge: "",
-    grade: "5", 
+    grade: "Not Set", 
     username: "", 
     pin: "",      
     botField: ""
   });
 
-  // 2. Added this useEffect to catch the URL parameters instantly
   useEffect(() => {
     const urlIntent = searchParams.get("intent") as Intent;
     if (urlIntent === "math" || urlIntent === "robotics") {
       setIntent(urlIntent);
-      setStep(1); // Jump straight to the form
+      setStep(1); 
     }
   }, [searchParams]);
 
@@ -55,7 +50,6 @@ function RequestAccessContent() {
     setFormError("");
     if (formData.botField) return; 
     
-    // Validation
     if (formData.pin.length !== 4 || isNaN(Number(formData.pin))) {
       setFormError("Your Secret PIN must be exactly 4 numbers.");
       return;
@@ -69,32 +63,45 @@ function RequestAccessContent() {
     setIsSubmitting(true);
     
     try {
-      // Step A: CRM Log (Silently continue if this fails)
-      try {
-        await supabase.from('registrations').insert([{
-          parent_name: formData.parentName || "Math Parent", 
-          email: formData.email,
-          student_name: formData.studentName,
-          interested_programs: ["Free Math Lab"],
-          status: 'approved',
-          metadata: {
-            funnel_stage: "Onboarding (Math Free Tier)",
-            funnel_stage_updated_at: new Date().toISOString(),
-            grade: formData.grade
-          }
-        }]);
-      } catch (crmError) {
-        console.warn("CRM Log failed, proceeding to account creation:", crmError);
+      // 1. Write the Master Lead to Registrations Table
+      const { error: regError } = await supabase.from('registrations').insert([{
+        parent_name: formData.parentName, 
+        email: formData.email,
+        phone: formData.phone || "Not Provided", // Satisfies NOT NULL
+        student_name: formData.studentName,
+        student_age: parseInt(formData.studentAge) || 0, // Satisfies NOT NULL
+        interested_programs: ["Free Math Lab"],
+        status: 'approved', // Approved immediately for instant access
+        temp_entry_pin: formData.pin,
+        metadata: {
+          pioneer_username: formData.username.trim(), // Hits your custom index!
+          funnel_stage: "Onboarding (Math Free Tier)",
+          grade: formData.grade
+        }
+      }]);
+
+      if (regError) {
+        console.error("Central Registration failed:", regError);
+        throw new Error("Failed to log registration. Please try again.");
       }
 
-      // Step B: Generate Auth & Profile (Active LMS Account)
+      // 2. Create Guardian Profile
+      let guardianId = null;
+      const { data: guardianData } = await supabase
+        .from('profiles')
+        .insert([{
+          role: 'guardian',
+          display_name: formData.parentName,
+          metadata: { email: formData.email, phone: formData.phone }
+        }])
+        .select('id')
+        .single();
+
+      if (guardianData) guardianId = guardianData.id;
+
+      // 3. Generate Auth User
       const cleanUsername = formData.username.trim().toLowerCase();
       const shadowEmail = `${cleanUsername.replace(/\s/g, '')}@pioneer.bot`;
-      
-      /** * CODE WORKAROUND:
-       * Supabase requires 6+ characters. 
-       * We pad the 4-digit PIN so it passes Auth validation.
-       */
       const paddedPassword = `PIONEER-${formData.pin}`;
 
       const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -109,28 +116,29 @@ function RequestAccessContent() {
         throw authError;
       }
 
+      // 4. Create Student Profile
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .insert([{
           auth_user_id: authData.user?.id,
           student_identifier: formData.username.trim(),
-          temp_entry_pin: formData.pin, // Store the raw 4-digit pin for student display
+          display_name: formData.studentName, 
+          temp_entry_pin: formData.pin, 
           role: "student",
           xp: 0,
           sparks: 0,
-          metadata: { grade: parseInt(formData.grade) } 
+          linked_parent_id: guardianId,
+          metadata: { grade: formData.grade } 
         }])
         .select()
         .single();
 
       if (profileError) throw new Error("Could not build student profile.");
 
-      // Step C: Auto-Login & Proceed
       localStorage.setItem("pioneer_session", JSON.stringify(profileData));
       setStep(2); 
 
     } catch (error: any) {
-      console.error("Math Account Creation failed:", error);
       setFormError(error.message || "Something went wrong. Please try again.");
     } finally {
       setIsSubmitting(false);
@@ -145,19 +153,17 @@ function RequestAccessContent() {
     setIsSubmitting(true);
     
     try {
+      // 1. Write the Master Lead to Registrations Table
       const { error } = await supabase
         .from('registrations')
         .insert([{
           parent_name: formData.parentName,
           email: formData.email,
           phone: formData.phone.trim(),
-          
-          // SEND DUMMY DATA TO SATISFY THE DATABASE
-          student_name: formData.studentName || "Pending Setup",
-          student_age: parseInt(formData.studentAge) || 0, // Fallback to 0 instead of NaN/null
-          
+          student_name: formData.studentName,
+          student_age: parseInt(formData.studentAge) || 0, 
           interested_programs: ["Premium Robotics LMS"], 
-          status: 'new', 
+          status: 'new', // Needs admin review
           metadata: {
             funnel_stage: "Lead (Robotics Intent)",
             funnel_stage_updated_at: new Date().toISOString()
@@ -174,8 +180,6 @@ function RequestAccessContent() {
       setIsSubmitting(false);
     }
   };
-
-  // --- RENDER HELPERS ---
 
   const renderIntentSelector = () => (
     <motion.div key="step0" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="w-full max-w-4xl mx-auto my-auto space-y-6 md:space-y-8 flex flex-col justify-center">
@@ -241,7 +245,6 @@ function RequestAccessContent() {
   return (
     <main className="h-[100dvh] bg-[#020617] text-white font-sans selection:bg-rad-teal/30 overflow-hidden flex flex-col relative">
       
-      {/* BACKGROUND VIDEO */}
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
         <video autoPlay muted loop playsInline className="w-full h-full object-cover opacity-30 grayscale mix-blend-luminosity">
           <source src="/video_clips/Learning Should Be Fun_1080p.mp4" type="video/mp4" />
@@ -257,7 +260,6 @@ function RequestAccessContent() {
         </Link>
         {step > 0 && (
           <button onClick={() => { 
-            // 3. Clear URL when going back to pathway selection
             router.replace('/request-access');
             setStep(0); 
             setIntent(null); 
@@ -288,15 +290,33 @@ function RequestAccessContent() {
               )}
 
               <div className="space-y-4 bg-black/50 p-6 md:p-8 rounded-[32px] border border-white/10 backdrop-blur-lg shadow-2xl">
+                
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Parent Name</label>
+                  <input required type="text" value={formData.parentName} onChange={e => setFormData({...formData, parentName: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-emerald-500 outline-none text-white text-sm" placeholder="Jane Doe" />
+                </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Parent Email</label>
                   <input required type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-emerald-500 outline-none text-white text-sm" placeholder="parent@email.com" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Student Real Name</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Phone Number</label>
+                  <input required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-emerald-500 outline-none text-white text-sm" placeholder="+27..." />
+                </div>
+
+                <div className="w-full h-px bg-white/10 my-4" />
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Student Name</label>
                   <input required type="text" value={formData.studentName} onChange={e => setFormData({...formData, studentName: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-emerald-500 outline-none text-white text-sm" placeholder="John" />
                 </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Student Age</label>
+                  <input required type="number" min="5" max="18" value={formData.studentAge} onChange={e => setFormData({...formData, studentAge: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-emerald-500 outline-none text-white text-sm" placeholder="10" />
+                </div>
+
                 <div className="w-full h-px bg-white/10 my-4" />
+
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-emerald-400 ml-2">Choose Pioneer ID</label>
                   <input required type="text" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-4 font-bold text-emerald-300 focus:border-emerald-400 outline-none text-sm" placeholder="Username" />
@@ -305,6 +325,7 @@ function RequestAccessContent() {
                   <label className="text-[10px] font-black uppercase tracking-widest text-emerald-400 ml-2">4-Digit Secret PIN</label>
                   <input required type="number" min="1000" max="9999" value={formData.pin} onChange={e => setFormData({...formData, pin: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-4 font-black tracking-[0.3em] text-emerald-300 focus:border-emerald-400 outline-none text-lg" placeholder="1234" />
                 </div>
+
               </div>
 
               <button type="submit" disabled={isSubmitting} className="w-full h-14 md:h-16 rounded-xl md:rounded-[24px] bg-emerald-500 text-black font-black uppercase italic tracking-widest flex items-center justify-center gap-3 hover:bg-emerald-400 transition-all shadow-xl disabled:opacity-50">
@@ -333,6 +354,15 @@ function RequestAccessContent() {
                   <div className="space-y-2">
                     <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Phone Number</label>
                     <input required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-blue-500 outline-none text-white text-sm" placeholder="+27..." />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Student Name</label>
+                    <input required type="text" value={formData.studentName} onChange={e => setFormData({...formData, studentName: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-blue-500 outline-none text-white text-sm" placeholder="John" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Student Age</label>
+                    <input required type="number" min="5" max="18" value={formData.studentAge} onChange={e => setFormData({...formData, studentAge: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-blue-500 outline-none text-white text-sm" placeholder="10" />
                   </div>
                   
                 </div>
@@ -366,7 +396,6 @@ function RequestAccessContent() {
   );
 }
 
-// 4. Wrap the entire export in Suspense to prevent Next.js build errors with useSearchParams
 export default function RequestAccessPage() {
   return (
     <Suspense fallback={<div className="h-screen bg-[#020617] flex items-center justify-center text-emerald-500"><Loader2 className="animate-spin" size={32} /></div>}>

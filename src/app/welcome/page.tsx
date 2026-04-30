@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Sparkles, Lock, User, Users, GraduationCap, CreditCard, 
   ShieldCheck, ArrowRight, ArrowLeft, CheckCircle2, ChevronRight, 
-  Check, Info, Zap, RotateCcw, UserPlus, Mail, Gamepad2, X, Loader2, Square, CheckSquare, Star, Plus, Trash2, AlertTriangle
+  Check, Info, Zap, RotateCcw, UserPlus, Mail, Gamepad2, X, Loader2, Square, CheckSquare, Star, Plus, Trash2, AlertTriangle, ChevronDown
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -50,10 +50,11 @@ export default function WelcomePortal() {
   const [requiredAgreements, setRequiredAgreements] = useState<any[]>([]);
   const [activeGuardianTab, setActiveGuardianTab] = useState(0);
   const [activeLearnerTab, setActiveLearnerTab] = useState(0);
+  const [activeAgreementId, setActiveAgreementId] = useState<string | null>(null); // NEW: Controls the Agreement Accordion
 
   const [wizardData, setWizardData] = useState({
     password: "", confirmPassword: "",
-    planType: "", // NEW: Stores plan type to dynamically hide steps
+    planType: "", // Stores plan type to dynamically hide steps
     guardians: [{ id: 'primary', name: "", email: "", phone: "", isPrimary: true, removalRequested: false }],
     learners: [{ id: 1 as any, name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }],
     billing: { frequency: "monthly", date: "1st" },
@@ -80,90 +81,146 @@ export default function WelcomePortal() {
         
         if (token) {
           try {
-            // Fetch Guardian
-            const { data: guardianData, error: guardianErr } = await supabase
+            // Fetch Guardian (Fast-Track / Paid)
+            let { data: guardianData, error: guardianErr } = await supabase
               .from('profiles')
               .select('id, display_name, metadata, funnel_stage, payment_plan_preference')
               .eq('onboarding_token', token)
               .single();
 
+            let meta: any = {};
+            let loadedGuardians: any[] = [];
+            let loadedLearners: any[] = [];
+
             if (guardianErr || !guardianData) {
-              console.warn("Token invalid, expired, or already used.");
-              setPersonalToken(null);
-              setIsInitializing(false);
-              return;
-            }
+              // ========================================================
+              // FALLBACK: FREE TRIAL PARENTS (From Prospects Table)
+              // ========================================================
+              const { data: prospectData, error: prospectErr } = await supabase
+                .from('prospects')
+                .select('*')
+                .eq('id', token)
+                .single();
 
-            const meta = typeof guardianData.metadata === 'string' ? JSON.parse(guardianData.metadata) : (guardianData.metadata || {});
+              if (prospectErr || !prospectData || prospectData.status !== 'Trial Active') {
+                console.warn("Token invalid, expired, or already used.");
+                setPersonalToken(null);
+                setIsInitializing(false);
+                return;
+              }
 
-            // Fetch Co-Guardians
-            const { data: coGuardiansData } = await supabase
-              .from('profiles')
-              .select('id, display_name, metadata')
-              .eq('linked_parent_id', guardianData.id)
-              .eq('role', 'guardian');
+              // Reconstruct Trial Prospect into expected wizard format
+              meta = prospectData.metadata || {};
+              guardianData = {
+                id: prospectData.id,
+                display_name: prospectData.name,
+                payment_plan_preference: 'Demo LMS Access', // Instantly maps to the Trial Agreements!
+                funnel_stage: prospectData.status, 
+                metadata: meta
+              };
 
-            let loadedGuardians = [{
-              id: guardianData.id,
-              name: guardianData.display_name || "",
-              email: meta.email || "",
-              phone: meta.phone || "",
-              isPrimary: true,
-              removalRequested: false
-            }];
+              loadedGuardians = [{
+                id: prospectData.id,
+                name: prospectData.name || "",
+                email: prospectData.email || "",
+                phone: prospectData.phone || "",
+                isPrimary: true,
+                removalRequested: false
+              }];
 
-            if (coGuardiansData && coGuardiansData.length > 0) {
-              coGuardiansData.forEach((cg: any) => {
-                const cgMeta = typeof cg.metadata === 'string' ? JSON.parse(cg.metadata) : (cg.metadata || {});
-                loadedGuardians.push({
-                  id: cg.id,
-                  name: cg.display_name || "",
-                  email: cgMeta.email || "",
-                  phone: cgMeta.phone || "",
-                  isPrimary: false,
-                  removalRequested: false
-                });
-              });
-            }
+              const childrenData = meta.children_data || meta.children || [];
+              loadedLearners = childrenData.length > 0 ? childrenData.map((c: any) => ({
+                id: c.id || Date.now(),
+                name: c.name || "",
+                dob: c.dob || c.date_of_birth || "",
+                grade: c.grade || "",
+                schoolCoding: c.codingAtSchool === 'Yes' || c.school_coding === true,
+                removalRequested: false
+              })) : [{ id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }];
 
-            // Fetch Learners
-            const { data: learnersData } = await supabase
-              .from('profiles')
-              .select('id, display_name, metadata')
-              .eq('linked_parent_id', guardianData.id)
-              .eq('role', 'student');
-
-            let loadedLearners = [];
-            if (learnersData && learnersData.length > 0) {
-              loadedLearners = learnersData.map((l: any) => {
-                const lMeta = typeof l.metadata === 'string' ? JSON.parse(l.metadata) : (l.metadata || {});
-                return {
-                  id: l.id, 
-                  name: l.display_name || "",
-                  dob: lMeta.dob || lMeta.date_of_birth || "",
-                  grade: lMeta.grade || "",
-                  schoolCoding: lMeta.school_coding || false,
-                  removalRequested: false
-                }
-              });
             } else {
-              loadedLearners = [{ id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }];
+              // ========================================================
+              // STANDARD: FAST-TRACK / PAID PARENTS (From Profiles Table)
+              // ========================================================
+              meta = typeof guardianData.metadata === 'string' ? JSON.parse(guardianData.metadata) : (guardianData.metadata || {});
+
+              // Fetch Co-Guardians
+              const { data: coGuardiansData } = await supabase
+                .from('profiles')
+                .select('id, display_name, metadata')
+                .eq('linked_parent_id', guardianData.id)
+                .eq('role', 'guardian');
+
+              loadedGuardians = [{
+                id: guardianData.id,
+                name: guardianData.display_name || "",
+                email: meta.email || "",
+                phone: meta.phone || "",
+                isPrimary: true,
+                removalRequested: false
+              }];
+
+              if (coGuardiansData && coGuardiansData.length > 0) {
+                coGuardiansData.forEach((cg: any) => {
+                  const cgMeta = typeof cg.metadata === 'string' ? JSON.parse(cg.metadata) : (cg.metadata || {});
+                  loadedGuardians.push({
+                    id: cg.id,
+                    name: cg.display_name || "",
+                    email: cgMeta.email || "",
+                    phone: cgMeta.phone || "",
+                    isPrimary: false,
+                    removalRequested: false
+                  });
+                });
+              }
+
+              // Fetch Learners
+              const { data: learnersData } = await supabase
+                .from('profiles')
+                .select('id, display_name, metadata')
+                .eq('linked_parent_id', guardianData.id)
+                .eq('role', 'student');
+
+              if (learnersData && learnersData.length > 0) {
+                loadedLearners = learnersData.map((l: any) => {
+                  const lMeta = typeof l.metadata === 'string' ? JSON.parse(l.metadata) : (l.metadata || {});
+                  return {
+                    id: l.id, 
+                    name: l.display_name || "",
+                    dob: lMeta.dob || lMeta.date_of_birth || "",
+                    grade: lMeta.grade || "",
+                    schoolCoding: lMeta.school_coding || false,
+                    removalRequested: false
+                  }
+                });
+              } else {
+                loadedLearners = [{ id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }];
+              }
             }
 
-            // DYNAMIC AGREEMENT FETCH
+            // ========================================================
+            // THE TAG MAPPER (Fixes missing agreements)
+            // ========================================================
             const { data: agreementsData } = await supabase
               .from('core_agreements')
               .select('*')
               .order('created_at', { ascending: true });
 
-            // SMART FILTERING
-            const parentTags = [
-              guardianData.payment_plan_preference,
-              meta.lesson_delivery_format
-            ].filter(Boolean);
+            const parentTags: string[] = [];
+            
+            if (guardianData!.payment_plan_preference === 'LMS Access') {
+              parentTags.push('Full LMS Access');
+            } else if (guardianData!.payment_plan_preference) {
+              parentTags.push(guardianData!.payment_plan_preference);
+            }
 
+            if (meta.lesson_delivery_format) {
+              parentTags.push(meta.lesson_delivery_format);
+            }
+
+            // SMART FILTERING
             let filteredAgreements = (agreementsData || []).filter((a: any) => {
-              if (!a.applicable_to || a.applicable_to.length === 0) return true;
+              if (!a.applicable_to || a.applicable_to.length === 0) return true; // Global applies to everyone
               return a.applicable_to.some((tag: string) => parentTags.includes(tag));
             });
 
@@ -178,7 +235,7 @@ export default function WelcomePortal() {
 
             setWizardData(prev => ({
               ...prev,
-              planType: guardianData.payment_plan_preference || "", // Track plan type
+              planType: guardianData!.payment_plan_preference || "", // Drives skip-billing pathing automatically
               guardians: loadedGuardians,
               learners: loadedLearners,
               agreements: initialAgreementsState
@@ -199,6 +256,13 @@ export default function WelcomePortal() {
 
     initializeOnboarding();
   }, []);
+
+  // Auto-open the first agreement drawer when they hit step 4
+  useEffect(() => {
+    if (step === 4 && requiredAgreements.length > 0 && !activeAgreementId) {
+      setActiveAgreementId(requiredAgreements[0].id);
+    }
+  }, [step, requiredAgreements]);
 
   useEffect(() => {
     if (pathway !== null) setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 50);
@@ -292,6 +356,31 @@ export default function WelcomePortal() {
       setWizardData({ ...wizardData, learners: newLearners });
       setActiveLearnerTab(Math.max(0, activeLearnerTab - 1));
     }
+  };
+
+  // Auto-advance drawer logic for Agreements
+  const advanceToNextAgreement = (currentId: string) => {
+    const currentIndex = requiredAgreements.findIndex(a => a.id === currentId);
+    if (currentIndex !== -1 && currentIndex < requiredAgreements.length - 1) {
+      setActiveAgreementId(requiredAgreements[currentIndex + 1].id);
+    } else {
+      setActiveAgreementId(null); // Close all when finished
+    }
+  };
+
+  // Status visualizer for Agreements
+  const getAgreementStatus = (policy: any, val: any) => {
+    if (policy.type === 'optional_text') {
+      return { text: val ? "Completed" : "Optional", color: val ? "text-emerald-500" : "text-slate-400" };
+    }
+    if (policy.type === 'yes_no') {
+      if (val === true) return { text: "Agreed", color: "text-emerald-500" };
+      if (val === false) return { text: "Declined", color: "text-rose-500" };
+      return { text: "Action Required", color: "text-amber-500" };
+    }
+    // required_checkbox
+    if (val) return { text: "Accepted", color: "text-emerald-500" };
+    return { text: "Action Required", color: "text-amber-500" };
   };
 
   const handleCompleteWizard = async () => {
@@ -689,81 +778,92 @@ export default function WelcomePortal() {
                     </div>
                   )}
 
-                  {/* STEP 4: Agreements (DYNAMIC ENGINE) */}
+                  {/* STEP 4: Agreements (APPLE PREMIUM ACCORDION ENGINE) */}
                   {step === 4 && (
                     <div className="space-y-8">
                       <div>
                         <h2 className="text-2xl font-black tracking-tight text-slate-900 flex items-center gap-3"><ShieldCheck className="text-emerald-500" /> Intake & Agreements</h2>
-                        <p className="text-slate-500 text-sm mt-2 font-medium">The final step! Please review and complete our core intake policies.</p>
+                        <p className="text-slate-500 text-sm mt-2 font-medium">The final step! Please review and accept our core policies to complete your setup.</p>
                       </div>
-                      <div className="space-y-5">
+                      
+                      <div className="space-y-4">
                         {requiredAgreements.map(policy => {
                           const val = wizardData.agreements[policy.id];
+                          const status = getAgreementStatus(policy, val);
+                          const isOpen = activeAgreementId === policy.id;
 
-                          // RENDER: OPTIONAL TEXT
-                          if (policy.type === 'optional_text') {
-                            return (
-                              <div key={policy.id} className="bg-white border border-slate-200 rounded-3xl p-5 md:p-6 space-y-3">
-                                <div>
-                                  <p className="font-bold text-slate-900 text-sm flex items-center gap-2">{policy.title} <span className="bg-slate-100 text-slate-400 px-2 py-0.5 rounded text-[8px] uppercase tracking-widest font-black">Optional</span></p>
-                                  <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">{policy.description}</p>
-                                </div>
-                                <textarea 
-                                  value={val || ''}
-                                  onChange={e => setWizardData({...wizardData, agreements: {...wizardData.agreements, [policy.id]: e.target.value}})}
-                                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-slate-900 font-medium focus:border-blue-500 outline-none transition-all resize-none text-sm"
-                                  rows={3}
-                                  placeholder="Type your response here..."
-                                />
-                              </div>
-                            );
-                          }
-
-                          // RENDER: YES/NO CHOICE
-                          if (policy.type === 'yes_no') {
-                            return (
-                              <div key={policy.id} className={`border-2 rounded-3xl p-5 md:p-6 transition-all ${val !== null ? 'border-blue-500 bg-blue-50/30' : 'border-slate-200 bg-white'}`}>
-                                <div>
-                                  <p className="font-bold text-slate-900 text-sm">{policy.title}</p>
-                                  <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">{policy.description}</p>
-                                </div>
-                                <div className="flex gap-3 mt-5">
-                                  <button 
-                                    onClick={() => setWizardData({...wizardData, agreements: {...wizardData.agreements, [policy.id]: true}})}
-                                    className={`flex-1 py-3 rounded-xl text-xs font-bold transition-all border-2 flex items-center justify-center gap-2 ${val === true ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'}`}
-                                  >
-                                    <Check size={14} className={val === true ? 'block' : 'hidden'} /> Yes, I agree
-                                  </button>
-                                  <button 
-                                    onClick={() => setWizardData({...wizardData, agreements: {...wizardData.agreements, [policy.id]: false}})}
-                                    className={`flex-1 py-3 rounded-xl text-xs font-bold transition-all border-2 flex items-center justify-center gap-2 ${val === false ? 'bg-rose-500 text-white border-rose-500 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:border-rose-300'}`}
-                                  >
-                                    <X size={14} className={val === false ? 'block' : 'hidden'} /> No, I decline
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          }
-
-                          // RENDER: REQUIRED CHECKBOX
                           return (
-                            <label key={policy.id} className={`flex items-start gap-4 p-5 md:p-6 rounded-3xl border-2 cursor-pointer transition-all ${val ? 'border-emerald-500 bg-emerald-50/30' : 'border-slate-200 hover:border-emerald-200 bg-white'}`}>
-                              <div className={`mt-0.5 flex items-center justify-center w-6 h-6 rounded border-2 transition-colors shrink-0 ${val ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300'}`}>
-                                <input 
-                                  type="checkbox" 
-                                  className="sr-only" 
-                                  checked={val || false} 
-                                  onChange={e => setWizardData({...wizardData, agreements: {...wizardData.agreements, [policy.id]: e.target.checked}})} 
-                                />
-                                <Check size={14} className={`text-white transition-opacity ${val ? 'opacity-100' : 'opacity-0'}`} strokeWidth={4} />
-                              </div>
-                              <div>
-                                <p className="font-bold text-slate-900 text-sm">{policy.title}</p>
-                                <p className="text-xs text-slate-500 font-medium mt-1 leading-relaxed">{policy.description}</p>
-                              </div>
-                            </label>
+                            <div key={policy.id} className={`bg-white border rounded-3xl transition-all duration-300 overflow-hidden ${isOpen ? 'border-blue-500 shadow-[0_8px_30px_-12px_rgba(59,130,246,0.2)]' : 'border-slate-200 hover:border-slate-300 shadow-sm'}`}>
+                              
+                              <button 
+                                onClick={() => setActiveAgreementId(isOpen ? null : policy.id)} 
+                                className="w-full flex items-center justify-between p-5 md:p-6 text-left focus:outline-none"
+                              >
+                                <div className="flex flex-col gap-1.5">
+                                  <span className="font-bold text-slate-900 text-sm md:text-base leading-tight pr-4">{policy.title}</span>
+                                  <span className={`text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 ${status.color}`}>
+                                    {status.text === 'Accepted' || status.text === 'Agreed' || status.text === 'Completed' ? <CheckCircle2 size={12}/> : <div className="w-1.5 h-1.5 rounded-full bg-current" />}
+                                    {status.text}
+                                  </span>
+                                </div>
+                                <div className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition-colors ${isOpen ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
+                                  <ChevronDown size={18} className={`transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
+                                </div>
+                              </button>
+
+                              <AnimatePresence>
+                                {isOpen && (
+                                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                                    <div className="px-5 md:px-6 pb-6 border-t border-slate-100 pt-5 space-y-6">
+                                      <p className="text-sm text-slate-600 font-medium leading-relaxed">{policy.description}</p>
+
+                                      {/* RENDER: OPTIONAL TEXT */}
+                                      {policy.type === 'optional_text' && (
+                                        <textarea 
+                                          value={val || ''}
+                                          onChange={e => setWizardData({...wizardData, agreements: {...wizardData.agreements, [policy.id]: e.target.value}})}
+                                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-slate-900 font-medium focus:border-blue-500 outline-none transition-all resize-none text-sm"
+                                          rows={3}
+                                          placeholder="Type your response here..."
+                                        />
+                                      )}
+
+                                      {/* RENDER: YES/NO CHOICE */}
+                                      {policy.type === 'yes_no' && (
+                                        <div className="flex gap-3">
+                                          <button 
+                                            onClick={() => { setWizardData({...wizardData, agreements: {...wizardData.agreements, [policy.id]: true}}); setTimeout(() => advanceToNextAgreement(policy.id), 300); }} 
+                                            className={`flex-1 py-3.5 rounded-2xl text-xs font-bold transition-all border-2 flex items-center justify-center gap-2 ${val === true ? 'bg-emerald-500 text-white border-emerald-500 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-200 hover:bg-emerald-50'}`}
+                                          >
+                                            <Check size={16} /> Yes, I agree
+                                          </button>
+                                          <button 
+                                            onClick={() => { setWizardData({...wizardData, agreements: {...wizardData.agreements, [policy.id]: false}}); setTimeout(() => advanceToNextAgreement(policy.id), 300); }} 
+                                            className={`flex-1 py-3.5 rounded-2xl text-xs font-bold transition-all border-2 flex items-center justify-center gap-2 ${val === false ? 'bg-rose-500 text-white border-rose-500 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:border-rose-200 hover:bg-rose-50'}`}
+                                          >
+                                            <X size={16} /> No, I decline
+                                          </button>
+                                        </div>
+                                      )}
+
+                                      {/* RENDER: REQUIRED CHECKBOX */}
+                                      {policy.type === 'required_checkbox' && (
+                                        <button 
+                                          onClick={() => { setWizardData({...wizardData, agreements: {...wizardData.agreements, [policy.id]: !val}}); if (!val) setTimeout(() => advanceToNextAgreement(policy.id), 300); }} 
+                                          className={`w-full py-4 rounded-2xl text-sm font-bold transition-all border-2 flex items-center justify-center gap-2 ${val ? 'bg-emerald-500 text-white border-emerald-500 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50'}`}
+                                        >
+                                          <CheckCircle2 size={18} className={val ? 'block' : 'opacity-50'} />
+                                          {val ? "Accepted & Signed" : "Tap to Accept & Sign"}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )
                         })}
+
                         {requiredAgreements.length === 0 && (
                           <div className="text-center py-10 border border-dashed border-slate-200 rounded-3xl">
                             <p className="text-slate-500 font-bold italic">No specific agreements are required for your selected plan.</p>
