@@ -12,7 +12,8 @@ import {
   CalendarX2, RefreshCw, X, Lock, XCircle, Landmark, CalendarPlus, ArrowRight
 } from 'lucide-react';
 
-export default function ParentDashboard({ parentId }: { parentId: string }) {
+export default function ParentDashboard({ parentId, paymentPlan = "" }: { parentId: string, paymentPlan?: string }) {
+  
   // --- Core Data State ---
   const [parentData, setParentData] = useState<any>(null);
   const [students, setStudents] = useState<any[]>([]);
@@ -20,6 +21,10 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
   const [portfolios, setPortfolios] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // --- BULLETPROOF PLG TOGGLE ---
+  const checkPlan = (paymentPlan || parentData?.payment_plan_preference || "").toLowerCase();
+  const isLMSAccess = checkPlan.includes("lms access") || checkPlan.includes("demo");
   
   // --- UI Navigation State ---
   const [activeGlobalTab, setActiveGlobalTab] = useState<'overview' | 'finance'>('overview');
@@ -58,6 +63,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
   const [message, setMessage] = useState("");
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isUpgrading, setIsUpgrading] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   
   const [lessonActions, setLessonActions] = useState<Record<string, 'apology' | 'reschedule'>>({});
@@ -106,12 +112,10 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
 
       setStudents(parsedKids);
       
-      // NEW LOGIC: Only auto-select if there is exactly ONE student.
       if (parsedKids.length === 1 && !selectedChildId) {
         setSelectedChildId(parsedKids[0].id);
         fetchPortfolio(parsedKids[0].id);
       } else if (selectedChildId) {
-        // Re-fetch portfolio if data updates and a child is already selected
         fetchPortfolio(selectedChildId);
       }
     } catch (err: any) {
@@ -124,6 +128,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
 
   // 2. Fetch Portfolio
   const fetchPortfolio = async (studentId: string) => {
+    if (isLMSAccess) return; // Save database calls if module is disabled
     try {
       const { data, error } = await supabase
         .from('tech_archive')
@@ -205,14 +210,14 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
     const slotDate = new Date(startTimeStr);
     const cutoff = new Date(slotDate);
     cutoff.setDate(cutoff.getDate() - 2);
-    cutoff.setHours(8, 0, 0, 0); // 8 AM local time, 2 days prior
+    cutoff.setHours(8, 0, 0, 0);
     return new Date() < cutoff;
   };
 
   const isSlotLockedForReschedule = (startTimeStr: string) => {
     const slotTime = new Date(startTimeStr).getTime();
     const now = new Date().getTime();
-    return (slotTime - now) < (2 * 60 * 60 * 1000); // Strictly locked if within 2 hours
+    return (slotTime - now) < (2 * 60 * 60 * 1000);
   };
 
   const handleOpenBookingEngine = async (mode: 'new' | 'reschedule', lessonData: any = null) => {
@@ -239,7 +244,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
         
       if (error) throw error;
       
-      // Filter out slots that violate the 48hr/8AM rule
       const validSlots = (data || []).filter(slot => isSlotBookable(slot.start_time));
       setAvailableSlots(validSlots);
     } catch (err) {
@@ -389,6 +393,53 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
     }
   };
 
+  // Programmatic Upgrade Request Message
+  const handleUpgradeRequest = async (featureName: string) => {
+    if (!selectedChild || isUpgrading) return;
+    setIsUpgrading(true);
+
+    const coachId = selectedChild.meta?.teacher?.id || '00000000-0000-0000-0000-000000000000';
+    const text = `[SYSTEM: UPGRADE REQUEST] Hi RAD Academy, we are interested in upgrading our plan to unlock ${featureName} for ${selectedChild.display_name.split(' ')[0]}. Please contact us with more information!`;
+    
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMsg = {
+      id: tempId,
+      student_id: selectedChild.id,
+      guardian_id: parentId,
+      coach_id: coachId,
+      sender_id: parentId,
+      message: text,
+      created_at: new Date().toISOString(),
+      is_read: true 
+    };
+    
+    setChatMessages(prev => [...prev, optimisticMsg]);
+
+    try {
+      const { data, error } = await supabase.from('coach_messages').insert([{
+        student_id: selectedChild.id,
+        guardian_id: parentId,
+        coach_id: coachId,
+        sender_id: parentId,
+        message: text
+      }]).select().single();
+
+      if (error) throw error;
+      
+      setChatMessages(prev => prev.map(msg => msg.id === tempId ? data : msg));
+      showToast("Upgrade request sent! Our team will be in touch shortly.", "success");
+      
+      // Auto-switch to feedback tab to show them the message
+      setActiveChildTab('feedback');
+
+    } catch (err) {
+      setChatMessages(prev => prev.filter(msg => msg.id !== tempId));
+      showToast("Failed to send request. Please try again or type a message manually.", "error");
+    } finally {
+      setIsUpgrading(false);
+    }
+  };
+
   const handleMarkAsRead = async () => {
     if (!selectedChildId || !parentId) return;
     window.dispatchEvent(new Event('messagesRead'));
@@ -405,8 +456,6 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
   };
 
   const totalXP = students.reduce((acc, kid) => acc + (kid.xp || 0), 0);
-  const isDemo = parentData?.payment_plan_preference === 'demo';
-
   const outstandingBalance = invoices.reduce((acc, inv) => {
     if (inv.status === 'paid') return acc;
     const total = parseFloat(inv.total_amount || 0);
@@ -469,8 +518,8 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-end justify-between gap-8">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3 mb-2">
-              <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${isDemo ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-green-500/10 text-green-400 border-green-500/20 shadow-[0_0_15px_rgba(34,197,94,0.2)]'}`}>
-                {isDemo ? 'Trial Access' : 'Active Account'}
+              <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${checkPlan.includes("demo") ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-green-500/10 text-green-400 border-green-500/20 shadow-[0_0_15px_rgba(34,197,94,0.2)]'}`}>
+                {checkPlan.includes("demo") ? 'Trial Access' : 'Active Account'}
               </span>
               <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 bg-white/5 px-4 py-1.5 rounded-full border border-white/5">
                 <Shield size={12} /> Secure Portal
@@ -541,18 +590,22 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
       {students.length > 0 && (
         <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2 border-b border-white/5">
           {[
-            { id: 'overview', icon: TrendingUp, label: 'Household Overview' },
-            { id: 'finance', icon: CreditCard, label: 'Billing & Finances' },
+            { id: 'overview', icon: TrendingUp, label: 'Household Overview', disabled: false },
+            { id: 'finance', icon: CreditCard, label: 'Billing & Finances', disabled: isLMSAccess },
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveGlobalTab(tab.id as any)}
+              onClick={() => !tab.disabled && setActiveGlobalTab(tab.id as any)}
+              disabled={tab.disabled}
               className={`flex items-center gap-2 px-6 py-3 rounded-t-2xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                activeGlobalTab === tab.id 
-                  ? 'bg-white/10 text-white border-b-2 border-blue-500' 
-                  : 'text-slate-400 border-b-2 border-transparent hover:bg-white/5 hover:text-white'
+                tab.disabled 
+                  ? 'text-slate-600 cursor-not-allowed border-b-2 border-transparent opacity-50'
+                  : activeGlobalTab === tab.id 
+                    ? 'bg-white/10 text-white border-b-2 border-blue-500' 
+                    : 'text-slate-400 border-b-2 border-transparent hover:bg-white/5 hover:text-white'
               }`}
             >
+              {tab.disabled && <Lock size={12} className="mr-0.5 inline" />}
               <tab.icon size={16} /> {tab.label}
             </button>
           ))}
@@ -619,34 +672,29 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                         </div>
                       </div>
                     </div>
-
-                    <button 
-                      disabled={true}
-                      className="w-full md:w-auto px-6 py-4 rounded-2xl flex items-center justify-center gap-3 transition-all font-black uppercase tracking-widest text-[10px] md:text-xs shadow-xl bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5"
-                      title="Unlocks on 25 April (Week 3)"
-                    >
-                      <Lock size={18} />
-                      Unlocks 25 April
-                    </button>
                   </div>
 
                   {/* CHILD-SPECIFIC TABS */}
                   <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
                     {[
-                      { id: 'overview', icon: Calendar, label: 'Logistics' },
-                      { id: 'portfolio', icon: Trophy, label: 'Brags & Portfolio' },
-                      { id: 'feedback', icon: MessageSquare, label: 'Coach Feedback' },
-                      { id: 'security', icon: Shield, label: 'Security' },
+                      { id: 'overview', icon: Calendar, label: 'Logistics', disabled: false },
+                      { id: 'portfolio', icon: Trophy, label: 'Brags & Portfolio', disabled: false }, // Enabled to show the FOMO screen
+                      { id: 'feedback', icon: MessageSquare, label: isLMSAccess ? 'Contact RAD Academy' : 'Teacher Feedback', disabled: false },
+                      { id: 'security', icon: Shield, label: 'Security', disabled: false },
                     ].map((tab) => (
                       <button
                         key={tab.id}
-                        onClick={() => setActiveChildTab(tab.id as any)}
+                        onClick={() => !tab.disabled && setActiveChildTab(tab.id as any)}
+                        disabled={tab.disabled}
                         className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                          activeChildTab === tab.id 
-                            ? 'bg-white text-black shadow-lg' 
-                            : 'bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-white'
+                          tab.disabled
+                            ? 'text-slate-600 bg-transparent border-transparent cursor-not-allowed opacity-50'
+                            : activeChildTab === tab.id 
+                              ? 'bg-white text-black shadow-lg' 
+                              : 'bg-white/5 text-slate-400 border border-white/5 hover:bg-white/10 hover:text-white'
                         }`}
                       >
+                        {tab.disabled && <Lock size={12} className="mr-0.5 inline" />}
                         <tab.icon size={14} /> {tab.label}
                       </button>
                     ))}
@@ -656,14 +704,16 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                   {activeChildTab === 'overview' && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                       
-                      {/* Left Col: Attendance */}
-                      <div className="lg:col-span-5 bg-[#0f172a] border border-white/10 rounded-[32px] p-8 flex flex-col justify-center">
+                      {/* Left Col: Attendance (Expands if LMS Access) */}
+                      <div className={`${isLMSAccess ? 'lg:col-span-12' : 'lg:col-span-5'} bg-[#0f172a] border border-white/10 rounded-[32px] p-8 flex flex-col justify-center`}>
                         <div className="flex justify-between items-start mb-8">
                           <div>
                             <div className="w-10 h-10 bg-emerald-500/10 text-emerald-400 rounded-xl flex items-center justify-center mb-3">
                               <CalendarCheck size={20} />
                             </div>
-                            <h3 className="text-lg font-black uppercase italic tracking-tight text-white">Attendance</h3>
+                            <h3 className="text-lg font-black uppercase italic tracking-tight text-white">
+                              {isLMSAccess ? "Lessons done this month" : "Attendance"}
+                            </h3>
                           </div>
                           <span className="text-4xl font-black text-emerald-400 tracking-tighter">{selectedChild.attendanceRate}%</span>
                         </div>
@@ -684,146 +734,171 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                         </div>
                       </div>
 
-                      {/* Right Col: Next Session & Actions */}
-                      <div className="lg:col-span-7 bg-[#0f172a] border border-white/10 rounded-[32px] p-8">
-                        <div className="flex items-center justify-between mb-6">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-blue-500/10 text-blue-400 rounded-xl flex items-center justify-center">
-                              <Clock size={20} />
-                            </div>
-                            <h3 className="text-lg font-black uppercase italic tracking-tight text-white">Next Session</h3>
-                          </div>
-                          <button 
-                            onClick={() => setShowScheduleModal(true)}
-                            className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-blue-500/10 hover:bg-blue-500/20 transition-colors px-3 py-1.5 rounded-lg border border-blue-500/20"
-                          >
-                            View Full Schedule
-                          </button>
-                        </div>
-
-                        {nextLesson ? (
-                          <div className="space-y-6">
-                            <div className="bg-[#020617] border border-white/5 rounded-2xl p-5 shadow-inner">
-                              <div className="flex justify-between items-start mb-2">
-                                <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">
-                                  {new Date(nextLesson.date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-                                </p>
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                                  {nextLesson.type === 'online' ? <Shield size={10} /> : <User size={10} />}
-                                  {nextLesson.type || nextLesson.delivery || 'Standard'}
-                                </span>
+                      {/* Right Col: Next Session & Actions (HIDDEN FOR LMS ACCESS) */}
+                      {!isLMSAccess && (
+                        <div className="lg:col-span-7 bg-[#0f172a] border border-white/10 rounded-[32px] p-8">
+                          <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-blue-500/10 text-blue-400 rounded-xl flex items-center justify-center">
+                                <Clock size={20} />
                               </div>
-                              <p className="text-3xl font-black text-white tracking-tighter">
-                                {new Date(nextLesson.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                              </p>
-                              <p className="text-xs text-slate-500 mt-2 font-bold">{nextLesson.topic}</p>
+                              <h3 className="text-lg font-black uppercase italic tracking-tight text-white">Next Session</h3>
                             </div>
-                            
-                            <div className="flex flex-col sm:flex-row gap-3">
-                              <button 
-                                onClick={() => handleLessonAction(nextLesson.id, 'apology')}
-                                disabled={lessonActions[nextLesson.id] === 'apology' || nextLesson.attendance_status === 'apology'}
-                                className={`flex-1 py-3.5 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all border ${
-                                  (lessonActions[nextLesson.id] === 'apology' || nextLesson.attendance_status === 'apology') 
-                                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
-                                    : 'bg-white/5 text-slate-300 hover:text-white border-white/10 hover:bg-white/10'
-                                }`}
-                              >
-                                {(lessonActions[nextLesson.id] === 'apology' || nextLesson.attendance_status === 'apology') ? <CheckCircle2 size={14}/> : <CalendarX2 size={14}/>}
-                                {(lessonActions[nextLesson.id] === 'apology' || nextLesson.attendance_status === 'apology') ? 'Apology Logged' : 'Log Absence'}
-                              </button>
+                            <button 
+                              onClick={() => setShowScheduleModal(true)}
+                              className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-blue-500/10 hover:bg-blue-500/20 transition-colors px-3 py-1.5 rounded-lg border border-blue-500/20"
+                            >
+                              View Full Schedule
+                            </button>
+                          </div>
+
+                          {nextLesson ? (
+                            <div className="space-y-6">
+                              <div className="bg-[#020617] border border-white/5 rounded-2xl p-5 shadow-inner">
+                                <div className="flex justify-between items-start mb-2">
+                                  <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">
+                                    {new Date(nextLesson.date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                                  </p>
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                                    {nextLesson.type === 'online' ? <Shield size={10} /> : <User size={10} />}
+                                    {nextLesson.type || nextLesson.delivery || 'Standard'}
+                                  </span>
+                                </div>
+                                <p className="text-3xl font-black text-white tracking-tighter">
+                                  {new Date(nextLesson.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                                <p className="text-xs text-slate-500 mt-2 font-bold">{nextLesson.topic}</p>
+                              </div>
                               
-                              <button 
-                                onClick={() => handleLessonAction(nextLesson.id, 'reschedule')}
-                                disabled={lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled' || isSlotLockedForReschedule(nextLesson.date)}
-                                className={`flex-1 py-3.5 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all border ${
-                                  (lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled') 
-                                    ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' 
+                              <div className="flex flex-col sm:flex-row gap-3">
+                                <button 
+                                  onClick={() => handleLessonAction(nextLesson.id, 'apology')}
+                                  disabled={lessonActions[nextLesson.id] === 'apology' || nextLesson.attendance_status === 'apology'}
+                                  className={`flex-1 py-3.5 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all border ${
+                                    (lessonActions[nextLesson.id] === 'apology' || nextLesson.attendance_status === 'apology') 
+                                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' 
+                                      : 'bg-white/5 text-slate-300 hover:text-white border-white/10 hover:bg-white/10'
+                                  }`}
+                                >
+                                  {(lessonActions[nextLesson.id] === 'apology' || nextLesson.attendance_status === 'apology') ? <CheckCircle2 size={14}/> : <CalendarX2 size={14}/>}
+                                  {(lessonActions[nextLesson.id] === 'apology' || nextLesson.attendance_status === 'apology') ? 'Apology Logged' : 'Log Absence'}
+                                </button>
+                                
+                                <button 
+                                  onClick={() => handleLessonAction(nextLesson.id, 'reschedule')}
+                                  disabled={lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled' || isSlotLockedForReschedule(nextLesson.date)}
+                                  className={`flex-1 py-3.5 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all border ${
+                                    (lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled') 
+                                      ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' 
+                                      : isSlotLockedForReschedule(nextLesson.date)
+                                      ? 'bg-slate-800 text-slate-600 border-slate-700 cursor-not-allowed'
+                                      : 'bg-white/5 text-slate-300 hover:text-white border-white/10 hover:bg-white/10'
+                                  }`}
+                                  title={isSlotLockedForReschedule(nextLesson.date) ? "Locked (< 2 hours)" : "Request Reschedule"}
+                                >
+                                  {(lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled') 
+                                    ? <><CheckCircle2 size={14}/> Rescheduled</> 
                                     : isSlotLockedForReschedule(nextLesson.date)
-                                    ? 'bg-slate-800 text-slate-600 border-slate-700 cursor-not-allowed'
-                                    : 'bg-white/5 text-slate-300 hover:text-white border-white/10 hover:bg-white/10'
-                                }`}
-                                title={isSlotLockedForReschedule(nextLesson.date) ? "Locked (< 2 hours)" : "Request Reschedule"}
-                              >
-                                {(lessonActions[nextLesson.id] === 'reschedule' || nextLesson.attendance_status === 'rescheduled') 
-                                  ? <><CheckCircle2 size={14}/> Rescheduled</> 
-                                  : isSlotLockedForReschedule(nextLesson.date)
-                                  ? <><Lock size={14}/> Locked (&lt;2h)</>
-                                  : <><RefreshCw size={14}/> Request Reschedule</>}
-                              </button>
+                                    ? <><Lock size={14}/> Locked (&lt;2h)</>
+                                    : <><RefreshCw size={14}/> Request Reschedule</>}
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="py-8 text-center bg-[#020617] rounded-2xl border border-white/5">
-                            <p className="text-sm font-bold text-slate-400 italic">No upcoming sessions scheduled.</p>
-                          </div>
-                        )}
-                      </div>
+                          ) : (
+                            <div className="py-8 text-center bg-[#020617] rounded-2xl border border-white/5">
+                              <p className="text-sm font-bold text-slate-400 italic">No upcoming sessions scheduled.</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </motion.div>
                   )}
 
                   {/* CHILD TAB: PORTFOLIO & BRAGS */}
                   {activeChildTab === 'portfolio' && (
-                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-2">
-                        <p className="text-sm text-slate-400 font-medium">Completed projects & mastered skills. <span className="text-white font-bold">Share them with family!</span></p>
-                      </div>
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 relative">
                       
-                      {portfolios.length === 0 ? (
-                        <div className="p-12 text-center bg-[#0f172a] rounded-[32px] border border-white/10">
-                          <FolderGit2 className="mx-auto size-12 text-slate-600 mb-4" />
-                          <h3 className="text-lg font-black text-white italic">Awaiting First Upload</h3>
-                          <p className="text-sm text-slate-500 mt-2">When {selectedChild.display_name.split(' ')[0]} completes and captures their first approved project, it will appear here!</p>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {portfolios.map(item => {
-                            const title = item.missions?.title || "Engineering Mission";
-                            const rawSkills = item.missions?.metadata?.skills || item.missions?.skills;
-                            const skills = Array.isArray(rawSkills) ? rawSkills : ["Problem Solving", "Logic"];
-
-                            return (
-                              <div key={item.id} className="bg-[#0f172a] border border-white/10 rounded-[32px] p-6 shadow-xl hover:border-blue-500/30 transition-colors group flex flex-col">
-                                
-                                <div className="w-full aspect-video bg-[#020617] rounded-2xl border border-white/5 mb-6 overflow-hidden relative group-hover:border-blue-500/30 transition-colors">
-                                  {item.snapshot_url ? (
-                                    <img src={item.snapshot_url} alt={title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
-                                  ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-slate-700 font-black italic uppercase tracking-widest text-xs">
-                                      Project File Missing
-                                    </div>
-                                  )}
-                                  <div className="absolute top-3 right-3">
-                                    <button 
-                                      onClick={() => copyToClipboard(`Look what ${selectedChild.display_name.split(' ')[0]} built at RAD Academy: ${title}! 🚀`)}
-                                      className="p-2.5 bg-black/60 backdrop-blur-md hover:bg-blue-600 hover:text-white rounded-xl text-slate-300 transition-all shadow-lg border border-white/10"
-                                      title="Share Achievement"
-                                    >
-                                      {copied ? <CheckCircle2 size={16}/> : <Share2 size={16}/>}
-                                    </button>
-                                  </div>
-                                </div>
-                                
-                                <div className="flex-1">
-                                  <h3 className="text-xl font-black uppercase italic tracking-tighter text-white mb-1 line-clamp-1">{title}</h3>
-                                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-5">Approved: {new Date(item.created_at).toLocaleDateString()}</p>
-                                  
-                                  <div className="space-y-2 mt-auto">
-                                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Acquired Skills:</p>
-                                    <div className="flex flex-wrap gap-2">
-                                      {skills.slice(0, 3).map((skill: string) => (
-                                        <span key={skill} className="px-2.5 py-1 bg-white/5 border border-white/10 text-[10px] font-bold text-slate-300 rounded-lg">
-                                          {skill}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
+                      {/* FOMO Overlay for LMS Access */}
+                      {isLMSAccess && (
+                        <div className="absolute inset-0 z-50 bg-[#020617]/40 backdrop-blur-[6px] rounded-[32px] border border-white/10 flex flex-col items-center justify-center p-8 text-center shadow-2xl min-h-[400px]">
+                          <div className="w-16 h-16 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center mb-4 shadow-inner border border-blue-500/30">
+                            <Lock size={24} />
+                          </div>
+                          <h3 className="text-lg font-black uppercase italic tracking-tighter text-white mb-2">Premium Feature</h3>
+                          <p className="text-xs text-slate-400 leading-relaxed font-medium mb-6 max-w-sm mx-auto">
+                            The Brags & Portfolio engine is exclusive to our fully enrolled students. Upgrade to start archiving your child's tech milestones.
+                          </p>
+                          <button 
+                            disabled={isUpgrading}
+                            onClick={() => handleUpgradeRequest('the Brags & Portfolio engine')}
+                            className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
+                          >
+                            {isUpgrading ? <Loader2 size={14} className="animate-spin" /> : "Upgrade Plan"} {!isUpgrading && <ArrowRight size={14} />}
+                          </button>
                         </div>
                       )}
+
+                      <div className={`${isLMSAccess ? 'opacity-40 pointer-events-none select-none min-h-[400px]' : ''} space-y-6`}>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 px-2">
+                          <p className="text-sm text-slate-400 font-medium">Completed projects & mastered skills. <span className="text-white font-bold">Share them with family!</span></p>
+                        </div>
+                        
+                        {portfolios.length === 0 ? (
+                          <div className="p-12 text-center bg-[#0f172a] rounded-[32px] border border-white/10 min-h-[300px] flex flex-col items-center justify-center">
+                            <FolderGit2 className="mx-auto size-12 text-slate-600 mb-4" />
+                            <h3 className="text-lg font-black text-white italic">Awaiting First Upload</h3>
+                            <p className="text-sm text-slate-500 mt-2">When {selectedChild.display_name.split(' ')[0]} completes and captures their first approved project, it will appear here!</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {portfolios.map(item => {
+                              const title = item.missions?.title || "Engineering Mission";
+                              const rawSkills = item.missions?.metadata?.skills || item.missions?.skills;
+                              const skills = Array.isArray(rawSkills) ? rawSkills : ["Problem Solving", "Logic"];
+
+                              return (
+                                <div key={item.id} className="bg-[#0f172a] border border-white/10 rounded-[32px] p-6 shadow-xl hover:border-blue-500/30 transition-colors group flex flex-col">
+                                  
+                                  <div className="w-full aspect-video bg-[#020617] rounded-2xl border border-white/5 mb-6 overflow-hidden relative group-hover:border-blue-500/30 transition-colors">
+                                    {item.snapshot_url ? (
+                                      <img src={item.snapshot_url} alt={title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-slate-700 font-black italic uppercase tracking-widest text-xs">
+                                        Project File Missing
+                                      </div>
+                                    )}
+                                    <div className="absolute top-3 right-3">
+                                      <button 
+                                        onClick={() => copyToClipboard(`Look what ${selectedChild.display_name.split(' ')[0]} built at RAD Academy: ${title}! 🚀`)}
+                                        className="p-2.5 bg-black/60 backdrop-blur-md hover:bg-blue-600 hover:text-white rounded-xl text-slate-300 transition-all shadow-lg border border-white/10"
+                                        title="Share Achievement"
+                                      >
+                                        {copied ? <CheckCircle2 size={16}/> : <Share2 size={16}/>}
+                                      </button>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="flex-1">
+                                    <h3 className="text-xl font-black uppercase italic tracking-tighter text-white mb-1 line-clamp-1">{title}</h3>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-5">Approved: {new Date(item.created_at).toLocaleDateString()}</p>
+                                    
+                                    <div className="space-y-2 mt-auto">
+                                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Acquired Skills:</p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {skills.slice(0, 3).map((skill: string) => (
+                                          <span key={skill} className="px-2.5 py-1 bg-white/5 border border-white/10 text-[10px] font-bold text-slate-300 rounded-lg">
+                                            {skill}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </motion.div>
                   )}
 
@@ -831,47 +906,63 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                   {activeChildTab === 'feedback' && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                       
-                      <div className="lg:col-span-1 space-y-6">
-                        <div className="bg-white/5 border border-white/10 rounded-[32px] p-8 relative overflow-hidden group mb-6">
-                          <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-6 relative z-10">Assigned Coach</h3>
-                          {selectedChild.meta?.teacher ? (
-                            <div className="text-center relative z-10">
-                              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 border-2 border-purple-500/50 flex items-center justify-center font-black text-xl text-purple-400 mx-auto mb-4 overflow-hidden shadow-xl">
-                                {selectedChild.meta.teacher.avatar_url ? (
-                                  <img src={selectedChild.meta.teacher.avatar_url} alt={selectedChild.meta.teacher.name} className="w-full h-full object-cover" />
-                                ) : (
-                                  selectedChild.meta.teacher.name.charAt(0)
-                                )}
-                              </div>
-                              <h4 className="text-lg font-bold text-white mb-1">{selectedChild.meta.teacher.name}</h4>
-                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Lead Robotics Coach</p>
-                              
-                              <button onClick={() => setShowCoachBio(selectedChild.meta.teacher)} className="text-[10px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 transition-colors hover:bg-purple-500/20 px-4 py-2 rounded-xl border border-purple-500/20">
-                                View Bio
-                              </button>
+                      {/* Left Col: Teacher & Evaluation (ALWAYS RENDERED NOW, WITH OVERLAY FOR LMS) */}
+                      <div className="lg:col-span-1 space-y-6 relative">
+                        
+                        {/* FOMO Overlay for LMS Access */}
+                        {isLMSAccess && (
+                          <div className="absolute inset-0 z-50 bg-[#020617]/40 backdrop-blur-[6px] rounded-[32px] border border-white/10 flex flex-col items-center justify-center p-8 text-center shadow-2xl min-h-[400px]">
+                            <div className="w-16 h-16 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center mb-4 shadow-inner border border-blue-500/30">
+                              <Lock size={24} />
                             </div>
-                          ) : (
-                            <p className="text-sm text-slate-400 italic text-center py-6">No coach assigned yet.</p>
-                          )}
-                        </div>
-
-                        <div className="bg-gradient-to-br from-blue-900/40 to-[#0f172a] border border-blue-500/20 rounded-[32px] p-8 shadow-inner">
-                          <div className="flex items-center gap-3 mb-6">
-                            <Award className="text-blue-400" size={20}/>
-                            <h3 className="text-sm font-black uppercase tracking-widest text-white">Latest Evaluation</h3>
-                          </div>
-                          <div className="space-y-4">
-                            <div>
-                              <div className="flex justify-between text-xs font-bold mb-1"><span className="text-slate-300">Logic & Problem Solving</span><span className="text-emerald-400">Excellent</span></div>
-                              <div className="h-1.5 w-full bg-black/40 rounded-full"><div className="h-full bg-emerald-500 rounded-full w-[90%]"/></div>
-                            </div>
-                            <div>
-                              <div className="flex justify-between text-xs font-bold mb-1"><span className="text-slate-300">Focus & Participation</span><span className="text-blue-400">Good</span></div>
-                              <div className="h-1.5 w-full bg-black/40 rounded-full"><div className="h-full bg-blue-500 rounded-full w-[75%]"/></div>
-                            </div>
-                            <p className="text-xs text-slate-400 italic mt-4 pt-4 border-t border-white/10">
-                              "{selectedChild.display_name.split(' ')[0]} is showing incredible aptitude for conditional logic this week. Very proud of their progress!"
+                            <h3 className="text-lg font-black uppercase italic tracking-tighter text-white mb-2">Premium Feature</h3>
+                            <p className="text-xs text-slate-400 leading-relaxed font-medium mb-6">
+                              Dedicated 1-on-1 teachers and comprehensive weekly evaluations are exclusive to our full-tier coaching programs.
                             </p>
+                            <button 
+                              disabled={isUpgrading}
+                              onClick={() => handleUpgradeRequest('1-on-1 Teachers and Weekly Evaluations')}
+                              className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-900/20 flex items-center gap-2"
+                            >
+                              {isUpgrading ? <Loader2 size={14} className="animate-spin" /> : "Upgrade Plan"} {!isUpgrading && <ArrowRight size={14} />}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Underlying Content (Blurred out if isLMSAccess) */}
+                        <div className={`${isLMSAccess ? 'opacity-40 pointer-events-none select-none' : ''} space-y-6`}>
+                          <div className="bg-white/5 border border-white/10 rounded-[32px] p-8 relative overflow-hidden group">
+                            <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-6 relative z-10">Assigned Teacher</h3>
+                            {selectedChild.meta?.teacher ? (
+                              <div className="text-center relative z-10">
+                                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 border-2 border-purple-500/50 flex items-center justify-center font-black text-xl text-purple-400 mx-auto mb-4 overflow-hidden shadow-xl">
+                                  {selectedChild.meta.teacher.avatar_url ? (
+                                    <img src={selectedChild.meta.teacher.avatar_url} alt={selectedChild.meta.teacher.name} className="w-full h-full object-cover" />
+                                  ) : (
+                                    selectedChild.meta.teacher.name.charAt(0)
+                                  )}
+                                </div>
+                                <h4 className="text-lg font-bold text-white mb-1">{selectedChild.meta.teacher.name}</h4>
+                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Lead Robotics Teacher</p>
+                                
+                                <button onClick={() => setShowCoachBio(selectedChild.meta.teacher)} className="text-[10px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 transition-colors hover:bg-purple-500/20 px-4 py-2 rounded-xl border border-purple-500/20">
+                                  View Bio
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-slate-400 italic text-center py-6">No teacher assigned yet.</p>
+                            )}
+                          </div>
+
+                          <div className="bg-gradient-to-br from-blue-900/40 to-[#0f172a] border border-blue-500/20 rounded-[32px] p-8 shadow-inner">
+                            <div className="flex items-center gap-3 mb-6">
+                              <Award className="text-blue-400" size={20}/>
+                              <h3 className="text-sm font-black uppercase tracking-widest text-white">Latest Evaluation</h3>
+                            </div>
+                            <div className="py-8 text-center border-t border-white/10">
+                               <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mb-2">System Update</p>
+                               <p className="text-sm font-bold text-slate-300 italic">Advanced AI-driven evaluations are launching in May 2026.</p>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -881,7 +972,9 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                         <div className="p-6 border-b border-white/5 bg-white/[0.02] flex items-center justify-between shrink-0">
                           <div className="flex items-center gap-3">
                             <Sparkles size={16} className="text-blue-400" />
-                            <h3 className="text-sm font-black uppercase tracking-widest text-slate-300">Direct Coach Portal</h3>
+                            <h3 className="text-sm font-black uppercase tracking-widest text-slate-300">
+                              {isLMSAccess ? "Contact RAD Academy" : "Direct Teacher Portal"}
+                            </h3>
                           </div>
                           
                           <div className="flex items-center gap-2 sm:gap-3">
@@ -898,7 +991,10 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                         <div className="flex-1 p-6 overflow-y-auto bg-[#020617] flex flex-col gap-4 shadow-inner custom-scrollbar" ref={chatScrollRef}>
                           {chatMessages.length === 0 && (
                             <div className="text-center text-slate-500 py-10 italic text-sm">
-                              Secure comms link established. You can now chat directly with {selectedChild.meta?.teacher?.name?.split(' ')[0] || 'the coach'}.
+                              {isLMSAccess 
+                                ? "Secure comms link established. You can now contact RAD Academy support directly." 
+                                : `Secure comms link established. You can now chat directly with ${selectedChild.meta?.teacher?.name?.split(' ')[0] || 'the teacher'}.`
+                              }
                             </div>
                           )}
                           
@@ -1051,7 +1147,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
       {/* ==========================================
           TAB CONTENT: GLOBAL FINANCE
           ========================================== */}
-      {activeGlobalTab === 'finance' && (
+      {activeGlobalTab === 'finance' && !isLMSAccess && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
           
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1307,10 +1403,10 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
               </div>
               
               <h3 className="text-2xl font-black uppercase italic tracking-tighter text-white mb-2">{showCoachBio.name}</h3>
-              <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-6">Lead Robotics Coach</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-6">Lead Robotics Teacher</p>
               
               <p className="text-sm text-slate-300 leading-relaxed font-medium bg-[#020617] p-6 rounded-3xl border border-white/5 shadow-inner">
-                {showCoachBio.bio || "This coach is an expert in foundational logic, Python, and hardware engineering, dedicated to helping your child redefine their potential."}
+                {showCoachBio.bio || "This teacher is an expert in foundational logic, Python, and hardware engineering, dedicated to helping your child redefine their potential."}
               </p>
             </motion.div>
           </div>
@@ -1366,7 +1462,7 @@ export default function ParentDashboard({ parentId }: { parentId: string }) {
                               {slot.delivery_mode}
                             </span>
                             <span className="text-[10px] font-bold text-slate-500 truncate">
-                              with {slot.profiles?.display_name?.split(' ')[0] || 'Coach'}
+                              with {slot.profiles?.display_name?.split(' ')[0] || 'Teacher'}
                             </span>
                           </div>
                           

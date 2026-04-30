@@ -1,45 +1,36 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState } from "react";
 import { 
-  ChevronLeft, Lock, CheckCircle2, Loader2, 
-  Zap, BarChart3, ChevronDown, ChevronUp, ShieldCheck, ShieldAlert, Clock, CalendarClock
+  ChevronLeft, Loader2, Zap, Target, BookOpen, 
+  ArrowRight, ShieldCheck, Cpu, Code2 
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { supabase } from "@/lib/supabase";
 import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrapper";
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
+import { motion, AnimatePresence } from "framer-motion";
 
-// Safely parse JSON configs from Supabase whether they return as strings or objects
-const safeParse = (data: any) => {
-  if (!data) return {};
-  if (typeof data === 'object') return data;
-  try { return JSON.parse(data); } catch(e) { return {}; }
+// Helper to determine the coding engine from the template type
+const getEngineTag = (templateType: string) => {
+  if (!templateType) return "MakeCode"; // Default assumption for legacy courses
+  if (templateType.includes("makecode")) return "MakeCode";
+  if (templateType.includes("python")) return "Python";
+  if (templateType.includes("scratch")) return "Scratch";
+  if (templateType.includes("java")) return "Java";
+  return "Coding Course";
 };
 
-// Format dates beautifully (e.g. "Apr 15, 2026")
-const formatUnlockDate = (dateString: string) => {
-  const d = new Date(dateString);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-};
-
-// --- SEPARATE THE COMPONENT THAT USES useSearchParams ---
-function CoursesContent() {
+export default function CoursesHubPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const targetCourseId = searchParams.get('courseId');
-
   const [loading, setLoading] = useState(true);
-  const [courseData, setCourseData] = useState<any>(null);
-  const [modules, setModules] = useState<any[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
-  const [openModuleId, setOpenModuleId] = useState<string | null>(null);
-  const [completionStats, setCompletionStats] = useState({ completed: 0, total: 0 });
+  const [enrolledCourses, setEnrolledCourses] = useState<any[]>([]);
 
   useEffect(() => {
-    async function fetchRoadmap() {
+    async function fetchCoursesHub() {
       const sessionData = localStorage.getItem("pioneer_session");
       if (!sessionData) { router.push("/login"); return; }
       const localUser = JSON.parse(sessionData);
@@ -48,380 +39,225 @@ function CoursesContent() {
         const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
         if (profile) setUserProfile(profile);
 
-        // Fetch targeted course or fallback to most recent
-        let query = supabase
+        // 1. Fetch all active enrollments for this student
+        const { data: enrollments } = await supabase
           .from('enrollments')
-          .select('course_id, courses(*)')
+          .select('course_id, status, courses(*)')
           .eq('student_id', localUser.id)
           .eq('status', 'active')
           .order('enrolled_at', { ascending: false });
 
-        if (targetCourseId) {
-          query = query.eq('course_id', targetCourseId);
+        if (!enrollments || enrollments.length === 0) {
+          setEnrolledCourses([]);
+          setLoading(false);
+          return;
         }
 
-        const { data: enrollmentData, error: enrollError } = await query.limit(1);
+        const courseIds = enrollments.map(e => e.course_id);
 
-        if (enrollError) throw enrollError;
+        // 2. Fetch all modules and missions for these courses to calculate totals
+        const { data: allModules } = await supabase
+          .from('modules')
+          .select('id, course_id, missions(id)')
+          .in('course_id', courseIds);
 
-        const enrollment = enrollmentData?.[0];
+        // 3. Fetch student's completed tech archives and quiz attempts to calculate progress and XP
+        const [archiveRes, quizRes] = await Promise.all([
+          supabase.from('tech_archive').select('mission_id, xp_earned, type').eq('student_id', localUser.id).eq('status', 'completed'),
+          supabase.from('quiz_attempts').select('module_id, score, passed').eq('student_id', localUser.id).eq('passed', true)
+        ]);
 
-        if (enrollment) {
-          const rawCourse = enrollment.courses as any;
-          setCourseData(Array.isArray(rawCourse) ? rawCourse[0] : rawCourse);
+        const techArchive = archiveRes.data || [];
+        const quizAttempts = quizRes.data || [];
 
-          const { data: modulesData } = await supabase
-            .from('modules')
-            .select(`*, missions (*)`)
-            .eq('course_id', enrollment.course_id)
-            .order('order_index', { ascending: true });
+        // 4. Calculate Stats per Course
+        const completedMissionIds = new Set(techArchive.map(t => t.mission_id));
+        const passedModuleIds = new Set(quizAttempts.map(q => q.module_id));
 
-          const { data: techArchive } = await supabase.from('tech_archive').select('mission_id').eq('student_id', localUser.id);
-          const completedMissions = new Set((techArchive || []).map(t => t.mission_id));
+        const processedCourses = enrollments.map((enrollment) => {
+          const course = Array.isArray(enrollment.courses) ? enrollment.courses[0] : enrollment.courses;
+          if (!course) return null;
 
-          const { data: quizAttempts } = await supabase.from('quiz_attempts').select('module_id, passed, score').eq('student_id', localUser.id);
+          const courseModules = (allModules || []).filter(m => m.course_id === course.id);
           
-          const quizMap = (quizAttempts || []).reduce((acc: any, curr: any) => {
-            if (!acc[curr.module_id]) acc[curr.module_id] = { passed: false, bestScore: 0 };
-            if (curr.passed) acc[curr.module_id].passed = true;
-            if (curr.score > acc[curr.module_id].bestScore) acc[curr.module_id].bestScore = curr.score;
-            return acc;
-          }, {});
+          let totalMissions = 0;
+          let completedMissions = 0;
+          
+          courseModules.forEach(mod => {
+            // Count Quizzes as a mission
+            totalMissions++; 
+            if (passedModuleIds.has(mod.id)) completedMissions++;
 
-          if (modulesData) {
-            let globalPrevComplete = true; 
-            let activeModId: string | null = null;
-            let totalMissions = 0;
-            let totalCompleted = 0;
-
-            const processed = modulesData.map((mod: any) => {
-              const moduleQuiz = quizMap[mod.id] || { passed: false, bestScore: 0 };
-              const isQuizPassed = moduleQuiz.passed;
-              const bestScore = moduleQuiz.bestScore;
-
-              // --- MODULE LEVEL CHECKS ---
-              const modConfig = safeParse(mod.module_config);
-              const modIsPublished = mod.is_published !== false && modConfig.is_published !== false && (mod.status || '').toLowerCase() !== 'draft';
-              
-              const modUnlockDate = mod.unlock_date ? new Date(mod.unlock_date) : null;
-              const modIsDateLocked = modUnlockDate && modUnlockDate > new Date();
-
-              // Determine base accessibility of the entire Module Accordion
-              let modBaseStatus = 'locked';
-              if (isQuizPassed) modBaseStatus = 'completed';
-              else if (!modIsPublished) modBaseStatus = 'standby';
-              else if (modIsDateLocked) modBaseStatus = 'scheduled';
-              else if (globalPrevComplete) modBaseStatus = 'unlocked';
-              
-              // Set active module to the first unlocked one we find
-              if (modBaseStatus === 'unlocked' && !activeModId) activeModId = mod.id;
-
-              const sortedMissions = (mod.missions || []).sort((a: any, b: any) => a.order_index - b.order_index);
-              let prevMissionInModuleDone = true; 
-
-              const processedMissions = sortedMissions.map((m: any) => {
-                totalMissions++;
-                const isDone = completedMissions.has(m.id);
-                if (isDone) totalCompleted++;
-                
-                // --- MISSION LEVEL CHECKS ---
-                const mConfig = safeParse(m.mission_config);
-                const missionIsPublished = m.is_published !== false && mConfig.is_published !== false && (m.status || '').toLowerCase() !== 'draft';
-                const mUnlockDate = m.unlock_date ? new Date(m.unlock_date) : null;
-                const mIsDateLocked = mUnlockDate && mUnlockDate > new Date();
-                
-                const isEffectivelyPublished = modIsPublished && missionIsPublished;
-                const isEffectivelyDateLocked = modIsDateLocked || mIsDateLocked;
-                
-                let status = 'locked';
-                if (isDone) {
-                  status = 'completed';
-                } else if (!isEffectivelyPublished) {
-                  status = 'standby'; 
-                } else if (isEffectivelyDateLocked) {
-                  status = 'scheduled';
-                  m.displayDate = modIsDateLocked ? mod.unlock_date : m.unlock_date; // Pass down the date for the UI
-                } else if (globalPrevComplete && prevMissionInModuleDone) {
-                  status = 'unlocked';
-                }
-
-                prevMissionInModuleDone = isDone;
-                return { ...m, status };
-              });
-
-              const allMissionsDone = processedMissions.length > 0 && processedMissions.every((m: any) => m.status === 'completed');
-              
-              let quizStatus = 'locked';
-              if (isQuizPassed) quizStatus = 'completed';
-              else if (!modIsPublished) quizStatus = 'standby';
-              else if (modIsDateLocked) quizStatus = 'scheduled';
-              else if (allMissionsDone) quizStatus = 'unlocked';
-
-              globalPrevComplete = isQuizPassed; 
-
-              return { 
-                ...mod,
-                modBaseStatus, // Track the overall accessibility of the accordion wrapper
-                missions: processedMissions, 
-                quiz: { status: quizStatus, passed: isQuizPassed, bestScore } 
-              };
+            // Count actual missions
+            (mod.missions || []).forEach((mission: any) => {
+              totalMissions++;
+              if (completedMissionIds.has(mission.id)) completedMissions++;
             });
+          });
 
-            setModules(processed);
-            setCompletionStats({ completed: totalCompleted, total: totalMissions });
-            setOpenModuleId(activeModId || (processed.length > 0 ? processed[0].id : null));
-          }
-        }
-      } catch (err) { 
-        console.error(err); 
-      } finally { 
-        setLoading(false); 
+          // Calculate Course Specific XP
+          const courseMissionIds = new Set(courseModules.flatMap(mod => (mod.missions || []).map((m: any) => m.id)));
+          let courseXp = 0;
+          
+          techArchive.forEach(archive => {
+            if (courseMissionIds.has(archive.mission_id) || (course.template_type === 'makecode_sandbox' && archive.type === 'custom_logic')) {
+              courseXp += (archive.xp_earned || 0);
+            }
+          });
+
+          const progressPercent = totalMissions > 0 ? Math.round((completedMissions / totalMissions) * 100) : 0;
+
+          return {
+            ...course,
+            stats: {
+              totalMissions,
+              completedMissions,
+              progressPercent,
+              courseXp
+            }
+          };
+        }).filter(Boolean);
+
+        setEnrolledCourses(processedCourses);
+
+      } catch (err) {
+        console.error("Failed to load courses hub:", err);
+      } finally {
+        setLoading(false);
       }
     }
-    fetchRoadmap();
-  }, [router, targetCourseId]);
+    fetchCoursesHub();
+  }, [router]);
 
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
 
-  const currentXP = userProfile?.xp || 0;
-  const isEngineer = currentXP >= 1000;
-  const stats = {
-    xp: currentXP,
-    level: isEngineer ? 2 : 1,
-    currentLevel: {
-      name: isEngineer ? "Engineer" : "Technician",
-      code: isEngineer ? "ENG-02" : "TECH-01",
-      accentColor: isEngineer ? "#4ade80" : "#60a5fa",
-      floor: isEngineer ? 1000 : 0
-    },
-    nextLevel: { name: isEngineer ? "Senior Engineer" : "Engineer", xpRequired: isEngineer ? 2500 : 1000 }
-  };
-
   return (
-    <DashboardClientWrapper initialStats={stats}>
-      <main className="min-h-screen lg:mr-80 relative overflow-hidden text-left bg-[#020617]">
-        <div className="max-w-4xl mx-auto p-4 sm:p-6 md:p-12 space-y-8 md:space-y-12 relative z-10 pb-12 md:pb-24">
+    <DashboardClientWrapper initialStats={{ xp: userProfile?.xp || 0, level: 1, currentLevel: { name: "Technician", floor: 0 }, nextLevel: { xpRequired: 1000 }}}>
+      <main className="min-h-screen lg:mr-80 relative overflow-hidden text-left bg-[#020617] pb-24">
+        
+        {/* Background Ambience */}
+        <div className="absolute top-0 left-0 w-full h-96 bg-blue-900/10 blur-[120px] pointer-events-none rounded-full transform -translate-y-1/2" />
+        
+        <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-12 space-y-8 md:space-y-12 relative z-10">
           
-          {/* =========================================
-              HEADER SECTION (MOBILE OPTIMIZED)
-              ========================================= */}
           <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-5 md:gap-6 border-b border-white/5 pb-6 md:pb-8">
             <div className="flex items-start md:items-center gap-4 md:gap-6 w-full md:w-auto">
               <Link href="/student/dashboard" className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all shadow-xl shrink-0 mt-1 md:mt-0">
                 <ChevronLeft size={18} className="md:w-5 md:h-5" />
               </Link>
               <div className="flex-1">
-                <p className="text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 mb-0.5 md:mb-1">Course_Roadmap</p>
-                <h1 className="text-3xl md:text-4xl font-black tracking-tighter text-white uppercase italic leading-[0.9] md:leading-none break-words pr-2">
-                  {courseData?.title || 'Unknown Sector'}
+                <p className="text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] text-blue-400 mb-0.5 md:mb-1">Course Library</p>
+                <h1 className="text-3xl md:text-5xl font-black tracking-tighter text-white uppercase italic leading-[0.9] md:leading-none break-words">
+                  Your Courses
                 </h1>
               </div>
             </div>
-
-            <div className="flex items-center gap-3 w-full md:w-auto mt-2 md:mt-0">
-              <div className="flex-1 md:flex-none bg-white/5 p-4 md:px-6 md:py-4 rounded-[20px] md:rounded-3xl border border-white/10 flex items-center justify-between md:justify-start md:gap-4 shadow-xl">
-                <div className="text-left md:text-right">
-                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Total_XP</p>
-                  <p className="text-xl md:text-2xl font-black text-white italic leading-none">{currentXP}</p>
-                </div>
-                <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl md:rounded-2xl bg-yellow-500/10 flex items-center justify-center text-yellow-500 border border-yellow-500/20 shrink-0">
-                  <Zap size={16} fill="currentColor" className="md:w-5 md:h-5" />
-                </div>
-              </div>
-
-              <div className="flex-1 md:flex-none bg-white/5 p-4 md:px-6 md:py-4 rounded-[20px] md:rounded-3xl border border-white/10 flex items-center justify-between md:justify-start md:gap-4 shadow-xl">
-                <div className="text-left md:text-right">
-                  <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Uplinks</p>
-                  <p className="text-xl md:text-2xl font-black text-white italic leading-none">{completionStats.completed}/{completionStats.total}</p>
-                </div>
-                <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl md:rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20 shrink-0">
-                  <BarChart3 size={16} className="md:w-5 md:h-5" />
-                </div>
-              </div>
+            
+            <div className="bg-white/5 border border-white/10 px-6 py-3 rounded-2xl flex items-center gap-4">
+               <div>
+                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Global XP</p>
+                 <p className="text-2xl font-black italic text-white">{userProfile?.xp || 0}</p>
+               </div>
+               <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center border border-blue-500/30">
+                 <Target size={20} />
+               </div>
             </div>
           </header>
 
-          <section className="space-y-4 md:space-y-6">
-            {modules.length === 0 ? (
-              <div className="relative bg-[#020617] border border-white/5 rounded-[32px] md:rounded-[56px] text-center shadow-2xl overflow-hidden group min-h-[400px] md:min-h-[500px] flex flex-col items-center justify-center mt-6 md:mt-12">
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden opacity-[0.02] group-hover:opacity-[0.04] transition-opacity duration-1000">
-                  <span className="text-[5rem] sm:text-[6rem] md:text-[10rem] font-black text-white whitespace-nowrap -rotate-12 italic tracking-tighter">
-                    CLASSIFIED
-                  </span>
+          <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
+            <AnimatePresence>
+              {enrolledCourses.length === 0 ? (
+                <div className="col-span-full py-20 text-center border border-white/5 bg-white/[0.02] rounded-[32px]">
+                  <BookOpen size={48} className="text-slate-500 mx-auto mb-4" />
+                  <h3 className="text-2xl font-black uppercase italic text-slate-300">No Enrolled Courses</h3>
+                  <p className="text-slate-400 mt-2 text-sm">You are not currently enrolled in any active courses.</p>
                 </div>
+              ) : (
+                enrolledCourses.map((course, idx) => {
+                  const isSandbox = course.template_type === 'makecode_sandbox';
+                  const engineName = getEngineTag(course.template_type);
 
-                <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-10 md:h-14 bg-fuchsia-500/10 border-y border-fuchsia-500/20 -rotate-12 backdrop-blur-sm flex items-center justify-center gap-4 md:gap-8 shadow-[0_0_50px_rgba(217,70,239,0.15)]">
-                      {[...Array(8)].map((_, i) => (
-                        <span key={i} className="text-fuchsia-400 font-black text-[8px] md:text-[10px] uppercase tracking-[0.4em] flex items-center gap-4 md:gap-8 drop-shadow-[0_0_10px_rgba(217,70,239,0.8)]">
-                          ROADMAP SECURED <span className="w-1 md:w-1.5 h-1 md:h-1.5 rounded-full bg-fuchsia-400 animate-pulse" />
-                        </span>
-                      ))}
-                  </div>
-                </div>
-
-                <div className="relative z-10 space-y-4 md:space-y-6 flex flex-col items-center backdrop-blur-md bg-[#020617]/70 p-6 md:p-14 rounded-[24px] md:rounded-[40px] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] max-w-[90%] md:max-w-lg mx-auto">
-                  <div className="w-16 h-16 md:w-24 md:h-24 bg-[#0f172a] border border-white/10 rounded-2xl md:rounded-3xl flex items-center justify-center shadow-inner relative group-hover:scale-105 transition-transform duration-500">
-                     <div className="absolute inset-0 border border-fuchsia-500/30 rounded-2xl md:rounded-3xl animate-ping opacity-20" />
-                     <ShieldAlert className="w-8 h-8 md:w-10 md:h-10 text-fuchsia-400" />
-                  </div>
-                  <div className="space-y-2 md:space-y-3">
-                    <h2 className="text-2xl sm:text-3xl md:text-4xl font-black uppercase tracking-tighter italic text-white drop-shadow-lg leading-none">Awaiting Clearance</h2>
-                    <p className="text-slate-400 text-xs md:text-sm leading-relaxed max-w-sm mx-auto">
-                      Your training roadmap is currently classified. Sectors and missions will populate here once Command authorizes your curriculum.
-                    </p>
-                  </div>
-                  <Link href="/student/dashboard" className="px-6 md:px-8 py-3.5 md:py-4 bg-white/5 border border-white/10 rounded-xl md:rounded-2xl text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-300 hover:text-white hover:bg-white/10 transition-all mt-2 md:mt-4 inline-block">
-                    Return to Dashboard
-                  </Link>
-                </div>
-                
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-40 bg-fuchsia-500/10 blur-[100px] -rotate-12 pointer-events-none z-0" />
-              </div>
-            ) : (
-              modules.map((mod) => {
-                const isOpen = openModuleId === mod.id;
-                const isClickable = mod.modBaseStatus === 'unlocked' || mod.modBaseStatus === 'completed';
-
-                return (
-                  <div key={mod.id} className={`bg-white/[0.02] border border-white/5 rounded-[28px] md:rounded-[40px] overflow-hidden transition-all shadow-2xl ${isClickable ? '' : 'opacity-80'}`}>
-                    
-                    {/* ENFORCED MODULE ACCORDION HEADER (MOBILE OPTIMIZED) */}
-                    <button 
-                      onClick={() => isClickable && setOpenModuleId(isOpen ? null : mod.id)} 
-                      className={`w-full flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 md:p-8 transition-all text-left ${isClickable ? 'hover:bg-white/5 cursor-pointer' : 'cursor-not-allowed'}`}
+                  return (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.1 }}
+                      key={course.id} 
+                      className="group flex flex-col bg-[#0f172a] border border-white/10 rounded-[32px] overflow-hidden hover:border-blue-500/50 transition-all shadow-xl hover:shadow-[0_0_40px_rgba(59,130,246,0.15)] relative"
                     >
-                      <div className="flex items-start md:items-center gap-3 md:gap-4 w-full md:w-auto">
-                        <div className={`w-10 h-10 md:w-12 md:h-12 rounded-lg md:rounded-xl flex items-center justify-center font-black border shrink-0 text-sm md:text-base ${mod.modBaseStatus === 'completed' ? 'bg-green-500/10 text-green-500 border-green-500/20' : isClickable ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-slate-800 text-slate-500 border-slate-700'}`}>
-                          M{mod.order_index}
+                      {/* Top Accent Gradient */}
+                      <div className={`h-2 w-full ${isSandbox ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-gradient-to-r from-blue-500 to-indigo-500'}`} />
+                      
+                      <div className="p-6 md:p-8 flex-1 flex flex-col">
+                        <div className="flex justify-between items-start mb-6">
+                          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border shadow-inner ${isSandbox ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
+                            {isSandbox ? <Cpu size={24} /> : <Code2 size={24} />}
+                          </div>
+                          <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full border ${isSandbox ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-white/5 border-white/10 text-slate-300'}`}>
+                            {engineName}
+                          </span>
                         </div>
-                        <div className="mt-[-2px] md:mt-0 flex-1">
-                          <h2 className="text-lg sm:text-xl font-black uppercase italic tracking-tighter text-white leading-tight drop-shadow-md pr-2">{mod.title}</h2>
-                          <p className="text-[9px] md:text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em] mt-1 leading-snug">{mod.description}</p>
-                        </div>
-                      </div>
 
-                      {/* DYNAMIC LOCK STATUS BADGES */}
-                      <div className="shrink-0 mt-1 md:mt-0 self-end md:self-auto">
-                        {isClickable ? (
-                          isOpen ? <ChevronUp className="text-slate-500 w-5 h-5 md:w-6 md:h-6" /> : <ChevronDown className="text-slate-500 w-5 h-5 md:w-6 md:h-6" />
-                        ) : mod.modBaseStatus === 'scheduled' ? (
-                          <div className="flex items-center gap-1.5 md:gap-2 text-amber-500 bg-amber-500/10 px-3 md:px-4 py-1.5 md:py-2 rounded-lg md:rounded-xl border border-amber-500/20">
-                            <CalendarClock size={14} className="md:w-4 md:h-4" />
-                            <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest">Unlocks {formatUnlockDate(mod.unlock_date)}</span>
-                          </div>
-                        ) : mod.modBaseStatus === 'standby' ? (
-                          <div className="flex items-center gap-1.5 md:gap-2 text-slate-500 bg-white/5 px-3 md:px-4 py-1.5 md:py-2 rounded-lg md:rounded-xl border border-white/10">
-                            <Clock size={14} className="md:w-4 md:h-4" />
-                            <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest hidden sm:inline">Standby</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5 md:gap-2 text-slate-500 bg-white/5 px-3 md:px-4 py-1.5 md:py-2 rounded-lg md:rounded-xl border border-white/10">
-                            <Lock size={14} className="md:w-4 md:h-4" />
-                            <span className="text-[8px] md:text-[10px] font-black uppercase tracking-widest hidden sm:inline">Encrypted</span>
-                          </div>
-                        )}
-                      </div>
-                    </button>
+                        <h2 className="text-2xl font-black italic uppercase tracking-tighter leading-tight mb-3 text-white">
+                          {course.title}
+                        </h2>
+                        <p className="text-sm text-slate-400 line-clamp-2 mb-8 flex-1">
+                          {course.description || "Course curriculum loaded and ready."}
+                        </p>
 
-                    {/* ONLY RENDER INTERIOR IF OPENED */}
-                    {isOpen && isClickable && (
-                      <div className="p-4 sm:p-5 md:p-8 pt-0 grid gap-3 md:gap-4 pl-10 md:pl-20 border-l-2 border-blue-500/20 ml-10 md:ml-14 mb-5 md:mb-8">
-                        {mod.missions.map((m: any) => (
-                          <div key={m.id} className={`relative p-5 md:p-6 rounded-[20px] md:rounded-3xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6 ${m.status === 'locked' || m.status === 'standby' || m.status === 'scheduled' ? 'bg-white/5 border-white/5 opacity-60' : m.status === 'completed' ? 'bg-green-500/5 border-green-500/20' : 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_30px_rgba(59,130,246,0.1)]'}`}>
-                            <div className={`absolute -left-[31px] md:-left-[71px] w-5 h-5 md:w-6 md:h-6 rounded-full flex items-center justify-center border-[3px] md:border-4 border-[#020617] ${m.status === 'completed' ? 'bg-green-400' : m.status === 'locked' || m.status === 'standby' || m.status === 'scheduled' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
-                              {m.status === 'completed' ? <CheckCircle2 className="w-2.5 h-2.5 md:w-3 md:h-3 text-[#020617]" /> : m.status === 'locked' ? <Lock className="w-2 h-2 md:w-2.5 md:h-2.5 text-[#020617]" /> : m.status === 'standby' || m.status === 'scheduled' ? <Clock className="w-2 h-2 md:w-2.5 md:h-2.5 text-[#020617]" /> : <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-[#020617] rounded-full" />}
+                        <div className="space-y-4 mb-8 bg-black/40 p-5 rounded-2xl border border-white/5">
+                          {/* Stat Grid */}
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Lessons Done</p>
+                              <p className="text-lg font-black text-white">{course.stats.completedMissions} <span className="text-sm text-slate-500">/ {course.stats.totalMissions}</span></p>
                             </div>
-                            <div className="space-y-1">
-                              <span className={`text-[8px] md:text-[9px] font-black uppercase tracking-[0.2em] ${m.status === 'completed' ? 'text-green-400' : m.status === 'standby' ? 'text-slate-400' : m.status === 'scheduled' ? 'text-amber-500' : m.status === 'locked' ? 'text-slate-500' : 'text-blue-400'}`}>Milestone_{m.order_index}</span>
-                              <h3 className="text-xl md:text-2xl font-black italic uppercase text-white tracking-tighter leading-tight drop-shadow-md pr-2">{m.title}</h3>
+                            <div>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Course XP</p>
+                              <p className="text-lg font-black text-yellow-500 flex items-center gap-1">
+                                {course.stats.courseXp} <Zap size={14} className="fill-yellow-500 -mt-0.5" />
+                              </p>
                             </div>
-                            
-                            {/* DYNAMIC MISSION BUTTON STATES */}
-                            {m.status === 'scheduled' ? (
-                              <button disabled className="w-full md:w-auto px-5 py-3 md:px-6 md:py-4 rounded-xl md:rounded-2xl font-black uppercase italic text-[10px] md:text-xs tracking-widest bg-amber-500/10 text-amber-500/80 border border-amber-500/20 cursor-not-allowed flex justify-center items-center gap-2 transition-all shrink-0">
-                                <CalendarClock size={14} /> Unlocks {formatUnlockDate(m.displayDate)}
-                              </button>
-                            ) : m.status === 'standby' ? (
-                              <button disabled className="w-full md:w-auto px-5 py-3 md:px-8 md:py-4 rounded-xl md:rounded-2xl font-black uppercase italic text-[10px] md:text-xs tracking-widest bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex justify-center items-center gap-2 transition-all shrink-0">
-                                <Clock size={14} /> Standby
-                              </button>
-                            ) : m.status === 'locked' ? (
-                              <button disabled className="w-full md:w-auto px-5 py-3 md:px-8 md:py-4 rounded-xl md:rounded-2xl font-black uppercase italic text-[10px] md:text-xs tracking-widest bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex justify-center items-center gap-2 transition-all shrink-0">
-                                <Lock size={14} /> Encrypted
-                              </button>
-                            ) : (
-                              <button onClick={() => window.location.href = `/student/lesson/${m.id}`} className={`w-full md:w-auto px-5 py-3 md:px-8 md:py-4 rounded-xl md:rounded-2xl font-black uppercase italic text-[10px] md:text-xs tracking-widest transition-all shrink-0 flex justify-center items-center ${m.status === 'completed' ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-white text-black hover:scale-105 shadow-[0_0_20px_rgba(59,130,246,0.4)]'}`}>
-                                {m.status === 'completed' ? 'Review Archive' : 'Enter Mission'}
-                              </button>
-                            )}
                           </div>
-                        ))}
 
-                        {/* MODULE QUIZ / CHECKPOINT */}
-                        <div className={`relative p-5 md:p-8 mt-4 md:mt-6 rounded-[24px] md:rounded-[32px] border-2 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-6 ${mod.quiz?.status === 'locked' || mod.quiz?.status === 'standby' || mod.quiz?.status === 'scheduled' ? 'bg-white/5 border-white/5 opacity-50' : mod.quiz?.status === 'completed' ? 'bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_40px_rgba(234,179,8,0.1)]' : 'bg-blue-500/10 border-blue-500/50 shadow-[0_0_40px_rgba(59,130,246,0.2)]'}`}>
-                          <div className={`absolute -left-[33px] md:-left-[71px] w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center border-[3px] md:border-4 border-[#020617] ${mod.quiz?.status === 'completed' ? 'bg-yellow-400' : mod.quiz?.status === 'locked' || mod.quiz?.status === 'standby' || mod.quiz?.status === 'scheduled' ? 'bg-slate-700' : 'bg-blue-400 animate-pulse'}`}>
-                            {mod.quiz?.status === 'completed' ? <ShieldCheck className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#020617]" /> : mod.quiz?.status === 'standby' || mod.quiz?.status === 'scheduled' ? <Clock className="w-3 h-3 md:w-3 md:h-3 text-[#020617]" /> : mod.quiz?.status === 'locked' ? <Lock className="w-3 h-3 md:w-3 md:h-3 text-[#020617]" /> : <ShieldAlert className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#020617]" />}
+                          {/* Progress Bar */}
+                          <div className="space-y-1.5 pt-2">
+                            <div className="flex justify-between text-[11px] font-black uppercase tracking-widest">
+                              <span className="text-slate-400">Completion</span>
+                              <span className={isSandbox ? 'text-emerald-400' : 'text-blue-400'}>{course.stats.progressPercent}%</span>
+                            </div>
+                            <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                              <motion.div 
+                                initial={{ width: 0 }}
+                                animate={{ width: `${course.stats.progressPercent}%` }}
+                                transition={{ duration: 1 }}
+                                className={`h-full ${isSandbox ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                              />
+                            </div>
                           </div>
-                          <div className="space-y-1">
-                            <span className={`text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em] ${mod.quiz?.status === 'completed' ? 'text-yellow-400' : mod.quiz?.status === 'locked' || mod.quiz?.status === 'standby' || mod.quiz?.status === 'scheduled' ? 'text-slate-500' : 'text-blue-400'}`}>Knowledge_Uplink</span>
-                            <h3 className="text-2xl md:text-3xl font-black italic uppercase text-white tracking-tighter leading-tight drop-shadow-md">Level-Up Checkpoint</h3>
-                            {mod.quiz?.status === 'completed' && <p className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-yellow-400 mt-2">Best Score: {mod.quiz?.bestScore}%</p>}
-                          </div>
-                          
-                          {mod.quiz?.status === 'scheduled' ? (
-                            <button disabled className="w-full md:w-auto px-5 py-3.5 md:px-6 md:py-5 rounded-xl md:rounded-2xl font-black uppercase italic text-[10px] md:text-xs tracking-widest bg-amber-500/10 text-amber-500/80 border border-amber-500/20 cursor-not-allowed flex justify-center items-center gap-2 transition-all shrink-0">
-                              <CalendarClock size={14} /> Unlocks {formatUnlockDate(mod.unlock_date)}
-                            </button>
-                          ) : mod.quiz?.status === 'standby' ? (
-                            <button disabled className="w-full md:w-auto px-5 py-3.5 md:px-8 md:py-5 rounded-xl md:rounded-2xl font-black uppercase italic text-[10px] md:text-xs tracking-widest bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex justify-center items-center gap-2 transition-all shrink-0">
-                              <Clock size={14} /> Standby
-                            </button>
-                          ) : mod.quiz?.status === 'locked' ? (
-                            <button disabled className="w-full md:w-auto px-5 py-3.5 md:px-8 md:py-5 rounded-xl md:rounded-2xl font-black uppercase italic text-[10px] md:text-xs tracking-widest bg-white/5 text-slate-500 border border-white/10 cursor-not-allowed flex justify-center items-center gap-2 transition-all shrink-0">
-                              <Lock size={14} /> Encrypted
-                            </button>
-                          ) : (
-                            <button onClick={() => window.location.href = `/student/quiz/${mod.id}`} className={`w-full md:w-auto px-5 py-3.5 md:px-8 md:py-5 rounded-xl md:rounded-2xl font-black uppercase italic text-[10px] md:text-xs tracking-widest transition-all shrink-0 flex justify-center items-center ${mod.quiz?.status === 'completed' ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30 border border-yellow-500/30' : 'bg-blue-500 text-black hover:scale-105 shadow-[0_0_20px_rgba(59,130,246,0.4)]'}`}>
-                              {mod.quiz?.status === 'completed' ? 'Review Checkpoint' : 'Start Checkpoint'}
-                            </button>
-                          )}
                         </div>
+
+                        {/* Route to the New Course Landing Page */}
+                        <Link 
+                          href={`/student/course/${course.id}`}
+                          className={`w-full py-4 rounded-xl flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[11px] transition-all group/btn ${isSandbox ? 'bg-emerald-600 hover:bg-emerald-500 text-black' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
+                        >
+                          Enter Course 
+                          <ArrowRight size={16} className="group-hover/btn:translate-x-1 transition-transform" />
+                        </Link>
                       </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
+                    </motion.div>
+                  );
+                })
+              )}
+            </AnimatePresence>
           </section>
-          
-          {/* =========================================
-              DASHBOARD FOOTER (GLOBAL)
-              ========================================= */}
-          <footer className="mt-12 md:mt-20 border-t border-white/5 pt-8 md:pt-10 flex flex-col md:flex-row items-center justify-between gap-4">
-             <div className="flex items-center gap-3">
-               <Image src="/logo/rad-logo_white_2.png" alt="RAD Academy" width={80} height={26} className="opacity-50" unoptimized />
-               <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-600">Pioneer Interface</span>
-             </div>
-             <p className="text-[8px] md:text-[9px] font-bold text-slate-600 uppercase tracking-widest">© 2026 RAD Academy. All Systems Nominal.</p>
-          </footer>
 
         </div>
       </main>
-      <ProfileSidebar />
-    </DashboardClientWrapper>
-  );
-}
-
-// --- WRAP THE CONTENT IN SUSPENSE FOR NEXT.JS BUILD ---
-export default function CourseRoadmapPage() {
-  return (
-    <Suspense fallback={
-      <div className="h-screen bg-[#020617] flex items-center justify-center">
-        <Loader2 className="animate-spin text-blue-500" size={40} />
+      <div className="hidden lg:block">
+        <ProfileSidebar />
       </div>
-    }>
-      <CoursesContent />
-    </Suspense>
+    </DashboardClientWrapper>
   );
 }

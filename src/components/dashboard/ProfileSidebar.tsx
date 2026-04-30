@@ -143,16 +143,19 @@ export default function ProfileSidebar() {
               <LayoutDashboard size={18} className="text-[#45a79a]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Dashboard</span>
             </Link>
 
-            {/* LIVE BOOTCAMP LINK */}
-            <Link href="/student/bootcamp" className="group flex items-center justify-between p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-all text-left shadow-[0_0_15px_rgba(16,185,129,0.1)]">
+            {/* DISABLED BOOTCAMP LINK (LOGIC LAB) */}
+            <div className="group flex items-center justify-between p-4 rounded-2xl bg-white/[0.03] border border-white/5 opacity-60 cursor-not-allowed text-left relative overflow-hidden">
               <div className="flex items-center gap-4">
-                <Zap size={18} className="text-emerald-500 group-hover:animate-pulse" />
-                <span className="text-[10px] font-black uppercase text-emerald-400 group-hover:text-white">Logic Lab</span>
+                <Zap size={18} className="text-slate-600" />
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black uppercase text-slate-500">Logic Lab</span>
+                  <span className="text-[7px] font-bold text-[#45a79a] uppercase tracking-tight">Reactivating: Next Bootcamp</span>
+                </div>
               </div>
-              <span className="flex items-center gap-1 text-[7px] font-bold text-emerald-900 uppercase tracking-widest border border-emerald-500/30 px-2 py-0.5 rounded-md bg-emerald-400">
-                <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" /> Live
+              <span className="flex items-center gap-1 text-[7px] font-bold text-slate-400 uppercase tracking-widest border border-white/10 px-2 py-0.5 rounded-md bg-black/50">
+                <Clock size={8} /> Standby
               </span>
-            </Link>
+            </div>
             
             <Link href="/student/blueprints" className="group flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-[#5574a9]/50 transition-all text-left">
               <Box size={18} className="text-[#5574a9]" /><span className="text-[10px] font-black uppercase text-slate-400 group-hover:text-white">Tech Archive</span>
