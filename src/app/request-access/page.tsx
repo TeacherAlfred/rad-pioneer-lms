@@ -151,8 +151,11 @@ function RequestAccessContent() {
           parent_name: formData.parentName,
           email: formData.email,
           phone: formData.phone.trim(),
-          student_name: formData.studentName,
-          student_age: parseInt(formData.studentAge),
+          
+          // SEND DUMMY DATA TO SATISFY THE DATABASE
+          student_name: formData.studentName || "Pending Setup",
+          student_age: parseInt(formData.studentAge) || 0, // Fallback to 0 instead of NaN/null
+          
           interested_programs: ["Premium Robotics LMS"], 
           status: 'new', 
           metadata: {
@@ -331,6 +334,7 @@ function RequestAccessContent() {
                     <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Phone Number</label>
                     <input required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full h-12 md:h-14 rounded-xl bg-white/5 border border-white/10 px-4 font-bold focus:border-blue-500 outline-none text-white text-sm" placeholder="+27..." />
                   </div>
+                  
                 </div>
               </div>
 
