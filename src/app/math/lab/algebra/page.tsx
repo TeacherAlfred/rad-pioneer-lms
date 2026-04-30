@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { calculateEventXp } from "@/lib/xp-engine";
 
 export default function AlgebraLab() {
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -105,9 +106,13 @@ export default function AlgebraLab() {
       
       if (isCorrect) {
         setIsSuccess(true);
+        
         if (userProfile) {
+          // Calculate the multiplied XP safely
+          const finalXp = await calculateEventXp(activeQuestion.xp_reward || 50);
+
           await supabase.from('profiles').update({ 
-            xp: (userProfile.xp || 0) + (activeQuestion.xp_reward || 50), 
+            xp: (userProfile.xp || 0) + finalXp, 
             sparks: (userProfile.sparks || 0) + (activeQuestion.sparks_reward || 2) 
           }).eq('id', userProfile.id);
         }
@@ -119,12 +124,13 @@ export default function AlgebraLab() {
           setCurrentDifficulty(nextLevel);
           setActiveQuestion(pickRandomFromPool(allQuestions, nextLevel));
         }, 2000);
+
       } else {
         // TRIGGER FAILURE OVERLAY
         setIsFailed(true);
       }
     }, 1500);
-  };
+  }; 
 
   // NEW: Manual continue after reading the explanation
   const handleFailContinue = () => {

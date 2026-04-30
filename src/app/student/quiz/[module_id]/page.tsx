@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase";
 import { Loader2, ArrowLeft, ShieldAlert, ArrowRight } from "lucide-react";
 import AdaptiveLogicSprint from "@/components/lms/AdaptiveLogicSprint";
 import { motion, AnimatePresence } from "framer-motion";
+import confetti from "canvas-confetti";
+import { calculateDiminishingXP, calculateEventXp } from "@/lib/xp-engine";
 
 export default function ModuleCheckpointPage() {
   const params = useParams();
@@ -57,46 +59,53 @@ export default function ModuleCheckpointPage() {
   const handleSprintComplete = async (stats: { score: number, timeTaken: number, maxLevel: number, multiplier: number }) => {
     setIsSaving(true);
     try {
-      const baseXP = 100;
-      const earnedXP = baseXP * stats.multiplier;
-
-      // 1. Fetch previous attempts to determine the next attempt_number
-      const { data: existingAttempts, error: fetchErr } = await supabase
+      // 1. Fetch previous attempts to determine Diminishing Returns
+      const { count, error: fetchErr } = await supabase
         .from('quiz_attempts')
-        .select('attempt_number')
+        .select('*', { count: 'exact', head: true })
         .eq('student_id', user.id)
         .eq('module_id', moduleId)
-        .order('attempt_number', { ascending: false });
+        .eq('passed', true);
 
       if (fetchErr) throw new Error(`Quiz Check Error: ${fetchErr.message}`);
 
-      // Calculate the next attempt number (defaults to 1 if no previous attempts exist)
-      const nextAttemptNumber = existingAttempts && existingAttempts.length > 0 
-        ? (existingAttempts[0].attempt_number || existingAttempts.length) + 1 
-        : 1;
+      const attemptCount = count || 0;
 
-      // 2. Insert the new attempt record with the correct attempt_number
+      // 2. Calculate Diminishing XP using the central engine
+      const baseXP = 100;
+      const performanceReward = Math.round(baseXP * stats.multiplier);
+      const earnedXP = await calculateDiminishingXP(performanceReward, attemptCount);
+
+      // 3. Insert the new attempt record
       const { error: qaError } = await supabase.from('quiz_attempts').insert([{
         student_id: user.id,
         module_id: moduleId,
         score: stats.score,
         passed: true,
         time_taken: stats.timeTaken,
-        attempt_number: nextAttemptNumber
+        attempt_number: attemptCount + 1
       }]);
 
       if (qaError) throw new Error(`Quiz Save Error: ${qaError.message}`);
 
-      // 3. Update User XP
-      const newXp = (user.xp || 0) + earnedXP;
-      const { error: profileError } = await supabase.from('profiles').update({ xp: newXp }).eq('id', user.id);
-      
-      if (profileError) throw new Error(`Profile Save Error: ${profileError.message}`);
+      // 4. Update User XP (Only if > 0)
+      if (earnedXP > 0) {
+        const newXp = (user.xp || 0) + earnedXP;
+        const { error: profileError } = await supabase.from('profiles').update({ xp: newXp }).eq('id', user.id);
+        if (profileError) throw new Error(`Profile Save Error: ${profileError.message}`);
 
-      const updatedUser = { ...user, xp: newXp };
-      localStorage.setItem("pioneer_session", JSON.stringify(updatedUser));
+        const updatedUser = { ...user, xp: newXp };
+        localStorage.setItem("pioneer_session", JSON.stringify(updatedUser));
+        setUser(updatedUser);
+      }
 
       setSprintFinished(true);
+      
+      // Visual feedback for the stage reward
+      if (earnedXP > 0) {
+        confetti({ particleCount: 100, spread: 70, origin: { y: 0.7 } });
+      }
+      
     } catch (err: any) {
       console.error("Failed to save results:", err);
       alert(`Results calculated, but failed to sync: ${err?.message || 'Unknown Error'}`);

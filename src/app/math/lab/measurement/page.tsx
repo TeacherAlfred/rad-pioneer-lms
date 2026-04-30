@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { calculateEventXp } from "@/lib/xp-engine";
 
 export default function MeasurementLab() {
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -94,21 +95,27 @@ export default function MeasurementLab() {
       
       if (isCorrect) {
         setIsSuccess(true);
+        
         if (userProfile) {
+          // Calculate the multiplied XP safely
+          const finalXp = await calculateEventXp(activeQuestion.xp_reward || 50);
+
           await supabase.from('profiles').update({ 
-            xp: (userProfile.xp || 0) + (activeQuestion.xp_reward || 50), 
+            xp: (userProfile.xp || 0) + finalXp, 
             sparks: (userProfile.sparks || 0) + (activeQuestion.sparks_reward || 2) 
           }).eq('id', userProfile.id);
         }
 
+        // ADAPTIVE STEP UP
         setTimeout(() => {
           setIsSuccess(false);
-          const nextDifficulty = Math.min(5, currentDifficulty + 1);
-          setCurrentDifficulty(nextDifficulty);
-          setActiveQuestion(pickRandomFromPool(allQuestions, nextDifficulty));
+          const nextLevel = Math.min(5, currentDifficulty + 1);
+          setCurrentDifficulty(nextLevel);
+          setActiveQuestion(pickRandomFromPool(allQuestions, nextLevel));
         }, 2000);
+
       } else {
-        // TRIGGER THE FAILURE SCREEN INSTEAD OF AUTO-SKIPPING
+        // TRIGGER FAILURE OVERLAY
         setIsFailed(true);
       }
     }, 1500); 

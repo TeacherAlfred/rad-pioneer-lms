@@ -8,6 +8,7 @@ import {
   Zap, Clock, CheckCircle2, ChevronRight, Brain, Smile, Frown, Meh, Target, Trophy, Loader2, ArrowRight
 } from "lucide-react";
 import { MATH_BANK, MathQuestion } from "@/lib/mathDatabase";
+import { calculateEventXp } from "@/lib/xp-engine";
 
 type SprintPhase = 'mood' | 'countdown' | 'sprint' | 'results';
 
@@ -121,7 +122,9 @@ export default function DailySprintPage() {
     if (!userProfile) return;
     
     const accuracy = totalAttempts > 0 ? Math.round((score / totalAttempts) * 100) : 0;
-    const earnedXP = score * 10;
+    
+    // Wrap the math calculation!
+    const earnedXP = await calculateEventXp(score * 10); 
     const earnedSparks = score >= 10 ? 2 : 1;
     
     try {

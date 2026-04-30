@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { calculateEventXp } from "@/lib/xp-engine";
 
 export default function NumbersLab() {
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -88,20 +89,25 @@ export default function NumbersLab() {
       
       if (isEquivalent) {
         setIsSuccess(true);
+        
         if (userProfile) {
-          await supabase.from('profiles').update({
-            xp: (userProfile.xp || 0) + (activeQuestion.xp_reward || 50),
-            sparks: (userProfile.sparks || 0) + (activeQuestion.sparks_reward || 2)
+          // Calculate the multiplied XP safely
+          const finalXp = await calculateEventXp(activeQuestion.xp_reward || 50);
+
+          await supabase.from('profiles').update({ 
+            xp: (userProfile.xp || 0) + finalXp, 
+            sparks: (userProfile.sparks || 0) + (activeQuestion.sparks_reward || 2) 
           }).eq('id', userProfile.id);
         }
 
-        // Adaptive Scale Up
+        // ADAPTIVE STEP UP
         setTimeout(() => {
           setIsSuccess(false);
-          const nextDifficulty = Math.min(5, currentDifficulty + 1);
-          setCurrentDifficulty(nextDifficulty);
-          setActiveQuestion(pickRandomFromPool(allQuestions, nextDifficulty));
+          const nextLevel = Math.min(5, currentDifficulty + 1);
+          setCurrentDifficulty(nextLevel);
+          setActiveQuestion(pickRandomFromPool(allQuestions, nextLevel));
         }, 2000);
+
       } else {
         // TRIGGER FAILURE OVERLAY
         setIsFailed(true);

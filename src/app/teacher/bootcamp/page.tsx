@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { calculateEventXp } from "@/lib/xp-engine";
 
 export default function TeacherBootcampDashboard() {
   const router = useRouter();
@@ -68,8 +69,11 @@ export default function TeacherBootcampDashboard() {
       const { data } = await supabase.from('profiles').select('bootcamp_xp').eq('id', studentId).single();
       const currentXp = data?.bootcamp_xp || 0;
       
+      // Wrap the 20 XP
+      const xpToAward = await calculateEventXp(20);
+
       await supabase.from('profiles')
-        .update({ bootcamp_xp: currentXp + 20 })
+        .update({ bootcamp_xp: currentXp + xpToAward })
         .eq('id', studentId);
     }
 

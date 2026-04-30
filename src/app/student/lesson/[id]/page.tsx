@@ -17,6 +17,7 @@ import MakeCodeRenderer from "@/components/lms/MakeCodeRenderer";
 import { javascriptGenerator } from "blockly/javascript";
 import SequenceViewer from "@/components/lms/SequenceViewer";
 import PioneerCoach from "@/components/ui/PioneerCoach";
+import { calculateDiminishingXP, calculateEventXp } from "@/lib/xp-engine";
 
 // --- CUSTOM SCROLL MANAGER HOOK ---
 function useScrollManager() {
@@ -760,6 +761,22 @@ export default function LessonPlayerPage() {
 
     setIsSaving(true);
     try {
+      // 1. Fetch attempt history to determine the Stage Multiplier
+      const { count, error: countError } = await supabase
+        .from('tech_archive')
+        .select('*', { count: 'exact', head: true })
+        .eq('mission_id', mission.id)
+        .eq('student_id', user.id);
+
+      if (countError) throw countError;
+      
+      const attemptCount = count || 0;
+
+      // 2. Calculate Diminishing XP using the central engine
+      const baseReward = mission.xp_reward || 50;
+      const calculatedXpEarned = await calculateDiminishingXP(baseReward, attemptCount);
+
+      // 3. Handle Image Upload
       let newHistoryArray = [...imageHistory];
       if (tempCaptureBlob) {
         const fileName = `${user.id}-${id}-${Date.now()}.png`;
@@ -769,33 +786,55 @@ export default function LessonPlayerPage() {
       }
       
       const newHistoryString = newHistoryArray.filter(Boolean).join(',');
-
-      // Apply SOS prefix if the student requested help
       const finalDesc = tutorialOutcome === 'help' 
           ? `[SOS: STUCK ON MAKECODE] ${finalMVP || "Needs assistance"}` 
           : (finalMVP || "Logic Complete");
 
-      const { error: archiveError } = await supabase.from('tech_archive').upsert({
-        student_id: user.id, mission_id: mission.id, title: mission.title,
+      // 4. Insert new record (preserves history for multiple records)
+      const { error: archiveError } = await supabase.from('tech_archive').insert({
+        student_id: user.id, 
+        mission_id: mission.id, 
+        title: mission.title,
         description: finalDesc, 
         win_condition: finalBeyond, 
-        media_url: newHistoryString, status: 'completed', xp_earned: mission.xp_reward || 50,
+        media_url: newHistoryString, 
+        status: 'completed', 
+        xp_earned: calculatedXpEarned,
         type: 'blueprint'
-      }, { onConflict: 'student_id,mission_id' });
+      });
 
-      if (archiveError) { showToast(`Database Error: ${archiveError.message}`, "error"); setIsSaving(false); return; }
+      if (archiveError) throw archiveError;
 
-      if (!isReadOnly) {
-        const newXP = (user.xp || 0) + (mission.xp_reward || 50);
-        await supabase.from('profiles').update({ xp: newXP }).eq('id', user.id);
-        await supabase.from('enrollments').update({ active_task: null }).eq('student_id', user.id);
-        localStorage.setItem("pioneer_session", JSON.stringify({ ...user, xp: newXP }));
+      // 5. Update User Profile XP (Only if reward is > 0)
+      if (calculatedXpEarned > 0) {
+        const newTotalXP = (user.xp || 0) + calculatedXpEarned;
+        await supabase.from('profiles').update({ xp: newTotalXP }).eq('id', user.id);
+        
+        // Update local session
+        const updatedUser = { ...user, xp: newTotalXP };
+        localStorage.setItem("pioneer_session", JSON.stringify(updatedUser));
+        setUser(updatedUser);
       }
       
-      setImageHistory(newHistoryArray); setImagePreview(newHistoryArray[0]);
-      setIsReadOnly(true); setIsCompleted(true);
-      confetti({ particleCount: 200, spread: 70, origin: { y: 0.6 } });
-    } catch (err) { showToast("An unexpected error occurred during the uplink.", "error"); } finally { setIsSaving(false); }
+      // Clear active task
+      await supabase.from('enrollments').update({ active_task: null }).eq('student_id', user.id);
+      
+      setImageHistory(newHistoryArray); 
+      setImagePreview(newHistoryArray[0]);
+      setIsReadOnly(true); 
+      setIsCompleted(true);
+      
+      if (calculatedXpEarned > 0) {
+        confetti({ particleCount: 200, spread: 70, origin: { y: 0.6 } });
+        showToast(`Uplink Success! Stage ${attemptCount + 1} reward: ${calculatedXpEarned} XP earned.`, "success");
+      } else {
+        showToast("Milestone Archived. No further XP available for this mission.", "success");
+      }
+    } catch (err: any) { 
+      showToast(err.message || "An unexpected error occurred during the uplink.", "error"); 
+    } finally { 
+      setIsSaving(false); 
+    }
   };
 
   const renderMediaContent = (url: string | undefined) => {
@@ -984,11 +1023,31 @@ export default function LessonPlayerPage() {
         <div className="flex items-center gap-3 md:gap-6 text-left w-full md:w-auto overflow-hidden">
           <button onClick={() => window.location.href = '/student/courses'} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all shrink-0"><ArrowLeft size={18} /></button>
           <div className="flex-1 overflow-hidden">
-            <p className="text-[8px] md:text-[9px] font-black uppercase tracking-[0.3em] text-blue-400 leading-none truncate">
-              {mission?.modules?.title} // Task {currentStepIndex + 1} of {steps.length}
-            </p>
-            <h1 className="text-sm md:text-xl font-black uppercase italic tracking-tighter leading-none mt-1 truncate">Milestone_{mission?.order_index}: {mission?.title}</h1>
-          </div>
+  <p className="text-[8px] md:text-[9px] font-black uppercase tracking-[0.3em] text-blue-400 leading-none truncate">
+    {mission?.modules?.title} // Task {currentStepIndex + 1} of {steps.length}
+  </p>
+  <h1 className="text-sm md:text-xl font-black uppercase italic tracking-tighter leading-none mt-1 truncate">
+    Milestone_{mission?.order_index}: {mission?.title}
+  </h1>
+  
+  {/* XP STAGE REWARD HUD */}
+  <div className="flex items-center gap-2 mt-2">
+    <div className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-1 rounded-lg shadow-[0_0_15px_rgba(234,179,8,0.1)]">
+      <Zap size={12} className="text-yellow-500 fill-yellow-500" />
+      <span className="text-[10px] font-black text-yellow-500 uppercase tracking-widest">
+        Reward: {calculateDiminishingXP(mission?.xp_reward || 50, isReadOnly ? 1 : 0)} XP
+      </span>
+    </div>
+    {isReadOnly && (
+      <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded-lg">
+        <RotateCcw size={12} className="text-blue-400" />
+        <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest italic truncate max-w-[120px] md:max-w-none">
+          Diminishing Replay Active
+        </span>
+      </div>
+    )}
+  </div>
+</div>
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-2 md:gap-4 w-full md:w-auto relative">
