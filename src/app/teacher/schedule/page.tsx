@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { 
     Loader2, Calendar as CalendarIcon, Link as LinkIcon, 
     Plus, User, Bell, Check, X, ChevronLeft, MapPin, Video, CheckCircle2,
-    Trash2, Save, Repeat, CalendarDays, Lock, UserMinus, Settings2
+    Trash2, Save, Repeat, CalendarDays, Lock, UserMinus, Settings2, ChevronDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -39,6 +39,10 @@ export default function TeacherSchedulePage() {
   const [myStudents, setMyStudents] = useState<any[]>([]);
   const [pendingBookings, setPendingBookings] = useState<PendingBooking[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // --- NEW: ADMIN TEACHER CONTEXT STATE ---
+  const [educators, setEducators] = useState<any[]>([]);
+  const [activeTeacherId, setActiveTeacherId] = useState<string>("");
   
   // --- GRID CONFIGURATION STATE ---
   const [activeDays, setActiveDays] = useState<string[]>(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']);
@@ -56,16 +60,13 @@ export default function TeacherSchedulePage() {
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const loadData = async () => {
-    const sessionData = localStorage.getItem("pioneer_session");
-    if (!sessionData) return; 
-    const user = JSON.parse(sessionData);
-    setCurrentUser(user);
-
+  // Reusable fetch function so Admins can swap contexts
+  const fetchScheduleData = async (teacherId: string) => {
+    setLoading(true);
     try {
-      const { data: scheduleData } = await supabase.from('teacher_schedule').select(`*`).eq('teacher_id', user.id);
+      const { data: scheduleData } = await supabase.from('teacher_schedule').select(`*`).eq('teacher_id', teacherId);
       const { data: studentData } = await supabase.from('profiles').select('id, display_name, metadata').eq('role', 'student');
-      const { data: pendingData } = await supabase.from('pending_bookings').select(`id, schedule_id, teacher_schedule!inner(day_of_week, time_slot, teacher_id)`).eq('status', 'pending').eq('teacher_schedule.teacher_id', user.id);
+      const { data: pendingData } = await supabase.from('pending_bookings').select(`id, schedule_id, teacher_schedule!inner(day_of_week, time_slot, teacher_id)`).eq('status', 'pending').eq('teacher_schedule.teacher_id', teacherId);
 
       if (scheduleData) setSchedule(scheduleData as ScheduleSlot[]);
       if (pendingData) setPendingBookings(pendingData as any[]);
@@ -75,7 +76,7 @@ export default function TeacherSchedulePage() {
         const teacherStudents = studentData.filter(student => {
           try {
             const meta = typeof student.metadata === 'string' ? JSON.parse(student.metadata) : student.metadata;
-            return meta?.teacher?.id === user.id;
+            return meta?.teacher?.id === teacherId;
           } catch (e) { return false; }
         });
         setMyStudents(teacherStudents);
@@ -84,7 +85,35 @@ export default function TeacherSchedulePage() {
     finally { setLoading(false); }
   };
 
+  const loadData = async () => {
+    const sessionData = localStorage.getItem("pioneer_session");
+    if (!sessionData) return; 
+    const user = JSON.parse(sessionData);
+    setCurrentUser(user);
+
+    let targetId = user.id;
+
+    try {
+      // If user is Admin, fetch the list of available educators
+      if (user.role === 'admin') {
+        const { data: edData } = await supabase.from('profiles').select('id, display_name').eq('role', 'educator').order('display_name');
+        if (edData) setEducators(edData);
+      }
+      
+      setActiveTeacherId(targetId);
+      await fetchScheduleData(targetId);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => { loadData(); }, []);
+
+  // --- ADMIN: SWITCH TEACHER CONTEXT ---
+  const handleTeacherChange = async (newTeacherId: string) => {
+    setActiveTeacherId(newTeacherId);
+    await fetchScheduleData(newTeacherId);
+  };
 
   // --- COMPUTED METRICS ---
   const dynamicHours = useMemo(() => {
@@ -112,14 +141,14 @@ export default function TeacherSchedulePage() {
 
   // --- ACTIONS ---
   const handleGenerateLink = async () => {
-    if (!currentUser) return;
+    if (!activeTeacherId) return;
     setIsGeneratingLink(true);
     try {
       const creditsStr = window.prompt("How many children is this parent booking for? (Enter 1 or 2)", "1");
       const credits = parseInt(creditsStr || "1");
       if (isNaN(credits) || credits < 1) return;
 
-      const { data, error } = await supabase.from('booking_links').insert({ teacher_id: currentUser.id, credits: credits, status: 'active' }).select('id').single();
+      const { data, error } = await supabase.from('booking_links').insert({ teacher_id: activeTeacherId, credits: credits, status: 'active' }).select('id').single();
       if (error) throw error;
       const bookingUrl = `${window.location.origin}/booking/${data.id}`;
       await navigator.clipboard.writeText(bookingUrl);
@@ -144,7 +173,7 @@ export default function TeacherSchedulePage() {
   };
 
   const handleSaveTimeslot = async () => {
-    if (!activeSlotData || !currentUser) return;
+    if (!activeSlotData || !activeTeacherId) return;
     setIsSaving(true);
     const pgTime = `${activeSlotData.time}:00`;
     
@@ -154,7 +183,7 @@ export default function TeacherSchedulePage() {
 
     try {
       const { error } = await supabase.from('teacher_schedule').upsert({
-          teacher_id: currentUser.id,
+          teacher_id: activeTeacherId,
           day_of_week: activeSlotData.day,
           time_slot: pgTime,
           status: determinedStatus,
@@ -164,7 +193,7 @@ export default function TeacherSchedulePage() {
         }, { onConflict: 'teacher_id, day_of_week, time_slot' });
 
       if (error) throw error;
-      await loadData(); 
+      await fetchScheduleData(activeTeacherId); 
     } catch (err: any) { alert(`Failed to save slot: ${err.message}`); } 
     finally { setIsSaving(false); setActiveSlotData(null); }
   };
@@ -173,9 +202,41 @@ export default function TeacherSchedulePage() {
     if (!activeSlotData?.existingSlot?.id) return;
     setIsSaving(true);
     await supabase.from('teacher_schedule').delete().eq('id', activeSlotData.existingSlot.id);
-    await loadData();
+    await fetchScheduleData(activeTeacherId);
     setIsSaving(false);
     setActiveSlotData(null);
+  };
+
+  const handleApproveRequest = async () => {
+    if (!approvalModal || !selectedStudentToAdd) return;
+    const slotToUpdate = schedule.find(s => s.id === approvalModal.schedule_id);
+    const currentIds = slotToUpdate?.student_ids || [];
+    
+    if (slotToUpdate?.delivery_mode === 'online' && currentIds.length >= 1) {
+        alert("This online slot is already at full capacity (1). Reject request or clear the slot.");
+        return;
+    }
+
+    const newIds = [...new Set([...currentIds, selectedStudentToAdd])];
+
+    await supabase.from('teacher_schedule').update({ status: 'booked', student_ids: newIds }).eq('id', approvalModal.schedule_id);
+    await supabase.from('pending_bookings').update({ status: 'approved' }).eq('id', approvalModal.id);
+
+    setApprovalModal(null);
+    setSelectedStudentToAdd("");
+    fetchScheduleData(activeTeacherId);
+  };
+
+  const handleRejectRequest = async (pendingId: string, scheduleId: string) => {
+    if (!confirm("Reject this booking?")) return;
+    const slotToUpdate = schedule.find(s => s.id === scheduleId);
+    
+    if (slotToUpdate && (!slotToUpdate.student_ids || slotToUpdate.student_ids.length === 0)) {
+       await supabase.from('teacher_schedule').update({ status: 'available' }).eq('id', scheduleId);
+    }
+    
+    await supabase.from('pending_bookings').update({ status: 'rejected' }).eq('id', pendingId);
+    fetchScheduleData(activeTeacherId);
   };
 
   const toggleDay = (day: string) => {
@@ -189,20 +250,65 @@ export default function TeacherSchedulePage() {
   return (
     <main className="min-h-screen bg-[#020617] text-white p-4 md:p-8 font-sans selection:bg-blue-500/30">
       
-      {/* HEADER */}
+      {/* HEADER & ADMIN SELECTOR */}
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 mb-6">
         <div>
-          <button onClick={() => window.location.href = '/teacher/dashboard'} className="mb-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
+          <button onClick={() => window.location.href = currentUser?.role === 'admin' ? '/admin/dashboard' : '/teacher/dashboard'} className="mb-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
              <ChevronLeft size={14} /> Back to Dashboard
           </button>
-          <h1 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3">
-            <CalendarIcon className="text-blue-500" /> Matrix Schedule
-          </h1>
+          
+          <div className="flex flex-col md:flex-row md:items-center gap-4">
+              <h1 className="text-3xl font-black uppercase italic tracking-tighter flex items-center gap-3">
+                <CalendarIcon className="text-blue-500" /> Matrix Schedule
+              </h1>
+              
+              {/* ADMIN: TEACHER SELECTOR */}
+              {currentUser?.role === 'admin' && educators.length > 0 && (
+                  <div className="flex items-center gap-2 bg-[#0f172a] border border-white/10 px-3 py-2 rounded-xl shadow-inner">
+                      <User size={14} className="text-slate-500 shrink-0" />
+                      <select 
+                          value={activeTeacherId}
+                          onChange={(e) => handleTeacherChange(e.target.value)}
+                          className="bg-transparent text-blue-400 font-bold text-sm outline-none appearance-none cursor-pointer pr-4"
+                      >
+                          <option value={currentUser.id}>My Schedule (Admin)</option>
+                          {educators.map(ed => (
+                              <option key={ed.id} value={ed.id}>{ed.display_name}'s Roster</option>
+                          ))}
+                      </select>
+                      <ChevronDown size={14} className="text-slate-500 pointer-events-none shrink-0" />
+                  </div>
+              )}
+          </div>
         </div>
+        
         <button onClick={handleGenerateLink} disabled={isGeneratingLink} className="flex items-center justify-center gap-2 px-6 py-3.5 bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] md:text-xs transition-all shadow-[0_0_20px_rgba(217,70,239,0.3)] hover:scale-105 w-full sm:w-auto">
           {isGeneratingLink ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />} Generate Booking Link
         </button>
       </div>
+
+      {/* APPROVAL INBOX (For Selected Context) */}
+      {pendingBookings.length > 0 && (
+        <div className="max-w-7xl mx-auto mb-8 bg-amber-500/10 border border-amber-500/20 rounded-3xl p-6 shadow-xl">
+          <h2 className="text-amber-500 font-black uppercase tracking-widest text-sm mb-4 flex items-center gap-2">
+            <Bell size={16} /> Pending Approvals ({pendingBookings.length})
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {pendingBookings.map(req => (
+              <div key={req.id} className="bg-[#020617]/50 border border-white/5 p-4 rounded-2xl flex justify-between items-center">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-1">{req.teacher_schedule.day_of_week}</p>
+                  <p className="text-lg font-bold text-white">{req.teacher_schedule.time_slot.substring(0,5)}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleRejectRequest(req.id, req.schedule_id)} className="w-10 h-10 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors"><X size={16} /></button>
+                  <button onClick={() => setApprovalModal(req)} className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white flex items-center justify-center transition-colors"><Check size={16} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* --- NEW SUMMARY COMMAND PANEL --- */}
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
@@ -486,6 +592,39 @@ export default function TeacherSchedulePage() {
               <button onClick={handleSaveTimeslot} disabled={isSaving} className={`flex-1 py-4 rounded-xl disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest hover:scale-[1.02] transition-all flex items-center justify-center gap-2 ${slotConfig.isBlocked ? 'bg-rose-600 hover:bg-rose-500 shadow-[0_0_20px_rgba(225,29,72,0.3)]' : 'bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.3)]'}`}>
                 {isSaving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} {slotConfig.isBlocked ? 'Lock Slot' : 'Save Slot'}
               </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+      </AnimatePresence>
+
+      {/* PARENT APPROVAL MODAL */}
+      <AnimatePresence>
+      {approvalModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[200] p-4">
+          <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-[#0f172a] border border-white/10 p-6 md:p-8 rounded-[32px] max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+            <h3 className="text-2xl font-black italic uppercase mb-2 tracking-tighter text-white">Approve Booking</h3>
+            <p className="text-slate-400 text-sm mb-6 border-b border-white/5 pb-4">Assigning for <strong className="text-white">{approvalModal.teacher_schedule.day_of_week} at {approvalModal.teacher_schedule.time_slot.substring(0,5)}</strong></p>
+            
+            {myStudents.length === 0 ? (
+                <div className="bg-amber-500/10 border border-amber-500/20 text-amber-500 p-4 rounded-xl text-xs mb-6 text-center font-bold">No students currently assigned to you.</div>
+            ) : (
+                <div className="relative mb-6">
+                    <select 
+                        className="w-full bg-black/50 border border-white/10 rounded-2xl p-4 text-white outline-none focus:border-blue-500 transition-colors appearance-none font-bold text-sm shadow-inner"
+                        value={selectedStudentToAdd}
+                        onChange={(e) => setSelectedStudentToAdd(e.target.value)}
+                    >
+                        <option value="" disabled>Select a student to approve...</option>
+                        {myStudents.map(s => <option key={s.id} value={s.id}>{s.display_name}</option>)}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">▼</div>
+                </div>
+            )}
+
+            <div className="flex gap-4">
+              <button onClick={() => setApprovalModal(null)} className="flex-1 py-4 rounded-xl border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/5 transition-colors text-slate-300">Cancel</button>
+              <button onClick={handleApproveRequest} disabled={!selectedStudentToAdd} className="flex-1 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest shadow-[0_0_20px_rgba(59,130,246,0.3)] hover:scale-[1.02] transition-all">Confirm Approval</button>
             </div>
           </motion.div>
         </div>
