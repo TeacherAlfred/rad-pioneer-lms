@@ -534,7 +534,7 @@ export default function InvitesCommandCenter() {
     const link = `${window.location.origin}/invite/${p.id}`;
     
     const formats = {
-      whatsapp: `Hi ${firstName}! 🚀\n\nA message from RAD Academy. As our websdite launches this weekend, we are gifting you a VIP RAD LMS Access invite specifically.\n\nBecause we are launching our new self-paced coding curriculum, you have an exclusive discount and a 14-Day Free Trial.\n\nClaim your secure license here before it expires:\n${link}\n\nYou are welcome to contact Teacher Alfred to confirm that this is legit`,
+      whatsapp: `Hi ${firstName}! 🚀\n\nA message from *RAD Academy*. As our revamped website launches this weekend, we are gifting you a personal RAD LMS Access invite.\n\nAs part of the launch, we are offering you a 14-Day Free Trial and an exclusive discount if you decide to upgrade.\n\nClaim your trial license here before it expires:\n${link}\n\nYou are welcome to contact Teacher Alfred if you have any questions.\n\nRegards,\n*RAD Academy Team*`,
       email: `Subject: Your VIP RAD Academy Access Invite 🚀\n\nHi ${firstName},\n\nI've officially secured your VIP access to the RAD Academy Learning Management System.\n\nWe're subsidizing licenses for parents who are serious about future-proofing their children. You get a 14-Day Full Access Trial, and if you claim it via the link below, you'll lock in our heavily discounted "Action-Taker's Pricing" forever.\n\nClaim your VIP access here:\n${link}\n\nCan't wait to see your child inside the portal.\n\nBest,\nRAD Academy Team`,
       linkedin: `Hi ${firstName}, great connecting! As discussed, I've organized a VIP invite for you to trial our new coding LMS. You can claim your 14-day free access and lock in the discounted tier right here: ${link} Let me know when you're set up!`
     };
@@ -635,7 +635,13 @@ export default function InvitesCommandCenter() {
     }
   };
 
-  const queueLeads = campaignProspects.filter(p => tableSelectedIds.includes(p.id));
+  // UPGRADE: Map directly from tableSelectedIds against the raw 'prospects' array.
+  // This prevents the queue from shrinking mid-session if a real-time DB update
+  // suddenly causes a lead to fail the active table filters.
+  const queueLeads = tableSelectedIds
+    .map(id => prospects.find(p => p.id === id))
+    .filter(Boolean);
+    
   const activeQueueLead = queueLeads[queueIndex];
 
   const handleNextQueueLead = async () => {
@@ -1038,12 +1044,14 @@ export default function InvitesCommandCenter() {
                       const text = getShareCopy('whatsapp', activeQueueLead);
                       let phone = activeQueueLead.phone.replace(/\D/g, '');
                       if (phone.startsWith('0')) phone = '27' + phone.substring(1);
-                      const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-                      window.open(url, '_blank');
+                      
+                      // UPGRADED: Deep link directly to the native app
+                      const url = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`;
+                      window.location.href = url;
                     }}
                     className="w-full py-5 bg-[#25D366] hover:bg-[#1DA851] text-white rounded-2xl font-black uppercase tracking-widest text-sm flex items-center justify-center gap-3 transition-all shadow-[0_0_30px_rgba(37,211,102,0.3)]"
                   >
-                    <Send size={18} /> Open WhatsApp Web
+                    <Send size={18} /> Open Desktop App
                   </button>
                 )}
               </div>
@@ -1505,20 +1513,21 @@ export default function InvitesCommandCenter() {
                         const text = getShareCopy('whatsapp', showShareModal);
                         let phone = showShareModal?.phone ? showShareModal.phone.replace(/\D/g, '') : '';
                         
-                        // Auto-format local ZA numbers (082... -> 2782...) for WhatsApp API reliability
+                        // Auto-format local ZA numbers (082... -> 2782...)
                         if (phone.startsWith('0')) {
                           phone = '27' + phone.substring(1);
                         }
 
+                        // UPGRADED: Deep link directly to the native app
                         const url = phone 
-                          ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}` 
-                          : `https://wa.me/?text=${encodeURIComponent(text)}`;
+                          ? `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}` 
+                          : `whatsapp://send?text=${encodeURIComponent(text)}`;
                           
-                        window.open(url, '_blank');
+                        window.location.href = url;
                       }}
                       className="w-full mt-4 py-4 bg-[#25D366] hover:bg-[#1DA851] text-white rounded-2xl font-black uppercase tracking-widest text-[11px] flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(37,211,102,0.3)]"
                     >
-                      <MessageSquare size={16} /> Open in WhatsApp
+                      <MessageSquare size={16} /> Open Desktop App
                     </button>
                   )}
 
