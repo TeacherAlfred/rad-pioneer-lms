@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
@@ -8,29 +8,44 @@ import {
   Plus, Search, Copy, MessageSquare, Mail, Linkedin, 
   Eye, X, Loader2, ArrowRight, Sparkles, TrendingUp, Calendar, UserPlus, CalendarClock,
   ArrowLeft, Share2, Activity, ShieldCheck, CheckSquare, Square, Trash2, Check,
-  CreditCard, GraduationCap
+  CreditCard, GraduationCap, UploadCloud, Tag
 } from "lucide-react";
 import Link from "next/link";
 import confetti from "canvas-confetti";
+
+type FilterType = 'all' | 'planned' | 'sent' | 'accepted' | 'expiredUnclaimed';
 
 export default function InvitesCommandCenter() {
   const [loading, setLoading] = useState(true);
   const [prospects, setProspects] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  
+  // --- Table Filter State ---
+  const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+  const [recencyFilterMode, setRecencyFilterMode] = useState<'exclude' | 'show'>('exclude');
+  const [recencyDays, setRecencyDays] = useState<string>("");
+  const [tagFilterMode, setTagFilterMode] = useState<'all' | 'has' | 'excludes'>('all');
+  const [tagFilterValue, setTagFilterValue] = useState<string>("LMS Trial Access");
 
   // Modals
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState<any>(null);
   const [showPreviewModal, setShowPreviewModal] = useState<string | null>(null);
   const [selectedLeadModal, setSelectedLeadModal] = useState<any>(null);
-  const [showConvertModal, setShowConvertModal] = useState<any>(null); // NEW: Conversion Modal
+  const [showConvertModal, setShowConvertModal] = useState<any>(null);
 
   // Bulk Generate Form State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inviteMode, setInviteMode] = useState<'existing' | 'new'>('new');
   const [selectedProspectIds, setSelectedProspectIds] = useState<string[]>([]);
   const [modalSearchQuery, setModalSearchQuery] = useState("");
-  const [bulkNewLeads, setBulkNewLeads] = useState([{ id: '1', name: '', email: '', phone: '' }]);
+  const [bulkNewLeads, setBulkNewLeads] = useState<any[]>([{ id: '1', name: '', email: '', phone: '', source: 'Manual Entry' }]);
+  const [bulkInviteTag, setBulkInviteTag] = useState("LMS Trial Access");
+  
+  // Smart Batching State
+  const [isDripCampaign, setIsDripCampaign] = useState(false);
+  const [leadsPerDay, setLeadsPerDay] = useState(20);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Global Cohort Dates
   const [plannedDate, setPlannedDate] = useState("");
@@ -44,6 +59,11 @@ export default function InvitesCommandCenter() {
   // Conversion State
   const [isConverting, setIsConverting] = useState(false);
   const [selectedTierOverride, setSelectedTierOverride] = useState<string>("auto");
+
+  // --- NEW: WhatsApp Queue State ---
+  const [tableSelectedIds, setTableSelectedIds] = useState<string[]>([]);
+  const [showQueueModal, setShowQueueModal] = useState(false);
+  const [queueIndex, setQueueIndex] = useState(0);
 
   useEffect(() => {
     fetchProspects();
@@ -95,7 +115,7 @@ export default function InvitesCommandCenter() {
   // --- Metrics Engine ---
   const metrics = useMemo(() => {
     const now = new Date().getTime();
-    let planned = 0, sent = 0, accepted = 0, converted = 0, expiredUnclaimed = 0, expiredTrial = 0;
+    const lists = { planned: [] as any[], sent: [] as any[], accepted: [] as any[], converted: [] as any[], expiredUnclaimed: [] as any[], expiredTrial: [] as any[] };
 
     prospects.forEach(p => {
       const isCampaignLead = p.metadata?.campaign === "Commitment Pricing May 2026" || p.source === 'Referral' || p.metadata?.referred_by_id;
@@ -109,21 +129,21 @@ export default function InvitesCommandCenter() {
       const invExpDate = p.metadata?.invite_expiry ? new Date(p.metadata.invite_expiry).getTime() : now + 100000;
       const trialEndDate = p.metadata?.trial_end ? new Date(p.metadata.trial_end).getTime() : now + 100000;
 
-      if (isPlanned) planned++;
-      if (isConverted) converted++;
+      if (isPlanned) lists.planned.push(p);
+      if (isConverted) lists.converted.push(p);
       
       if (isInviteSent) {
-        if (now > invExpDate) expiredUnclaimed++;
-        else sent++;
+        if (now > invExpDate) lists.expiredUnclaimed.push(p);
+        else lists.sent.push(p);
       }
 
       if (isTrialActive) {
-        if (now > trialEndDate) expiredTrial++;
-        else accepted++;
+        if (now > trialEndDate) lists.expiredTrial.push(p);
+        else lists.accepted.push(p);
       }
     });
 
-    return { planned, sent, accepted, converted, expiredUnclaimed, expiredTrial };
+    return lists;
   }, [prospects]);
 
   // --- Utility Generators ---
@@ -132,18 +152,149 @@ export default function InvitesCommandCenter() {
     return Array.from({length: 24}).map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
   };
 
-  // --- Execution: Convert to Paid Student ---
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (!text) return;
+
+      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+      if (lines.length < 2) return alert("File appears empty or invalid.");
+
+      const firstLine = lines[0];
+      let delimiter = ',';
+      if (firstLine.includes('\t')) delimiter = '\t';
+      else if (firstLine.includes(';')) delimiter = ';';
+
+      const headers = lines[0].toLowerCase().split(delimiter).map(h => h.trim());
+      const nameIdx = headers.findIndex(h => h.includes('name'));
+      const emailIdx = headers.findIndex(h => h.includes('email'));
+      const phoneIdx = headers.findIndex(h => h.includes('phone') || h.includes('number') || h.includes('mobile'));
+      const sourceIdx = headers.findIndex(h => h.includes('source'));
+
+      if (nameIdx === -1 && emailIdx === -1 && phoneIdx === -1) {
+        return alert(`Could not detect Name, Email, or Phone columns. Detected headers: ${headers.join(' | ')}`);
+      }
+
+      const existingEmails = new Map<string, string>();
+      const existingPhones = new Map<string, string>();
+      
+      prospects.forEach(p => {
+        if (p.email) existingEmails.set(p.email.toLowerCase(), p.id);
+        if (p.phone) {
+           const pLast6 = p.phone.replace(/\D/g, '').slice(-6);
+           if (pLast6.length === 6) existingPhones.set(pLast6, p.id);
+        }
+      });
+
+      const importedLeads: any[] = [];
+      const autoSelectedIds = new Set(selectedProspectIds);
+      
+      const seenEmails = new Map<string, number>();
+      const seenPhones = new Map<string, number>();
+      let dupGroupCounter = 1;
+      
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(delimiter).map(c => c.trim());
+        
+        const hasName = nameIdx !== -1 && cols[nameIdx];
+        const hasEmail = emailIdx !== -1 && cols[emailIdx];
+        const hasPhone = phoneIdx !== -1 && cols[phoneIdx];
+
+        if (hasName && (hasEmail || hasPhone)) {
+          const cleanEmail = hasEmail ? cols[emailIdx].toLowerCase() : '';
+          const cleanPhone = hasPhone ? cols[phoneIdx].replace(/\D/g, '') : '';
+          const phoneLast6 = cleanPhone.slice(-6);
+
+          let matchedProspectId = null;
+
+          if (cleanEmail && existingEmails.has(cleanEmail)) {
+             matchedProspectId = existingEmails.get(cleanEmail);
+          } else if (phoneLast6 && phoneLast6.length === 6 && existingPhones.has(phoneLast6)) {
+             matchedProspectId = existingPhones.get(phoneLast6);
+          }
+
+          if (matchedProspectId) {
+             autoSelectedIds.add(matchedProspectId);
+             importedLeads.push({
+               id: `import-${Date.now()}-${i}`,
+               name: cols[nameIdx],
+               email: hasEmail ? cols[emailIdx] : '',
+               phone: hasPhone ? cols[phoneIdx] : '',
+               source: sourceIdx !== -1 && cols[sourceIdx] ? cols[sourceIdx] : '',
+               inPipeline: true,
+               warning: "Already in pipeline"
+             });
+          } else {
+             let groupId: number | null = null;
+             let warning = null;
+
+             if (cleanEmail && seenEmails.has(cleanEmail)) {
+               groupId = seenEmails.get(cleanEmail) ?? null;
+             } else if (phoneLast6 && phoneLast6.length === 6 && seenPhones.has(phoneLast6)) {
+               groupId = seenPhones.get(phoneLast6) ?? null;
+             }
+
+             if (groupId !== null) {
+               warning = `Duplicate (Group ${groupId})`;
+               importedLeads.forEach(l => {
+                 if (l.dupGroup === groupId) l.warning = `Duplicate (Group ${groupId})`;
+               });
+             } else {
+               groupId = dupGroupCounter++;
+               if (cleanEmail) seenEmails.set(cleanEmail, groupId);
+               if (phoneLast6 && phoneLast6.length === 6) seenPhones.set(phoneLast6, groupId);
+             }
+
+             importedLeads.push({
+               id: `import-${Date.now()}-${i}`,
+               name: cols[nameIdx],
+               email: hasEmail ? cols[emailIdx] : '',
+               phone: hasPhone ? cols[phoneIdx] : '',
+               source: sourceIdx !== -1 && cols[sourceIdx] ? cols[sourceIdx] : '',
+               dupGroup: groupId,
+               warning: warning,
+               inPipeline: false
+             });
+          }
+        }
+      }
+
+      if (importedLeads.length > 0) {
+        importedLeads.sort((a, b) => {
+          if (a.inPipeline && !b.inPipeline) return 1;
+          if (!a.inPipeline && b.inPipeline) return -1;
+          if (a.warning && b.warning && a.dupGroup && b.dupGroup) return a.dupGroup - b.dupGroup;
+          return (a.warning ? -1 : 1) - (b.warning ? -1 : 1);
+        });
+        
+        setSelectedProspectIds(Array.from(autoSelectedIds)); 
+        setBulkNewLeads(importedLeads);
+        
+        const newLeadsCount = importedLeads.filter(l => !l.inPipeline).length;
+        if ((newLeadsCount + autoSelectedIds.size) > 20) setIsDripCampaign(true);
+      } else {
+        alert("No valid leads found. Ensure rows have a Name AND either an Email or Phone number.");
+      }
+    };
+    reader.readAsText(file);
+    
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const executeConversion = async () => {
     const p = showConvertModal;
     if (!p) return;
 
     setIsConverting(true);
     try {
-      // 1. Determine Tier Pricing
       let activeTier = selectedTierOverride;
       if (activeTier === "auto") {
-        if (metrics.converted < 10) activeTier = "tier1";
-        else if (metrics.converted < 20) activeTier = "tier2";
+        if (metrics.converted.length < 10) activeTier = "tier1";
+        else if (metrics.converted.length < 20) activeTier = "tier2";
         else activeTier = "tier3";
       }
 
@@ -154,7 +305,6 @@ export default function InvitesCommandCenter() {
       };
       const selectedPricing = tiers[activeTier as keyof typeof tiers];
 
-      // 2. Generate Profile Data
       const guardianId = crypto.randomUUID();
       const onboardingToken = generateToken();
       
@@ -179,12 +329,11 @@ export default function InvitesCommandCenter() {
         metadata: JSON.stringify({ date_of_birth: c.dob, school_coding: c.codingAtSchool === 'Yes' })
       }));
 
-      // 3. Generate Quote Data (Expires midnight tomorrow)
       const expiryDate = new Date();
       expiryDate.setDate(expiryDate.getDate() + 1);
       expiryDate.setHours(23, 59, 59, 999);
       
-      const invoiceNumber = Math.floor(Date.now() / 1000); // Rough timestamp for unique quote num
+      const invoiceNumber = Math.floor(Date.now() / 1000); 
       
       const quotationRecord = {
         id: crypto.randomUUID(),
@@ -196,7 +345,7 @@ export default function InvitesCommandCenter() {
         doc_type: 'quote',
         expires_at: expiryDate.toISOString(),
         amount_paid: "0",
-        line_items: [{ // <-- Removed JSON.stringify
+        line_items: [{ 
           qty: numChildren.toString(), 
           desc: selectedPricing.desc, 
           disc: 0, 
@@ -204,19 +353,16 @@ export default function InvitesCommandCenter() {
           price: selectedPricing.price.toString(),
           item_id: selectedPricing.id
         }],
-        metadata: { // <-- Removed JSON.stringify
+        metadata: { 
           global_note: "Your VIP Access trial has concluded. Please pay this quote to officially secure your child's spot.", 
           prospect_name: p.name, 
           prospect_email: p.email 
         }
       };
 
-      // 4. Referral Bonus Logic
       if (p.metadata?.referred_by_id) {
-        // Fetch the person who referred them
         const { data: referrerProspect } = await supabase.from('prospects').select('status, metadata').eq('id', p.metadata.referred_by_id).single();
         
-        // If the referrer is ALSO converted, they get a credit!
         if (referrerProspect?.status === 'Converted (Won)' && referrerProspect.metadata?.converted_profile_id) {
           const refProfileId = referrerProspect.metadata.converted_profile_id;
           const { data: refProfile } = await supabase.from('profiles').select('metadata').eq('id', refProfileId).single();
@@ -226,17 +372,14 @@ export default function InvitesCommandCenter() {
             const newCredits = (refMeta.booking_credits || 0) + 1;
             refMeta.booking_credits = newCredits;
             
-            // Give the referrer their credit
             await supabase.from('profiles').update({ metadata: JSON.stringify(refMeta) }).eq('id', refProfileId);
           }
         }
       }
 
-      // 5. Execute DB Transaction (Sequential for safety)
       await supabase.from('profiles').insert([guardianProfile, ...studentProfiles]);
       await supabase.from('billing_records').insert([quotationRecord]);
       
-      // Mark Prospect as Won and save the new profile ID so referrals can find them later
       const updatedMeta = { ...p.metadata, converted_profile_id: guardianId, conversion_date: new Date().toISOString() };
       await supabase.from('prospects').update({ status: 'Converted (Won)', metadata: updatedMeta }).eq('id', p.id);
       
@@ -264,35 +407,103 @@ export default function InvitesCommandCenter() {
     }
   };
 
-  // --- Bulk Generation Action ---
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     try {
       const todayString = new Date().toISOString().split('T')[0];
-      const targetStatus = plannedDate > todayString ? 'Invite Planned' : 'Invite Sent';
+      const basePlannedDate = new Date(plannedDate);
+      
+      const relativeInviteDays = Math.round((new Date(inviteExpiry).getTime() - basePlannedDate.getTime()) / (1000 * 60 * 60 * 24));
+      const relativeTrialDays = Math.round((new Date(trialExpiry).getTime() - basePlannedDate.getTime()) / (1000 * 60 * 60 * 24));
 
-      const metadataAdditions = {
-        custom_trial_end: new Date(trialExpiry).toISOString(),
-        invite_expiry: new Date(inviteExpiry).toISOString(),
-        planned_invite_date: new Date(plannedDate).toISOString(),
-        invite_generated_at: new Date().toISOString(),
-        campaign: "Commitment Pricing May 2026"
-      };
+      const validNewLeads = bulkNewLeads.filter(l => !l.inPipeline && l.name.trim() !== "" && (l.email.trim() !== "" || l.phone.trim() !== ""));
+      
+      if (selectedProspectIds.length === 0 && validNewLeads.length === 0) {
+        throw new Error("Please select existing prospects or enter valid new leads to generate invites.");
+      }
 
-      if (inviteMode === 'existing') {
-        if (selectedProspectIds.length === 0) throw new Error("Please select at least one prospect to invite.");
-        const updatePromises = selectedProspectIds.map(id => {
-          const existing = prospects.find(p => p.id === id);
-          return supabase.from('prospects').update({ status: targetStatus, metadata: { ...existing.metadata, ...metadataAdditions } }).eq('id', id);
+      let globalIndex = 0;
+      let updatePromises: any[] = [];
+      let insertPayload: any[] = [];
+
+      for (const id of selectedProspectIds) {
+        const existing = prospects.find(p => p.id === id);
+        if (!existing) continue;
+
+        const staggerDays = isDripCampaign && leadsPerDay > 0 ? Math.floor(globalIndex / leadsPerDay) : 0;
+        globalIndex++;
+
+        const leadPlannedDate = new Date(basePlannedDate);
+        leadPlannedDate.setDate(leadPlannedDate.getDate() + staggerDays);
+        const leadPlannedString = leadPlannedDate.toISOString().split('T')[0];
+        const targetStatus = leadPlannedString > todayString ? 'Invite Planned' : 'Invite Sent';
+
+        const leadInviteExpiry = new Date(leadPlannedDate);
+        leadInviteExpiry.setDate(leadInviteExpiry.getDate() + relativeInviteDays);
+        
+        const leadTrialExpiry = new Date(leadPlannedDate);
+        leadTrialExpiry.setDate(leadTrialExpiry.getDate() + relativeTrialDays);
+
+        // Tags Merging
+        const existingTags = existing.metadata?.invite_tags || [];
+        const finalTags = bulkInviteTag.trim() ? Array.from(new Set([...existingTags, bulkInviteTag.trim()])) : existingTags;
+
+        const metadataAdditions = {
+          custom_trial_end: leadTrialExpiry.toISOString(),
+          invite_expiry: leadInviteExpiry.toISOString(),
+          planned_invite_date: leadPlannedDate.toISOString(),
+          invite_generated_at: new Date().toISOString(),
+          campaign: "Commitment Pricing May 2026",
+          drip_batch: staggerDays > 0 ? `Batch ${staggerDays + 1}` : 'Immediate',
+          invite_tags: finalTags
+        };
+
+        updatePromises.push(supabase.from('prospects').update({ status: targetStatus, metadata: { ...existing.metadata, ...metadataAdditions } }).eq('id', id));
+      }
+
+      for (const l of validNewLeads) {
+        const staggerDays = isDripCampaign && leadsPerDay > 0 ? Math.floor(globalIndex / leadsPerDay) : 0;
+        globalIndex++;
+
+        const leadPlannedDate = new Date(basePlannedDate);
+        leadPlannedDate.setDate(leadPlannedDate.getDate() + staggerDays);
+        const leadPlannedString = leadPlannedDate.toISOString().split('T')[0];
+        const targetStatus = leadPlannedString > todayString ? 'Invite Planned' : 'Invite Sent';
+
+        const leadInviteExpiry = new Date(leadPlannedDate);
+        leadInviteExpiry.setDate(leadInviteExpiry.getDate() + relativeInviteDays);
+        
+        const leadTrialExpiry = new Date(leadPlannedDate);
+        leadTrialExpiry.setDate(leadTrialExpiry.getDate() + relativeTrialDays);
+
+        const finalTags = bulkInviteTag.trim() ? [bulkInviteTag.trim()] : [];
+
+        const metadataAdditions = {
+          custom_trial_end: leadTrialExpiry.toISOString(),
+          invite_expiry: leadInviteExpiry.toISOString(),
+          planned_invite_date: leadPlannedDate.toISOString(),
+          invite_generated_at: new Date().toISOString(),
+          campaign: "Commitment Pricing May 2026",
+          lead_source: l.source,
+          drip_batch: staggerDays > 0 ? `Batch ${staggerDays + 1}` : 'Immediate',
+          invite_tags: finalTags
+        };
+
+        insertPayload.push({
+          name: l.name, 
+          email: l.email.trim() !== '' ? l.email : null,
+          phone: l.phone.trim() !== '' ? l.phone : null,
+          status: targetStatus, 
+          source: l.source.trim() !== '' ? l.source : null,
+          metadata: metadataAdditions
         });
+      }
+
+      if (updatePromises.length > 0) {
         await Promise.all(updatePromises);
-      } else {
-        const validLeads = bulkNewLeads.filter(l => l.name.trim() !== "" && l.email.trim() !== "");
-        if (validLeads.length === 0) throw new Error("Please fill out Name and Email for at least one lead.");
-        const insertPayload = validLeads.map(l => ({
-          name: l.name, email: l.email, phone: l.phone, status: targetStatus, source: 'Direct Invite', metadata: metadataAdditions
-        }));
+      }
+      if (insertPayload.length > 0) {
         const { error } = await supabase.from('prospects').insert(insertPayload);
         if (error) throw error;
       }
@@ -300,7 +511,8 @@ export default function InvitesCommandCenter() {
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
       setShowGenerateModal(false);
       setSelectedProspectIds([]);
-      setBulkNewLeads([{ id: '1', name: '', email: '', phone: '' }]);
+      setBulkNewLeads([{ id: '1', name: '', email: '', phone: '', source: 'Manual Entry' }]);
+      setIsDripCampaign(false);
 
     } catch (err: any) {
       alert(err.message || "Failed to generate invites.");
@@ -309,8 +521,8 @@ export default function InvitesCommandCenter() {
     }
   };
 
-  const addBulkRow = () => setBulkNewLeads([...bulkNewLeads, { id: Date.now().toString(), name: '', email: '', phone: '' }]);
-  const updateBulkRow = (id: string, field: 'name' | 'email' | 'phone', value: string) => setBulkNewLeads(bulkNewLeads.map(l => l.id === id ? { ...l, [field]: value } : l));
+  const addBulkRow = () => setBulkNewLeads([...bulkNewLeads, { id: Date.now().toString(), name: '', email: '', phone: '', source: 'Manual Entry' }]);
+  const updateBulkRow = (id: string, field: 'name' | 'email' | 'phone' | 'source', value: string) => setBulkNewLeads(bulkNewLeads.map(l => l.id === id ? { ...l, [field]: value } : l));
   const removeBulkRow = (id: string) => {
     if (bulkNewLeads.length === 1) return;
     setBulkNewLeads(bulkNewLeads.filter(l => l.id !== id));
@@ -322,7 +534,7 @@ export default function InvitesCommandCenter() {
     const link = `${window.location.origin}/invite/${p.id}`;
     
     const formats = {
-      whatsapp: `Hi ${firstName}! 🚀\n\nAs promised, I've secured a VIP RAD LMS Access invite specifically for you.\n\nBecause we are launching our new self-paced coding curriculum, I'm giving you an exclusive Action-Taker's discount and a 14-Day Free Trial.\n\nClaim your secure license here before it expires:\n${link}\n\nLet me know if you have any issues setting it up!`,
+      whatsapp: `Hi ${firstName}! 🚀\n\nA message from RAD Academy. As our websdite launches this weekend, we are gifting you a VIP RAD LMS Access invite specifically.\n\nBecause we are launching our new self-paced coding curriculum, you have an exclusive discount and a 14-Day Free Trial.\n\nClaim your secure license here before it expires:\n${link}\n\nYou are welcome to contact Teacher Alfred to confirm that this is legit`,
       email: `Subject: Your VIP RAD Academy Access Invite 🚀\n\nHi ${firstName},\n\nI've officially secured your VIP access to the RAD Academy Learning Management System.\n\nWe're subsidizing licenses for parents who are serious about future-proofing their children. You get a 14-Day Full Access Trial, and if you claim it via the link below, you'll lock in our heavily discounted "Action-Taker's Pricing" forever.\n\nClaim your VIP access here:\n${link}\n\nCan't wait to see your child inside the portal.\n\nBest,\nRAD Academy Team`,
       linkedin: `Hi ${firstName}, great connecting! As discussed, I've organized a VIP invite for you to trial our new coding LMS. You can claim your 14-day free access and lock in the discounted tier right here: ${link} Let me know when you're set up!`
     };
@@ -339,14 +551,121 @@ export default function InvitesCommandCenter() {
     }
   };
 
+  // --- Filtering & Sorting ---
   const campaignProspects = useMemo(() => {
-    return prospects.filter(p => {
+    let filtered = prospects.filter(p => {
       const isPartOfCampaign = ['Invite Planned', 'Invite Sent', 'Trial Active'].includes(p.status) && p.metadata?.campaign === "Commitment Pricing May 2026";
       const isReferral = p.source === 'Referral' || p.metadata?.referred_by_id;
       const isConvertedCampaign = p.status === 'Converted (Won)' && (p.metadata?.campaign === "Commitment Pricing May 2026" || isReferral);
       return isPartOfCampaign || isReferral || isConvertedCampaign;
-    }).filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.email?.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [prospects, searchQuery]);
+    });
+
+    if (searchQuery) {
+      filtered = filtered.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.email?.toLowerCase().includes(searchQuery.toLowerCase()));
+    }
+
+    if (activeFilter !== 'all') {
+      const allowedIds = new Set(metrics[activeFilter].map((m: any) => m.id));
+      filtered = filtered.filter(p => allowedIds.has(p.id));
+    }
+
+    if (recencyDays !== '' && !isNaN(Number(recencyDays))) {
+      const daysThreshold = Number(recencyDays);
+      const cutoffTime = Date.now() - (daysThreshold * 24 * 60 * 60 * 1000);
+      
+      filtered = filtered.filter(p => {
+        if (!p.metadata?.invite_generated_at) {
+          return recencyFilterMode === 'exclude';
+        }
+        const sentTime = new Date(p.metadata.invite_generated_at).getTime();
+        if (recencyFilterMode === 'exclude') return sentTime < cutoffTime;
+        else return sentTime >= cutoffTime;
+      });
+    }
+
+    if (tagFilterMode !== 'all' && tagFilterValue.trim() !== '') {
+      const searchTag = tagFilterValue.trim().toLowerCase();
+      filtered = filtered.filter(p => {
+        const tags: string[] = p.metadata?.invite_tags || [];
+        const hasTag = tags.some(t => t.toLowerCase().includes(searchTag));
+        return tagFilterMode === 'has' ? hasTag : !hasTag;
+      });
+    }
+
+    return filtered;
+  }, [prospects, searchQuery, activeFilter, metrics, recencyDays, recencyFilterMode, tagFilterMode, tagFilterValue]);
+
+  const groupedProspects = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    campaignProspects.forEach(p => {
+      const rawDate = p.metadata?.planned_invite_date;
+      const dateKey = rawDate 
+        ? new Date(rawDate).toLocaleDateString('en-ZA', { year: 'numeric', month: 'short', day: 'numeric' }) 
+        : 'Unscheduled / Immediate';
+      
+      if (!groups[dateKey]) groups[dateKey] = [];
+      groups[dateKey].push(p);
+    });
+    
+    return Object.entries(groups).sort((a, b) => {
+      if (a[0] === 'Unscheduled / Immediate') return 1;
+      if (b[0] === 'Unscheduled / Immediate') return -1;
+      return new Date(a[0]).getTime() - new Date(b[0]).getTime();
+    });
+  }, [campaignProspects]);
+
+  const clearFilters = () => {
+    setActiveFilter('all');
+    setRecencyDays('');
+    setRecencyFilterMode('exclude');
+    setTagFilterMode('all');
+    setSearchQuery('');
+  };
+
+  // --- NEW: WhatsApp Queue Functions ---
+  const toggleTableSelection = (id: string) => {
+    setTableSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const toggleAllTableSelection = () => {
+    if (tableSelectedIds.length === campaignProspects.length) {
+      setTableSelectedIds([]);
+    } else {
+      setTableSelectedIds(campaignProspects.map(p => p.id));
+    }
+  };
+
+  const queueLeads = campaignProspects.filter(p => tableSelectedIds.includes(p.id));
+  const activeQueueLead = queueLeads[queueIndex];
+
+  const handleNextQueueLead = async () => {
+    if (!activeQueueLead) return;
+    
+    // Optional telemetry: Auto-mark as sent when advancing
+    try {
+      const meta = activeQueueLead.metadata || {};
+      const newMeta = {
+        ...meta,
+        invite_generated_at: new Date().toISOString()
+      };
+      await supabase.from('prospects').update({ 
+        status: 'Invite Sent', 
+        metadata: newMeta 
+      }).eq('id', activeQueueLead.id);
+    } catch (e) {
+      console.error("Failed to auto-update telemetry on queue skip", e);
+    }
+
+    if (queueIndex < queueLeads.length - 1) {
+      setQueueIndex(queueIndex + 1);
+    } else {
+      // Finished
+      confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
+      setShowQueueModal(false);
+      setTableSelectedIds([]);
+      setQueueIndex(0);
+    }
+  };
 
   if (loading) {
     return (
@@ -358,7 +677,7 @@ export default function InvitesCommandCenter() {
   }
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans selection:bg-blue-500/30 overflow-x-hidden">
+    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans selection:bg-blue-500/30 overflow-x-hidden relative pb-32">
       <div className="max-w-7xl mx-auto space-y-8">
         
         {/* HEADER */}
@@ -387,148 +706,367 @@ export default function InvitesCommandCenter() {
           </button>
         </header>
 
-        {/* METRICS DASHBOARD */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-          <div className="bg-purple-500/10 border border-purple-500/20 rounded-2xl p-5 shadow-sm">
+        {/* METRICS DASHBOARD (Click to Filter) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div 
+            onClick={() => setActiveFilter(activeFilter === 'planned' ? 'all' : 'planned')}
+            className={`bg-purple-500/10 border ${activeFilter === 'planned' ? 'border-purple-400 ring-1 ring-purple-400' : 'border-purple-500/20'} rounded-2xl p-5 shadow-sm cursor-pointer hover:bg-purple-500/20 transition-all`}
+          >
             <p className="text-[9px] font-black uppercase tracking-widest text-purple-400 mb-2 flex items-center gap-1.5"><CalendarClock size={12}/> Planned</p>
-            <p className="text-3xl font-black text-purple-400 italic">{metrics.planned}</p>
+            <p className="text-3xl font-black text-purple-400 italic">{metrics.planned.length}</p>
           </div>
-          <div className="bg-[#0f172a] border border-white/10 rounded-2xl p-5 shadow-sm">
+          <div 
+            onClick={() => setActiveFilter(activeFilter === 'sent' ? 'all' : 'sent')}
+            className={`bg-[#0f172a] border ${activeFilter === 'sent' ? 'border-white/40 ring-1 ring-white/40' : 'border-white/10'} rounded-2xl p-5 shadow-sm cursor-pointer hover:bg-white/5 transition-all`}
+          >
             <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2 flex items-center gap-1.5"><Send size={12}/> Sent</p>
-            <p className="text-3xl font-black text-white italic">{metrics.sent}</p>
+            <p className="text-3xl font-black text-white italic">{metrics.sent.length}</p>
           </div>
-          <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-5 shadow-sm">
+          <div 
+            onClick={() => setActiveFilter(activeFilter === 'accepted' ? 'all' : 'accepted')}
+            className={`bg-blue-500/10 border ${activeFilter === 'accepted' ? 'border-blue-400 ring-1 ring-blue-400' : 'border-blue-500/20'} rounded-2xl p-5 shadow-sm cursor-pointer hover:bg-blue-500/20 transition-all`}
+          >
             <p className="text-[9px] font-black uppercase tracking-widest text-blue-400 mb-2 flex items-center gap-1.5"><Clock size={12}/> Trial Active</p>
-            <p className="text-3xl font-black text-blue-400 italic">{metrics.accepted}</p>
+            <p className="text-3xl font-black text-blue-400 italic">{metrics.accepted.length}</p>
           </div>
-          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-5 shadow-sm">
-            <p className="text-[9px] font-black uppercase tracking-widest text-emerald-400 mb-2 flex items-center gap-1.5"><CheckCircle2 size={12}/> Paid</p>
-            <p className="text-3xl font-black text-emerald-400 italic">{metrics.converted}</p>
-          </div>
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-sm opacity-70">
+          <div 
+            onClick={() => setActiveFilter(activeFilter === 'expiredUnclaimed' ? 'all' : 'expiredUnclaimed')}
+            className={`bg-slate-800 border ${activeFilter === 'expiredUnclaimed' ? 'border-slate-400 ring-1 ring-slate-400' : 'border-slate-700'} rounded-2xl p-5 shadow-sm cursor-pointer hover:bg-slate-700 transition-all`}
+          >
             <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2 flex items-center gap-1.5"><X size={12}/> Expired Unclaimed</p>
-            <p className="text-3xl font-black text-slate-300 italic">{metrics.expiredUnclaimed}</p>
-          </div>
-          <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-5 shadow-sm">
-            <p className="text-[9px] font-black uppercase tracking-widest text-rose-400 mb-2 flex items-center gap-1.5"><AlertTriangle size={12}/> Expired Unpaid</p>
-            <p className="text-3xl font-black text-rose-400 italic">{metrics.expiredTrial}</p>
+            <p className="text-3xl font-black text-slate-300 italic">{metrics.expiredUnclaimed.length}</p>
           </div>
         </div>
 
         {/* PIPELINE TABLE */}
-        <div className="bg-[#0f172a] border border-white/10 rounded-[32px] overflow-hidden shadow-xl">
-          <div className="p-6 border-b border-white/5 bg-white/[0.02] flex flex-col sm:flex-row justify-between gap-4 sm:items-center">
-            <h3 className="text-sm font-black uppercase tracking-widest text-slate-300 flex items-center gap-2">
-              <Users size={16} className="text-blue-500"/> Campaign Ledger
-            </h3>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
-              <input 
-                type="text" placeholder="Search leads..." 
-                value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#020617] border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-xs font-bold text-white focus:outline-none focus:border-blue-500"
-              />
+        <div className="bg-[#0f172a] border border-white/10 rounded-[32px] overflow-hidden shadow-xl flex flex-col">
+          
+          {/* HEADER & MULTI-FILTERS */}
+          <div className="p-6 border-b border-white/5 bg-white/[0.02] flex flex-col gap-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black uppercase tracking-widest text-slate-300 flex items-center gap-2">
+                <Users size={16} className="text-blue-500"/> Campaign Ledger
+                {(activeFilter !== 'all' || recencyDays !== '' || tagFilterMode !== 'all' || searchQuery !== '') && (
+                  <button onClick={clearFilters} className="ml-2 px-2.5 py-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 text-[9px] rounded-lg cursor-pointer hover:bg-blue-500 hover:text-white transition-colors flex items-center gap-1">
+                    Clear Filters <X size={10}/>
+                  </button>
+                )}
+              </h3>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-3 w-full">
+              {/* Search */}
+              <div className="relative w-full sm:w-64 shrink-0">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                <input 
+                  type="text" placeholder="Search leads..." 
+                  value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-[#020617] border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-xs font-bold text-white focus:outline-none focus:border-blue-500 transition-colors"
+                />
+              </div>
+
+              {/* Recency Filter */}
+              <div className="flex items-center gap-2 bg-[#020617] border border-white/10 rounded-xl px-3 py-1 h-10 w-full sm:w-auto shrink-0 transition-colors focus-within:border-blue-500">
+                <Clock size={14} className="text-slate-500 shrink-0" />
+                <select 
+                   value={recencyFilterMode} 
+                   onChange={e => setRecencyFilterMode(e.target.value as any)} 
+                   className="bg-transparent text-[10px] font-bold text-slate-300 uppercase tracking-widest focus:outline-none cursor-pointer"
+                >
+                  <option value="exclude">Exclude sent within last:</option>
+                  <option value="show">Only show sent within last:</option>
+                </select>
+                <input 
+                  type="number" min="0" 
+                  value={recencyDays} onChange={(e) => setRecencyDays(e.target.value)} 
+                  className="w-12 bg-transparent text-white text-xs font-bold focus:outline-none text-center border-l border-white/10 pl-2 ml-1" 
+                  placeholder="0" 
+                />
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest shrink-0">Days</span>
+              </div>
+
+              {/* Tag Filter */}
+              <div className="flex items-center gap-2 bg-[#020617] border border-white/10 rounded-xl px-3 py-1 h-10 w-full sm:w-auto shrink-0 transition-colors focus-within:border-blue-500">
+                 <Tag size={14} className="text-slate-500 shrink-0" />
+                 <select 
+                    value={tagFilterMode} 
+                    onChange={e => setTagFilterMode(e.target.value as any)} 
+                    className="bg-transparent text-[10px] font-bold text-slate-300 uppercase tracking-widest focus:outline-none cursor-pointer"
+                 >
+                   <option value="all">Any Tag</option>
+                   <option value="has">Has Tag:</option>
+                   <option value="excludes">Lacks Tag:</option>
+                 </select>
+                 {tagFilterMode !== 'all' && (
+                   <input 
+                      type="text" 
+                      value={tagFilterValue} 
+                      onChange={e => setTagFilterValue(e.target.value)} 
+                      className="w-32 bg-transparent text-white text-xs font-bold focus:outline-none border-l border-white/10 pl-3 ml-1" 
+                      placeholder="e.g. LMS Trial" 
+                   />
+                 )}
+              </div>
             </div>
           </div>
           
-          <div className="overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left whitespace-nowrap">
+          <div className="overflow-x-auto custom-scrollbar flex-1">
+            <table className="w-full text-left text-sm">
               <thead className="bg-[#020617] text-[9px] font-black uppercase tracking-widest text-slate-500 border-b border-white/10">
                 <tr>
-                  <th className="px-6 py-4">Prospect</th>
-                  <th className="px-6 py-4">Status</th>
-                  <th className="px-6 py-4">Source / Referral</th>
-                  <th className="px-6 py-4">Telemetry Activity</th>
-                  <th className="px-6 py-4 text-right">Actions</th>
+                  <th className="px-4 py-4 w-12 text-center">
+                    <button onClick={toggleAllTableSelection} className="text-slate-500 hover:text-blue-400 transition-colors">
+                      {tableSelectedIds.length === campaignProspects.length && campaignProspects.length > 0 ? <CheckSquare size={16}/> : <Square size={16}/>}
+                    </button>
+                  </th>
+                  <th className="px-6 py-4 whitespace-nowrap">Prospect</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Status & Tags</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Source / Referral</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Telemetry Activity</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Invite Sent</th>
+                  <th className="px-6 py-4 text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
-                {campaignProspects.length === 0 ? (
-                  <tr><td colSpan={5} className="p-12 text-center text-slate-500 font-bold italic text-xs">No prospects active in this campaign.</td></tr>
-                ) : (
-                  campaignProspects.map(p => {
-                    let statusColor = "bg-slate-500/10 text-slate-400 border-slate-500/20";
-                    if (p.status === 'Invite Planned') statusColor = "bg-purple-500/10 text-purple-400 border-purple-500/20";
-                    if (p.status === 'Invite Sent') statusColor = "bg-amber-500/10 text-amber-400 border-amber-500/20";
-                    if (p.status === 'Trial Active' || (p.source === 'Referral' && p.status === 'New Lead')) statusColor = "bg-blue-500/10 text-blue-400 border-blue-500/20";
-                    if (p.status === 'Converted (Won)') statusColor = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
-
-                    const isReferred = p.source === 'Referral' || p.metadata?.referred_by_id;
-                    const progress = p.metadata?.form_progress || 'Unopened';
-                    const lastActive = p.metadata?.last_active;
+              
+              {groupedProspects.length === 0 ? (
+                <tbody>
+                  <tr><td colSpan={7} className="p-12 text-center text-slate-500 font-bold italic text-xs">No prospects match this criteria.</td></tr>
+                </tbody>
+              ) : (
+                groupedProspects.map(([dateKey, groupLeads]) => (
+                  <tbody key={dateKey} className="divide-y divide-white/5">
+                    {/* --- GROUP HEADER --- */}
+                    <tr className="bg-white/5 border-t border-white/10">
+                      <td colSpan={7} className="px-6 py-2">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-blue-400 flex items-center gap-2">
+                          <Calendar size={12} /> {dateKey} <span className="text-slate-500 ml-2">({groupLeads.length} Leads)</span>
+                        </span>
+                      </td>
+                    </tr>
                     
-                    // Show Convert button if they are in Trial Active phase
-                    const canConvert = p.status === 'Trial Active' || (p.source === 'Referral' && p.status === 'New Lead');
+                    {/* --- GROUP ROWS --- */}
+                    {groupLeads.map(p => {
+                      const isSelected = tableSelectedIds.includes(p.id);
+                      let statusColor = "bg-slate-500/10 text-slate-400 border-slate-500/20";
+                      if (p.status === 'Invite Planned') statusColor = "bg-purple-500/10 text-purple-400 border-purple-500/20";
+                      if (p.status === 'Invite Sent') statusColor = "bg-amber-500/10 text-amber-400 border-amber-500/20";
+                      if (p.status === 'Trial Active' || (p.source === 'Referral' && p.status === 'New Lead')) statusColor = "bg-blue-500/10 text-blue-400 border-blue-500/20";
+                      if (p.status === 'Converted (Won)') statusColor = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
 
-                    let progressColor = "text-slate-500 bg-slate-800 border-slate-700";
-                    if (progress === 'Form Opened') progressColor = "text-blue-400 bg-blue-500/10 border-blue-500/20";
-                    if (progress === 'Guardian Details Completed') progressColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
-                    if (progress === 'Completed') progressColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+                      const isReferred = p.source === 'Referral' || p.metadata?.referred_by_id;
+                      const progress = p.metadata?.form_progress || 'Unopened';
+                      const lastActive = p.metadata?.last_active;
+                      const tags = p.metadata?.invite_tags || [];
+                      
+                      const canConvert = p.status === 'Trial Active' || (p.source === 'Referral' && p.status === 'New Lead');
 
-                    return (
-                      <tr key={p.id} onClick={() => setSelectedLeadModal(p)} className="hover:bg-white/[0.02] transition-colors group cursor-pointer">
-                        <td className="px-6 py-4">
-                          <p className="font-black text-sm text-white group-hover:text-blue-400 transition-colors">{p.name}</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">{p.email}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-widest border ${statusColor}`}>
-                            {p.status === 'New Lead' && isReferred ? 'Trial Active' : p.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-xs font-medium">
-                          {isReferred ? (
-                            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400 rounded-lg text-[10px] font-black uppercase tracking-widest">
-                              <UserPlus size={12}/> {p.metadata?.referred_by_name || 'Referral'}
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">{p.source || 'Direct Invite'}</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col gap-1.5">
-                            <span className={`w-fit px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${progressColor}`}>
-                              {progress}
-                            </span>
-                            {lastActive && (
-                              <span className="text-[9px] font-bold text-slate-500 flex items-center gap-1">
-                                <Clock size={10}/> {new Date(lastActive).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex justify-end items-center gap-2">
-                            {canConvert && (
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); setShowConvertModal(p); }}
-                                className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-500 text-emerald-400 hover:text-white rounded-lg transition-all border border-emerald-500/30 text-[10px] font-black uppercase tracking-widest shadow-sm flex items-center gap-1.5"
-                                title="Convert to Paid Profile"
-                              >
-                                <CheckCircle2 size={14} /> Convert
-                              </button>
-                            )}
-                            <button onClick={(e) => { e.stopPropagation(); setShowPreviewModal(`${window.location.origin}/invite/${p.id}`); }} className="p-2 bg-white/5 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors border border-white/5"><Eye size={14} /></button>
-                            <button onClick={(e) => { e.stopPropagation(); setShowShareModal(p); }} className={`p-2 rounded-lg transition-colors border ${p.status === 'Invite Planned' ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-600 hover:text-white border-purple-500/20' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-600 hover:text-white border-blue-500/20'}`}>
-                              {p.status === 'Invite Planned' ? <Send size={14} /> : <Share2 size={14} />}
+                      let progressColor = "text-slate-500 bg-slate-800 border-slate-700";
+                      if (progress === 'Form Opened') progressColor = "text-blue-400 bg-blue-500/10 border-blue-500/20";
+                      if (progress === 'Guardian Details Completed') progressColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+                      if (progress === 'Completed') progressColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+
+                      const sentDateStr = p.metadata?.invite_generated_at 
+                        ? new Date(p.metadata.invite_generated_at).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) 
+                        : 'Pending';
+
+                      return (
+                        <tr key={p.id} onClick={() => toggleTableSelection(p.id)} className={`hover:bg-white/[0.04] transition-colors group cursor-pointer ${isSelected ? 'bg-blue-500/5' : ''}`}>
+                          <td className="px-4 py-4 text-center">
+                            <button className={`${isSelected ? 'text-blue-500' : 'text-slate-600 group-hover:text-blue-400'} transition-colors`}>
+                              {isSelected ? <CheckSquare size={16}/> : <Square size={16}/>}
                             </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
+                          </td>
+                          <td className="px-6 py-4 whitespace-normal break-words max-w-[200px]" onClick={(e) => { e.stopPropagation(); setSelectedLeadModal(p); }}>
+                            <p className="font-black text-sm text-white group-hover:text-blue-400 transition-colors">{p.name}</p>
+                            <div className="flex flex-col gap-0.5 mt-1">
+                              {p.email && <span className="text-[10px] text-slate-400">{p.email}</span>}
+                              {p.phone ? (
+                                <span className="text-[10px] font-mono text-blue-300/80">{p.phone}</span>
+                              ) : (
+                                <span className="text-[8px] font-black uppercase tracking-widest text-rose-500/70 flex items-center gap-1 mt-0.5">
+                                  <AlertTriangle size={8} /> No Phone
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 whitespace-normal break-words max-w-[180px]">
+                            <div className="flex flex-col items-start gap-1.5">
+                              <span className={`px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-widest border ${statusColor}`}>
+                                {p.status === 'New Lead' && isReferred ? 'Trial Active' : p.status}
+                              </span>
+                              
+                              {tags.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                  {tags.map((t: string, i: number) => (
+                                    <span key={i} className="px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded text-[8px] font-bold uppercase tracking-widest flex items-center gap-1">
+                                      <Tag size={8}/> {t}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {p.metadata?.drip_batch && p.status === 'Invite Planned' && (
+                                <span className="text-[8px] font-bold text-slate-500">{p.metadata.drip_batch}</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 text-xs font-medium whitespace-normal break-words max-w-[150px]">
+                            {isReferred ? (
+                              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400 rounded-lg text-[10px] font-black uppercase tracking-widest">
+                                <UserPlus size={12}/> {p.metadata?.referred_by_name || 'Referral'}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">{p.source || 'Direct Invite'}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-4 whitespace-normal break-words max-w-[180px]">
+                            <div className="flex flex-col gap-1.5 items-start">
+                              <span className={`w-fit px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${progressColor}`}>
+                                {progress}
+                              </span>
+                              {lastActive && (
+                                <span className="text-[9px] font-bold text-slate-500 flex items-center gap-1">
+                                  <Clock size={10}/> {new Date(lastActive).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap">
+                             <span className={`text-[10px] font-bold ${sentDateStr === 'Pending' ? 'text-slate-600' : 'text-slate-300'}`}>
+                               {sentDateStr}
+                             </span>
+                          </td>
+                          <td className="px-6 py-4 text-right whitespace-nowrap">
+                            <div className="flex justify-end items-center gap-2">
+                              {canConvert && (
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); setShowConvertModal(p); }}
+                                  className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-500 text-emerald-400 hover:text-white rounded-lg transition-all border border-emerald-500/30 text-[10px] font-black uppercase tracking-widest shadow-sm flex items-center gap-1.5"
+                                  title="Convert to Paid Profile"
+                                >
+                                  <CheckCircle2 size={14} /> Convert
+                                </button>
+                              )}
+                              <button onClick={(e) => { e.stopPropagation(); setShowPreviewModal(`${window.location.origin}/invite/${p.id}`); }} className="p-2 bg-white/5 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors border border-white/5"><Eye size={14} /></button>
+                              <button onClick={(e) => { e.stopPropagation(); setShowShareModal(p); }} className={`p-2 rounded-lg transition-colors border ${p.status === 'Invite Planned' ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-600 hover:text-white border-purple-500/20' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-600 hover:text-white border-blue-500/20'}`}>
+                                {p.status === 'Invite Planned' ? <Send size={14} /> : <Share2 size={14} />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                ))
+              )}
             </table>
           </div>
         </div>
 
       </div>
 
+      {/* --- NEW: QUEUE ACTION BAR --- */}
+      <AnimatePresence>
+        {tableSelectedIds.length > 0 && !showQueueModal && (
+          <motion.div 
+            initial={{ y: 100, opacity: 0 }} 
+            animate={{ y: 0, opacity: 1 }} 
+            exit={{ y: 100, opacity: 0 }} 
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 bg-blue-600 rounded-full px-6 py-4 shadow-[0_10px_40px_rgba(37,99,235,0.4)] flex items-center gap-6 border border-blue-400/30"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-black text-sm">
+                {tableSelectedIds.length}
+              </div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-widest text-white leading-tight">Leads Selected</p>
+                <p className="text-[10px] text-blue-200 font-medium">Ready for dispatch</p>
+              </div>
+            </div>
+            
+            <div className="flex gap-2">
+              <button 
+                onClick={() => { setQueueIndex(0); setShowQueueModal(true); }}
+                className="px-6 py-2 bg-white text-blue-600 hover:bg-blue-50 rounded-full text-xs font-black uppercase tracking-widest flex items-center gap-2 transition-colors shadow-sm"
+              >
+                <MessageSquare size={14} /> Start WhatsApp Queue
+              </button>
+              <button onClick={() => setTableSelectedIds([])} className="p-2 hover:bg-white/10 rounded-full text-blue-200 hover:text-white transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ==========================================
           MODALS
           ========================================== */}
-      
+
+      {/* --- NEW: WHATSAPP QUEUE MODAL --- */}
+      <AnimatePresence>
+        {showQueueModal && activeQueueLead && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
+            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-2xl bg-[#0f172a] border border-[#25D366]/30 rounded-[32px] shadow-2xl p-8 flex flex-col">
+              
+              <div className="flex items-center justify-between mb-8 pb-6 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-[#25D366]/20 text-[#25D366] rounded-xl flex items-center justify-center shrink-0 border border-[#25D366]/30"><MessageSquare size={20}/></div>
+                  <div>
+                    <h3 className="text-xl font-black uppercase italic tracking-tighter text-white">Dispatch Queue</h3>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Lead {queueIndex + 1} of {queueLeads.length}</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowQueueModal(false)} className="p-2 bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-full transition-colors"><X size={16}/></button>
+              </div>
+
+              <div className="text-center space-y-6 mb-8">
+                <p className="text-[10px] font-black uppercase tracking-widest text-[#25D366] bg-[#25D366]/10 w-fit mx-auto px-3 py-1 rounded-full border border-[#25D366]/20">Current Target</p>
+                <div>
+                  <h2 className="text-4xl font-black text-white">{activeQueueLead.name}</h2>
+                  <p className="text-slate-400 mt-2 font-mono text-lg">{activeQueueLead.phone || "No Phone Provided"}</p>
+                </div>
+
+                {!activeQueueLead.phone ? (
+                  <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-sm font-bold">
+                    This lead does not have a phone number. Skip to next.
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      const text = getShareCopy('whatsapp', activeQueueLead);
+                      let phone = activeQueueLead.phone.replace(/\D/g, '');
+                      if (phone.startsWith('0')) phone = '27' + phone.substring(1);
+                      const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+                      window.open(url, '_blank');
+                    }}
+                    className="w-full py-5 bg-[#25D366] hover:bg-[#1DA851] text-white rounded-2xl font-black uppercase tracking-widest text-sm flex items-center justify-center gap-3 transition-all shadow-[0_0_30px_rgba(37,211,102,0.3)]"
+                  >
+                    <Send size={18} /> Open WhatsApp Web
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-[#020617] border border-white/5 rounded-2xl p-4 mb-6">
+                 <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">Message Preview</p>
+                 <textarea readOnly value={getShareCopy('whatsapp', activeQueueLead)} className="w-full h-24 bg-transparent text-xs text-slate-400 resize-none focus:outline-none custom-scrollbar" />
+              </div>
+
+              <div className="flex gap-4">
+                <button 
+                  onClick={handleNextQueueLead}
+                  className="flex-1 bg-white hover:bg-slate-200 text-black rounded-xl py-4 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-colors shadow-lg"
+                >
+                  Mark Sent & Next <ArrowRight size={16} />
+                </button>
+              </div>
+
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* X-RAY LEAD DETAILS MODAL */}
       <AnimatePresence>
         {selectedLeadModal && (
@@ -683,7 +1221,7 @@ export default function InvitesCommandCenter() {
                     onChange={e => setSelectedTierOverride(e.target.value)}
                     className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-blue-500 appearance-none"
                   >
-                    <option value="auto">Auto-Calculate (Currently {metrics.converted < 10 ? 'Tier 1' : metrics.converted < 20 ? 'Tier 2' : 'Tier 3'})</option>
+                    <option value="auto">Auto-Calculate (Currently {metrics.converted.length < 10 ? 'Tier 1' : metrics.converted.length < 20 ? 'Tier 2' : 'Tier 3'})</option>
                     <option value="tier1">Tier 1 - First 10 (R250/mo)</option>
                     <option value="tier2">Tier 2 - Next 10 (R350/mo)</option>
                     <option value="tier3">Tier 3 - Standard (R450/mo)</option>
@@ -799,44 +1337,125 @@ export default function InvitesCommandCenter() {
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 sticky top-0 bg-[#0f172a] pb-2">Batch Lead Data</p>
+                    <div className="space-y-4">
+                      
+                      {/* --- NEW: CSV UPLOAD ZONE --- */}
+                      <div className="bg-blue-500/5 border-2 border-dashed border-blue-500/30 rounded-2xl p-6 flex flex-col items-center justify-center text-center group hover:bg-blue-500/10 hover:border-blue-500/50 transition-all relative">
+                        <UploadCloud className="text-blue-400 mb-3" size={32} />
+                        <h4 className="text-sm font-black text-white uppercase tracking-widest mb-1">Upload CSV Export</h4>
+                        <p className="text-[10px] font-bold text-slate-400 max-w-sm">Drag and drop your Meta/HubSpot CSV here. Must contain 'Name' and 'Email' columns.</p>
+                        <input 
+                          type="file" 
+                          accept=".csv"
+                          ref={fileInputRef}
+                          onChange={handleFileUpload}
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between sticky top-0 bg-[#0f172a] pt-1 pb-2 z-10 border-b border-white/5">
+                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Lead Data ({bulkNewLeads.length})</p>
+                         <button type="button" onClick={() => setBulkNewLeads([{ id: '1', name: '', email: '', phone: '', source: 'Manual Entry' }])} className="text-[9px] text-rose-500 font-bold uppercase tracking-widest">Clear List</button>
+                      </div>
+                      
                       <AnimatePresence>
-                        {bulkNewLeads.map((lead, idx) => (
-                          <motion.div key={lead.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, height: 0 }} className="flex flex-col md:flex-row gap-3 bg-[#020617] p-3 rounded-xl border border-white/5 relative group">
-                            <div className="absolute -left-2 -top-2 w-5 h-5 bg-slate-800 text-slate-400 rounded-full flex items-center justify-center text-[9px] font-black">{idx + 1}</div>
-                            <input type="text" required placeholder="Lead Name *" value={lead.name} onChange={e => updateBulkRow(lead.id, 'name', e.target.value)} className="flex-1 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
-                            <input type="email" required placeholder="Email Address *" value={lead.email} onChange={e => updateBulkRow(lead.id, 'email', e.target.value)} className="flex-1 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
-                            <input type="tel" placeholder="Phone Number" value={lead.phone} onChange={e => updateBulkRow(lead.id, 'phone', e.target.value)} className="w-full md:w-32 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
-                            <button type="button" onClick={() => removeBulkRow(lead.id)} className={`p-2 rounded-lg transition-colors ${bulkNewLeads.length === 1 ? 'opacity-20 cursor-not-allowed text-slate-600' : 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-500'}`}><Trash2 size={16} /></button>
+                        {bulkNewLeads.map((lead: any, idx) => (
+                          <motion.div 
+                            key={lead.id} 
+                            initial={{ opacity: 0, x: -10 }} 
+                            animate={{ opacity: 1, x: 0 }} 
+                            exit={{ opacity: 0, height: 0 }} 
+                            className={`flex flex-col md:flex-row gap-3 p-3 rounded-xl border relative group mb-4 transition-all ${
+                              lead.inPipeline 
+                                ? 'opacity-50 grayscale bg-[#020617] border-white/5' 
+                                : lead.warning 
+                                  ? 'bg-amber-500/10 border-amber-500/40 shadow-[0_0_15px_rgba(245,158,11,0.1)]' 
+                                  : 'bg-[#020617] border-white/5'
+                            }`}
+                          >
+                            <div className={`absolute -left-2 -top-2 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black ${lead.inPipeline ? 'bg-slate-800 text-slate-500' : lead.warning ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-400'}`}>
+                              {idx + 1}
+                            </div>
+                            
+                            {/* Warning / Pipeline Label */}
+                            {(lead.warning || lead.inPipeline) && (
+                              <div className={`absolute -top-3 left-6 px-2 text-[8px] font-black uppercase tracking-widest flex items-center gap-1 ${lead.inPipeline ? 'bg-[#0f172a] text-slate-400' : 'bg-[#0f172a] text-amber-500'}`}>
+                                {lead.inPipeline ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />} 
+                                {lead.inPipeline ? 'Auto-Selected in Existing Pipeline Tab' : lead.warning}
+                              </div>
+                            )}
+
+                            <input readOnly={lead.inPipeline} type="text" placeholder="Lead Name *" value={lead.name} onChange={e => updateBulkRow(lead.id, 'name', e.target.value)} className="flex-1 w-full md:w-auto bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
+                            <input readOnly={lead.inPipeline} type="email" placeholder="Email Address" value={lead.email} onChange={e => updateBulkRow(lead.id, 'email', e.target.value)} className="flex-1 w-full md:w-auto bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
+                            <input readOnly={lead.inPipeline} type="tel" placeholder="Phone Number" value={lead.phone} onChange={e => updateBulkRow(lead.id, 'phone', e.target.value)} className="w-full md:w-32 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
+                            <input readOnly={lead.inPipeline} type="text" placeholder="Source" value={lead.source} onChange={e => updateBulkRow(lead.id, 'source', e.target.value)} className="w-full md:w-32 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-slate-400 focus:outline-none focus:border-blue-500" />
+                            
+                            <button type="button" onClick={() => removeBulkRow(lead.id)} className={`p-2 rounded-lg transition-colors absolute right-2 top-2 md:relative md:right-auto md:top-auto ${bulkNewLeads.length === 1 ? 'opacity-20 cursor-not-allowed text-slate-600' : 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-500'}`}>
+                              <Trash2 size={16} />
+                            </button>
                           </motion.div>
                         ))}
                       </AnimatePresence>
-                      <button type="button" onClick={addBulkRow} className="w-full py-3 border border-dashed border-white/20 rounded-xl text-slate-400 text-xs font-black uppercase tracking-widest hover:border-blue-500 hover:text-blue-400 transition-colors flex items-center justify-center gap-2"><Plus size={14} /> Add Another Row</button>
+                      <button type="button" onClick={addBulkRow} className="w-full py-3 border border-dashed border-white/20 rounded-xl text-slate-400 text-xs font-black uppercase tracking-widest hover:border-blue-500 hover:text-blue-400 transition-colors flex items-center justify-center gap-2"><Plus size={14} /> Add Manual Row</button>
                     </div>
                   )}
                 </div>
 
                 <div className="pt-4 border-t border-white/10 shrink-0">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Global Cohort Schedule</p>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="flex items-center justify-between mb-4">
+                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Global Cohort Schedule</p>
+                     
+                     {/* --- NEW: Smart Batching Toggle --- */}
+                     <label className="flex items-center gap-2 cursor-pointer group">
+                       <div onClick={() => setIsDripCampaign(!isDripCampaign)}>
+                         {isDripCampaign ? <CheckSquare size={16} className="text-blue-400"/> : <Square size={16} className="text-slate-600 group-hover:text-white transition-colors"/>}
+                       </div>
+                       <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">Smart Batching (Drip)</span>
+                     </label>
+                  </div>
+
+                  {isDripCampaign && (
+                    <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 mb-4 flex items-center gap-4">
+                      <div className="flex-1">
+                        <p className="text-xs font-bold text-blue-300">Paced Delivery</p>
+                        <p className="text-[9px] text-blue-400/70 mt-1 uppercase tracking-widest">Leads will be evenly staggered day-by-day starting from the planned date.</p>
+                      </div>
+                      <div className="shrink-0 w-24">
+                        <label className="text-[8px] font-black uppercase tracking-widest text-blue-400 block mb-1">Leads / Day</label>
+                        <input type="number" min="1" value={leadsPerDay} onChange={e => setLeadsPerDay(parseInt(e.target.value) || 1)} className="w-full bg-[#020617] border border-blue-500/30 rounded-lg px-3 py-1.5 text-xs font-bold text-white focus:outline-none" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* --- UPGRADED: Added Invite Tag column to grid --- */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-purple-400 ml-1 flex items-center gap-1"><Send size={10}/> Planned Send</label>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-purple-400 ml-1 flex items-center gap-1"><Send size={10}/> {isDripCampaign ? 'Start Sending On' : 'Planned Send'}</label>
                       <input type="date" required value={plannedDate} onChange={e => setPlannedDate(e.target.value)} className="w-full mt-1 bg-purple-500/10 border border-purple-500/20 rounded-xl px-3 py-2 text-xs font-bold text-purple-300 focus:outline-none focus:border-purple-500 [color-scheme:dark]" />
                     </div>
                     <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 flex items-center gap-1"><Calendar size={10}/> Link Expiry</label>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 flex items-center gap-1"><Calendar size={10}/> Base Link Expiry</label>
                       <input type="date" required value={inviteExpiry} onChange={e => setInviteExpiry(e.target.value)} className="w-full mt-1 bg-[#020617] border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-slate-300 focus:outline-none focus:border-blue-500 [color-scheme:dark]" />
                     </div>
                     <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-blue-500 ml-1 flex items-center gap-1"><Clock size={10}/> Trial Expiry (14D)</label>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-blue-500 ml-1 flex items-center gap-1"><Clock size={10}/> Base Trial Expiry</label>
                       <input type="date" required value={trialExpiry} onChange={e => setTrialExpiry(e.target.value)} className="w-full mt-1 bg-blue-500/10 border border-blue-500/30 rounded-xl px-3 py-2 text-xs font-bold text-blue-400 focus:outline-none focus:border-blue-500 [color-scheme:dark]" />
                     </div>
+                    <div>
+                      <label className="text-[10px] font-black uppercase tracking-widest text-indigo-400 ml-1 flex items-center gap-1"><Tag size={10}/> Invite Tag</label>
+                      <input type="text" required value={bulkInviteTag} onChange={e => setBulkInviteTag(e.target.value)} className="w-full mt-1 bg-indigo-500/10 border border-indigo-500/30 rounded-xl px-3 py-2 text-xs font-bold text-indigo-400 focus:outline-none focus:border-indigo-500" placeholder="e.g. LMS Trial" />
+                    </div>
                   </div>
+                  
+                  {isDripCampaign && (
+                    <p className="text-[9px] text-slate-500 italic mt-3 text-center">
+                      * Expiry dates will auto-adjust forward based on each lead's actual drip send date.
+                    </p>
+                  )}
 
                   <button type="submit" disabled={isSubmitting} className="w-full mt-6 bg-blue-600 text-white rounded-xl py-4 text-xs font-black uppercase tracking-widest hover:bg-blue-500 flex items-center justify-center gap-2 transition-all shadow-xl shadow-blue-600/20 disabled:opacity-50">
                     {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />} 
-                    Execute Bulk Generation {inviteMode === 'existing' && selectedProspectIds.length > 0 ? `(${selectedProspectIds.length} Leads)` : ''}
+                    Execute {isDripCampaign ? 'Batched' : 'Bulk'} Generation ({selectedProspectIds.length + bulkNewLeads.filter(l => !l.inPipeline && l.name.trim() !== "" && (l.email.trim() !== "" || l.phone.trim() !== "")).length} Leads)
                   </button>
                 </div>
 
@@ -880,7 +1499,6 @@ export default function InvitesCommandCenter() {
                     </button>
                   </div>
 
-                  {/* --- NEW: DIRECT WHATSAPP LAUNCHER --- */}
                   {shareTab === 'whatsapp' && (
                     <button
                       onClick={() => {
