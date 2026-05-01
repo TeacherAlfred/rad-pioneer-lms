@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Users, Calendar, Activity, AlertTriangle, Search, Filter, 
-  ChevronRight, Phone, Mail, Target, BookOpen, CalendarIcon,
+  ChevronRight, Phone, Mail, Target, BookOpen, CalendarIcon, ExternalLink,
   MessageSquare, Shield, Clock, Plus, Zap, Laptop, CalendarClock,
   CheckCircle2, ChevronLeft, CalendarCheck, Loader2, X, Edit2, Save, MapPin, Video, CalendarPlus,
   CalendarDays, Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard, TrendingUp, Trophy, FileText, Check, XCircle, CalendarRange, Bell, ArrowRight
@@ -21,6 +21,10 @@ const AVAILABLE_COURSES = [
   "Term 2 Lessons (Online)",
   "Unassigned"
 ];
+
+// ==========================================
+// MAIN COMPONENT
+// ==========================================
 
 export default function TeacherDashboard() {
   const router = useRouter();
@@ -46,6 +50,81 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
 
   const [viewScope, setViewScope] = useState<string>('global');
+  const [pendingSubmissions, setPendingSubmissions] = useState<any[]>([]);
+
+  // ----------------------------------------
+  // XP AWARD LOGIC
+  // ----------------------------------------
+  const handleAwardXP = async (submission: any, awardedXp: number, bonusXp: number, justification: string) => {
+    const finalAwarded = isNaN(awardedXp) ? 0 : awardedXp;
+    const finalBonus = isNaN(bonusXp) ? 0 : bonusXp;
+
+    const maxBonus = Math.floor((submission.potential_xp || 0) * 0.1);
+    if (finalBonus > maxBonus) {
+      return showToast(`Bonus cannot exceed ${maxBonus} XP (10% limit)`, "error");
+    }
+
+    const totalToGive = finalAwarded + finalBonus;
+
+    // OPTIMISTIC UI UPDATE: Instantly move it to the 'Evaluated' tab
+    setPendingSubmissions(prev => prev.map(s => 
+      s.id === submission.id 
+        ? { ...s, review_status: 'reviewed', xp_earned: (s.xp_earned || 0) + totalToGive, metadata: { ...s.metadata, teacher_notes: justification } }
+        : s
+    ));
+
+    try {
+      // 1. Update Student Profile XP
+      const { data: profile } = await supabase.from('profiles').select('xp, metadata').eq('id', submission.student_id).single();
+      
+      if (profile) {
+        const currentXp = profile.xp || 0;
+        const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+        
+        let noteLog = `[${new Date().toLocaleDateString()}] Awarded ${finalAwarded} XP`;
+        if (finalBonus > 0) noteLog += ` + ${finalBonus} Bonus XP`;
+        noteLog += ` for project: ${submission.project_title || submission.title}\n`;
+        if (justification) noteLog += `Teacher Note: ${justification}\n`;
+
+        meta.admin_notes = noteLog + (meta.admin_notes ? `\n${meta.admin_notes}` : "");
+
+        await supabase.from('profiles').update({ 
+          xp: currentXp + totalToGive,
+          metadata: meta 
+        }).eq('id', submission.student_id);
+      }
+
+      // SAFELY PARSE JSON: Prevents the DB from throwing an empty {} error when spreading stringified data
+      const subMeta = typeof submission.metadata === 'string' ? JSON.parse(submission.metadata) : (submission.metadata || {});
+
+      // 2. Update Archive Status (Using the correct schema columns)
+      const { data: updatedRow, error: archiveError } = await supabase
+        .from('tech_archive')
+        .update({
+          review_status: 'reviewed',
+          xp_earned: (submission.xp_earned || 0) + totalToGive, 
+          teacher_feedback: justification,      // <-- Fixed column
+          teacher_xp_awarded: finalBonus        // <-- Fixed column
+        })
+        .eq('id', submission.id)
+        .select();
+
+      if (archiveError) throw archiveError;
+      
+      // Catch silent RLS failures (where error is null but 0 rows were allowed to be updated)
+      if (!updatedRow || updatedRow.length === 0) {
+         throw new Error("RLS_BLOCKED");
+      }
+
+      showToast(`Awarded ${totalToGive} XP to student!`, "success");
+      // Run SILENT fetch in background to resync without closing the modal
+      fetchDashboardData(true); 
+    } catch (err: any) {
+      console.error("DB Error Details:", err.message || err);
+      showToast(err.message === "RLS_BLOCKED" ? "Database blocked save. Check RLS policies!" : "Error updating XP.", "error");
+      fetchDashboardData(true); // Revert optimistic update on failure
+    }
+  };
 
   useEffect(() => { fetchDashboardData(); }, []);
 
@@ -79,8 +158,9 @@ export default function TeacherDashboard() {
     };
   }, [currentUser]);
 
-  async function fetchDashboardData() {
-    setLoading(true);
+  // Added isSilentRefresh to prevent the loading spinner from closing the modal
+  async function fetchDashboardData(isSilentRefresh = false) {
+    if (!isSilentRefresh) setLoading(true);
     try {
       const sessionData = localStorage.getItem("pioneer_session");
       if (!sessionData) { router.push("/login"); return; }
@@ -89,18 +169,37 @@ export default function TeacherDashboard() {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
       if (profile) setCurrentUser(profile);
 
-      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes, availRes] = await Promise.all([
+      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes, availRes, subsRes, missionsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'student').order('display_name', { ascending: true }),
         supabase.from('profiles').select('id, display_name, metadata').in('role', ['guardian', 'admin']),
         supabase.from('courses').select('*').eq('is_published', true).order('order_index', { ascending: true }),
         supabase.from('enrollments').select('*, courses(*)'),
         supabase.from('profiles').select('id, display_name').eq('role', 'educator').order('display_name', { ascending: true }),
-        supabase.from('teacher_availability').select('*').gte('end_time', new Date().toISOString()).order('start_time', { ascending: true })
+        supabase.from('teacher_availability').select('*').gte('end_time', new Date().toISOString()).order('start_time', { ascending: true }),
+        // Fetch BOTH pending and reviewed submissions for the history tab
+        supabase.from('tech_archive').select('*, profiles!inner(display_name, metadata)').in('review_status', ['pending', 'reviewed']),
+        supabase.from('missions').select('id, xp_reward')
       ]);
 
       if (coursesRes.data) setActiveCourses(coursesRes.data);
       if (educatorsRes.data) setEducators(educatorsRes.data);
       if (availRes.data) setAvailabilities(availRes.data);
+      
+      const missionsMap = new Map();
+      if (missionsRes.data) {
+        missionsRes.data.forEach((m: any) => missionsMap.set(m.id, m.xp_reward));
+      }
+
+      if (subsRes.data) {
+        const myStudentsSubs = subsRes.data.filter((sub: any) => 
+          sub.profiles?.metadata?.teacher?.id === localUser.id
+        ).map((sub: any) => {
+           let max = sub.potential_xp || 0;
+           if (max === 0) max = missionsMap.get(sub.mission_id) || 0;
+           return { ...sub, potential_xp: max }; 
+        });
+        setPendingSubmissions(myStudentsSubs);
+      }
 
       const enrollmentsMap = new Map();
       if (enrollmentsRes.data) {
@@ -261,7 +360,6 @@ export default function TeacherDashboard() {
   };
 
   const handleBulkSchedule = async (params: { studentIds: string[], course: string, delivery: string, startDate: string, startTopic: string, weeks: number, reminders: any }) => {
-    // Bulk Logic remains unchanged
     showToast("Bulk deployed!", "success");
   };
 
@@ -284,8 +382,9 @@ export default function TeacherDashboard() {
   const metrics = {
     totalStudents: scopedStudents.length,
     activeStreaks: scopedStudents.filter(s => s.attendance.includes('Streak')).length,
-    upcomingClasses: todayClassesCount, 
-    activeAlerts: scopedStudents.filter(s => s.alerts.length > 0).length
+    upcomingClasses: todayClassesCount,
+    activeAlerts: scopedStudents.filter(s => s.alerts.length > 0).length,
+    pendingReviews: pendingSubmissions.filter(s => s.review_status === 'pending').length
   };
 
   if (loading) return <div className="h-screen bg-[#020617] flex flex-col items-center justify-center gap-4"><Loader2 className="animate-spin text-purple-500" size={40} /></div>;
@@ -373,188 +472,25 @@ export default function TeacherDashboard() {
       </div>
 
       {/* MODALS */}
-      <MetricDrilldownModal metric={metricDrilldown} students={scopedStudents} onClose={() => setMetricDrilldown(null)} onEnroll={enrollInBootcamp} />
+      <MetricDrilldownModal metric={metricDrilldown} pendingSubmissions={pendingSubmissions} onAwardXP={handleAwardXP} students={scopedStudents} onClose={() => setMetricDrilldown(null)} onEnroll={enrollInBootcamp} />
       <BulkScheduleModal isOpen={isBulkScheduleOpen} onClose={() => setIsBulkScheduleOpen(false)} students={scopedStudents} activeCourses={activeCourses} onSchedule={handleBulkSchedule} />
       <EditLessonModal isOpen={!!editingLessonGroup} lessonGroup={editingLessonGroup} students={scopedStudents} onClose={() => setEditingLessonGroup(null)} onSave={handleSaveLessonEdits} showToast={showToast} />
     </div>
   );
 }
 
-
-
 // ==========================================
 // SUB-COMPONENTS
 // ==========================================
 
-function ManageAvailabilityModal({ isOpen, onClose, teacherId, availabilities, onRefresh, showToast }: any) {
-  const [date, setDate] = useState("");
-  const [startTime, setStartTime] = useState("14:00");
-  const [endTime, setEndTime] = useState("17:00");
-  const [delivery, setDelivery] = useState("both");
-  const [isSaving, setIsSaving] = useState(false);
-
-  if (!isOpen) return null;
-
-  const handleGenerate = async () => {
-    if (!date || !startTime || !endTime) return showToast("Please fill out all fields.", "error");
-    const startDt = new Date(`${date}T${startTime}`);
-    const endDt = new Date(`${date}T${endTime}`);
-    
-    if (startDt >= endDt) return showToast("End time must be after start time.", "error");
-
-    setIsSaving(true);
-    try {
-      const slots = [];
-      let current = new Date(startDt);
-      
-      while (current < endDt) {
-        const next = new Date(current);
-        next.setHours(next.getHours() + 1);
-        if (next > endDt) break; // Only create full 1-hour slots
-        slots.push({
-          teacher_id: teacherId,
-          start_time: current.toISOString(),
-          end_time: next.toISOString(),
-          delivery_mode: delivery,
-          is_booked: false
-        });
-        current = next;
-      }
-
-      if (slots.length > 0) {
-        const { error } = await supabase.from('teacher_availability').insert(slots);
-        if (error) throw error;
-        await onRefresh();
-        showToast(`${slots.length} open slots generated successfully!`, "success");
-      } else {
-        showToast("Time window too short to generate a 1-hour slot.", "error");
-      }
-    } catch (err: any) {
-      showToast("Failed to generate slots. Check for overlaps.", "error");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleDeleteSlot = async (id: string) => {
-    try {
-      await supabase.from('teacher_availability').delete().eq('id', id);
-      await onRefresh();
-      showToast("Slot deleted.", "success");
-    } catch (e) {
-      showToast("Failed to delete slot.", "error");
-    }
-  };
-
-  const openSlots = availabilities.filter((a: any) => !a.is_booked);
-
-  return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center p-6">
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
-      <motion.div 
-        initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
-        className="relative bg-[#0f172a] border border-white/10 rounded-[40px] w-full max-w-4xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
-      >
-        <div className="p-8 border-b border-white/5 flex justify-between items-center bg-white/[0.02] shrink-0">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-blue-500/20 text-blue-400 rounded-2xl border border-blue-500/30"><CalendarClock size={24} /></div>
-            <div>
-                <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white leading-none">Availability Generator</h2>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-2">Open your calendar for parents</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-2 bg-white/5 hover:bg-white/10 rounded-full"><X size={20} /></button>
-        </div>
-
-        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
-          <div className="lg:w-1/2 p-8 overflow-y-auto custom-scrollbar border-r border-white/5 space-y-6">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Date</label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Start Time</label>
-                <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">End Time</label>
-                <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500" />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-2">Delivery Mode Allowed</label>
-              <select value={delivery} onChange={e => setDelivery(e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-blue-500 appearance-none">
-                <option value="both">Both (Online & In-Person)</option>
-                <option value="online">Online Only</option>
-                <option value="in-person">In-Person Only</option>
-              </select>
-            </div>
-
-            <div className="pt-6 border-t border-white/5">
-              <button 
-                onClick={handleGenerate} 
-                disabled={isSaving}
-                className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase italic tracking-widest flex items-center justify-center gap-2 transition-all shadow-xl disabled:opacity-50"
-              >
-                {isSaving ? <Loader2 size={18} className="animate-spin"/> : <Plus size={18}/>} Generate 1-Hr Blocks
-              </button>
-            </div>
-          </div>
-
-          <div className="lg:w-1/2 flex flex-col bg-[#020617]">
-            <div className="p-6 border-b border-white/5 shrink-0">
-              <p className="text-sm font-bold text-white">Your Open Slots</p>
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">{openSlots.length} unbooked blocks waiting</p>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-6 space-y-3 custom-scrollbar">
-              {openSlots.length === 0 ? (
-                <div className="text-center p-8 border border-dashed border-white/10 rounded-3xl">
-                  <p className="text-sm font-bold text-slate-400 italic">No open slots available.</p>
-                </div>
-              ) : (
-                openSlots.map((slot: any) => {
-                  const start = new Date(slot.start_time);
-                  const end = new Date(slot.end_time);
-                  return (
-                    <div key={slot.id} className="flex items-center justify-between p-4 rounded-2xl border border-white/5 bg-white/5 hover:border-white/10 transition-colors group">
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {start.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'})}
-                        </p>
-                        <p className="text-[10px] font-black uppercase tracking-widest text-blue-400 mt-1">
-                          {start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-[#020617] px-2 py-1 rounded-md border border-white/5">
-                          {slot.delivery_mode}
-                        </span>
-                        <button 
-                          onClick={() => handleDeleteSlot(slot.id)}
-                          className="text-rose-500 hover:text-rose-400 p-2 bg-rose-500/10 hover:bg-rose-500/20 rounded-xl transition-colors"
-                        >
-                          <Trash2 size={14}/>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
 function HeroMetrics({ metrics, onDrilldown, scopeName }: { metrics: any, onDrilldown: (metric: string) => void, scopeName: string }) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+      <div onClick={() => onDrilldown('reviews')} className="bg-gradient-to-br from-amber-500/10 to-[#020617] border border-amber-500/20 rounded-[24px] p-6 shadow-xl relative overflow-hidden cursor-pointer hover:border-amber-500/50 hover:scale-[1.02] transition-all group">
+        <FileText className="absolute -right-4 -bottom-4 text-amber-500/10 group-hover:text-amber-500/20 transition-colors" size={80} />
+        <p className="text-[10px] font-black uppercase tracking-widest text-amber-400 mb-1">Pending Reviews</p>
+        <p className="text-4xl font-black text-white tracking-tighter">{metrics.pendingReviews}</p>
+      </div>
       <div onClick={() => onDrilldown('all')} className="bg-gradient-to-br from-purple-500/10 to-[#020617] border border-purple-500/20 rounded-[24px] p-6 shadow-xl relative overflow-hidden cursor-pointer hover:border-purple-500/50 hover:scale-[1.02] transition-all group">
         <Users className="absolute -right-4 -bottom-4 text-purple-500/10 group-hover:text-purple-500/20 transition-colors" size={80} />
         <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-1">{scopeName} Roster</p>
@@ -570,19 +506,197 @@ function HeroMetrics({ metrics, onDrilldown, scopeName }: { metrics: any, onDril
         <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-blue-400 transition-colors mb-1">Classes Today</p>
         <p className="text-4xl font-black text-blue-400 tracking-tighter">{metrics.upcomingClasses}</p>
       </div>
-      <div onClick={() => onDrilldown('alerts')} className="bg-gradient-to-br from-rose-500/10 to-[#020617] border border-rose-500/20 rounded-[24px] p-6 shadow-xl relative overflow-hidden cursor-pointer hover:border-rose-500/50 hover:scale-[1.02] transition-all group">
-        <AlertTriangle className="absolute -right-4 -bottom-4 text-rose-500/10 group-hover:text-rose-500/20 transition-colors" size={80} />
-        <p className="text-[10px] font-black uppercase tracking-widest text-rose-400 mb-1">Medical / Alerts</p>
-        <p className="text-4xl font-black text-white tracking-tighter">{metrics.activeAlerts}</p>
+    </div>
+  );
+}
+
+function ReviewCard({ sub, onAwardXP, isHistoryView = false }: { sub: any, onAwardXP: any, isHistoryView?: boolean }) {
+  const maxPossible = sub.potential_xp || 100;
+  
+  // Local state so UI instantly reflects the successful award
+  const [localEarned, setLocalEarned] = useState(sub.xp_earned || 0);
+  const remainingBase = Math.max(0, maxPossible - localEarned);
+  const maxBonus = Math.floor(maxPossible * 0.1);
+
+  const [baseXp, setBaseXp] = useState<number | string>(remainingBase);
+  const [bonusXp, setBonusXp] = useState<number | string>(0);
+  const [note, setNote] = useState(sub.metadata?.teacher_notes || "");
+  
+  const [isSaving, setIsSaving] = useState(false);
+  const [isEvaluated, setIsEvaluated] = useState(isHistoryView);
+  const [justFinished, setJustFinished] = useState(false);
+
+  const handleBaseChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.value === '') { setBaseXp(''); return; }
+    let num = parseInt(e.target.value);
+    if (num > remainingBase) num = remainingBase;
+    if (num < 0) num = 0;
+    setBaseXp(num);
+  };
+
+  const handleBonusChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.value === '') { setBonusXp(''); return; }
+    let num = parseInt(e.target.value);
+    if (num > maxBonus) num = maxBonus;
+    if (num < 0) num = 0;
+    setBonusXp(num);
+  };
+
+  const handleSubmit = async () => {
+    setIsSaving(true);
+    const finalBase = typeof baseXp === 'number' ? baseXp : 0;
+    const finalBonus = typeof bonusXp === 'number' ? bonusXp : 0;
+    
+    await onAwardXP(sub, finalBase, finalBonus, note);
+    
+    setLocalEarned((prev: number) => prev + finalBase + finalBonus);
+    setBaseXp(0);
+    setBonusXp(0);
+    setIsEvaluated(true);
+    setJustFinished(true); // Triggers the success flash
+    setIsSaving(false);
+  };
+
+  const pendingAdd = (typeof baseXp === 'number' ? baseXp : 0) + (typeof bonusXp === 'number' ? bonusXp : 0);
+
+  // --- NEW: SMART BUTTON LOGIC ---
+  const isZeroAction = (baseXp === 0 || baseXp === '') && (bonusXp === 0 || bonusXp === '') && note.trim() === '';
+  
+  // Only disable if saving, OR if we are in History View trying to submit a completely blank update.
+  const isButtonDisabled = isSaving || (isHistoryView && isZeroAction);
+
+  // If they just submitted, flash green then collapse to simulate moving to the other tab
+  if (justFinished) {
+    return (
+      <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-3xl p-6 flex flex-col items-center justify-center gap-3 shadow-[0_0_30px_rgba(16,185,129,0.15)] animate-pulse min-h-[200px]">
+        <CheckCircle2 size={40} className="text-emerald-400" />
+        <p className="text-sm font-black uppercase tracking-widest text-emerald-400">Evaluation Saved</p>
+        <p className="text-xs text-slate-400">Moved to Evaluated Tab</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`bg-[#020617] border ${isEvaluated ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-white/5 hover:border-amber-500/30'} rounded-3xl p-6 flex flex-col md:flex-row items-center gap-8 transition-all shadow-inner relative overflow-hidden`}>
+      
+      {isEvaluated && <div className="absolute top-0 right-0 border-b border-l border-emerald-500/30 bg-emerald-500/20 px-3 py-1 rounded-bl-xl text-[9px] font-black uppercase tracking-widest text-emerald-400 z-10 flex items-center gap-1"><CheckCircle2 size={10}/> Evaluated</div>}
+
+      <div className="flex-1 w-full space-y-3 relative z-10">
+         <h3 className="text-xl font-black text-white uppercase">{sub.profiles?.display_name}</h3>
+         <p className="text-sm font-bold text-slate-300">{sub.title || sub.project_title || "Custom Logic Build"}</p>
+         
+         <div className={`inline-flex items-center gap-3 bg-white/5 border border-white/5 rounded-lg px-3 py-1.5 mt-1 transition-colors ${isEvaluated ? 'bg-emerald-500/10 border-emerald-500/20' : ''}`}>
+           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">
+             Max Possible: <span className="text-white">{maxPossible} XP</span>
+           </p>
+           <span className="text-blue-500/30">|</span>
+           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">
+             Total Earned: <span className={`text-white transition-all ${isEvaluated ? 'text-emerald-400' : ''}`}>{localEarned} XP</span>
+             {pendingAdd > 0 && !isEvaluated && (
+               <span className="text-amber-400 ml-1">(+{pendingAdd} Pending)</span>
+             )}
+           </p>
+         </div>
+         
+         <div className="pt-3">
+           {sub.media_url ? (
+             <a href={sub.media_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-500/10 text-blue-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all border border-blue-500/20">
+               <ExternalLink size={14}/> View Blueprint / Code
+             </a>
+           ) : sub.metadata?.submission_urls ? (
+             Object.values(sub.metadata.submission_urls).map((url: any, idx) => (
+               <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-500/10 text-blue-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all border border-blue-500/20 mr-2 mt-2">
+                 <ExternalLink size={14}/> View Submission {idx + 1}
+               </a>
+             ))
+           ) : null}
+         </div>
+      </div>
+
+      <div className="w-full md:w-1/2 lg:w-5/12 shrink-0 bg-[#0f172a] p-6 rounded-[24px] border border-white/5 flex flex-col gap-5 min-w-[340px] shadow-lg relative z-10">
+         
+         {isEvaluated ? (
+           <div className="flex flex-col gap-3 py-2">
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex justify-between items-center">
+                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Final Grade Recorded</span>
+                <CheckCircle2 className="text-emerald-500" size={18} />
+              </div>
+              {note && (
+                <div className="bg-white/5 rounded-xl p-4">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1 flex items-center gap-1"><FileText size={10}/> Teacher Note</p>
+                  <p className="text-xs text-slate-300 italic">"{note}"</p>
+                </div>
+              )}
+           </div>
+         ) : (
+           <>
+             <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 block mb-2 pl-1">Add Base (Max {remainingBase})</label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    max={remainingBase}
+                    value={baseXp}
+                    onChange={handleBaseChange}
+                    className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-amber-500 transition-colors" 
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[9px] font-black uppercase tracking-widest text-amber-500 block mb-2 pl-1">Bonus (Max {maxBonus})</label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    max={maxBonus}
+                    value={bonusXp}
+                    onChange={handleBonusChange}
+                    className="w-full bg-[#020617] border border-amber-500/20 rounded-xl px-4 py-3 text-sm font-bold text-amber-400 outline-none focus:border-amber-500 placeholder:text-amber-500/30 transition-colors" 
+                  />
+                </div>
+             </div>
+             
+             <div>
+                <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 block mb-2 pl-1 flex items-center gap-1"><FileText size={10}/> Teacher Note</label>
+                <input 
+                  type="text" 
+                  value={note}
+                  onChange={e => setNote(e.target.value)}
+                  placeholder="Great use of loops..." 
+                  className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-medium text-white outline-none focus:border-amber-500 transition-colors placeholder:text-slate-600" 
+                />
+             </div>
+
+             <button 
+                onClick={handleSubmit}
+                disabled={isButtonDisabled}
+                className={`w-full py-4 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 mt-1 border ${
+                  isButtonDisabled
+                    ? 'bg-amber-600 opacity-50 cursor-not-allowed border-amber-600' 
+                    : 'bg-white/5 hover:bg-amber-500 text-slate-300 hover:text-black border-white/10 hover:border-amber-500'
+                }`}
+             >
+               {isSaving ? <Loader2 size={16} className="animate-spin"/> : <CheckCircle2 size={16}/>}
+               {isSaving 
+                 ? "Saving..." 
+                 : isHistoryView 
+                   ? "Add Extra XP/Note" 
+                   : isZeroAction 
+                     ? "Mark Evaluated" 
+                     : "Submit Evaluation"
+               }
+             </button>
+           </>
+         )}
       </div>
     </div>
   );
 }
 
-function MetricDrilldownModal({ metric, students, onClose, onEnroll }: { metric: string | null, students: any[], onClose: () => void, onEnroll: (id: string) => void }) {
+function MetricDrilldownModal({ metric, pendingSubmissions, onAwardXP, students, onClose, onEnroll }: { metric: string | null, pendingSubmissions?: any[], onAwardXP?: any, students: any[], onClose: () => void, onEnroll: (id: string) => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const [cachedMetric, setCachedMetric] = useState<string | null>(null);
+  const [reviewTab, setReviewTab] = useState<'pending' | 'evaluated'>('pending');
 
   useEffect(() => {
     if (metric) setCachedMetric(metric);
@@ -590,6 +704,70 @@ function MetricDrilldownModal({ metric, students, onClose, onEnroll }: { metric:
 
   const displayMetric = metric || cachedMetric;
 
+  if (displayMetric === 'reviews') {
+    const queue = (pendingSubmissions || []).filter(sub => sub.review_status === 'pending');
+    const history = (pendingSubmissions || []).filter(sub => sub.review_status === 'reviewed');
+    const displayData = reviewTab === 'pending' ? queue : history;
+
+    return (
+      <AnimatePresence>
+        {metric && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+              className="relative bg-[#0f172a] border border-white/10 rounded-[40px] w-full max-w-5xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+            >
+              <div className="p-8 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white/[0.02] shrink-0 gap-6">
+                
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-amber-500/20 text-amber-400 rounded-2xl border border-amber-500/30"><Trophy size={24} /></div>
+                  <div>
+                      <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white leading-none">Review Queue</h2>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-2">{queue.length} Submissions Awaiting Feedback</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 w-full sm:w-auto">
+                  <div className="flex bg-[#020617] rounded-xl p-1 border border-white/5 shadow-inner flex-1 sm:flex-none">
+                    <button
+                      onClick={() => setReviewTab('pending')}
+                      className={`flex-1 sm:flex-none px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all flex items-center justify-center gap-2 ${reviewTab === 'pending' ? 'bg-amber-500/20 text-amber-400 shadow-md' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+                    >
+                      Pending <span className="bg-amber-500/20 px-2 py-0.5 rounded-full">{queue.length}</span>
+                    </button>
+                    <button
+                      onClick={() => setReviewTab('evaluated')}
+                      className={`flex-1 sm:flex-none px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all flex items-center justify-center gap-2 ${reviewTab === 'evaluated' ? 'bg-emerald-500/20 text-emerald-400 shadow-md' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+                    >
+                      Evaluated <CheckCircle2 size={12} />
+                    </button>
+                  </div>
+                  
+                  <button type="button" onClick={onClose} className="text-slate-500 hover:text-white transition-colors p-2 bg-white/5 hover:bg-white/10 rounded-full shrink-0"><X size={20} /></button>
+                </div>
+
+              </div>
+              
+              <div className="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+                {displayData.length === 0 ? (
+                   <div className="text-center p-16 border border-dashed border-white/5 rounded-3xl">
+                     <p className="text-slate-500 italic font-bold">No submissions found in this tab.</p>
+                   </div>
+                ) : (
+                  displayData.map((sub) => (
+                    <ReviewCard key={sub.id} sub={sub} onAwardXP={onAwardXP} isHistoryView={reviewTab === 'evaluated'} />
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    );
+  }
+
+  // --- STUDENT LIST VIEWS (Unchanged logic) ---
   let title = "Student List";
   let filtered = students;
   let icon = <Users size={24} />;
@@ -623,8 +801,8 @@ function MetricDrilldownModal({ metric, students, onClose, onEnroll }: { metric:
 
   return (
     <AnimatePresence>
-      {metric && displayMetric && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+      {metric && displayMetric !== 'reviews' && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-6">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-black/95 backdrop-blur-md" />
           <motion.div 
             initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
@@ -689,159 +867,9 @@ function MetricDrilldownModal({ metric, students, onClose, onEnroll }: { metric:
   );
 }
 
-function NextDaysTracker({ students, availabilities, onEditLesson }: { students: any[], availabilities: any[], onEditLesson: (lessonGroup: any) => void }) {
-  const scheduleDays = useMemo(() => {
-    const rawLessons = students.flatMap(student =>
-      (student.schedule || []).map((lesson: any) => {
-         const lessonDate = new Date(lesson.date);
-         return {
-            lessonId: lesson.id,
-            dateObj: lessonDate,
-            dateTs: lessonDate.getTime(),
-            topic: lesson.topic,
-            studentId: student.id,
-            studentName: student.name,
-            course: lesson.course || student.course,
-            delivery: lesson.delivery || student.delivery_method || 'in-person',
-            location: lesson.location || '',
-            link: lesson.link || null
-         };
-      })
-    );
-
-    // Merge in the open availabilities so they render natively on the timeline
-    availabilities.filter(a => !a.is_booked).forEach(a => {
-       const d = new Date(a.start_time);
-       rawLessons.push({
-          is_open_slot: true,
-          lessonId: a.id,
-          dateObj: d,
-          dateTs: d.getTime(),
-          topic: "Available for Booking",
-          studentId: "open",
-          studentName: "Unbooked Slot",
-          course: "Time Inventory",
-          delivery: a.delivery_mode,
-          location: "TBD",
-          link: null
-       });
-    });
-
-    const groupedMap = new Map<string, any>();
-    rawLessons.forEach(lesson => {
-      // Open slots don't group with anything else
-      const key = lesson.is_open_slot ? `open-${lesson.lessonId}` : `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
-      if (!groupedMap.has(key)) {
-        groupedMap.set(key, { 
-          ...lesson, 
-          key: key, 
-          attendees: [{ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId }] 
-        });
-      } else {
-        groupedMap.get(key).attendees.push({ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId });
-      }
-    });
-
-    const groupedLessons = Array.from(groupedMap.values());
-    groupedLessons.sort((a, b) => a.dateTs - b.dateTs);
-
-    const now = new Date();
-    now.setHours(0,0,0,0);
-
-    return Array.from({ length: 7 }).map((_, i) => {
-       const d = new Date(now);
-       d.setDate(d.getDate() + i);
-       const start = d.getTime();
-       const end = start + 24 * 60 * 60 * 1000;
-       
-       let label = d.toLocaleDateString('en-US', { weekday: 'short' });
-       if (i === 0) label = 'Today';
-       if (i === 1) label = 'Tomorrow';
-
-       return {
-          dateObj: d,
-          label,
-          dateStr: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-          lessons: groupedLessons.filter(l => l.dateTs >= start && l.dateTs < end)
-       };
-    });
-  }, [students, availabilities]);
-
-  return (
-    <div className="pt-6 pb-2">
-      <div className="flex items-center gap-2 mb-4">
-        <CalendarDays size={18} className="text-purple-500" />
-        <h2 className="text-lg font-black uppercase italic tracking-widest text-white">7-Day Horizon</h2>
-      </div>
-      
-      <div className="flex gap-3 overflow-x-auto pb-4 snap-x snap-mandatory scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-        {scheduleDays.map((day, idx) => (
-          <div key={idx} className="bg-[#0f172a]/80 backdrop-blur-md border border-white/5 rounded-3xl p-4 min-w-[150px] lg:min-w-0 flex-1 flex flex-col snap-start shrink-0 shadow-lg">
-             <div className="flex flex-col 2xl:flex-row 2xl:items-baseline justify-between mb-3 border-b border-white/5 pb-2 gap-1">
-               <h3 className={`text-sm font-black uppercase tracking-widest ${idx === 0 ? 'text-blue-400' : 'text-slate-300'}`}>{day.label}</h3>
-               <span className="text-[9px] font-bold text-slate-500">{day.dateStr}</span>
-             </div>
-             
-             <div className="flex-1 space-y-2">
-                {day.lessons.length === 0 ? (
-                  <p className="text-[10px] font-bold text-slate-600 italic text-center py-4">No lessons scheduled</p>
-                ) : (
-                  day.lessons.map((lesson: any, lessonIdx: number) => {
-                    const isOnline = lesson.delivery === 'online';
-                    const isMissingLogistics = (isOnline && !lesson.link) || (!isOnline && !lesson.location);
-                    
-                    const displayText = lesson.is_open_slot 
-                      ? "OPEN SLOT" 
-                      : (!isOnline ? lesson.location : lesson.attendees.map((a:any) => a.studentName).join(', '));
-
-                    return (
-                      <div 
-                        key={lesson.key || `${lesson.dateTs}-${lessonIdx}`} 
-                        onClick={() => !lesson.is_open_slot && onEditLesson(lesson)}
-                        className={`bg-[#020617] rounded-2xl p-3 flex flex-col gap-1.5 relative ${
-                          lesson.is_open_slot 
-                            ? 'border-2 border-dashed border-white/10 cursor-default opacity-80' 
-                            : 'border border-white/5 hover:border-purple-500/50 transition-colors cursor-pointer group'
-                        }`}
-                      >
-                        {!lesson.is_open_slot && (
-                          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-white transition-opacity">
-                            <Edit2 size={12}/>
-                          </div>
-                        )}
-
-                        <p className={`text-xs font-black pr-5 ${lesson.is_open_slot ? 'text-slate-400' : isOnline ? 'text-purple-400' : 'text-emerald-400'}`}>
-                          {new Date(lesson.dateTs).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                        </p>
-                        
-                        <div className="flex items-start gap-1.5">
-                          {isOnline ? <Video size={12} className="text-purple-500 shrink-0 mt-0.5"/> : <MapPin size={12} className={`shrink-0 mt-0.5 ${lesson.location ? 'text-emerald-500' : 'text-amber-500'}`}/>}
-                          
-                          {isMissingLogistics && !lesson.is_open_slot ? (
-                             <span className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                               + Add {isOnline ? 'Link' : 'Venue'}
-                             </span>
-                          ) : (
-                             <p className={`text-[10px] font-bold leading-tight line-clamp-2 ${lesson.is_open_slot ? 'text-slate-500 tracking-widest uppercase' : 'text-white'}`}>
-                               {displayText}
-                             </p>
-                          )}
-                        </div>
-
-                        <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 truncate mt-0.5">
-                          {lesson.topic}
-                        </p>
-                      </div>
-                    )
-                  })
-                )}
-             </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// ---------------------------------------------------------
+// REST OF UNCHANGED SUB-COMPONENTS
+// ---------------------------------------------------------
 
 function StudentIntelligence({ students, unreadStudentIds, unreadOnlyFilter }: { students: any[], unreadStudentIds: Set<string>, unreadOnlyFilter: boolean }) {
   const router = useRouter();
@@ -960,7 +988,6 @@ function StudentIntelligence({ students, unreadStudentIds, unreadOnlyFilter }: {
                         {student.name}
                       </h3>
                       
-                      {/* INLINE UNREAD BADGE */}
                       {hasUnread && (
                         <span className="flex items-center gap-1 bg-purple-500 text-white px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest shadow-lg animate-pulse">
                           <Bell size={10} /> New Message
@@ -1050,17 +1077,17 @@ function ItinerarySidebar({ students, availabilities, onEditLesson }: { students
     availabilities.filter(a => !a.is_booked).forEach(a => {
        const d = new Date(a.start_time);
        rawLessons.push({
-          is_open_slot: true,
-          lessonId: a.id,
-          dateObj: d,
-          dateTs: d.getTime(),
-          topic: "Available for Booking",
-          studentId: "open",
-          studentName: "Unbooked Slot",
-          course: "Time Inventory",
-          delivery: a.delivery_mode,
-          location: "TBD",
-          link: null
+         is_open_slot: true,
+         lessonId: a.id,
+         dateObj: d,
+         dateTs: d.getTime(),
+         topic: "Available for Booking",
+         studentId: "open",
+         studentName: "Unbooked Slot",
+         course: "Time Inventory",
+         delivery: a.delivery_mode,
+         location: "TBD",
+         link: null
        });
     });
 
@@ -1201,11 +1228,159 @@ function ItinerarySidebar({ students, availabilities, onEditLesson }: { students
   );
 }
 
-// ---------------------------------------------------------
-// BULK SCHEDULING MODAL
-// ---------------------------------------------------------
+function NextDaysTracker({ students, availabilities, onEditLesson }: { students: any[], availabilities: any[], onEditLesson: (lessonGroup: any) => void }) {
+  const scheduleDays = useMemo(() => {
+    const rawLessons = students.flatMap(student =>
+      (student.schedule || []).map((lesson: any) => {
+         const lessonDate = new Date(lesson.date);
+         return {
+            lessonId: lesson.id,
+            dateObj: lessonDate,
+            dateTs: lessonDate.getTime(),
+            topic: lesson.topic,
+            studentId: student.id,
+            studentName: student.name,
+            course: lesson.course || student.course,
+            delivery: lesson.delivery || student.delivery_method || 'in-person',
+            location: lesson.location || '',
+            link: lesson.link || null
+         };
+      })
+    );
+
+    availabilities.filter(a => !a.is_booked).forEach(a => {
+       const d = new Date(a.start_time);
+       rawLessons.push({
+         is_open_slot: true,
+         lessonId: a.id,
+         dateObj: d,
+         dateTs: d.getTime(),
+         topic: "Available for Booking",
+         studentId: "open",
+         studentName: "Unbooked Slot",
+         course: "Time Inventory",
+         delivery: a.delivery_mode,
+         location: "TBD",
+         link: null
+       });
+    });
+
+    const groupedMap = new Map<string, any>();
+    rawLessons.forEach(lesson => {
+      const key = lesson.is_open_slot ? `open-${lesson.lessonId}` : `${lesson.dateTs}-${lesson.topic}-${lesson.delivery}`;
+      if (!groupedMap.has(key)) {
+        groupedMap.set(key, { 
+          ...lesson, 
+          key: key, 
+          attendees: [{ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId }] 
+        });
+      } else {
+        groupedMap.get(key).attendees.push({ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId });
+      }
+    });
+
+    const groupedLessons = Array.from(groupedMap.values());
+    groupedLessons.sort((a, b) => a.dateTs - b.dateTs);
+
+    const now = new Date();
+    now.setHours(0,0,0,0);
+
+    return Array.from({ length: 7 }).map((_, i) => {
+       const d = new Date(now);
+       d.setDate(d.getDate() + i);
+       const start = d.getTime();
+       const end = start + 24 * 60 * 60 * 1000;
+       
+       let label = d.toLocaleDateString('en-US', { weekday: 'short' });
+       if (i === 0) label = 'Today';
+       if (i === 1) label = 'Tomorrow';
+
+       return {
+          dateObj: d,
+          label,
+          dateStr: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          lessons: groupedLessons.filter(l => l.dateTs >= start && l.dateTs < end)
+       };
+    });
+  }, [students, availabilities]);
+
+  return (
+    <div className="pt-6 pb-2">
+      <div className="flex items-center gap-2 mb-4">
+        <CalendarDays size={18} className="text-purple-500" />
+        <h2 className="text-lg font-black uppercase italic tracking-widest text-white">7-Day Horizon</h2>
+      </div>
+      
+      <div className="flex gap-3 overflow-x-auto pb-4 snap-x snap-mandatory scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        {scheduleDays.map((day, idx) => (
+          <div key={idx} className="bg-[#0f172a]/80 backdrop-blur-md border border-white/5 rounded-3xl p-4 min-w-[150px] lg:min-w-0 flex-1 flex flex-col snap-start shrink-0 shadow-lg">
+             <div className="flex flex-col 2xl:flex-row 2xl:items-baseline justify-between mb-3 border-b border-white/5 pb-2 gap-1">
+               <h3 className={`text-sm font-black uppercase tracking-widest ${idx === 0 ? 'text-blue-400' : 'text-slate-300'}`}>{day.label}</h3>
+               <span className="text-[9px] font-bold text-slate-500">{day.dateStr}</span>
+             </div>
+             
+             <div className="flex-1 space-y-2">
+                {day.lessons.length === 0 ? (
+                  <p className="text-[10px] font-bold text-slate-600 italic text-center py-4">No lessons scheduled</p>
+                ) : (
+                  day.lessons.map((lesson: any, lessonIdx: number) => {
+                    const isOnline = lesson.delivery === 'online';
+                    const isMissingLogistics = (isOnline && !lesson.link) || (!isOnline && !lesson.location);
+                    
+                    const displayText = lesson.is_open_slot 
+                      ? "OPEN SLOT" 
+                      : (!isOnline ? lesson.location : lesson.attendees.map((a:any) => a.studentName).join(', '));
+
+                    return (
+                      <div 
+                        key={lesson.key || `${lesson.dateTs}-${lessonIdx}`} 
+                        onClick={() => !lesson.is_open_slot && onEditLesson(lesson)}
+                        className={`bg-[#020617] rounded-2xl p-3 flex flex-col gap-1.5 relative ${
+                          lesson.is_open_slot 
+                            ? 'border-2 border-dashed border-white/10 cursor-default opacity-80' 
+                            : 'border border-white/5 hover:border-purple-500/50 transition-colors cursor-pointer group'
+                        }`}
+                      >
+                        {!lesson.is_open_slot && (
+                          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-white transition-opacity">
+                            <Edit2 size={12}/>
+                          </div>
+                        )}
+
+                        <p className={`text-xs font-black pr-5 ${lesson.is_open_slot ? 'text-slate-400' : isOnline ? 'text-purple-400' : 'text-emerald-400'}`}>
+                          {new Date(lesson.dateTs).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </p>
+                        
+                        <div className="flex items-start gap-1.5">
+                          {isOnline ? <Video size={12} className="text-purple-500 shrink-0 mt-0.5"/> : <MapPin size={12} className={`shrink-0 mt-0.5 ${lesson.location ? 'text-emerald-500' : 'text-amber-500'}`}/>}
+                          
+                          {isMissingLogistics && !lesson.is_open_slot ? (
+                             <span className="text-[9px] font-black uppercase tracking-widest text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                               + Add {isOnline ? 'Link' : 'Venue'}
+                             </span>
+                          ) : (
+                             <p className={`text-[10px] font-bold leading-tight line-clamp-2 ${lesson.is_open_slot ? 'text-slate-500 tracking-widest uppercase' : 'text-white'}`}>
+                               {displayText}
+                             </p>
+                          )}
+                        </div>
+
+                        <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 truncate mt-0.5">
+                          {lesson.topic}
+                        </p>
+                      </div>
+                    )
+                  })
+                )}
+             </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BulkScheduleModal({ isOpen, onClose, students, activeCourses, onSchedule }: any) {
-  
   const courseTitles = activeCourses.map((c: any) => c.title).concat("Unassigned");
   const [course, setCourse] = useState(courseTitles[0] || "");
   const [delivery, setDelivery] = useState("in-person");
@@ -1422,9 +1597,6 @@ function BulkScheduleModal({ isOpen, onClose, students, activeCourses, onSchedul
   );
 }
 
-// ---------------------------------------------------------
-// UPDATED: DUAL-TAB SESSION MANAGER MODAL
-// ---------------------------------------------------------
 function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave, showToast }: any) {
   const [activeTab, setActiveTab] = useState<'details' | 'wrapup'>('details');
   
@@ -1482,12 +1654,12 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave, showT
     if (!studentId) return;
     const student = students.find((s: any) => s.id === studentId);
     if (student && !attendees.find(a => a.studentId === student.id)) {
-       setAttendees(prev => [...prev, { studentId: student.id, studentName: student.name }]);
+       setAttendees((prev: any[]) => [...prev, { studentId: student.id, studentName: student.name }]);
     }
   };
 
   const setStudentStatus = (studentId: string, status: string) => {
-    setAttendance(prev => ({ ...prev, [studentId]: status }));
+    setAttendance((prev: Record<string, string>) => ({ ...prev, [studentId]: status }));
   };
 
   const availableToAdd = students.filter((s: any) => !attendees.find(a => a.studentId === s.id));
@@ -1588,7 +1760,7 @@ function EditLessonModal({ isOpen, onClose, lessonGroup, students, onSave, showT
                         <div key={a.studentId} className="flex justify-between items-center p-3 hover:bg-white/5 rounded-xl transition-colors group">
                           <span className="text-sm font-bold text-white">{a.studentName}</span>
                           <button 
-                            onClick={() => setAttendees(prev => prev.filter(att => att.studentId !== a.studentId))}
+                            onClick={() => setAttendees((prev: any[]) => prev.filter(att => att.studentId !== a.studentId))}
                             className="text-xs font-bold text-rose-500/50 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1"
                           >
                             <X size={14}/> Remove

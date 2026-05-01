@@ -566,19 +566,19 @@ export default function ProspectsCRM() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2 md:col-span-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Prospect Name</label>
-                      <input required value={selectedProspect.name} onChange={e => setSelectedProspect({...selectedProspect, name: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-4 text-white font-bold text-lg outline-none focus:border-fuchsia-500" placeholder="e.g. Sarah Connor" />
+                      <input required value={selectedProspect.name || ""} onChange={e => setSelectedProspect({...selectedProspect, name: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-4 text-white font-bold text-lg outline-none focus:border-fuchsia-500" placeholder="e.g. Sarah Connor" />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Email Address</label>
-                      <input type="email" value={selectedProspect.email} onChange={e => setSelectedProspect({...selectedProspect, email: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm outline-none focus:border-fuchsia-500" />
+                      <input type="email" value={selectedProspect.email || ""} onChange={e => setSelectedProspect({...selectedProspect, email: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm outline-none focus:border-fuchsia-500" />
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Phone Number</label>
-                      <input value={selectedProspect.phone} onChange={e => setSelectedProspect({...selectedProspect, phone: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm outline-none focus:border-fuchsia-500" />
+                      <input value={selectedProspect.phone || ""} onChange={e => setSelectedProspect({...selectedProspect, phone: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm outline-none focus:border-fuchsia-500" />
                     </div>
                     <div className="space-y-2 md:col-span-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Lead Source</label>
-                      <select value={selectedProspect.source} onChange={e => setSelectedProspect({...selectedProspect, source: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm font-bold outline-none focus:border-fuchsia-500">
+                      <select value={selectedProspect.source || ""} onChange={e => setSelectedProspect({...selectedProspect, source: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm font-bold outline-none focus:border-fuchsia-500">
                         {SOURCE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
@@ -708,7 +708,7 @@ export default function ProspectsCRM() {
 
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-300 uppercase tracking-widest ml-2">Current Status</label>
-                      <select value={selectedProspect.status} onChange={e => setSelectedProspect({...selectedProspect, status: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-white font-bold text-sm outline-none focus:border-fuchsia-500 shadow-inner">
+                      <select value={selectedProspect.status || ""} onChange={e => setSelectedProspect({...selectedProspect, status: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-white font-bold text-sm outline-none focus:border-fuchsia-500 shadow-inner">
                         {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
@@ -727,7 +727,7 @@ export default function ProspectsCRM() {
                       <label className="text-[10px] font-black text-slate-300 uppercase tracking-widest ml-2">Next Action / Task</label>
                       <input 
                         list="action-tasks"
-                        value={selectedProspect.next_action_task} 
+                        value={selectedProspect.next_action_task || ""} 
                         onChange={e => setSelectedProspect({...selectedProspect, next_action_task: e.target.value})} 
                         placeholder="e.g. Send Quote" 
                         className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-slate-300 text-sm outline-none focus:border-fuchsia-500 shadow-inner" 

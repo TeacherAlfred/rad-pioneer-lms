@@ -10,7 +10,7 @@ import {
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
-import { calculateDiminishingXP, calculateEventXp } from "@/lib/xp-engine";
+import { calculateDiminishingXP } from "@/lib/xp-engine";
 
 type UIPhase = 'loading' | 'intro' | 'select-input' | 'select-output' | 'training' | 'workspace' | 'capture' | 'success';
 
@@ -41,6 +41,7 @@ export default function MakecodeSandboxPage() {
   const [trainingTab, setTrainingTab] = useState<'input' | 'output'>('input');
   const [trainingProgress, setTrainingProgress] = useState<Record<string, boolean>>({});
   const [submissionUrls, setSubmissionUrls] = useState<Record<string, string>>({});
+  const [verifyingTut, setVerifyingTut] = useState<string | null>(null); // Loading state for DB insert
   
   // Capture State
   const [showCapturePreview, setShowCapturePreview] = useState(false);
@@ -55,9 +56,11 @@ export default function MakecodeSandboxPage() {
       setCurrentUser(user);
 
       try {
-        const [tutRes, enrollRes] = await Promise.all([
+        // We also fetch the existing tech_archive to pre-fill completed tutorials
+        const [tutRes, enrollRes, archiveRes] = await Promise.all([
           supabase.from('makecode_tutorials').select('*'),
-          supabase.from('enrollments').select('id, sandbox_state').eq('student_id', user.id).eq('course_id', course_id).single()
+          supabase.from('enrollments').select('id, sandbox_state').eq('student_id', user.id).eq('course_id', course_id).single(),
+          supabase.from('tech_archive').select('mission_id, media_url').eq('student_id', user.id).eq('type', 'makecode_tutorial')
         ]);
 
         if (tutRes.data) setTutorials(tutRes.data);
@@ -70,6 +73,19 @@ export default function MakecodeSandboxPage() {
             used_inputs: dbState.used_inputs || [],
             used_outputs: dbState.used_outputs || []
           });
+        }
+
+        // Restore previously submitted tutorial links from DB
+        if (archiveRes.data) {
+          const restoredProgress: Record<string, boolean> = {};
+          const restoredUrls: Record<string, string> = {};
+          archiveRes.data.forEach(arch => {
+            const tutId = arch.mission_id.replace('tut-', '');
+            restoredProgress[tutId] = true;
+            if (arch.media_url) restoredUrls[tutId] = arch.media_url;
+          });
+          setTrainingProgress(restoredProgress);
+          setSubmissionUrls(restoredUrls);
         }
 
         const { data: hardwareData } = await supabase
@@ -122,19 +138,69 @@ export default function MakecodeSandboxPage() {
     return tutorials.filter(t => (selectedOutput?.tutorial_ids || []).includes(t.id));
   }, [selectedOutput, tutorials]);
 
-  /// Combined for the "Proceed" button check
   const activeTutorials = useMemo(() => {
     const combined = [...inputTutorials, ...outputTutorials];
     return Array.from(new Map(combined.map(item => [item.id, item])).values());
   }, [inputTutorials, outputTutorials]);
 
-  const trainingCompletedCount = Object.keys(trainingProgress).length;
+  const trainingCompletedCount = activeTutorials.filter(t => trainingProgress[t.id]).length;
   const isTrainingComplete = activeTutorials.length === 0 || trainingCompletedCount >= activeTutorials.length;
 
-  const handleLinkSubmission = (tutId: string, url: string) => {
+  // --- UPDATED: Tutorial Submission Logic (Removes "tut-" prefix for UUID column) ---
+  const handleLinkSubmission = async (tut: any, url: string) => {
     if (!url.includes('makecode.microbit.org')) return alert("Paste a valid MakeCode Share Link!");
-    setTrainingProgress(prev => ({ ...prev, [tutId]: true }));
-    setSubmissionUrls(prev => ({ ...prev, [tutId]: url }));
+    
+    setVerifyingTut(tut.id);
+    try {
+       // If they are updating an existing link
+       if (trainingProgress[tut.id]) {
+          const { error } = await supabase.from('tech_archive')
+            .update({ media_url: url, review_status: 'pending' }) 
+            .eq('student_id', currentUser.id)
+            .eq('mission_id', tut.id); // <-- FIXED: Removed "tut-" prefix
+          
+          if (error) throw error;
+            
+          setSubmissionUrls(prev => ({ ...prev, [tut.id]: url }));
+       } else {
+          // New Submission
+          const potentialXp = tut.xp_value || 100;
+          const earnedXp = Math.floor(potentialXp * 0.5); 
+
+          const { error } = await supabase.from('tech_archive').insert({
+             student_id: currentUser.id,
+             mission_id: tut.id, // <-- FIXED: Removed "tut-" prefix
+             title: `MakeCode Training: ${tut.title}`,
+             description: tut.description,
+             media_url: url,
+             status: 'completed',
+             review_status: 'pending', 
+             xp_earned: earnedXp,
+             potential_xp: potentialXp,
+             type: 'makecode_tutorial'
+          });
+
+          if (error) throw error;
+
+          if (earnedXp > 0) {
+             const newXp = (currentUser.xp || 0) + earnedXp;
+             const { error: profileErr } = await supabase.from('profiles').update({ xp: newXp }).eq('id', currentUser.id);
+             if (profileErr) throw profileErr;
+             
+             const updatedUser = { ...currentUser, xp: newXp };
+             setCurrentUser(updatedUser);
+             localStorage.setItem("pioneer_session", JSON.stringify(updatedUser));
+          }
+
+          setTrainingProgress(prev => ({ ...prev, [tut.id]: true }));
+          setSubmissionUrls(prev => ({ ...prev, [tut.id]: url }));
+       }
+    } catch (err: any) {
+       console.error("DB ERROR:", err);
+       alert(`Submission Failed: ${err.message || err.details || "Unknown Database Error"}`);
+    } finally {
+       setVerifyingTut(null);
+    }
   };
 
   const startCapture = async () => {
@@ -154,6 +220,7 @@ export default function MakecodeSandboxPage() {
     } catch (err) { console.error("Capture failed:", err); }
   };
 
+  // --- UPDATED: Custom Logic Capture (Uses random UUID instead of "sandbox-" string) ---
   const confirmAndSaveBuild = async () => {
     if (!tempCaptureBlob || !selectedInput || !selectedOutput) return;
     setIsSaving(true);
@@ -164,21 +231,25 @@ export default function MakecodeSandboxPage() {
       const { data: urlData } = supabase.storage.from('tech-archive-assets').getPublicUrl(`blueprints/${fileName}`);
 
       const { count } = await supabase.from('tech_archive').select('*', { count: 'exact', head: true }).eq('student_id', currentUser.id).eq('type', 'custom_logic');
-      const earnedXP = await calculateDiminishingXP(150, count || 0);
+      
+      const potentialXp = await calculateDiminishingXP(150, count || 0);
+      const earnedXp = Math.floor(potentialXp * 0.5); 
 
       await supabase.from('tech_archive').insert({
         student_id: currentUser.id,
-        mission_id: `sandbox-${Date.now()}`,
+        mission_id: crypto.randomUUID(), // <-- FIXED: Generates a valid UUID instead of a string
         title: `Custom Logic: ${selectedInput.name} + ${selectedOutput.name}`,
         description: `Integration of ${selectedInput.name} and ${selectedOutput.name} via MakeCode Sandbox.`,
         media_url: urlData.publicUrl,
         status: 'completed',
-        xp_earned: earnedXP,
+        review_status: 'pending', 
+        xp_earned: earnedXp,
+        potential_xp: potentialXp,
         type: 'custom_logic'
       });
 
-      if (earnedXP > 0) {
-        const newXp = (currentUser.xp || 0) + earnedXP;
+      if (earnedXp > 0) {
+        const newXp = (currentUser.xp || 0) + earnedXp;
         await supabase.from('profiles').update({ xp: newXp }).eq('id', currentUser.id);
         localStorage.setItem("pioneer_session", JSON.stringify({ ...currentUser, xp: newXp }));
       }
@@ -600,11 +671,12 @@ export default function MakecodeSandboxPage() {
                               onChange={(e) => setSubmissionUrls(prev => ({...prev, [tut.id]: e.target.value}))}
                             />
                             <button 
-                              onClick={() => handleLinkSubmission(tut.id, submissionUrls[tut.id])}
+                              onClick={() => handleLinkSubmission(tut, submissionUrls[tut.id])}
+                              disabled={verifyingTut === tut.id}
                               className={`shrink-0 px-8 py-4 rounded-xl font-black uppercase tracking-widest text-xs transition-all duration-300 flex items-center justify-center gap-2.5 whitespace-nowrap ${isDone ? 'bg-white/5 border border-white/10 text-white hover:bg-white/10' : 'bg-white text-black hover:bg-slate-200 hover:-translate-y-0.5 shadow-[0_10px_20px_rgba(0,0,0,0.2)]'}`}
                             >
-                              {isDone ? <Edit2 size={14} /> : null}
-                              {isDone ? "Update Link" : "Verify Build"}
+                              {verifyingTut === tut.id ? <Loader2 size={14} className="animate-spin" /> : (isDone ? <Edit2 size={14} /> : null)}
+                              {verifyingTut === tut.id ? "Saving..." : (isDone ? "Update Link" : "Verify Build")}
                             </button>
                           </div>
                           
@@ -710,7 +782,7 @@ export default function MakecodeSandboxPage() {
              <motion.div key="success" initial={{opacity: 0}} animate={{opacity: 1}} className="max-w-2xl w-full py-20 text-center space-y-8">
                <CheckCircle2 size={80} className="text-green-500 mx-auto" />
                <h2 className="text-5xl font-black uppercase italic tracking-tighter leading-none">Logic <br/><span className="text-green-400">Archived</span></h2>
-               <p className="text-slate-400">Incredible work, Pioneer. Your logic has been saved to your personal Tech Archive.</p>
+               <p className="text-slate-400">Incredible work, Pioneer. Your logic has been saved and sent to Command for review.</p>
                
                <button 
                  onClick={() => router.push(`/student/course/${course_id}`)} 

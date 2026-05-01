@@ -767,7 +767,7 @@ export default function DashboardPage() {
                               </div>
                             ) : (
                               <button 
-                                onClick={() => router.push(activeTask.type === 'checkpoint' ? `/student/quiz/${activeTask.id}` : `/student/lesson/${activeTask.id}`)}
+                                onClick={() => router.push(`/student/course/${courseData.id}`)}
                                 className={`w-full py-5 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl ${
                                   activeTask.type === 'checkpoint' 
                                     ? 'bg-gradient-to-r from-yellow-500 to-amber-500 text-black hover:shadow-[0_0_40px_rgba(245,158,11,0.6)]' 
@@ -778,14 +778,14 @@ export default function DashboardPage() {
                                 {activeTask.type === 'checkpoint' ? (
                                   <>
                                     <ShieldCheck className="w-6 h-6 animate-pulse" />
-                                    <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Boss Level</span>
+                                    <span className="font-black uppercase tracking-widest text-sm md:text-base italic">View Course</span>
                                   </>
                                 ) : (
                                   <>
                                     <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                      <Play fill="currentColor" className="w-4 h-4 ml-1" />
+                                      <Map className="w-4 h-4" />
                                     </div>
-                                    <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Launch Mission</span>
+                                    <span className="font-black uppercase tracking-widest text-sm md:text-base italic">View Course</span>
                                   </>
                                 )}
                               </button>

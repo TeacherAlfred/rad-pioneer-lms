@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, DollarSign, Clock, X, ArrowUpRight,
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
   GraduationCap, Eye, Bell, CalendarDays, Building2, Send, 
-  Inbox, Calculator, Key, Brain, Cpu, Trophy
+  Inbox, Calculator, Key, Brain, Cpu, Trophy, ExternalLink, FileText
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -28,10 +28,15 @@ export default function AdminDashboard() {
   // Unified Registration Alerts
   const [newRegistrations, setNewRegistrations] = useState<any[]>([]);
 
-  // NEW: XP Settings State
+  // XP Settings State
   const [isXpModalOpen, setIsXpModalOpen] = useState(false);
   const [xpConfig, setXpConfig] = useState({ multiplier: 1.0, start_date: "", end_date: "" });
   const [isSavingXp, setIsSavingXp] = useState(false);
+
+  // NEW: Pending Reviews State
+  const [pendingSubmissions, setPendingSubmissions] = useState<any[]>([]);
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [reviewTeacherFilter, setReviewTeacherFilter] = useState<string>('all');
 
   // Stats State
   const [stats, setStats] = useState({
@@ -54,7 +59,7 @@ export default function AdminDashboard() {
     fetchHeartbeat();
   }, []);
 
-  // --- 1. EXISTING LISTENER: Coach Messages ---
+  // --- EXISTING LISTENER: Coach Messages ---
   useEffect(() => {
     if (!currentUser) return;
 
@@ -77,7 +82,7 @@ export default function AdminDashboard() {
     return () => { supabase.removeChannel(channel); };
   }, [currentUser]);
 
-  // --- 2. REGISTRATIONS LISTENER: Fetch Initial ---
+  // --- REGISTRATIONS LISTENER: Fetch Initial ---
   useEffect(() => {
     const fetchAlerts = async () => {
       const { data } = await supabase
@@ -92,7 +97,7 @@ export default function AdminDashboard() {
     fetchAlerts();
   }, []);
 
-  // --- 3. REGISTRATIONS LISTENER: Realtime Subscription ---
+  // --- REGISTRATIONS LISTENER: Realtime Subscription ---
   useEffect(() => {
     const channel = supabase.channel('admin-registration-alerts')
       .on(
@@ -120,14 +125,34 @@ export default function AdminDashboard() {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
       if (profile) setCurrentUser(profile);
 
-      // NEW: Fetch Global XP Config
+      // Fetch Global XP Config
       const { data: xpData } = await supabase.from('system_settings').select('*').eq('id', 1).single();
       if (xpData) {
          setXpConfig({
-            multiplier: xpData.xp_multiplier || 1.0,
-            start_date: xpData.xp_start_date ? new Date(xpData.xp_start_date).toISOString().slice(0, 16) : "",
-            end_date: xpData.xp_end_date ? new Date(xpData.xp_end_date).toISOString().slice(0, 16) : ""
+           multiplier: xpData.xp_multiplier || 1.0,
+           start_date: xpData.xp_start_date ? new Date(xpData.xp_start_date).toISOString().slice(0, 16) : "",
+           end_date: xpData.xp_end_date ? new Date(xpData.xp_end_date).toISOString().slice(0, 16) : ""
          });
+      }
+
+      // NEW: Fetch Pending Reviews AND Missions to map XP
+      const [subsRes, missionsRes] = await Promise.all([
+        supabase.from('tech_archive').select('*, profiles!inner(display_name, metadata)').eq('review_status', 'pending'),
+        supabase.from('missions').select('id, xp_reward')
+      ]);
+
+      const missionsMap = new Map();
+      if (missionsRes.data) {
+        missionsRes.data.forEach(m => missionsMap.set(m.id, m.xp_reward));
+      }
+
+      if (subsRes.data) {
+        const enrichedSubs = subsRes.data.map(sub => {
+           let max = sub.potential_xp || 0;
+           if (max === 0) max = missionsMap.get(sub.mission_id) || 0;
+           return { ...sub, potential_xp: max }; 
+        });
+        setPendingSubmissions(enrichedSubs);
       }
 
       const { count: studentCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student');
@@ -183,7 +208,61 @@ export default function AdminDashboard() {
     }
   }
 
-  // --- NEW: SAVE XP HANDLER ---
+  // --- NEW: AWARD XP HANDLER ---
+  const handleAwardXP = async (submission: any, awardedXp: number, bonusXp: number, justification: string) => {
+    const finalAwarded = isNaN(awardedXp) ? 0 : awardedXp;
+    const finalBonus = isNaN(bonusXp) ? 0 : bonusXp;
+
+  
+
+    const maxBonus = Math.floor((submission.potential_xp || 0) * 0.1);
+    if (finalBonus > maxBonus) {
+      return alert(`Bonus cannot exceed ${maxBonus} XP (10% limit)`);
+    }
+
+    const totalToGive = finalAwarded + finalBonus;
+
+    try {
+      const { data: profile } = await supabase.from('profiles').select('xp, metadata').eq('id', submission.student_id).single();
+      
+      if (profile) {
+        const currentXp = profile.xp || 0;
+        const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+        
+        let noteLog = `[${new Date().toLocaleDateString()}] Awarded ${finalAwarded} XP`;
+        if (finalBonus > 0) noteLog += ` + ${finalBonus} Bonus XP`;
+        noteLog += ` for project: ${submission.project_title || submission.title}\n`;
+        if (justification) noteLog += `Admin Note: ${justification}\n`;
+
+        meta.admin_notes = noteLog + (meta.admin_notes ? `\n${meta.admin_notes}` : "");
+
+        await supabase.from('profiles').update({ 
+          xp: currentXp + totalToGive,
+          metadata: meta 
+        }).eq('id', submission.student_id);
+      }
+
+      await supabase
+        .from('tech_archive')
+        .update({
+          review_status: 'reviewed',
+          xp_earned: (submission.xp_earned || 0) + totalToGive, 
+          metadata: { 
+            ...(submission.metadata || {}), 
+            teacher_notes: justification,
+            bonus_awarded: finalBonus,
+            admin_id_awarded: currentUser?.id
+          }
+        })
+        .eq('id', submission.id);
+
+      fetchHeartbeat(); // Refresh data
+    } catch (err) {
+      console.error(err);
+      alert("Error updating XP");
+    }
+  };
+
   const handleSaveXpConfig = async () => {
       setIsSavingXp(true);
       try {
@@ -201,14 +280,9 @@ export default function AdminDashboard() {
       }
   };
 
-  // --- SIMPLE ACKNOWLEDGE HANDLER ---
   const handleAcknowledge = async (id: string) => {
     setNewRegistrations((current) => current.filter(item => item.id !== id));
-
-    await supabase
-      .from('registrations')
-      .update({ is_acknowledged: true })
-      .eq('id', id);
+    await supabase.from('registrations').update({ is_acknowledged: true }).eq('id', id);
   };
 
   const handleLogout = async () => {
@@ -216,6 +290,22 @@ export default function AdminDashboard() {
     await supabase.auth.signOut();
     router.push("/login");
   };
+
+  // --- Dynamic Filters for Review Modal ---
+  const reviewTeachers = useMemo(() => {
+    const map = new Map();
+    pendingSubmissions.forEach(sub => {
+      const t = sub.profiles?.metadata?.teacher;
+      if (t && t.id) map.set(t.id, t.name || 'Unknown Teacher');
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [pendingSubmissions]);
+
+  const filteredReviews = useMemo(() => {
+    if (reviewTeacherFilter === 'all') return pendingSubmissions;
+    return pendingSubmissions.filter(sub => sub.profiles?.metadata?.teacher?.id === reviewTeacherFilter);
+  }, [pendingSubmissions, reviewTeacherFilter]);
+
 
   const StatCard = ({ label, value, icon: Icon, color, id, customValue = null }: any) => (
     <motion.div 
@@ -283,7 +373,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // --- NEW: PREVENT FLASHING (Guard Clause) ---
   if (loading) {
     return (
       <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
@@ -296,7 +385,7 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans overflow-x-hidden text-left relative">
       
-      {/* --- SIMPLIFIED UNIFIED NOTIFICATION PANEL --- */}
+      {/* NOTIFICATION PANEL (UNCHANGED) */}
       <AnimatePresence>
         {newRegistrations.length > 0 && (
           <motion.div
@@ -306,57 +395,32 @@ export default function AdminDashboard() {
             className="fixed bottom-6 right-6 lg:bottom-10 lg:right-10 z-[150] w-[calc(100%-3rem)] max-w-[360px] flex flex-col gap-4 pointer-events-none"
           >
             {newRegistrations.map((item) => {
-              // Read the unified flag!
               const isMath = item.interested_programs?.[0] === "Free Math Lab";
-
               return (
-                <motion.div 
-                  key={item.id} 
-                  layout
-                  className={`bg-[#0f172a]/95 backdrop-blur-xl border p-5 rounded-3xl flex flex-col gap-3 pointer-events-auto ${
-                    isMath 
-                      ? 'border-emerald-500/40 shadow-[0_0_40px_rgba(16,185,129,0.15)]' 
-                      : 'border-blue-500/40 shadow-[0_0_40px_rgba(37,99,235,0.15)]'
-                  }`}
-                >
+                <motion.div key={item.id} layout className={`bg-[#0f172a]/95 backdrop-blur-xl border p-5 rounded-3xl flex flex-col gap-3 pointer-events-auto ${isMath ? 'border-emerald-500/40 shadow-[0_0_40px_rgba(16,185,129,0.15)]' : 'border-blue-500/40 shadow-[0_0_40px_rgba(37,99,235,0.15)]'}`}>
                   <div className="flex items-start justify-between">
                     <div className={`flex items-center gap-2 ${isMath ? 'text-emerald-400' : 'text-blue-400'}`}>
                       {isMath ? <Brain size={16} className="animate-pulse" /> : <Cpu size={16} className="animate-pulse" />}
-                      <span className="text-[10px] font-black uppercase tracking-widest">
-                        {isMath ? 'Math Setup' : 'Robotics Lead'}
-                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-widest">{isMath ? 'Math Setup' : 'Robotics Lead'}</span>
                     </div>
                     <span className="text-[9px] text-slate-400 uppercase font-bold tracking-widest bg-white/5 px-2 py-0.5 rounded border border-white/5">
                       {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
-
                   <div>
                     <p className="font-bold text-lg text-white leading-tight">{item.parent_name}</p>
                     <p className="text-xs text-slate-300 mt-1">{item.email}</p>
                     <p className="text-xs text-slate-300 mt-0.5">{item.phone}</p>
-
                     {isMath && item.metadata?.pioneer_username && (
                       <p className="text-xs text-emerald-300 mt-2 font-bold">Pioneer ID: {item.metadata.pioneer_username}</p>
                     )}
-
                     {item.interested_programs && item.interested_programs.length > 0 && (
-                      <div className={`mt-3 inline-block border px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${
-                        isMath 
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
-                        : 'bg-blue-500/20 text-blue-300 border-blue-500/30'
-                      }`}>
+                      <div className={`mt-3 inline-block border px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${isMath ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-blue-500/20 text-blue-300 border-blue-500/30'}`}>
                         {item.interested_programs[0]}
                       </div>
                     )}
                   </div>
-
-                  <button 
-                    onClick={() => handleAcknowledge(item.id)}
-                    className={`mt-2 w-full py-3 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 hover:scale-[1.02] ${
-                      isMath ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'
-                    }`}
-                  >
+                  <button onClick={() => handleAcknowledge(item.id)} className={`mt-2 w-full py-3 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 hover:scale-[1.02] ${isMath ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'}`}>
                     <ShieldCheck size={14} /> Acknowledge & Close
                   </button>
                 </motion.div>
@@ -381,11 +445,9 @@ export default function AdminDashboard() {
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
-            {/* NEW: XP CONFIG BUTTON */}
             <button onClick={() => setIsXpModalOpen(true)} className="px-6 py-4 bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg flex items-center gap-2">
               <Trophy size={14} /> XP Events
             </button>
-
             <Link href="/admin/invites" className="px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-[0_0_20px_rgba(79,70,229,0.4)] flex items-center gap-2 group">
               <Send size={14} className="group-hover:-translate-y-0.5 group-hover:translate-x-0.5 transition-transform" /> Invite Leads
             </Link>
@@ -406,6 +468,28 @@ export default function AdminDashboard() {
             </button>
           </div>
         </header>
+
+        {/* --- PENDING REVIEWS ALERT CARD --- */}
+        {pendingSubmissions.length > 0 && (
+          <div 
+            onClick={() => setIsReviewModalOpen(true)}
+            className="bg-gradient-to-r from-amber-500/20 to-[#020617] border border-amber-500/30 rounded-[32px] p-8 cursor-pointer hover:border-amber-500/60 transition-all flex items-center justify-between group overflow-hidden relative shadow-[0_0_30px_rgba(245,158,11,0.15)]"
+          >
+            <div className="relative z-10">
+              <div className="flex items-center gap-3 mb-2">
+                 <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
+                   <Trophy size={20} />
+                 </div>
+                 <h3 className="text-sm font-black uppercase tracking-[0.2em] text-amber-400">Action Required</h3>
+              </div>
+              <p className="text-3xl md:text-5xl font-black text-white italic tracking-tighter">
+                {pendingSubmissions.length} Pending Reviews
+              </p>
+              <p className="text-slate-400 text-sm mt-2 max-w-md">Student sandbox and MakeCode submissions are awaiting grading and XP distribution.</p>
+            </div>
+            <Trophy className="absolute -right-10 -bottom-10 size-64 text-amber-500/10 group-hover:text-amber-500/20 group-hover:scale-110 transition-all duration-700" />
+          </div>
+        )}
 
         {/* TABBED METRICS SECTION */}
         <div className="space-y-6">
@@ -572,7 +656,7 @@ export default function AdminDashboard() {
         )}
       </AnimatePresence>
 
-      {/* --- NEW: GLOBAL XP SETTINGS MODAL --- */}
+      {/* --- GLOBAL XP SETTINGS MODAL --- */}
       <AnimatePresence>
         {isXpModalOpen && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
@@ -604,6 +688,172 @@ export default function AdminDashboard() {
                 <button onClick={handleSaveXpConfig} disabled={isSavingXp} className="flex-1 py-4 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest text-center flex items-center justify-center gap-2 shadow-lg shadow-purple-900/20 transition-all">
                    {isSavingXp ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Save Event
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- NEW: ADMIN REVIEW QUEUE MODAL --- */}
+      <AnimatePresence>
+        {isReviewModalOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsReviewModalOpen(false)} className="absolute inset-0 bg-black/90 backdrop-blur-xl" />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 20 }} 
+              animate={{ scale: 1, opacity: 1, y: 0 }} 
+              exit={{ scale: 0.95, opacity: 0, y: 20 }} 
+              className="relative w-full max-w-5xl bg-[#0a0f1c] border border-white/10 rounded-[32px] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+            >
+              
+              <div className="p-6 md:p-8 border-b border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/[0.02] shrink-0">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-amber-500/20 text-amber-400 rounded-2xl border border-amber-500/30">
+                    <Trophy size={24} />
+                  </div>
+                  <div>
+                      <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white leading-none">Review Queue</h2>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-2">{filteredReviews.length} Submissions Awaiting Feedback</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-4">
+                  {reviewTeachers.length > 0 && (
+                    <select 
+                      value={reviewTeacherFilter}
+                      onChange={(e) => setReviewTeacherFilter(e.target.value)}
+                      className="bg-[#020617] border border-white/10 rounded-xl px-4 py-2.5 text-xs font-bold text-white outline-none focus:border-amber-500 cursor-pointer"
+                    >
+                      <option value="all">All Teachers</option>
+                      {reviewTeachers.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  <button type="button" onClick={() => setIsReviewModalOpen(false)} className="text-slate-500 hover:text-white transition-colors p-2 bg-white/5 hover:bg-white/10 rounded-full"><X size={20} /></button>
+                </div>
+              </div>
+              
+              <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+                {filteredReviews.length === 0 ? (
+                   <div className="text-center p-12 text-slate-500 italic font-bold">All caught up! No reviews pending for this selection.</div>
+                ) : (
+                  filteredReviews.map((sub) => (
+                    <div key={sub.id} className="bg-[#020617] border border-white/5 rounded-3xl p-6 flex flex-col md:flex-row items-center gap-8 group hover:border-amber-500/30 transition-all shadow-inner">
+                      
+                      {(() => {
+                        const maxPossible = sub.potential_xp || 100;
+                        const alreadyEarned = sub.xp_earned || 0;
+                        const remainingBase = Math.max(0, maxPossible - alreadyEarned);
+                        const maxBonus = Math.floor(maxPossible * 0.1);
+
+                        return (
+                          <>
+                            <div className="flex-1 w-full space-y-3">
+                               <div className="flex justify-between items-start">
+                                 <h3 className="text-xl font-black text-white uppercase">{sub.profiles?.display_name}</h3>
+                                 {sub.profiles?.metadata?.teacher?.name && (
+                                   <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 bg-white/5 px-2 py-1 rounded border border-white/5">
+                                     {sub.profiles.metadata.teacher.name}
+                                   </span>
+                                 )}
+                               </div>
+                               <p className="text-sm font-bold text-slate-300">{sub.title || sub.project_title || "Custom Logic Build"}</p>
+                               
+                               <div className="inline-flex items-center gap-3 bg-white/5 border border-white/5 rounded-lg px-3 py-1.5 mt-1">
+                                 <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">
+                                   Max Possible: <span className="text-white">{maxPossible} XP</span>
+                                 </p>
+                                 <span className="text-blue-500/30">|</span>
+                                 <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">
+                                   Already Earned: <span className="text-white">{alreadyEarned} XP</span>
+                                 </p>
+                               </div>
+                               
+                               <div className="pt-3">
+                                 {sub.media_url ? (
+                                   <a href={sub.media_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-500/10 text-blue-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all border border-blue-500/20">
+                                     <ExternalLink size={14}/> View Blueprint / Code
+                                   </a>
+                                 ) : sub.metadata?.submission_urls ? (
+                                   Object.values(sub.metadata.submission_urls).map((url: any, idx) => (
+                                     <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-500/10 text-blue-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all border border-blue-500/20 mr-2 mt-2">
+                                       <ExternalLink size={14}/> View Submission {idx + 1}
+                                     </a>
+                                   ))
+                                 ) : null}
+                               </div>
+                            </div>
+
+                            <div className="w-full md:w-1/2 lg:w-5/12 shrink-0 bg-[#0f172a] p-6 rounded-[24px] border border-white/5 flex flex-col gap-5 min-w-[340px] shadow-lg">
+                               <div className="flex gap-4">
+                                  <div className="flex-1">
+                                    <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 block mb-2 pl-1">Add Base (Max {remainingBase})</label>
+                                    <input 
+                                      id={`xp-${sub.id}`} 
+                                      type="number" 
+                                      min="0"
+                                      max={remainingBase}
+                                      defaultValue={remainingBase} 
+                                      className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-amber-500 transition-colors" 
+                                    />
+                                  </div>
+                                  <div className="flex-1">
+                                    <label className="text-[9px] font-black uppercase tracking-widest text-amber-500 block mb-2 pl-1">Bonus (Max {maxBonus})</label>
+                                    <input 
+                                      id={`bonus-${sub.id}`} 
+                                      type="number" 
+                                      min="0"
+                                      max={maxBonus}
+                                      defaultValue={0}
+                                      className="w-full bg-[#020617] border border-amber-500/20 rounded-xl px-4 py-3 text-sm font-bold text-amber-400 outline-none focus:border-amber-500 placeholder:text-amber-500/30 transition-colors" 
+                                    />
+                                  </div>
+                               </div>
+                               
+                               <div>
+                                  <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 block mb-2 pl-1 flex items-center gap-1"><FileText size={10}/> Admin Note</label>
+                                  <input 
+                                    id={`note-${sub.id}`} 
+                                    type="text" 
+                                    placeholder="Great use of loops..." 
+                                    className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-medium text-white outline-none focus:border-amber-500 transition-colors placeholder:text-slate-600" 
+                                  />
+                               </div>
+
+                               <button 
+                                  id={`submit-btn-${sub.id}`}
+                                  onClick={async (e) => {
+                                    const btn = e.currentTarget;
+                                    const originalText = btn.innerHTML;
+                                    btn.innerHTML = "SAVING...";
+                                    btn.style.opacity = "0.5";
+                                    btn.style.pointerEvents = "none";
+
+                                    let baseVal = parseInt((document.getElementById(`xp-${sub.id}`) as HTMLInputElement).value) || 0;
+                                    let bonusVal = parseInt((document.getElementById(`bonus-${sub.id}`) as HTMLInputElement).value) || 0;
+                                    const noteVal = (document.getElementById(`note-${sub.id}`) as HTMLInputElement).value;
+                                    
+                                    if (baseVal > remainingBase) baseVal = remainingBase;
+                                    if (bonusVal > maxBonus) bonusVal = maxBonus;
+
+                                    await handleAwardXP(sub, baseVal, bonusVal, noteVal);
+
+                                    btn.innerHTML = originalText;
+                                    btn.style.opacity = "1";
+                                    btn.style.pointerEvents = "auto";
+                                  }}
+                                  className="w-full py-4 bg-white/5 hover:bg-amber-500 text-slate-300 hover:text-black rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 mt-1 border border-white/10 hover:border-amber-500"
+                               >
+                                 <CheckCircle2 size={16}/> Submit Evaluation
+                               </button>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ))
+                )}
               </div>
             </motion.div>
           </div>

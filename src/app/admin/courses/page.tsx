@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
-  Plus, Search, MoreVertical, LayoutDashboard, 
+  Plus, Search, MoreVertical, LayoutDashboard, BarChart3,
   ArrowLeft, BookOpen, Rocket, Loader2, Calendar, Globe, Lock, EyeOff,
   SortAsc, Clock, Edit3, X, Save, ShieldAlert, UserPlus, Users, CheckCircle2
 } from "lucide-react";
@@ -223,9 +223,16 @@ export default function AdminCoursesPage() {
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white">Mission Control</span>
             </Link>
 
-            <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-[20px] font-black uppercase text-[10px] tracking-widest transition-all shadow-xl shadow-blue-600/20">
-              <Plus size={18} /> New Course
-            </button>
+            <div className="flex items-center gap-3">
+              {/* NEW GLOBAL INSIGHTS LINK */}
+              <Link href="/admin/courses/insights" className="flex items-center gap-2 bg-white/5 border border-white/10 hover:border-purple-500/50 text-slate-400 hover:text-white px-6 py-4 rounded-[20px] font-black uppercase text-[10px] tracking-widest transition-all">
+                <BarChart3 size={18} className="text-purple-400" /> Global Intel
+              </Link>
+
+              <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-[20px] font-black uppercase text-[10px] tracking-widest transition-all shadow-xl shadow-blue-600/20">
+                <Plus size={18} /> New Course
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
@@ -338,17 +345,22 @@ export default function AdminCoursesPage() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mt-12">
-                  <Link href={`/admin/courses/${course.id}`} className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 hover:bg-blue-600 hover:border-blue-600 py-5 rounded-3xl transition-all group/btn shadow-xl">
+                <div className="grid grid-cols-3 gap-3 mt-12">
+                  <Link href={`/admin/courses/${course.id}`} className="flex flex-col items-center justify-center gap-2 bg-white/5 border border-white/10 hover:bg-blue-600 hover:border-blue-600 py-4 rounded-3xl transition-all group/btn shadow-xl">
                     <Rocket size={18} className="text-blue-400 group-hover/btn:text-white" />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Modules</span>
+                    <span className="text-[8px] font-black uppercase tracking-widest">Modules</span>
                   </Link>
                   
-                  {/* --- ENROLL BUTTON --- */}
-                  <button onClick={() => handleOpenEnrollment(course)} className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 hover:bg-emerald-600 hover:border-emerald-600 py-5 rounded-3xl transition-all group/btn shadow-xl">
+                  <button onClick={() => handleOpenEnrollment(course)} className="flex flex-col items-center justify-center gap-2 bg-white/5 border border-white/10 hover:bg-emerald-600 hover:border-emerald-600 py-4 rounded-3xl transition-all group/btn shadow-xl">
                     <UserPlus size={18} className="text-emerald-400 group-hover/btn:text-white" />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-300 group-hover/btn:text-white">Roster</span>
+                    <span className="text-[8px] font-black uppercase tracking-widest text-slate-300 group-hover/btn:text-white">Roster</span>
                   </button>
+
+                  {/* --- NEW INSIGHTS BUTTON --- */}
+                  <Link href={`/admin/courses/${course.id}/insights`} className="flex flex-col items-center justify-center gap-2 bg-white/5 border border-white/10 hover:bg-purple-600 hover:border-purple-600 py-4 rounded-3xl transition-all group/btn shadow-xl">
+                    <BarChart3 size={18} className="text-purple-400 group-hover/btn:text-white" />
+                    <span className="text-[8px] font-black uppercase tracking-widest text-slate-300 group-hover/btn:text-white">Insights</span>
+                  </Link>
                 </div>
               </motion.div>
             ))}
