@@ -250,7 +250,7 @@ export default function DashboardPage() {
 
   // FOMO Countdown Timer Logic
   useEffect(() => {
-    const targetDate = new Date("2026-05-01T10:00:00+02:00").getTime();
+    const targetDate = new Date("2026-05-08T23:59:59+02:00").getTime();
     
     const interval = setInterval(() => {
       const now = new Date().getTime();
@@ -287,8 +287,8 @@ export default function DashboardPage() {
   // Identify LMS-Only Students vs Full Active Students
   const isLmsOnly = !metadata.account_tier || metadata.account_tier !== 'full';
   
-  // They only see the lockdown if they are LMS-only AND it is before May 1st
-  const isPreLaunchLms = isLmsOnly && new Date() < new Date("2026-05-01T10:00:00+02:00");
+  // They only see the lockdown if they are LMS-only AND it is before May 8th
+  const isPreLaunchLms = isLmsOnly && new Date() < new Date("2026-05-08T23:59:59+02:00");
 
   // --- NEW: Trigger 2x XP Modal for Full-Tier Learners Only ---
   useEffect(() => {
@@ -577,9 +577,20 @@ export default function DashboardPage() {
               ========================================= */}
           {allEnrollments.length > 0 && (
             <section className="space-y-6 md:space-y-8 pt-4 md:pt-6">
-              <div className="flex items-center gap-2.5 md:gap-3 px-2 md:px-4 border-b border-white/5 pb-3 md:pb-4">
-                <BookOpen className="w-4 h-4 md:w-5 md:h-5 text-blue-500" />
-                <h3 className="text-sm md:text-base font-black uppercase tracking-widest text-white italic text-left">Your Current Course</h3>
+              <div className="flex items-center justify-between px-2 md:px-4 border-b border-white/5 pb-3 md:pb-4">
+                <div className="flex items-center gap-2.5 md:gap-3">
+                  <BookOpen className="w-4 h-4 md:w-5 md:h-5 text-blue-500" />
+                  <h3 className="text-sm md:text-base font-black uppercase tracking-widest text-white italic text-left">Your Current Course</h3>
+                </div>
+                
+                {/* --- UNMISSABLE 'ALL COURSES' BUTTON --- */}
+                <Link 
+                  href="/student/courses" 
+                  className="group flex items-center gap-2 text-[10px] md:text-xs font-black uppercase tracking-widest text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 px-5 md:px-6 py-2 md:py-2.5 rounded-xl border border-blue-400/50 transition-all shadow-[0_0_15px_rgba(59,130,246,0.4)] hover:shadow-[0_0_25px_rgba(59,130,246,0.6)] hover:-translate-y-1 active:scale-95"
+                >
+                  View All Courses 
+                  <ArrowUpRight size={14} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                </Link>
               </div>
               
               <div className="space-y-6 md:space-y-8">
@@ -938,11 +949,11 @@ export default function DashboardPage() {
               </span>
               
               <h3 className="text-4xl font-black text-white uppercase italic tracking-tighter leading-tight mb-4">
-                DOUBLE <span className="text-amber-400">XP</span> <br/> WEEKEND!
+                DOUBLE <span className="text-amber-400">XP</span> <br/> WEEK!
               </h3>
               
               <p className="text-slate-300 text-sm font-medium leading-relaxed mb-6">
-                Get ready! From <strong className="text-white">May 1st - 3rd</strong>, all missions and daily claims yield <strong className="text-amber-400 font-black">2x XP</strong>. Rack up points and dominate the leaderboard!
+                Get ready! From <strong className="text-white">May 1st - 8th</strong>, all missions and daily claims yield <strong className="text-amber-400 font-black">2x XP</strong>. Rack up points and dominate the leaderboard!
               </p>
 
               {/* Mini Countdown Timer inside the Modal */}
