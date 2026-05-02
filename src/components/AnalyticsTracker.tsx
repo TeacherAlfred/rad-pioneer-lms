@@ -1,11 +1,19 @@
 "use client";
 
+import { Suspense } from 'react';
 import { usePageTracking } from '@/hooks/useTracker';
 
-export default function AnalyticsTracker() {
-  // Turn on global pageview tracking
+// 1. Isolate the hook inside a sub-component
+function TrackerLogic() {
   usePageTracking();
-  
-  // Render nothing, just run the hook behind the scenes
   return null; 
+}
+
+// 2. Wrap the sub-component in a Suspense boundary
+export default function AnalyticsTracker() {
+  return (
+    <Suspense fallback={null}>
+      <TrackerLogic />
+    </Suspense>
+  );
 }

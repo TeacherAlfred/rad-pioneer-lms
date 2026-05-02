@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { supabase } from '@/lib/supabase'; // Import your supabase client
+import { supabase } from '@/lib/supabase'; 
 
 export const trackEvent = async (
   event_type: string,
@@ -10,11 +10,18 @@ export const trackEvent = async (
   user_identifier?: string | null,
   metadata: Record<string, any> = {}
 ) => {
+  
+  // 🛑 THE FIX: Intercept and block the request if running locally
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`📡 [Analytics Blocked in Dev] ${event_type} | Path: ${url_path}`);
+    return; // Exit the function immediately!
+  }
+
   try {
     // 1. Check if the user is logged in
     const { data: { session } } = await supabase.auth.getSession();
     
-    // 2. Grab their name or email if they exist (adjust based on your profiles table)
+    // 2. Grab their name or email if they exist
     const loggedInUser = session?.user?.user_metadata?.display_name 
                       || session?.user?.email 
                       || null;
@@ -38,6 +45,7 @@ export const trackEvent = async (
     console.error("Failed to push telemetry", e);
   }
 };
+
 
 export function usePageTracking() {
   const pathname = usePathname();
