@@ -7,7 +7,9 @@ import {
   Target, TrendingUp, DollarSign, Clock, X, ArrowUpRight,
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
   GraduationCap, Eye, Bell, CalendarDays, Building2, Send, 
-  Inbox, Calculator, Key, Brain, Cpu, Trophy, ExternalLink, FileText
+  Inbox, Calculator, Key, Brain, Cpu, Trophy, ExternalLink, FileText,
+  BarChart3,
+  Globe
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -337,10 +339,10 @@ export default function AdminDashboard() {
       title: "Growth & Acquisition",
       desc: "Manage top-of-funnel leads, invites, and external campaigns.",
       items: [
-        { label: 'Lead Inbox', icon: Inbox, path: '/admin/leads', color: 'hover:border-blue-500' },
-        { label: 'New Intake', icon: UserPlus, path: '/admin/intake', color: 'hover:border-blue-400' },
-        { label: 'Invite Campaigns', icon: Send, path: '/admin/invites', color: 'hover:border-purple-500' },
-        { label: 'General Prospects', icon: Target, path: '/admin/prospects', color: 'hover:border-fuchsia-500' },
+        { label: 'Prospects', icon: Target, path: '/admin/prospects', color: 'hover:border-fuchsia-500' },
+        { label: 'Leads', icon: Inbox, path: '/admin/leads', color: 'hover:border-blue-500' },
+        { label: 'Add a Guardian', icon: UserPlus, path: '/admin/intake', color: 'hover:border-blue-400' },
+        { label: 'Outbound Invites', icon: Send, path: '/admin/invites', color: 'hover:border-purple-500' },
         { label: 'Events & Bootcamps', icon: CalendarDays, path: '/admin/events', color: 'hover:border-yellow-500' },
         { label: 'B2B Consulting', icon: Building2, path: '/admin/consulting', color: 'hover:border-indigo-500' },
       ]
@@ -369,6 +371,7 @@ export default function AdminDashboard() {
         { label: 'Growth Blueprint', icon: Target, path: '/admin/blueprint', color: 'hover:border-fuchsia-500' },
         { label: 'System Auth/MFA', icon: Key, path: '/admin/setup-mfa', color: 'hover:border-zinc-500' },
         { label: 'Verification', icon: CheckCircle2, path: '/admin/verify', color: 'hover:border-zinc-400' },
+        { label: 'Web Analytics', icon: Globe, path: '/admin/analytics', color: 'hover:border-cyan-400' },
       ]
     }
   };
