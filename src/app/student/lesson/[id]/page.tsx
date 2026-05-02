@@ -1031,22 +1031,22 @@ export default function LessonPlayerPage() {
   </h1>
   
   {/* XP STAGE REWARD HUD */}
-  <div className="flex items-center gap-2 mt-2">
-    <div className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-1 rounded-lg shadow-[0_0_15px_rgba(234,179,8,0.1)]">
-      <Zap size={12} className="text-yellow-500 fill-yellow-500" />
-      <span className="text-[10px] font-black text-yellow-500 uppercase tracking-widest">
-        Reward: {calculateDiminishingXP(mission?.xp_reward || 50, isReadOnly ? 1 : 0)} XP
-      </span>
-    </div>
-    {isReadOnly && (
-      <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded-lg">
-        <RotateCcw size={12} className="text-blue-400" />
-        <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest italic truncate max-w-[120px] md:max-w-none">
-          Diminishing Replay Active
-        </span>
-      </div>
-    )}
-  </div>
+          <div className="flex items-center gap-2 mt-2">
+            <div className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-1 rounded-lg shadow-[0_0_15px_rgba(234,179,8,0.1)]">
+              <Zap size={12} className="text-yellow-500 fill-yellow-500" />
+              <span className="text-[10px] font-black text-yellow-500 uppercase tracking-widest">
+                Reward: {isReadOnly ? 0 : (mission?.xp_reward || 50)} XP
+              </span>
+            </div>
+            {isReadOnly && (
+              <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded-lg">
+                <RotateCcw size={12} className="text-blue-400" />
+                <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest italic truncate max-w-[120px] md:max-w-none">
+                  Diminishing Replay Active
+                </span>
+              </div>
+            )}
+          </div>
 </div>
         </div>
 
