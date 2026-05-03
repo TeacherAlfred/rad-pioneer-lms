@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
 import LinearCourseEditor from "@/components/admin/courses/LinearCourseEditor";
 import MakecodeCourseEditor from "@/components/admin/courses/MakecodeCourseEditor";
+import TrialMissionEditor from "@/components/admin/courses/TrialMissionEditor";
 
 // Simple UUID regex
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -53,6 +54,11 @@ export default function CourseEditorDispatcher({ params }: { params: Promise<{ c
   // DISPATCH LOGIC
   if (templateType === 'makecode_sandbox') {
     return <MakecodeCourseEditor courseId={courseId} />;
+  }
+  
+  // FIX: Match the exact string from your database!
+  if (templateType === 'makecode_trial') {
+    return <TrialMissionEditor courseId={courseId} />;
   }
 
   return <LinearCourseEditor courseId={courseId} />;

@@ -18,6 +18,7 @@ import { javascriptGenerator } from "blockly/javascript";
 import SequenceViewer from "@/components/lms/SequenceViewer";
 import PioneerCoach from "@/components/ui/PioneerCoach";
 import { calculateDiminishingXP, calculateEventXp } from "@/lib/xp-engine";
+import PioneerSimulator from "@/components/trial/PioneerSimulator";
 
 // --- CUSTOM SCROLL MANAGER HOOK ---
 function useScrollManager() {
@@ -876,6 +877,12 @@ export default function LessonPlayerPage() {
 
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
   if (errorMsg) return ( <div className="h-screen bg-[#020617] flex flex-col items-center justify-center text-white space-y-6"><ShieldAlert size={64} className="text-red-500" /><h1 className="text-2xl font-black uppercase tracking-widest">{errorMsg}</h1><Link href="/student/dashboard" className="px-8 py-3 bg-white text-black rounded-xl font-black uppercase text-xs">Return to Dashboard</Link></div> );
+
+  // --- THE PIONEER TRIAL INTERCEPTOR ---
+  // If the mission belongs to the Trial Module, hijack the render and show the Walled Garden HUD instead!
+  if (mission?.module_id === '90000000-9000-0000-0000-000000000002') {
+    return <PioneerSimulator mission={mission} />;
+  }
 
   return (
     <main className="h-[100dvh] text-white flex flex-col overflow-hidden bg-[#020617] font-sans relative" onClick={handleGlobalClick}>

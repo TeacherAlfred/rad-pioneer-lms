@@ -43,7 +43,6 @@ export default function LoginPage() {
 
         if (authError) throw authError;
 
-        // FIX: Fetch the *entire* profile, not just the role, so we can save it to the session
         const { data: userProfile, error: profileError } = await supabase
           .from('profiles')
           .select('*')
@@ -52,15 +51,21 @@ export default function LoginPage() {
 
         if (profileError || !userProfile) throw new Error("Profile access denied.");
 
-        // FIX: Save the session to localStorage so the dashboard doesn't kick them out!
+        // Save session
         localStorage.setItem("pioneer_session", JSON.stringify(userProfile));
 
+        // ROUTING BASED ON ROLE & TIER
         if (userProfile.role === 'admin') {
           window.location.href = "/admin/dashboard"; 
         } else if (userProfile.role === 'educator') {
           router.push("/teacher/dashboard");
         } else if (userProfile.role === 'guardian') {
-          router.push("/parent/dashboard");
+          // THE GUARDIAN BOUNCER
+          if (userProfile.account_tier === 'trial') {
+            router.push("/trial/guardian");
+          } else {
+            router.push("/parent/dashboard");
+          }
         } else {
           router.push("/");
         }
@@ -110,26 +115,36 @@ export default function LoginPage() {
               .eq('id', dbUser.id);
           }
 
-          // --- PERMISSIVE AUTH SIGN IN (RESTORED) ---
+          // --- PERMISSIVE AUTH SIGN IN ---
           const shadowEmail = `${typedName.toLowerCase().replace(/\s/g, '')}@pioneer.bot`;
           const securePassword = `PIONEER-${typedPin}`; 
           
-          // We attempt to sign them in (for new Math users), but we DO NOT throw an error if it fails.
-          // This allows your legacy Pioneers to slip through just like they used to.
           await supabase.auth.signInWithPassword({
             email: shadowEmail,
             password: securePassword,
-          });
+          }).catch(() => { /* Legacy permissive fail */ });
 
-          // Set the session so the frontend grants access
+          // FETCH INHERITED TIER FROM OUR NEW SQL VIEW
+          const { data: tierData } = await supabase
+            .from('student_active_tiers')
+            .select('active_tier')
+            .eq('student_id', dbUser.id)
+            .single();
+
+          // Attach to session object so the frontend layouts know the tier
+          // If the SQL view returns 'none', check if we manually forced the profile row to 'trial'
+          dbUser.active_tier = (tierData?.active_tier && tierData.active_tier !== 'none') 
+            ? tierData.active_tier 
+            : dbUser.account_tier;
+          
           localStorage.setItem("pioneer_session", JSON.stringify(dbUser));
 
-          // --- ROUTING LOGIC ---
-          const meta = typeof dbUser.metadata === 'string' 
-            ? JSON.parse(dbUser.metadata) 
-            : dbUser.metadata;
-
-          router.push("/student/dashboard");
+          // --- THE STUDENT BOUNCER ---
+          if (dbUser.active_tier === 'trial') {
+            router.push("/trial/hub");
+          } else {
+            router.push("/student/dashboard");
+          }
           
         } else {
           setError("Oops! That Secret Code didn't work.");
