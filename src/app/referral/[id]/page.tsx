@@ -31,6 +31,7 @@ export default function ReferralInvitePage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [numKids, setNumKids] = useState<number>(1);
+  const [isAtBottomStep1, setIsAtBottomStep1] = useState(false);
 
   // Multi-Child State
   const [children, setChildren] = useState([{ id: '1', name: '', dob: '', codingAtSchool: 'No' }]);
@@ -78,6 +79,13 @@ export default function ReferralInvitePage() {
     setChildren(children.map(c => c.id === id ? { ...c, [field]: value } : c));
   };
 
+  // ADDED: Token generator exactly like the VIP page
+  const generateToken = () => {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    return Array.from({length: 24}).map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
+  };
+
+  // UPDATED: Now generates the Walled Garden 'trial' profiles and onboarding tokens
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const validChildren = children.filter(c => c.name.trim() !== "");
@@ -91,21 +99,52 @@ export default function ReferralInvitePage() {
       let trialEnd = new Date(trialStart);
       trialEnd.setDate(trialEnd.getDate() + 14);
 
+      const guardianId = crypto.randomUUID();
+      const onboardingToken = generateToken();
+
+      // 1. Create Trial Guardian Profile (ACCOUNT_TIER: TRIAL)
+      const guardianProfile = {
+        id: guardianId, 
+        role: 'guardian', 
+        display_name: parentName, 
+        onboarding_token: onboardingToken,
+        status: 'active', 
+        funnel_stage: 'Trial Active', 
+        account_tier: 'trial', 
+        metadata: JSON.stringify({ email: email, phone: phone, trial_start: trialStart.toISOString(), trial_end: trialEnd.toISOString() })
+      };
+
+      // 2. Create Student Profiles
+      const studentProfiles = validChildren.map((c: any) => ({
+        id: crypto.randomUUID(), 
+        role: 'student', 
+        display_name: c.name, 
+        linked_parent_id: guardianId,
+        status: 'active', 
+        metadata: JSON.stringify({ date_of_birth: c.dob, school_coding: c.codingAtSchool === 'Yes' })
+      }));
+
+      // 3. Save Profiles to DB
+      await supabase.from('profiles').insert([guardianProfile, ...studentProfiles]);
+
+      // 4. Create New Prospect Record (With Trial Active status & converted_profile_id)
       const payload = {
         name: parentName,
         email: email,
         phone: phone,
-        status: 'New Lead',
+        status: 'Trial Active',
         source: 'Referral',
         metadata: {
           referred_by_id: referrerId,
           referred_by_name: referrerData.name,
           children: validChildren,
+          children_data: children,
           trial_start: trialStart.toISOString(),
           trial_end: trialEnd.toISOString(),
           accepted_date: today.toISOString(),
           campaign: "Commitment Pricing May 2026",
-          form_progress: 'Completed'
+          form_progress: 'Completed Trial',
+          converted_profile_id: guardianId
         }
       };
 
@@ -113,6 +152,20 @@ export default function ReferralInvitePage() {
       if (error) throw error;
       
       setNewLeadId(data.id);
+      
+      // 5. Send Welcome Email (passing the token so they can set a password)
+      fetch('/api/emails/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenario: 'trial',
+          name: parentName,
+          email: email,
+          token: onboardingToken,
+          quoteId: data.id 
+        })
+      });
+
       confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: ['#3b82f6', '#6366f1', '#10b981'] });
       setIsSuccess(true);
       setWizardStep(0);
@@ -135,18 +188,17 @@ export default function ReferralInvitePage() {
     }
   };
 
-  const scrollToForm = () => document.getElementById('claim-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
   const faqs = [
     { q: "Do I need to enter credit card details for the trial?", a: "No! The 14-day trial is completely free and requires zero payment details. You only pay if you explicitly choose to upgrade after seeing the value." },
-    { q: "When does my paid month start if I upgrade early?", a: "If you upgrade during your 14-day trial, your paid access only begins after your trial ends. You don't lose any of your free days!" },
-    { q: "What is the Bonus Offer mentioned?", a: "If you decide to pay upfront for 4 months, we will gift you 1 completely free 1-on-1 private coaching session, PLUS an extra 1 month of LMS Access added to your account for free." },
+    { q: "What happens when the trial ends?", a: "Your child's progress is saved. If you wish to continue, you can easily upgrade to a paid license from your parent portal. If not, the trial simply expires with no hidden fees." },
     { q: "How does the Refer-a-Friend 1-on-1 lesson work?", a: "Once you secure your access, you'll receive a personal invite link to share with friends. If a friend signs up using your link, and BOTH of you eventually upgrade to a paid license after your trials, you will BOTH be automatically credited with a free 1-on-1 private online coding lesson!" }
   ];
 
   const reviewImages = [
     "https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/reviews/Screenshot_20260129_143852.jpg",
-    "https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/reviews/Screenshot_20260210_094654_edit_76061668599851.jpg"
+    "https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/reviews/Screenshot_20260210_094654_edit_76061668599851.jpg",
+    "https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/reviews/review_sb.jpg",
+    "https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/reviews/Screenshot_20260428_141204.jpg"
   ];
 
   if (loading) {
@@ -195,7 +247,6 @@ export default function ReferralInvitePage() {
             <p className="text-[15px] sm:text-lg text-slate-600 font-medium leading-relaxed max-w-xl">
               With the rising cost of living, providing your child with premium education shouldn't have to suffer. We are turning screen time into skill time with our self-paced coding LMS.
             </p>
-            {/* NEW: QUICK CLAIM BUTTON */}
             <button 
               onClick={() => setWizardStep(1)}
               className="w-full sm:w-auto mt-4 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 group hover:-translate-y-1"
@@ -248,7 +299,7 @@ export default function ReferralInvitePage() {
                     <div className="w-8 h-8 sm:w-10 sm:h-10 bg-emerald-500 text-white rounded-full flex items-center justify-center shrink-0 shadow-md"><Sparkles size={16}/></div>
                     <div className="relative z-10 pt-0.5">
                       <p className="text-sm sm:text-base font-black text-emerald-700 uppercase tracking-tight leading-none mb-1">14 Days Completely Free</p>
-                      <p className="text-[10px] sm:text-xs font-bold text-emerald-600/80 leading-snug">Your trial gives you full access instantly. The discounted rates below only apply <span className="underline">after</span> your 2 weeks are up.</p>
+                      <p className="text-[10px] sm:text-xs font-bold text-emerald-600/80 leading-snug">Experience the platform with zero obligations or upfront payments.</p>
                     </div>
                   </div>
 
@@ -257,20 +308,6 @@ export default function ReferralInvitePage() {
                   </button>
                   <div className="text-center flex items-center justify-center gap-1.5 text-slate-400">
                     <ShieldCheck size={12}/> <span className="text-[9px] font-bold uppercase tracking-widest">No Credit Card Required</span>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-slate-100">
-                  <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1.5 pt-4">
-                    <Clock size={12}/> Post-Trial Rates (First Come, First Served)
-                  </p>
-                  <div className="flex justify-between items-center bg-blue-50 border border-blue-100 rounded-2xl p-4 mb-3">
-                    <div className="text-left"><p className="text-sm sm:text-base font-black text-slate-900 leading-none">Tier 1</p><p className="text-[9px] sm:text-[10px] font-bold text-slate-500">First 10 Licenses</p></div>
-                    <div className="text-right"><p className="text-xl font-black text-blue-600 italic tracking-tighter">R250<span className="text-xs sm:text-sm text-blue-400 not-italic tracking-normal">/mo</span></p></div>
-                  </div>
-                  <div className="flex justify-between items-center border border-slate-200 rounded-2xl p-4 opacity-60">
-                    <div className="text-left"><p className="text-sm sm:text-base font-black text-slate-900 leading-none">Tier 2</p><p className="text-[9px] sm:text-[10px] font-bold text-slate-500">Next 10 Licenses</p></div>
-                    <div className="text-right"><p className="text-lg font-black text-slate-900 italic tracking-tighter">R350<span className="text-[10px] sm:text-xs text-slate-500 not-italic tracking-normal">/mo</span></p></div>
                   </div>
                 </div>
               </>
@@ -301,65 +338,9 @@ export default function ReferralInvitePage() {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-5 md:px-12 pb-24 mt-8">
-        <div className="flex justify-center mb-12">
-          <button onClick={() => setShowReviews(true)} className="group relative px-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 flex items-center gap-3 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-50 to-purple-50 opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="relative z-10 flex -space-x-2.5">
-              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-purple-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-purple-600 fill-purple-600"/></div>
-            </div>
-            <div className="relative z-10 flex items-center gap-2">
-              <span className="text-sm font-black text-slate-900 tracking-tight">See what parents are saying</span>
-              <MessageSquareHeart size={18} className="text-rose-500" />
-            </div>
-          </button>
-        </div>
-
-        <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-6 sm:p-8 md:p-10 rounded-[32px] md:rounded-[40px] text-white shadow-2xl relative overflow-hidden mb-12">
-          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none"><Target size={120}/></div>
-          <div className="relative z-10">
-            <span className="px-3 py-1 bg-white/10 border border-white/20 rounded-lg text-[9px] font-black uppercase tracking-widest text-blue-300 mb-4 inline-block">Action-Taker's Pricing</span>
-            <h3 className="text-xl sm:text-2xl font-black italic uppercase tracking-tight mb-4">Why is it so affordable?</h3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-6">Those who get the most out of our platform are the ones who show up regularly. We are offering massive discounts, but they come with one condition: <strong className="text-white">Accountability.</strong></p>
-            <ul className="space-y-4">
-              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Start with a completely free <strong className="text-white">14-Day Full Access Trial</strong>.</span></li>
-              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Upgrade anytime during the trial. Your paid months only begin <strong className="text-white">after your trial ends</strong>.</span></li>
-              <li className="flex items-start gap-3"><AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Maintain an average of doing <strong className="text-white">1 lesson per week</strong> to avoid forfeiting the discount.</span></li>
-            </ul>
-            <div className="mt-8 p-4 bg-white/5 border border-white/10 rounded-2xl flex items-start sm:items-center gap-4">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center shrink-0 mt-1 sm:mt-0"><Sparkles size={16}/></div>
-              <div>
-                <p className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-blue-300 mb-1">Bonus Offer</p>
-                <p className="text-xs sm:text-sm font-bold text-white leading-tight">Pay for 4 months and get <span className="text-emerald-400">1 free 1-on-1 coaching session</span> PLUS get a <span className="text-emerald-400">1 month LMS Access gift voucher!</span></p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="text-center mb-8"><h2 className="text-3xl font-black text-slate-900 italic uppercase tracking-tighter">Frequently Asked Questions</h2></div>
-        <div className="space-y-4">
-          {faqs.map((faq, index) => (
-            <div key={index} className={`bg-white border rounded-2xl overflow-hidden transition-all duration-300 ${openFaq === index ? 'border-blue-500 shadow-lg shadow-blue-500/10' : 'border-slate-200 shadow-sm hover:border-slate-300'}`}>
-              <button onClick={() => setOpenFaq(openFaq === index ? null : index)} className="w-full flex items-center justify-between p-5 md:p-6 text-left">
-                <span className={`font-black tracking-tight pr-4 ${openFaq === index ? 'text-blue-600' : 'text-slate-900'}`}>{faq.q}</span>
-                <ChevronDown size={20} className={`shrink-0 transition-transform duration-300 ${openFaq === index ? 'rotate-180 text-blue-600' : 'text-slate-400'}`} />
-              </button>
-              <AnimatePresence>
-                {openFaq === index && (
-                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                    <div className="px-5 md:px-6 pb-6 pt-2 text-sm text-slate-600 leading-relaxed border-t border-slate-100">{faq.a}</div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ))}
-        </div>
-      </div>
-
+      {/* =========================================================
+          WIZARD MODAL (2-Step Form - No Pricing)
+          ========================================================= */}
       <AnimatePresence>
         {wizardStep > 0 && (
           <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -377,10 +358,18 @@ export default function ReferralInvitePage() {
                 <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-2 text-right">Step {wizardStep} of 2</p>
               </div>
 
-              <div className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-white">
+              <div 
+                className="p-6 overflow-y-auto custom-scrollbar flex-1 bg-white relative"
+                onScroll={(e) => {
+                  if (wizardStep === 1) {
+                    const target = e.target as HTMLElement;
+                    setIsAtBottomStep1(target.scrollHeight - target.scrollTop <= target.clientHeight + 20);
+                  }
+                }}
+              >
                 {wizardStep === 1 && (
                   <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-4">
-                    <p className="text-sm font-medium text-slate-500 mb-6">Enter your details below to claim your referral gift.</p>
+                    <p className="text-sm font-medium text-slate-500 mb-6">Enter your details below to claim your trial.</p>
                     
                     <div>
                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1">Parent's Full Name *</label>
@@ -399,11 +388,19 @@ export default function ReferralInvitePage() {
                       <label className="text-[10px] font-black uppercase tracking-widest text-blue-700 block mb-2">How many children are you signing up?</label>
                       <input type="number" min="1" max="5" value={numKids} onChange={e => setNumKids(parseInt(e.target.value) || 1)} className="w-full bg-white border border-blue-200 rounded-lg px-4 py-3 text-lg font-black text-blue-900 text-center focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all shadow-sm" />
                     </div>
+                    
                     <button onClick={handleNextStep} className="w-full mt-8 py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all shadow-xl">
                       Next: Student Details <ArrowRight size={16} />
                     </button>
+                    
+                    <div className={`absolute bottom-6 left-0 right-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none flex items-end justify-center pb-2 transition-opacity duration-300 z-10 ${isAtBottomStep1 ? 'opacity-0' : 'opacity-100'}`}>
+                      <div className="bg-white/80 backdrop-blur-sm p-1.5 rounded-full shadow-sm border border-slate-100 animate-bounce text-slate-400">
+                        <ChevronDown size={16} />
+                      </div>
+                    </div>
                   </motion.div>
                 )}
+
                 {wizardStep === 2 && (
                   <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
                     <p className="text-sm font-medium text-slate-500 mb-2">Enter the details for your {numKids > 1 ? `${numKids} children` : 'child'}.</p>
@@ -449,6 +446,56 @@ export default function ReferralInvitePage() {
           </div>
         )}
       </AnimatePresence>
+
+      <div className="max-w-3xl mx-auto px-5 md:px-12 pb-24 mt-8">
+        <div className="flex justify-center mb-12">
+          <button onClick={() => setShowReviews(true)} className="group relative px-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 flex items-center gap-3 overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-50 to-purple-50 opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative z-10 flex -space-x-2.5">
+              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
+              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
+              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
+              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
+              <div className="w-8 h-8 rounded-full bg-purple-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-purple-600 fill-purple-600"/></div>
+            </div>
+            <div className="relative z-10 flex items-center gap-2">
+              <span className="text-sm font-black text-slate-900 tracking-tight">See what parents are saying</span>
+              <MessageSquareHeart size={18} className="text-rose-500" />
+            </div>
+          </button>
+        </div>
+
+        <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-6 sm:p-8 md:p-10 rounded-[32px] md:rounded-[40px] text-white shadow-2xl relative overflow-hidden mb-12">
+          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none"><Target size={120}/></div>
+          <div className="relative z-10">
+            <h3 className="text-xl sm:text-2xl font-black italic uppercase tracking-tight mb-4">Why a 14-Day Free Trial?</h3>
+            <p className="text-slate-300 text-sm leading-relaxed mb-6">We want to make sure your child actually enjoys coding before you commit to anything. Test the waters completely free.</p>
+            <ul className="space-y-4">
+              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Start with a completely free <strong className="text-white">14-Day Full Access Trial</strong>.</span></li>
+              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Upgrade anytime during the trial. Your paid months only begin <strong className="text-white">after your trial ends</strong>.</span></li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="text-center mb-8"><h2 className="text-3xl font-black text-slate-900 italic uppercase tracking-tighter">Frequently Asked Questions</h2></div>
+        <div className="space-y-4">
+          {faqs.map((faq, index) => (
+            <div key={index} className={`bg-white border rounded-2xl overflow-hidden transition-all duration-300 ${openFaq === index ? 'border-blue-500 shadow-lg shadow-blue-500/10' : 'border-slate-200 shadow-sm hover:border-slate-300'}`}>
+              <button onClick={() => setOpenFaq(openFaq === index ? null : index)} className="w-full flex items-center justify-between p-5 md:p-6 text-left">
+                <span className={`font-black tracking-tight pr-4 ${openFaq === index ? 'text-blue-600' : 'text-slate-900'}`}>{faq.q}</span>
+                <ChevronDown size={20} className={`shrink-0 transition-transform duration-300 ${openFaq === index ? 'rotate-180 text-blue-600' : 'text-slate-400'}`} />
+              </button>
+              <AnimatePresence>
+                {openFaq === index && (
+                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                    <div className="px-5 md:px-6 pb-6 pt-2 text-sm text-slate-600 leading-relaxed border-t border-slate-100">{faq.a}</div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <AnimatePresence>
         {showReviews && (

@@ -147,7 +147,6 @@ export default function VIPInvitePage() {
     return Array.from({length: 24}).map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
   };
 
-  // Scroll Controllers for Step 3
   const scrollStep3Down = () => {
     if (step3ScrollRef.current) {
       step3ScrollRef.current.scrollBy({ top: 180, behavior: 'smooth' });
@@ -160,7 +159,7 @@ export default function VIPInvitePage() {
     }
   };
 
-  // --- THE MASTER SUBMISSION ENGINE (Handles both paths) ---
+  // --- THE MASTER SUBMISSION ENGINE (Handles both paths & creates user profiles!) ---
   const handleComplete = async (path: 'fast-track' | 'trial') => {
     setIsCompleting(true);
     const validChildren = children.filter(c => c.name.trim() !== "");
@@ -168,20 +167,35 @@ export default function VIPInvitePage() {
     try {
       const today = new Date();
       
+      // Calculate Trial Dates for BOTH paths now
+      const launchDate = new Date('2026-05-01T00:00:00');
+      const trialStart = today > launchDate ? today : launchDate;
+      let trialEnd = new Date(trialStart);
+      trialEnd.setDate(trialEnd.getDate() + 14);
+      if (prospectData?.metadata?.custom_trial_end) trialEnd = new Date(prospectData.metadata.custom_trial_end);
+
+      const guardianId = crypto.randomUUID();
+      const onboardingToken = generateToken();
+
       if (path === 'fast-track') {
         // ==========================================
         // PATH A: UPGRADE & FAST-TRACK (PLG Conversion)
         // ==========================================
         setChosenPath('fast-track');
-
-        const guardianId = crypto.randomUUID();
-        const onboardingToken = generateToken();
         
-        // 1. Create Guardian Profile
+        // 1. Create Guardian Profile (ACCOUNT_TIER: TRIAL - Wait for Payment to Upgrade)
         const guardianProfile = {
           id: guardianId, role: 'guardian', display_name: parentName, onboarding_token: onboardingToken,
-          status: 'active', funnel_stage: 'Active (Paid Client)', payment_plan_preference: 'LMS Access',
-          metadata: JSON.stringify({ email: email, phone: phone, booking_credits: 0 })
+          status: 'active', funnel_stage: 'Trial Active', payment_plan_preference: 'LMS Access',
+          account_tier: 'trial', // <--- STILL TRIAL. Grants immediate Walled Garden access.
+          metadata: JSON.stringify({ 
+            email: email, 
+            phone: phone, 
+            booking_credits: 0,
+            trial_start: trialStart.toISOString(), 
+            trial_end: trialEnd.toISOString(),
+            fast_track_pending: true // Tag them so admin knows to process upgrade upon payment
+          })
         };
 
         // 2. Create Student Profiles
@@ -250,17 +264,41 @@ export default function VIPInvitePage() {
         // PATH B: 14-DAY FREE TRIAL
         // ==========================================
         setChosenPath('trial');
-
-        const launchDate = new Date('2026-05-01T00:00:00');
-        const trialStart = today > launchDate ? today : launchDate;
-        let trialEnd = new Date(trialStart);
-        trialEnd.setDate(trialEnd.getDate() + 14);
         
-        if (prospectData?.metadata?.custom_trial_end) trialEnd = new Date(prospectData.metadata.custom_trial_end);
+        // 1. Create Guardian Profile (ACCOUNT_TIER: TRIAL)
+        const guardianProfile = {
+          id: guardianId, 
+          role: 'guardian', 
+          display_name: parentName, 
+          onboarding_token: onboardingToken,
+          status: 'active', 
+          funnel_stage: 'Trial Active', 
+          account_tier: 'trial', // <--- GRANTS WALLED GARDEN ACCESS
+          metadata: JSON.stringify({ email: email, phone: phone, trial_start: trialStart.toISOString(), trial_end: trialEnd.toISOString() })
+        };
+
+        // 2. Create Student Profiles
+        const studentProfiles = validChildren.map((c: any) => ({
+          id: crypto.randomUUID(), 
+          role: 'student', 
+          display_name: c.name, 
+          linked_parent_id: guardianId,
+          status: 'active', 
+          metadata: JSON.stringify({ date_of_birth: c.dob, school_coding: c.codingAtSchool === 'Yes' })
+        }));
+
+        // 3. Save Trial Profiles to DB
+        await supabase.from('profiles').insert([guardianProfile, ...studentProfiles]);
 
         const updatedMeta = { 
-          ...prospectData.metadata, children_data: children, children: validChildren, trial_start: trialStart.toISOString(),
-          trial_end: trialEnd.toISOString(), accepted_date: today.toISOString(), form_progress: 'Completed Trial'
+          ...prospectData.metadata, 
+          children_data: children, 
+          children: validChildren, 
+          trial_start: trialStart.toISOString(),
+          trial_end: trialEnd.toISOString(), 
+          accepted_date: today.toISOString(), 
+          form_progress: 'Completed Trial',
+          converted_profile_id: guardianId // Link prospect to the new profile
         };
 
         await supabase.from('prospects').update({ name: parentName, email: email, phone: phone, status: 'Trial Active', metadata: updatedMeta }).eq('id', inviteId);
@@ -272,7 +310,8 @@ export default function VIPInvitePage() {
             scenario: 'trial',
             name: parentName,
             email: email,
-            quoteId: inviteId // Passing prospect ID so they can set up the trial
+            token: onboardingToken, // Pass the token so they can set a password!
+            quoteId: inviteId 
           })
         });
 
@@ -362,7 +401,7 @@ export default function VIPInvitePage() {
             <p className="text-[15px] sm:text-lg text-slate-600 font-medium leading-relaxed max-w-xl">
               With the rising cost of living, providing your child with premium education shouldn't have to suffer. We are turning screen time into skill time with our self-paced coding LMS.
             </p>
-            <button onClick={handleOpenWizard} className="w-full sm:w-auto mt-4 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 group hover:-translate-y-1">
+            <button onClick={handleOpenWizard} className="w-full sm:w-auto mt-4 px-8 py-4 bg-blue-600 hover:bg-blue-50 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 group hover:-translate-y-1">
               Claim 14-Day Free Trial <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
             </button>
           </div>
@@ -420,29 +459,6 @@ export default function VIPInvitePage() {
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-100">
-                  <p className="text-[9px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1.5 pt-4">
-                    <Clock size={12}/> Post-Trial Rates (First Come, First Served)
-                  </p>
-                  <div className="flex justify-between items-center bg-blue-50 border border-blue-100 rounded-2xl p-4 mb-3">
-                    <div className="text-left">
-                      <p className="text-sm sm:text-base font-black text-slate-900 leading-none">Tier 1</p>
-                      <p className="text-[9px] sm:text-[10px] font-bold text-slate-500">First 10 Licenses</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xl font-black text-blue-600 italic tracking-tighter">R250<span className="text-xs sm:text-sm text-blue-400 not-italic tracking-normal">/mo</span></p>
-                    </div>
-                  </div>
-                  <div className="flex justify-between items-center border border-slate-200 rounded-2xl p-4 opacity-60">
-                    <div className="text-left">
-                      <p className="text-sm sm:text-base font-black text-slate-900 leading-none">Tier 2</p>
-                      <p className="text-[9px] sm:text-[10px] font-bold text-slate-500">Next 10 Licenses</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-lg font-black text-slate-900 italic tracking-tighter">R350<span className="text-[10px] sm:text-xs text-slate-500 not-italic tracking-normal">/mo</span></p>
-                    </div>
-                  </div>
-                </div>
               </>
             ) : (
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center space-y-6">
@@ -471,7 +487,7 @@ export default function VIPInvitePage() {
                         <Mail size={16} className="text-blue-500 shrink-0 mt-0.5" />
                         <div>
                           <p className="text-xs font-bold text-slate-900">(2 of 3) Welcome to RAD Academy!</p>
-                          <p className="text-[10px] text-slate-500 leading-relaxed">A secure link to set your parent password and unlock the learning portal.</p>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">A secure link to set your parent password and unlock the Trial Portal while we process your upgrade.</p>
                         </div>
                       </div>
 
