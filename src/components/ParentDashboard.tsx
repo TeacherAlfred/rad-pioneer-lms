@@ -9,8 +9,9 @@ import {
   Trophy, Clock, Plus, Copy, BarChart3, FolderGit2, Star,
   HeartHandshake, CreditCard, CalendarCheck, MessageSquare, 
   Download, Send, User, FileText, Sparkles, Share2, Award, 
-  CalendarX2, RefreshCw, X, Lock, XCircle, Landmark, CalendarPlus, ArrowRight
+  CalendarX2, RefreshCw, X, Lock, XCircle, Landmark, CalendarPlus, ArrowRight, ImagePlus
 } from 'lucide-react';
+import StudentMediaGallery from "@/components/dashboard/StudentMediaGallery";
 
 export default function ParentDashboard({ parentId, paymentPlan = "" }: { parentId: string, paymentPlan?: string }) {
   
@@ -28,7 +29,7 @@ export default function ParentDashboard({ parentId, paymentPlan = "" }: { parent
   
   // --- UI Navigation State ---
   const [activeGlobalTab, setActiveGlobalTab] = useState<'overview' | 'finance'>('overview');
-  const [activeChildTab, setActiveChildTab] = useState<'overview' | 'portfolio' | 'feedback' | 'security'>('overview'); 
+  const [activeChildTab, setActiveChildTab] = useState<'overview' | 'portfolio' | 'feedback' | 'media' | 'security'>('overview'); 
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   
   // --- Modals & Popups ---
@@ -680,6 +681,7 @@ export default function ParentDashboard({ parentId, paymentPlan = "" }: { parent
                       { id: 'overview', icon: Calendar, label: 'Logistics', disabled: false },
                       { id: 'portfolio', icon: Trophy, label: 'Brags & Portfolio', disabled: false }, // Enabled to show the FOMO screen
                       { id: 'feedback', icon: MessageSquare, label: isLMSAccess ? 'Contact RAD Academy' : 'Teacher Feedback', disabled: false },
+                      { id: 'media', icon: ImagePlus, label: 'Media Gallery', disabled: false },
                       { id: 'security', icon: Shield, label: 'Security', disabled: false },
                     ].map((tab) => (
                       <button
@@ -1033,6 +1035,16 @@ export default function ParentDashboard({ parentId, paymentPlan = "" }: { parent
                           </div>
                         </div>
                       </div>
+                    </motion.div>
+                  )}
+
+                  {/* CHILD TAB: MEDIA GALLERY */}
+                  {activeChildTab === 'media' && (
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="pt-2">
+                      <StudentMediaGallery 
+                        studentId={selectedChild.id} 
+                        studentName={selectedChild.display_name} 
+                      />
                     </motion.div>
                   )}
 

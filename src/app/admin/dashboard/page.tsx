@@ -8,13 +8,13 @@ import {
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
   GraduationCap, Eye, Bell, CalendarDays, Building2, Send, 
   Inbox, Calculator, Key, Brain, Cpu, Trophy, ExternalLink, FileText,
-  BarChart3,
-  Globe
+  BarChart3, Globe, ImagePlus
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import MediaDesk from "@/components/admin/MediaDesk";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -35,10 +35,13 @@ export default function AdminDashboard() {
   const [xpConfig, setXpConfig] = useState({ multiplier: 1.0, start_date: "", end_date: "" });
   const [isSavingXp, setIsSavingXp] = useState(false);
 
-  // NEW: Pending Reviews State
+  // Pending Reviews State
   const [pendingSubmissions, setPendingSubmissions] = useState<any[]>([]);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [reviewTeacherFilter, setReviewTeacherFilter] = useState<string>('all');
+
+  // --- REFACTORED: Media Desk State ---
+  const [isMediaModalOpen, setIsMediaModalOpen] = useState(false);
 
   // Stats State
   const [stats, setStats] = useState({
@@ -137,7 +140,6 @@ export default function AdminDashboard() {
          });
       }
 
-      // NEW: Fetch Pending Reviews from BOTH tables and Missions to map XP
       const [techArchiveRes, tutSubsRes, missionsRes] = await Promise.all([
         supabase.from('tech_archive').select('*, profiles!inner(display_name, metadata)').eq('review_status', 'pending'),
         supabase.from('tutorial_submissions').select('*').eq('status', 'pending'),
@@ -151,7 +153,6 @@ export default function AdminDashboard() {
 
       let combinedPending: any[] = [];
 
-      // 1. Process standard Tech Archive submissions
       if (techArchiveRes.data) {
         const enrichedTech = techArchiveRes.data.map((sub: any) => {
            let max = sub.potential_xp || 0;
@@ -161,7 +162,6 @@ export default function AdminDashboard() {
         combinedPending = [...combinedPending, ...enrichedTech];
       }
 
-      // 2. Process Trial/MakeCode submissions (Fetch profiles manually due to schema setup)
       if (tutSubsRes.data && tutSubsRes.data.length > 0) {
         const studentIds = [...new Set(tutSubsRes.data.map((s: any) => s.student_id))];
         const { data: profilesData } = await supabase.from('profiles').select('id, display_name, metadata').in('id', studentIds);
@@ -176,10 +176,10 @@ export default function AdminDashboard() {
            return {
              ...sub,
              title: missionData ? `${missionData.title} (MakeCode Win ${sub.win_index})` : 'MakeCode Submission',
-             media_url: sub.share_url, // Maps to the ReviewCard's expected URL property
+             media_url: sub.share_url,
              potential_xp: missionData?.xp || 250,
-             xp_earned: sub.xp_earned || 0, // <--- READ FROM DB
-             bonus_xp: sub.bonus_xp || 0, // <--- READ FROM DB
+             xp_earned: sub.xp_earned || 0,
+             bonus_xp: sub.bonus_xp || 0,
              review_status: sub.status,
              profiles: profileMap.get(sub.student_id) || { display_name: 'Unknown Pioneer', metadata: {} },
              source_table: 'tutorial_submissions'
@@ -243,7 +243,7 @@ export default function AdminDashboard() {
     }
   }
 
-  // --- NEW: AWARD XP HANDLER ---
+  // --- XP & EVALUATION HANDLERS ---
   const handleAwardXP = async (submission: any, awardedXp: number, bonusXp: number, justification: string) => {
     const finalAwarded = isNaN(awardedXp) ? 0 : awardedXp;
     const finalBonus = isNaN(bonusXp) ? 0 : bonusXp;
@@ -256,7 +256,6 @@ export default function AdminDashboard() {
     const totalToGive = finalAwarded + finalBonus;
 
     try {
-      // 1. Give the student their XP
       const { data: profile } = await supabase.from('profiles').select('xp, metadata').eq('id', submission.student_id).single();
       
       if (profile) {
@@ -276,14 +275,13 @@ export default function AdminDashboard() {
         }).eq('id', submission.student_id);
       }
 
-      // 2. Route the status update back to the correct source table!
       if (submission.source_table === 'tutorial_submissions') {
         await supabase
           .from('tutorial_submissions')
           .update({ 
             status: 'reviewed',
             xp_earned: (submission.xp_earned || 0) + totalToGive,
-            bonus_xp: (submission.bonus_xp || 0) + finalBonus // <--- TRACK BONUS SEPARATELY
+            bonus_xp: (submission.bonus_xp || 0) + finalBonus 
           })
           .eq('id', submission.id);
       } else {
@@ -292,7 +290,7 @@ export default function AdminDashboard() {
           .update({
             review_status: 'reviewed',
             xp_earned: (submission.xp_earned || 0) + totalToGive, 
-            teacher_xp_awarded: (submission.teacher_xp_awarded || 0) + finalBonus, // Used by tech_archive
+            teacher_xp_awarded: (submission.teacher_xp_awarded || 0) + finalBonus,
             metadata: { 
               ...(submission.metadata || {}), 
               teacher_notes: justification,
@@ -303,7 +301,7 @@ export default function AdminDashboard() {
           .eq('id', submission.id);
       }
 
-      fetchHeartbeat(); // Refresh data
+      fetchHeartbeat(); 
     } catch (err) {
       console.error(err);
       alert("Error updating XP");
@@ -338,7 +336,6 @@ export default function AdminDashboard() {
     router.push("/login");
   };
 
-  // --- Dynamic Filters for Review Modal ---
   const reviewTeachers = useMemo(() => {
     const map = new Map();
     pendingSubmissions.forEach(sub => {
@@ -433,7 +430,7 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans overflow-x-hidden text-left relative">
       
-      {/* NOTIFICATION PANEL (UNCHANGED) */}
+      {/* NOTIFICATION PANEL */}
       <AnimatePresence>
         {newRegistrations.length > 0 && (
           <motion.div
@@ -493,6 +490,9 @@ export default function AdminDashboard() {
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
+            <button onClick={() => setIsMediaModalOpen(true)} className="px-6 py-4 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg flex items-center gap-2">
+              <ImagePlus size={14} /> Open Media Desk
+            </button>
             <button onClick={() => setIsXpModalOpen(true)} className="px-6 py-4 bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg flex items-center gap-2">
               <Trophy size={14} /> XP Events
             </button>
@@ -913,6 +913,9 @@ export default function AdminDashboard() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* --- RENDER THE COMPONENTIZED MEDIA DESK --- */}
+      <MediaDesk isOpen={isMediaModalOpen} onClose={() => setIsMediaModalOpen(false)} />
 
     </div>
   );
