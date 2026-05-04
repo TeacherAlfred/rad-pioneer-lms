@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     const requestUrl = new URL(req.url);
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || `${requestUrl.protocol}//${requestUrl.host}`;
 
-    let queuePayload: any[] = [];
+    const queuePayload: any[] = [];
     const now = new Date();
 
     // ==========================================
