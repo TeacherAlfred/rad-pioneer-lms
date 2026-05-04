@@ -290,12 +290,11 @@ export default function DashboardPage() {
   // They only see the lockdown if they are LMS-only AND it is before May 8th
   const isPreLaunchLms = isLmsOnly && new Date() < new Date("2026-05-08T23:59:59+02:00");
 
-  // --- NEW: Trigger 2x XP Modal for Full-Tier Learners Only ---
+  // --- NEW: Trigger 2x XP Event Banner for Full-Tier Learners Only ---
   useEffect(() => {
     if (!loading && !isLmsOnly) {
       const hasSeenEvent = sessionStorage.getItem("xp_event_may_2026");
       if (!hasSeenEvent) {
-        // Slight delay so the dashboard renders beautifully before the modal drops in
         const timer = setTimeout(() => setShowXpEventModal(true), 1200);
         return () => clearTimeout(timer);
       }
@@ -370,6 +369,44 @@ export default function DashboardPage() {
     <DashboardClientWrapper initialStats={stats}>
       {/* Conditionally remove the lg:mr-80 margin if pre-launch so the dashboard centers completely */}
       <main className={`min-h-screen relative overflow-hidden text-left bg-[#020617] ${isPreLaunchLms ? '' : 'lg:mr-80'}`}>
+        
+        {/* --- NEW: 2X XP FOMO EVENT BANNER (FULL STUDENTS ONLY) --- */}
+        <AnimatePresence>
+          {showXpEventModal && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="bg-gradient-to-r from-amber-600 via-orange-500 to-amber-600 relative z-50 shadow-[0_0_20px_rgba(245,158,11,0.3)] border-b border-amber-400/50 overflow-hidden"
+            >
+              <div className="max-w-4xl lg:max-w-5xl mx-auto px-4 sm:px-6 md:px-12 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-black/20 rounded-full flex items-center justify-center shrink-0">
+                    <Zap size={16} className="text-amber-100 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-widest italic leading-tight">Double XP Week!</h3>
+                    <p className="text-[10px] text-amber-100 font-bold uppercase tracking-widest mt-0.5">Special LMS Launch Event</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-4 bg-black/20 px-4 py-1.5 rounded-full border border-black/10">
+                  <div className="flex gap-2 text-white font-black italic text-xs md:text-sm tracking-widest">
+                    <span>{timeLeft.days.toString().padStart(2, '0')}d</span><span className="text-amber-300 opacity-50">:</span>
+                    <span>{timeLeft.hours.toString().padStart(2, '0')}h</span><span className="text-amber-300 opacity-50">:</span>
+                    <span>{timeLeft.minutes.toString().padStart(2, '0')}m</span><span className="text-amber-300 opacity-50">:</span>
+                    <span>{timeLeft.seconds.toString().padStart(2, '0')}s</span>
+                  </div>
+                </div>
+
+                <button onClick={closeXpModal} className="absolute sm:relative right-4 top-4 sm:right-auto sm:top-auto text-amber-200 hover:text-white transition-colors p-1 bg-black/10 rounded-full sm:bg-transparent sm:p-0">
+                  <X size={16} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="max-w-4xl lg:max-w-5xl mx-auto p-4 sm:p-6 md:p-12 space-y-8 md:space-y-12 relative z-10 pb-12 md:pb-20">
           
           {/* =========================================
@@ -667,44 +704,44 @@ export default function DashboardPage() {
                                     <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.2)_50%,transparent_75%)] bg-[length:10px_10px] animate-[shimmer_1s_linear_infinite]" />
                                   </motion.div>
                                 </div>
-                              </div>
-                              <div className="pt-5 border-t border-white/5">
-                                <div className="flex justify-between items-center mb-3 gap-3">
-                                  <div className="flex items-center gap-1.5 min-w-0">
-                                    <Zap size={12} className="text-emerald-500 shrink-0" /> 
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 truncate">
-                                      {progressStats.currentModuleTitle || "System Initialization"}
+                                <div className="pt-5 border-t border-white/5">
+                                  <div className="flex justify-between items-center mb-3 gap-3">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <Zap size={12} className="text-emerald-500 shrink-0" /> 
+                                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 truncate">
+                                        {progressStats.currentModuleTitle || "System Initialization"}
+                                      </span>
+                                    </div>
+                                    <span className="text-xs font-black text-emerald-400 shrink-0 whitespace-nowrap">
+                                      {progressStats.moduleCompletedMissions} / {progressStats.moduleTotalMissions} Core
                                     </span>
                                   </div>
-                                  <span className="text-xs font-black text-emerald-400 shrink-0 whitespace-nowrap">
-                                    {progressStats.moduleCompletedMissions} / {progressStats.moduleTotalMissions} Core
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-1.5 md:gap-2">
-                                  {Array.from({ length: progressStats.moduleTotalMissions }).map((_, i) => {
-                                    const isComplete = i < progressStats.moduleCompletedMissions;
-                                    const isActive = i === progressStats.moduleCompletedMissions;
-                                    return (
-                                      <div 
-                                        key={i} 
-                                        className={`h-4 md:h-5 flex-1 rounded-sm border transition-all duration-500 ${
-                                          isComplete 
-                                            ? 'bg-emerald-500 border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.4)]' 
-                                            : isActive
-                                              ? 'bg-blue-500/20 border-blue-400/50 animate-pulse shadow-[0_0_10px_rgba(59,130,246,0.2)]'
-                                              : 'bg-slate-800/50 border-slate-700/50'
-                                        }`}
-                                      />
-                                    );
-                                  })}
-                                  <div 
-                                    className={`h-5 md:h-6 w-8 flex items-center justify-center rounded-md border transition-all duration-500 ml-1 ${
-                                      progressStats.moduleCompletedMissions === progressStats.moduleTotalMissions && progressStats.moduleTotalMissions > 0
-                                        ? 'bg-yellow-500 border-yellow-400 shadow-[0_0_15px_rgba(234,179,8,0.5)] animate-pulse'
-                                        : 'bg-slate-800/50 border-slate-700/50'
-                                    }`}
-                                  >
-                                    <ShieldCheck size={12} className={progressStats.moduleCompletedMissions === progressStats.moduleTotalMissions && progressStats.moduleTotalMissions > 0 ? 'text-black' : 'text-slate-600'} />
+                                  <div className="flex items-center gap-1.5 md:gap-2">
+                                    {Array.from({ length: progressStats.moduleTotalMissions }).map((_, i) => {
+                                      const isComplete = i < progressStats.moduleCompletedMissions;
+                                      const isActive = i === progressStats.moduleCompletedMissions;
+                                      return (
+                                        <div 
+                                          key={i} 
+                                          className={`h-4 md:h-5 flex-1 rounded-sm border transition-all duration-500 ${
+                                            isComplete 
+                                              ? 'bg-emerald-500 border-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.4)]' 
+                                              : isActive
+                                                ? 'bg-blue-500/20 border-blue-400/50 animate-pulse shadow-[0_0_10px_rgba(59,130,246,0.2)]'
+                                                : 'bg-slate-800/50 border-slate-700/50'
+                                          }`}
+                                        />
+                                      );
+                                    })}
+                                    <div 
+                                      className={`h-5 md:h-6 w-8 flex items-center justify-center rounded-md border transition-all duration-500 ml-1 ${
+                                        progressStats.moduleCompletedMissions === progressStats.moduleTotalMissions && progressStats.moduleTotalMissions > 0
+                                          ? 'bg-yellow-500 border-yellow-400 shadow-[0_0_15px_rgba(234,179,8,0.5)] animate-pulse'
+                                          : 'bg-slate-800/50 border-slate-700/50'
+                                      }`}
+                                    >
+                                      <ShieldCheck size={12} className={progressStats.moduleCompletedMissions === progressStats.moduleTotalMissions && progressStats.moduleTotalMissions > 0 ? 'text-black' : 'text-slate-600'} />
+                                    </div>
                                   </div>
                                 </div>
                               </div>
@@ -910,77 +947,6 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* --- NEW: 2X XP FOMO EVENT MODAL (FULL STUDENTS ONLY) --- */}
-      <AnimatePresence>
-        {showXpEventModal && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 md:p-6">
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              onClick={closeXpModal}
-              className="absolute inset-0 bg-black/80 backdrop-blur-md" 
-            />
-            
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-md bg-gradient-to-br from-[#0f172a] to-[#020617] border border-amber-500/30 rounded-[32px] overflow-hidden shadow-[0_0_50px_rgba(245,158,11,0.2)] text-center p-8 md:p-10"
-            >
-              <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-transparent via-amber-500 to-transparent animate-pulse" />
-              
-              <button onClick={closeXpModal} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors">
-                <X size={20} />
-              </button>
-
-              <div className="w-20 h-20 mx-auto bg-amber-500/10 border border-amber-500/30 rounded-full flex items-center justify-center mb-6 shadow-inner relative">
-                 <div className="absolute inset-0 bg-amber-500/20 blur-xl rounded-full animate-pulse" />
-                 <Zap className="w-10 h-10 text-amber-400 relative z-10" />
-              </div>
-
-              <span className="px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-[10px] font-black uppercase tracking-widest mb-4 inline-block">
-                Special LMS Launch Event
-              </span>
-              
-              <h3 className="text-4xl font-black text-white uppercase italic tracking-tighter leading-tight mb-4">
-                DOUBLE <span className="text-amber-400">XP</span> <br/> WEEK!
-              </h3>
-              
-              <p className="text-slate-300 text-sm font-medium leading-relaxed mb-6">
-                Get ready! From <strong className="text-white">May 1st - 8th</strong>, all missions and daily claims yield <strong className="text-amber-400 font-black">2x XP</strong>. Rack up points and dominate the leaderboard!
-              </p>
-
-              {/* Mini Countdown Timer inside the Modal */}
-              <div className="grid grid-cols-4 gap-2 w-full mb-8">
-                {[
-                  { label: 'Days', value: timeLeft.days },
-                  { label: 'Hrs', value: timeLeft.hours },
-                  { label: 'Min', value: timeLeft.minutes },
-                  { label: 'Sec', value: timeLeft.seconds }
-                ].map((t, i) => (
-                  <div key={i} className="bg-black/40 border border-amber-500/20 rounded-xl p-2 md:p-3 flex flex-col items-center shadow-inner">
-                    <span className="text-xl md:text-2xl font-black italic text-amber-500 leading-none mb-1">
-                      {t.value.toString().padStart(2, '0')}
-                    </span>
-                    <span className="text-[8px] font-black text-amber-500/50 uppercase tracking-widest">
-                      {t.label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <button 
-                onClick={closeXpModal}
-                className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black rounded-2xl font-black uppercase tracking-widest text-[12px] transition-all shadow-[0_0_20px_rgba(245,158,11,0.4)]"
-              >
-                I'm Ready!
-              </button>
             </motion.div>
           </div>
         )}
