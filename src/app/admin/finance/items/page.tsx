@@ -156,7 +156,7 @@ export default function ItemsPortal() {
     let bestMargin = { name: "N/A", qty: 0, rev: 0, gp: 0, margin: 0, totalCost: 0, invoicedRev: 0, paidRev: 0, allInvoices: [] as any[], paidInvoices: [] as any[] };
     
     // Global Aggregate Accumulator
-    let aggregate = { units: 0, invoiced: 0, paid: 0, outstanding: 0, cost: 0, gp: 0, margin: 0 };
+    const aggregate = { units: 0, invoiced: 0, paid: 0, outstanding: 0, cost: 0, gp: 0, margin: 0 };
 
     itemStats.forEach(stat => {
       const margin = stat.rev > 0 ? (stat.gp / stat.rev) * 100 : 0;

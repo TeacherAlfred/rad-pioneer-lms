@@ -67,12 +67,8 @@ export default function PipelineDashboard() {
     billingItems.forEach(i => {
       const cost = Number(i.cost) || 0;
       
-      // Map the primary name (lowercase and trimmed)
-      if (i.name) {
-        map[i.name.toLowerCase().trim()] = cost;
-      }
+      if (i.name) map[i.name.toLowerCase().trim()] = cost;
       
-      // Map any aliases if they exist in the DB
       if (i.aliases && Array.isArray(i.aliases)) {
         i.aliases.forEach((alias: string) => {
           if (alias) map[alias.toLowerCase().trim()] = cost;
@@ -83,11 +79,16 @@ export default function PipelineDashboard() {
   }, [billingItems]);
 
   const processedQuotes = useMemo(() => {
-    return quotes.map(q => {
+    const nowMs = Date.now();
+
+    // --- NEW: Remove manually expired and superseded quotes from the active pipeline ---
+    const activePipelineQuotes = quotes.filter(q => q.status !== 'expired' && q.status !== 'superseded');
+
+    return activePipelineQuotes.map(q => {
       let profit = 0;
       let parsedLineItems: any[] = [];
 
-      // SAFE JSON PARSING: Handle stringified JSONB arrays from Supabase
+      // SAFE JSON PARSING
       if (Array.isArray(q.line_items)) {
         parsedLineItems = q.line_items;
       } else if (typeof q.line_items === 'string') {
@@ -95,13 +96,11 @@ export default function PipelineDashboard() {
           parsedLineItems = JSON.parse(q.line_items);
           if (!Array.isArray(parsedLineItems)) parsedLineItems = [];
         } catch (e) {
-          console.error("Failed to parse line_items for quote:", q.id, e);
           parsedLineItems = [];
         }
       }
 
       parsedLineItems.forEach((li: any) => {
-        // Fuzzy match: lowercase and trim the quote's line item description
         const rawDesc = li.desc || li.description || "";
         const searchKey = rawDesc.toLowerCase().trim();
         
@@ -117,8 +116,10 @@ export default function PipelineDashboard() {
       const totalAmt = Number(q.total_amount) || 0;
       const marginPct = totalAmt > 0 ? (profit / totalAmt) * 100 : 0;
 
-      // Return the newly parsed array so the Drawer UI doesn't crash on .map() later!
-      return { ...q, profit, marginPct, line_items: parsedLineItems };
+      // Calculate if the quote passed its expiry date but hasn't been manually cleared
+      const isExpired = q.status === 'pending' && q.expires_at && new Date(q.expires_at).getTime() < nowMs;
+
+      return { ...q, profit, marginPct, line_items: parsedLineItems, isExpired };
     });
   }, [quotes, itemCostMap]);
 
@@ -134,13 +135,9 @@ export default function PipelineDashboard() {
     const declined = processedQuotes.filter(q => q.status === 'declined');
     const past7Days = processedQuotes.filter(q => new Date(q.created_at) >= sevenDaysAgo);
 
-    // Calculate Profit for Top 20% Analysis on PENDING quotes
     const quotesWithProfit = [...pending];
-
-    // Sort by most profitable (absolute margin)
     quotesWithProfit.sort((a, b) => b.profit - a.profit);
     
-    // Select the Top 20% of quotes by volume
     const top20Count = Math.max(1, Math.ceil(quotesWithProfit.length * 0.2));
     const topQuotes = quotesWithProfit.slice(0, top20Count).filter(q => q.profit > 0);
 
@@ -176,7 +173,6 @@ export default function PipelineDashboard() {
   const filteredQuotes = useMemo(() => {
     let result = [...processedQuotes];
 
-    // Apply Active Card Filter
     if (activeFilter === 'past7') {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -191,7 +187,6 @@ export default function PipelineDashboard() {
       result = result.filter(q => pipelineStats.paretoIds.has(q.id));
     }
 
-    // Apply Search Query
     if (searchQuery.trim()) {
       const lowerQ = searchQuery.toLowerCase();
       result = result.filter(q => {
@@ -202,7 +197,6 @@ export default function PipelineDashboard() {
       });
     }
 
-    // Sort pareto view by largest profit first
     if (activeFilter === 'pareto') {
       result.sort((a, b) => b.profit - a.profit);
     }
@@ -214,6 +208,20 @@ export default function PipelineDashboard() {
   const openQuoteDrawer = (quote: any) => {
     setActiveQuote(quote);
     setIsDrawerOpen(true);
+  };
+
+  const handleMarkExpired = async () => {
+    if (!activeQuote) return;
+    try {
+      await supabase.from('billing_records').update({ status: 'expired' }).eq('id', activeQuote.id);
+      
+      // Update local state directly so it drops out of processedQuotes immediately
+      setQuotes(quotes.map(q => q.id === activeQuote.id ? { ...q, status: 'expired' } : q));
+      setIsDrawerOpen(false);
+    } catch (e) {
+      console.error("Failed to expire quote:", e);
+      alert("Failed to mark quote as expired.");
+    }
   };
 
   const openWhatsAppComposer = (quote: any, e?: React.MouseEvent) => {
@@ -439,9 +447,10 @@ export default function PipelineDashboard() {
                             q.status === 'invoiced' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' :
                             q.status === 'accepted' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                             q.status === 'declined' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                            q.isExpired ? 'bg-rose-500/20 text-rose-400 border-rose-500/30 animate-pulse' :
                             'bg-amber-500/10 text-amber-400 border-amber-500/20'
                           }`}>
-                            {q.status === 'invoiced' ? 'Accepted & Invoiced' : q.status}
+                            {q.status === 'invoiced' ? 'Accepted & Invoiced' : q.isExpired ? 'Expired (Review)' : q.status}
                           </span>
                         </td>
                         <td className="px-6 py-5 text-right">
@@ -502,9 +511,10 @@ export default function PipelineDashboard() {
                             activeQuote.status === 'invoiced' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' :
                             activeQuote.status === 'accepted' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                             activeQuote.status === 'declined' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                            activeQuote.isExpired ? 'bg-rose-500/20 text-rose-400 border-rose-500/30 animate-pulse' :
                             'bg-amber-500/10 text-amber-400 border-amber-500/20'
                           }`}>
-                            {activeQuote.status === 'invoiced' ? 'Accepted & Invoiced' : activeQuote.status}
+                            {activeQuote.status === 'invoiced' ? 'Accepted & Invoiced' : activeQuote.isExpired ? 'Expired (Review)' : activeQuote.status}
                        </span>
                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 font-mono">QT-{activeQuote.invoice_number}</span>
                      </div>
@@ -596,17 +606,26 @@ export default function PipelineDashboard() {
                    <a 
                      href={`/quote/${activeQuote.id}`} 
                      target="_blank" 
-                     className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-colors"
+                     className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-colors border border-white/10"
                    >
-                     <FileText size={16}/> Web Quote
+                     <FileText size={14}/> Web Quote
                    </a>
                    {activeQuote.status === 'pending' && (
-                     <button 
-                       onClick={() => openWhatsAppComposer(activeQuote)}
-                       className="flex-[2] py-3.5 bg-green-600 hover:bg-green-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-green-900/20"
-                     >
-                       <MessageCircle size={16}/> Draft WhatsApp Message
-                     </button>
+                     <>
+                       <button 
+                         onClick={handleMarkExpired}
+                         className="px-4 py-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center transition-all border border-rose-500/20"
+                         title="Mark as Expired (Remove from active Pipeline)"
+                       >
+                         <XCircle size={16}/>
+                       </button>
+                       <button 
+                         onClick={() => openWhatsAppComposer(activeQuote)}
+                         className="flex-[2] py-3.5 bg-green-600 hover:bg-green-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-green-900/20"
+                       >
+                         <MessageCircle size={14}/> WhatsApp Follow-up
+                       </button>
+                     </>
                    )}
                 </div>
              </motion.div>

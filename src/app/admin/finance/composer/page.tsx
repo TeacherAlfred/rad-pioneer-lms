@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
   Plus, Trash2, Save, Send, User, ArrowRight,
-  Search, Package, Calculator, ArrowLeft, ChevronDown, Eye, X, Shield, Printer, CreditCard, Loader2, Calendar, FileText, Download, CheckCircle2, Building2 
+  Search, Package, Calculator, ArrowLeft, ChevronDown, Eye, X, Shield, Printer, CreditCard, Loader2, Calendar, FileText, Download, CheckCircle2, Building2, Link as LinkIcon
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -24,7 +24,7 @@ function BillingComposer() {
   const searchParams = useSearchParams();
   
   const initialLeadId = searchParams.get('leadId');
-  const initialClientId = searchParams.get('client_id'); // NEW: For B2B
+  const initialClientId = searchParams.get('client_id'); 
   const prospectName = searchParams.get('prospectName');
   const prospectEmail = searchParams.get('prospectEmail');
   const prospectPhone = searchParams.get('prospectPhone');
@@ -32,7 +32,7 @@ function BillingComposer() {
   const initialType = (searchParams.get('mode') as 'invoice' | 'quote') || (searchParams.get('type') as 'invoice' | 'quote') || 'invoice';
 
   const [docType, setDocType] = useState<'invoice' | 'quote'>(initialType);
-  const [clientMode, setClientMode] = useState<'b2c' | 'b2b'>(initialClientId ? 'b2b' : 'b2c'); // NEW: Toggle state
+  const [clientMode, setClientMode] = useState<'b2c' | 'b2b'>(initialClientId ? 'b2b' : 'b2c'); 
   const [expiryDate, setExpiryDate] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -41,12 +41,16 @@ function BillingComposer() {
   const [isIframe, setIsIframe] = useState(false);
 
   const [dbItems, setDbItems] = useState<any[]>([]);
-  const [corporateClients, setCorporateClients] = useState<any[]>([]); // NEW: B2B Database
+  const [corporateClients, setCorporateClients] = useState<any[]>([]); 
   const [nextInvNum, setNextInvNum] = useState(1100);
 
   const [guardianSearch, setGuardianSearch] = useState("");
-  const [selectedGuardian, setSelectedGuardian] = useState<any>(null); // Acts as universal recipient
+  const [selectedGuardian, setSelectedGuardian] = useState<any>(null); 
   const [suggestedGuardians, setSuggestedGuardians] = useState<any[]>([]);
+
+  // --- NEW: Linked Documents State ---
+  const [availableDocs, setAvailableDocs] = useState<any[]>([]);
+  const [linkedDocs, setLinkedDocs] = useState<any[]>([]);
 
   // Include disc_type and disc_rand for feature parity
   const [lineItems, setLineItems] = useState<any[]>([{ desc: '', note: '', qty: 1, price: 0, disc: 0, disc_type: 'pct', disc_rand: "0.00" }]);
@@ -94,6 +98,26 @@ function BillingComposer() {
     }
   }, [initialLeadId, initialClientId, prospectName, prospectEmail, initialType, convertFromQuoteId]);
 
+  // --- NEW: Fetch related documents when client changes ---
+  useEffect(() => {
+    if (selectedGuardian && !selectedGuardian.id.toString().startsWith('prospect-')) {
+      const fetchClientDocs = async () => {
+        const isB2B = selectedGuardian.isB2B;
+        const { data } = await supabase.from('billing_records')
+          .select('id, invoice_number, doc_type, total_amount, status, created_at')
+          .eq(isB2B ? 'corporate_client_id' : 'guardian_id', selectedGuardian.id)
+          .in('status', ['pending', 'accepted', 'declined', 'expired']) // Show docs that can be superseded
+          .order('created_at', { ascending: false });
+        
+        if (data) setAvailableDocs(data);
+      };
+      fetchClientDocs();
+    } else {
+      setAvailableDocs([]);
+      setLinkedDocs([]); // Clear linked docs if client is removed/temp
+    }
+  }, [selectedGuardian]);
+
   useEffect(() => {
     if (clientMode === 'b2c' && guardianSearch.length > 2) {
       const searchGuardians = async () => {
@@ -114,7 +138,6 @@ function BillingComposer() {
     const { data: items } = await supabase.from('billing_items').select('*').eq('is_active', true);
     if (items) setDbItems(items);
 
-    // Fetch corporate clients for the dropdown
     const { data: corps } = await supabase.from('corporate_clients').select('*').order('company_name');
     if (corps) setCorporateClients(corps);
 
@@ -137,7 +160,6 @@ function BillingComposer() {
   async function fetchSpecificCorporate(id: string) {
     const { data } = await supabase.from('corporate_clients').select('*').eq('id', id).single();
     if (data) {
-      // Map B2B structure to existing B2C interface so the rest of the app doesn't break
       setSelectedGuardian({
         id: data.id,
         isB2B: true,
@@ -196,7 +218,8 @@ function BillingComposer() {
         global_note: globalNote,
         prospect_name: isTempProspect ? selectedGuardian.display_name : null,
         prospect_email: isTempProspect ? selectedGuardian.email : null,
-        prospect_phone: isTempProspect ? selectedGuardian.phone : null
+        prospect_phone: isTempProspect ? selectedGuardian.phone : null,
+        linked_documents: linkedDocs.map(d => ({ id: d.id, ref: d.invoice_number, type: d.doc_type })) // Track linked docs
       };
 
       if (convertFromQuoteId) {
@@ -211,13 +234,14 @@ function BillingComposer() {
          disc: item.disc
       }));
 
+      // 1. Insert the new document
       const { data: newRecord, error: dbError } = await supabase
         .from('billing_records')
         .insert({
           invoice_number: nextInvNum,
           payment_reference: paymentReference,
           guardian_id: dbGuardianId, 
-          corporate_client_id: dbCorporateId, // NEW: Saves to correct CRM
+          corporate_client_id: dbCorporateId, 
           total_amount: grandTotal,
           line_items: cleanLineItems,
           status: 'pending',
@@ -230,7 +254,32 @@ function BillingComposer() {
 
       if (dbError) throw dbError;
 
-      if (convertFromQuoteId) {
+      // 2. Process linked documents (Marking old ones as superseded/expired to clean pipeline)
+      if (linkedDocs.length > 0) {
+         for (const doc of linkedDocs) {
+            // Fetch old metadata so we don't overwrite it
+            const { data: oldDoc } = await supabase.from('billing_records').select('metadata').eq('id', doc.id).single();
+            const oldMeta = oldDoc?.metadata || {};
+            
+            const updatePayload: any = {
+              metadata: { 
+                ...oldMeta, 
+                superseded_by: newRecord.id, 
+                superseded_date: new Date().toISOString() 
+              }
+            };
+            
+            // Apply new pipeline status if requested
+            if (doc.new_status !== 'none') {
+              updatePayload.status = doc.new_status;
+            }
+            
+            await supabase.from('billing_records').update(updatePayload).eq('id', doc.id);
+         }
+      }
+
+      // Legacy handler for direct "Convert to Invoice" button
+      if (convertFromQuoteId && !linkedDocs.find(d => d.id === convertFromQuoteId)) {
           const { data: oldQuote } = await supabase.from('billing_records').select('metadata').eq('id', convertFromQuoteId).single();
           if (oldQuote) {
               await supabase.from('billing_records').update({
@@ -240,6 +289,7 @@ function BillingComposer() {
           }
       }
 
+      // 3. Document Dispatch Operations (Email/PDF)
       if (action === 'email') {
           const templateSlug = docType === 'invoice' ? 'billing_invoice' : 'billing_quote';
           const { data: templateData } = await supabase.from('email_templates').select('body_content').eq('slug', templateSlug).single();
@@ -319,7 +369,6 @@ function BillingComposer() {
         if (isIframe) {
           window.location.reload(); 
         } else {
-          // Route intelligently back to B2B profile or general finance ledger
           if (isB2B && dbCorporateId) {
             router.push(`/admin/consulting/${dbCorporateId}`);
           } else {
@@ -525,6 +574,91 @@ function BillingComposer() {
                     placeholder="Enter overall notes for this document (e.g. valid for Term 2 only, special conditions)..."
                 />
             </div>
+
+            {/* --- NEW: LINKED DOCUMENTS MODULE --- */}
+            {availableDocs.length > 0 && (
+              <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-6">
+                <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                  <label className="text-[10px] font-black uppercase text-slate-500 flex items-center gap-2">
+                    <LinkIcon size={14}/> Previous Documents & Linkage
+                  </label>
+                </div>
+                
+                <div className="space-y-4">
+                   <select 
+                     className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold text-white outline-none focus:border-purple-500"
+                     onChange={(e) => {
+                       if (e.target.value) {
+                         const doc = availableDocs.find(d => d.id === e.target.value);
+                         if (doc && !linkedDocs.find(l => l.id === doc.id)) {
+                           // 1. Default action is supersede to auto-clean the pipeline
+                           setLinkedDocs([...linkedDocs, { ...doc, new_status: 'superseded' }]);
+                           
+                           // 2. AUTO-ADD LINE ITEMS FROM THE LINKED DOC
+                           let parsedItems: any[] = [];
+                           if (Array.isArray(doc.line_items)) {
+                             parsedItems = doc.line_items;
+                           } else if (typeof doc.line_items === 'string') {
+                             try { parsedItems = JSON.parse(doc.line_items); } catch(err) {}
+                           }
+                           
+                           if (parsedItems.length > 0) {
+                             setLineItems(prev => {
+                               // If the composer only has the default empty row, replace it completely
+                               if (prev.length === 1 && !prev[0].desc && prev[0].price === 0) {
+                                 return [...parsedItems];
+                               }
+                               // Otherwise, append the items to the bottom of the list
+                               return [...prev, ...parsedItems];
+                             });
+                           }
+                         }
+                         e.target.value = ""; 
+                       }
+                     }}
+                     value=""
+                   >
+                     <option value="" disabled>+ Link a previous quote or invoice...</option>
+                     {availableDocs.filter(d => !linkedDocs.find(l => l.id === d.id)).map(d => (
+                       <option key={d.id} value={d.id}>
+                         {d.doc_type === 'quote' ? 'QT' : 'INV'}-{d.invoice_number} (R{d.total_amount}) • Status: {d.status}
+                       </option>
+                     ))}
+                   </select>
+
+                   {linkedDocs.length > 0 && (
+                     <div className="space-y-2 mt-4">
+                       {linkedDocs.map((doc, idx) => (
+                          <div key={doc.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-black/20 border border-white/5 rounded-2xl gap-4">
+                             <div>
+                                <p className="text-sm font-bold text-white">{doc.doc_type === 'quote' ? 'QT' : 'INV'}-{doc.invoice_number}</p>
+                                <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">Val: R{doc.total_amount} | Status: {doc.status}</p>
+                             </div>
+                             <div className="flex flex-wrap items-center gap-2">
+                                <select 
+                                  value={doc.new_status}
+                                  onChange={(e) => {
+                                    const next = [...linkedDocs];
+                                    next[idx].new_status = e.target.value;
+                                    setLinkedDocs(next);
+                                  }}
+                                  className="bg-[#020617] border border-white/10 rounded-lg px-3 py-2 text-xs font-bold text-slate-300 outline-none focus:border-purple-500 flex-1 sm:flex-none"
+                                >
+                                  <option value="none">Just Link (Keep {doc.status})</option>
+                                  <option value="superseded">Replace (Remove from pipeline)</option>
+                                  <option value="expired">Mark Expired (Remove from pipeline)</option>
+                                </select>
+                                <button onClick={() => setLinkedDocs(linkedDocs.filter((_, i) => i !== idx))} className="p-2 text-slate-600 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors">
+                                   <Trash2 size={16} />
+                                </button>
+                             </div>
+                          </div>
+                       ))}
+                     </div>
+                   )}
+                </div>
+              </div>
+            )}
             
             {!isIframe && (
               <div className="px-8 flex justify-end">
@@ -540,7 +674,6 @@ function BillingComposer() {
             <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-6">
               <h3 className="text-sm font-black uppercase tracking-widest text-white border-b border-white/5 pb-4">Recipient_Sector</h3>
               
-              {/* NEW: B2B vs B2C Toggle */}
               {!selectedGuardian && (
                 <div className="flex bg-[#020617] p-1 rounded-xl border border-white/10 mb-4">
                   <button 
@@ -627,8 +760,16 @@ function BillingComposer() {
               <h3 className="text-sm font-black uppercase tracking-widest opacity-60">Ledger_Final_Total</h3>
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <div className="flex justify-between opacity-70 text-[11px] font-bold"><span>Sub_Total</span><span>R {subTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
-                  <div className="flex justify-between opacity-70 text-[11px] font-bold text-rose-200"><span>Line_Discounts</span><span>- R {lineItemTotalDisc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></div>
+                  <div className="flex justify-between opacity-70 text-[11px] font-bold">
+                    <span>Sub_Total</span>
+                    {/* Changed undefined to 'en-US' */}
+                    <span>R {subTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between opacity-70 text-[11px] font-bold text-rose-200">
+                    <span>Line_Discounts</span>
+                    {/* Changed undefined to 'en-US' */}
+                    <span>- R {lineItemTotalDisc.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
                 </div>
                 <div className="pt-3 border-t border-white/20 space-y-2">
                    <label className="text-[9px] font-black uppercase opacity-60 ml-1 tracking-widest">Overall Adjustment %</label>
@@ -636,7 +777,8 @@ function BillingComposer() {
                 </div>
                 <div className="pt-4 border-t border-white/30 flex justify-between items-end">
                   <span className="font-black uppercase text-[10px]">Total_Payable</span>
-                  <span className="text-4xl font-black tracking-tighter italic">R {grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  {/* Changed undefined to 'en-US' */}
+                  <span className="text-4xl font-black tracking-tighter italic">R {grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               </div>
               <div className="flex flex-col gap-3">
