@@ -85,7 +85,22 @@ export default function PipelineDashboard() {
   const processedQuotes = useMemo(() => {
     return quotes.map(q => {
       let profit = 0;
-      q.line_items?.forEach((li: any) => {
+      let parsedLineItems: any[] = [];
+
+      // SAFE JSON PARSING: Handle stringified JSONB arrays from Supabase
+      if (Array.isArray(q.line_items)) {
+        parsedLineItems = q.line_items;
+      } else if (typeof q.line_items === 'string') {
+        try {
+          parsedLineItems = JSON.parse(q.line_items);
+          if (!Array.isArray(parsedLineItems)) parsedLineItems = [];
+        } catch (e) {
+          console.error("Failed to parse line_items for quote:", q.id, e);
+          parsedLineItems = [];
+        }
+      }
+
+      parsedLineItems.forEach((li: any) => {
         // Fuzzy match: lowercase and trim the quote's line item description
         const rawDesc = li.desc || li.description || "";
         const searchKey = rawDesc.toLowerCase().trim();
@@ -102,7 +117,8 @@ export default function PipelineDashboard() {
       const totalAmt = Number(q.total_amount) || 0;
       const marginPct = totalAmt > 0 ? (profit / totalAmt) * 100 : 0;
 
-      return { ...q, profit, marginPct };
+      // Return the newly parsed array so the Drawer UI doesn't crash on .map() later!
+      return { ...q, profit, marginPct, line_items: parsedLineItems };
     });
   }, [quotes, itemCostMap]);
 
