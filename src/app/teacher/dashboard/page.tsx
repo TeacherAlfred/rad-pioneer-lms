@@ -94,26 +94,35 @@ export default function TeacherDashboard() {
         }).eq('id', submission.student_id);
       }
 
-      // SAFELY PARSE JSON: Prevents the DB from throwing an empty {} error when spreading stringified data
-      const subMeta = typeof submission.metadata === 'string' ? JSON.parse(submission.metadata) : (submission.metadata || {});
+      // 2. Route the status update back to the correct source table!
+      if (submission.source_table === 'tutorial_submissions') {
+        const { data: updatedRow, error: archiveError } = await supabase
+          .from('tutorial_submissions')
+          .update({ 
+            status: 'reviewed',
+            xp_earned: (submission.xp_earned || 0) + totalToGive,
+            bonus_xp: (submission.bonus_xp || 0) + finalBonus
+          })
+          .eq('id', submission.id)
+          .select();
 
-      // 2. Update Archive Status (Using the correct schema columns)
-      const { data: updatedRow, error: archiveError } = await supabase
-        .from('tech_archive')
-        .update({
-          review_status: 'reviewed',
-          xp_earned: (submission.xp_earned || 0) + totalToGive, 
-          teacher_feedback: justification,      // <-- Fixed column
-          teacher_xp_awarded: finalBonus        // <-- Fixed column
-        })
-        .eq('id', submission.id)
-        .select();
+        if (archiveError) throw archiveError;
+        if (!updatedRow || updatedRow.length === 0) throw new Error("RLS_BLOCKED");
 
-      if (archiveError) throw archiveError;
-      
-      // Catch silent RLS failures (where error is null but 0 rows were allowed to be updated)
-      if (!updatedRow || updatedRow.length === 0) {
-         throw new Error("RLS_BLOCKED");
+      } else {
+        const { data: updatedRow, error: archiveError } = await supabase
+          .from('tech_archive')
+          .update({
+            review_status: 'reviewed',
+            xp_earned: (submission.xp_earned || 0) + totalToGive, 
+            teacher_feedback: justification,      
+            teacher_xp_awarded: (submission.teacher_xp_awarded || 0) + finalBonus        
+          })
+          .eq('id', submission.id)
+          .select();
+
+        if (archiveError) throw archiveError;
+        if (!updatedRow || updatedRow.length === 0) throw new Error("RLS_BLOCKED");
       }
 
       showToast(`Awarded ${totalToGive} XP to student!`, "success");
@@ -158,7 +167,6 @@ export default function TeacherDashboard() {
     };
   }, [currentUser]);
 
-  // Added isSilentRefresh to prevent the loading spinner from closing the modal
   async function fetchDashboardData(isSilentRefresh = false) {
     if (!isSilentRefresh) setLoading(true);
     try {
@@ -169,16 +177,18 @@ export default function TeacherDashboard() {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
       if (profile) setCurrentUser(profile);
 
-      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes, availRes, subsRes, missionsRes] = await Promise.all([
+      const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes, availRes, techArchiveRes, tutSubsRes, missionsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'student').order('display_name', { ascending: true }),
         supabase.from('profiles').select('id, display_name, metadata').in('role', ['guardian', 'admin']),
         supabase.from('courses').select('*').eq('is_published', true).order('order_index', { ascending: true }),
         supabase.from('enrollments').select('*, courses(*)'),
         supabase.from('profiles').select('id, display_name').eq('role', 'educator').order('display_name', { ascending: true }),
         supabase.from('teacher_availability').select('*').gte('end_time', new Date().toISOString()).order('start_time', { ascending: true }),
+        
         // Fetch BOTH pending and reviewed submissions for the history tab
         supabase.from('tech_archive').select('*, profiles!inner(display_name, metadata)').in('review_status', ['pending', 'reviewed']),
-        supabase.from('missions').select('id, xp_reward')
+        supabase.from('tutorial_submissions').select('*').in('status', ['pending', 'reviewed']),
+        supabase.from('missions').select('id, xp_reward, title')
       ]);
 
       if (coursesRes.data) setActiveCourses(coursesRes.data);
@@ -187,19 +197,52 @@ export default function TeacherDashboard() {
       
       const missionsMap = new Map();
       if (missionsRes.data) {
-        missionsRes.data.forEach((m: any) => missionsMap.set(m.id, m.xp_reward));
+        missionsRes.data.forEach((m: any) => missionsMap.set(m.id, { xp: m.xp_reward, title: m.title }));
       }
 
-      if (subsRes.data) {
-        const myStudentsSubs = subsRes.data.filter((sub: any) => 
-          sub.profiles?.metadata?.teacher?.id === localUser.id
-        ).map((sub: any) => {
+      let combinedSubs: any[] = [];
+
+      // 1. Process standard Tech Archive submissions
+      if (techArchiveRes.data) {
+        const enrichedTech = techArchiveRes.data.map((sub: any) => {
            let max = sub.potential_xp || 0;
-           if (max === 0) max = missionsMap.get(sub.mission_id) || 0;
-           return { ...sub, potential_xp: max }; 
+           if (max === 0) max = missionsMap.get(sub.mission_id)?.xp || 0;
+           return { ...sub, potential_xp: max, source_table: 'tech_archive' }; 
         });
-        setPendingSubmissions(myStudentsSubs);
+        combinedSubs = [...combinedSubs, ...enrichedTech];
       }
+
+      // 2. Process Trial/MakeCode submissions
+      if (tutSubsRes.data && tutSubsRes.data.length > 0) {
+        const studentIds = [...new Set(tutSubsRes.data.map((s: any) => s.student_id))];
+        const { data: profilesData } = await supabase.from('profiles').select('id, display_name, metadata').in('id', studentIds);
+        
+        const profileMap = new Map();
+        if (profilesData) {
+          profilesData.forEach(p => profileMap.set(p.id, p));
+        }
+
+        const enrichedSubs = tutSubsRes.data.map((sub: any) => {
+           const missionData = missionsMap.get(sub.mission_id);
+           return {
+             ...sub,
+             title: missionData ? `${missionData.title} (MakeCode Win ${sub.win_index})` : 'MakeCode Submission',
+             media_url: sub.share_url, 
+             potential_xp: missionData?.xp || 250,
+             xp_earned: sub.xp_earned || 0,
+             review_status: sub.status,
+             profiles: profileMap.get(sub.student_id) || { display_name: 'Unknown Pioneer', metadata: {} },
+             source_table: 'tutorial_submissions'
+           };
+        });
+        combinedSubs = [...combinedSubs, ...enrichedSubs];
+      }
+
+      // Filter by the teacher's students!
+      const myStudentsSubs = combinedSubs.filter((sub: any) => 
+        sub.profiles?.metadata?.teacher?.id === localUser.id
+      );
+      setPendingSubmissions(myStudentsSubs);
 
       const enrollmentsMap = new Map();
       if (enrollmentsRes.data) {
@@ -297,7 +340,7 @@ export default function TeacherDashboard() {
     return availabilities.filter(a => a.teacher_id === targetId);
   }, [availabilities, viewScope, currentUser]);
 
-  let scopeName = viewScope === 'my_roster' ? "My" : viewScope === 'global' ? "Global" : educators.find(e => e.id === viewScope)?.display_name?.split(' ')[0] + "'s";
+  const scopeName = viewScope === 'my_roster' ? "My" : viewScope === 'global' ? "Global" : educators.find(e => e.id === viewScope)?.display_name?.split(' ')[0] + "'s";
 
   const handleSaveLessonEdits = async (lessonGroup: any, finalAttendees: any[], newDateISO: string, newDelivery: string, newLogistics: string, wrapUpData: { attendance: Record<string, string>, xp: number, note: string }) => {
     try {
@@ -512,12 +555,22 @@ function HeroMetrics({ metrics, onDrilldown, scopeName }: { metrics: any, onDril
 
 function ReviewCard({ sub, onAwardXP, isHistoryView = false }: { sub: any, onAwardXP: any, isHistoryView?: boolean }) {
   const maxPossible = sub.potential_xp || 100;
-  
-  // Local state so UI instantly reflects the successful award
-  const [localEarned, setLocalEarned] = useState(sub.xp_earned || 0);
-  const remainingBase = Math.max(0, maxPossible - localEarned);
   const maxBonus = Math.floor(maxPossible * 0.1);
+  
+  // 1. Safely extract existing totals based on the table source
+  const [localTotalEarned, setLocalTotalEarned] = useState(sub.xp_earned || 0);
+  
+  const existingBonus = sub.source_table === 'tutorial_submissions' 
+    ? (sub.bonus_xp || 0) 
+    : (sub.teacher_xp_awarded || sub.metadata?.bonus_awarded || 0);
+    
+  const [localBonusEarned, setLocalBonusEarned] = useState(existingBonus);
 
+  // 2. Calculate true Base XP by subtracting the bonuses from the total
+  const baseEarned = localTotalEarned - localBonusEarned;
+  const remainingBase = Math.max(0, maxPossible - baseEarned);
+
+  // 3. Set standard state
   const [baseXp, setBaseXp] = useState<number | string>(remainingBase);
   const [bonusXp, setBonusXp] = useState<number | string>(0);
   const [note, setNote] = useState(sub.metadata?.teacher_notes || "");
@@ -549,11 +602,13 @@ function ReviewCard({ sub, onAwardXP, isHistoryView = false }: { sub: any, onAwa
     
     await onAwardXP(sub, finalBase, finalBonus, note);
     
-    setLocalEarned((prev: number) => prev + finalBase + finalBonus);
+    // Update local state so UI instantly reflects the new totals
+    setLocalTotalEarned((prev: number) => prev + finalBase + finalBonus);
+    setLocalBonusEarned((prev: number) => prev + finalBonus);
     setBaseXp(0);
     setBonusXp(0);
     setIsEvaluated(true);
-    setJustFinished(true); // Triggers the success flash
+    setJustFinished(true); 
     setIsSaving(false);
   };
 
@@ -591,7 +646,7 @@ function ReviewCard({ sub, onAwardXP, isHistoryView = false }: { sub: any, onAwa
            </p>
            <span className="text-blue-500/30">|</span>
            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">
-             Total Earned: <span className={`text-white transition-all ${isEvaluated ? 'text-emerald-400' : ''}`}>{localEarned} XP</span>
+             Total Earned: <span className={`text-white transition-all ${isEvaluated ? 'text-emerald-400' : ''}`}>{localTotalEarned} XP</span>
              {pendingAdd > 0 && !isEvaluated && (
                <span className="text-amber-400 ml-1">(+{pendingAdd} Pending)</span>
              )}

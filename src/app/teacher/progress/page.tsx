@@ -167,8 +167,8 @@ export default function StudentProgressPage() {
 
     // Sort
     result.sort((a, b) => {
-      let aVal = a[sortConfig.key];
-      let bVal = b[sortConfig.key];
+      const aVal = a[sortConfig.key];
+      const bVal = b[sortConfig.key];
 
       if (typeof aVal === 'string') {
         return sortConfig.direction === 'asc' 

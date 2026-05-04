@@ -91,7 +91,7 @@ export default function TeacherSchedulePage() {
     const user = JSON.parse(sessionData);
     setCurrentUser(user);
 
-    let targetId = user.id;
+    const targetId = user.id;
 
     try {
       // If user is Admin, fetch the list of available educators
