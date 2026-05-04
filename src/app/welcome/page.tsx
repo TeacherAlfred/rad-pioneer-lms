@@ -219,7 +219,7 @@ export default function WelcomePortal() {
             }
 
             // SMART FILTERING
-            let filteredAgreements = (agreementsData || []).filter((a: any) => {
+            const filteredAgreements = (agreementsData || []).filter((a: any) => {
               if (!a.applicable_to || a.applicable_to.length === 0) return true; // Global applies to everyone
               return a.applicable_to.some((tag: string) => parentTags.includes(tag));
             });
