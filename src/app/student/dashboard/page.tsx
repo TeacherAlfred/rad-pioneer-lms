@@ -173,8 +173,8 @@ export default function DashboardPage() {
       let totalCompleted = 0;
 
       // Course Card Stats (Micro)
-      let totalModulesCount = modules?.length || 0;
-      let completedModulesCount = passedModuleIds.length;
+      const totalModulesCount = modules?.length || 0;
+      const completedModulesCount = passedModuleIds.length;
       let activeModTitle = "";
       let activeModTotalMissions = 0;
       let activeModCompletedMissions = 0;

@@ -609,11 +609,11 @@ export default function LessonPlayerPage() {
     await new Promise(r => setTimeout(r, 1000));
 
     const topBlocks = workspace.current.getTopBlocks(true);
-    let userStacksData: { blocks: { value: string, block: Blockly.Block }[] }[] = [];
+    const userStacksData: { blocks: { value: string, block: Blockly.Block }[] }[] = [];
     
     for (const topBlock of topBlocks) {
         if (topBlock.type.startsWith('event_')) {
-            let currentStack: { value: string, block: Blockly.Block }[] = [];
+            const currentStack: { value: string, block: Blockly.Block }[] = [];
             const ev = topBlock.type.replace('event_', ''); 
             currentStack.push({ value: ev, block: topBlock });
             setSimLogs(prev => [...prev, `[EVENT BINDING]: ${ev} Listener Active.`]);
@@ -652,7 +652,7 @@ export default function LessonPlayerPage() {
        });
     });
     
-    let expectedStacks: string[][] = [];
+    const expectedStacks: string[][] = [];
     let currentExpectedStack: string[] = [];
     
     for (const item of winSequence) {
