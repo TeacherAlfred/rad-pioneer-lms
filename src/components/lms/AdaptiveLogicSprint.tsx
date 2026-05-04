@@ -124,7 +124,7 @@ export default function AdaptiveLogicSprint({ questions, onComplete }: AdaptiveL
           handleFinishSprint();
           return;
         }
-        let nextLevel = activeLevel + 1;
+        const nextLevel = activeLevel + 1;
         let nextDiff = activeDifficulty;
         if (isFirstAttemptAtLevel) nextDiff = Math.min(5, activeDifficulty + 1);
 
@@ -148,7 +148,7 @@ export default function AdaptiveLogicSprint({ questions, onComplete }: AdaptiveL
       }
       
       setTimeout(() => {
-        let nextDiff = Math.max(1, activeDifficulty - 1); 
+        const nextDiff = Math.max(1, activeDifficulty - 1); 
         setActiveDifficulty(nextDiff);
         setIsFirstAttemptAtLevel(false); 
         

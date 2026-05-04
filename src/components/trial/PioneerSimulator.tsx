@@ -4,9 +4,12 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   CheckCircle2, Lock, Play, Zap, ChevronRight, 
-  Map, Cpu, Link as LinkIcon, ExternalLink, Target, UploadCloud, X
+  Map, Cpu, Link as LinkIcon, ExternalLink, Target, UploadCloud, X, Edit2
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+
+import { calculateDiminishingXP } from "@/lib/xp-engine";
 
 export default function PioneerSimulator({ mission }: { mission: any }) {
   const router = useRouter();
@@ -14,22 +17,15 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
   // State Machine
   const [currentView, setCurrentView] = useState<'roadmap' | 'workspace'>('roadmap');
   
-  // Progress Tracking
-  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  // Progress Tracking (Maps the Win Index to an object containing url, status, and XP breakdowns)
+  const [completedWins, setCompletedWins] = useState<Record<number, { url: string, status: string, xp_earned: number, bonus_xp: number }>>({});
   const [activeStepIndex, setActiveStepIndex] = useState<number>(0);
   
   // Interaction States
   const [isVerifying, setIsVerifying] = useState(false);
   const [makecodeLink, setMakecodeLink] = useState("");
   const [tutorialLaunched, setTutorialLaunched] = useState(false);
-  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false); // NEW MODAL STATE
-
-  // Reset interaction states when changing steps
-  useEffect(() => {
-    setTutorialLaunched(false);
-    // Note: We don't reset the makecodeLink here so if they paste it once, 
-    // it stays in the input for the next step's modal, saving them time!
-  }, [activeStepIndex]);
+  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
 
   // Extract the data from the JSON config
   const introStep = mission.mission_config.steps.find((s: any) => s.type === 'intro');
@@ -38,23 +34,58 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
   const roadmapLevels = [
     ...(introStep?.cards || []),
     {
+      order: (introStep?.cards?.length || 0) + 1,
       title: "Final Output: System Uplink",
       content: "You did it! Now, add your own custom flair. Change the colors or add a secret melody. When you are done, click the 'Share' button in your tutorial and paste your link below to send it to HQ for evaluation.",
       isSubmission: true
     }
   ];
 
-  const highestUnlocked = completedSteps.length;
+  const highestUnlocked = Object.keys(completedWins).length;
+
+  // FETCH PREVIOUS SUBMISSIONS ON MOUNT
+  useEffect(() => {
+    async function fetchStudentSubmissions() {
+      const sessionStr = localStorage.getItem("pioneer_session");
+      if (!sessionStr || !mission?.id) return;
+      const student = JSON.parse(sessionStr);
+
+      const { data, error } = await supabase
+        .from('tutorial_submissions')
+        .select('win_index, share_url, status, xp_earned, bonus_xp')
+        .eq('student_id', student.id)
+        .eq('mission_id', mission.id);
+
+      if (!error && data) {
+        // Create a map of completed wins capturing ALL data for the UI footer
+        const winMap: Record<number, { url: string, status: string, xp_earned: number, bonus_xp: number }> = {};
+        data.forEach(sub => {
+          winMap[sub.win_index - 1] = { 
+            url: sub.share_url, 
+            status: sub.status,
+            xp_earned: sub.xp_earned || 0,
+            bonus_xp: sub.bonus_xp || 0
+          };
+        });
+        setCompletedWins(winMap);
+      }
+    }
+
+    fetchStudentSubmissions();
+  }, [mission?.id]);
+
+  // Reset interaction states when changing steps
+  useEffect(() => {
+    setTutorialLaunched(false);
+  }, [activeStepIndex]);
 
   const handleLaunchTutorial = () => {
     setTutorialLaunched(true);
-    // Grab the URL from the database, or fallback to the MakeCode homepage
     const customUrl = roadmapLevels[activeStepIndex].tutorial_url || "https://makecode.microbit.org/";
     window.open(customUrl, "_blank");
   };
 
-  const handleVerifyStep = () => {
-    // Basic validation to ensure they actually pasted a link
+  const handleVerifyStep = async () => {
     if (makecodeLink.length < 10) {
       alert("Pioneer, please paste your valid tutorial link first!");
       return;
@@ -62,23 +93,91 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
 
     setIsVerifying(true);
     
-    setTimeout(() => {
-      setIsVerifying(false);
-      setIsLinkModalOpen(false); // Close modal on success
+    try {
+      const sessionStr = localStorage.getItem("pioneer_session");
+      if (!sessionStr) throw new Error("No active session found.");
+      const student = JSON.parse(sessionStr);
+
+      const isUpdate = !!completedWins[activeStepIndex];
+      const isFinalStep = roadmapLevels[activeStepIndex].isSubmission;
       
-      if (roadmapLevels[activeStepIndex].isSubmission) {
-        setCompletedSteps([...completedSteps, activeStepIndex]);
-        alert("UPLINK SUCCESSFUL! +250 XP. Your teacher has been notified. Returning to HQ...");
-        router.push('/trial/hub');
-        return;
+      // Calculate Upfront XP using the Engine! (Applies to ANY first-time submission)
+      let upfrontXp = 0;
+      if (!isUpdate) {
+        // Calculate the base 50% upfront reward
+        const baseUpfront = Math.floor((mission.xp_reward || 250) * 0.5);
+        
+        // Pass it through the XP Engine (0 previous attempts because they only get this upfront XP once)
+        upfrontXp = await calculateDiminishingXP(baseUpfront, 0); 
       }
 
-      if (!completedSteps.includes(activeStepIndex)) {
-        setCompletedSteps([...completedSteps, activeStepIndex]);
+      // 1. Insert OR Update the submission in the unified portfolio table
+      if (isUpdate) {
+        const { error } = await supabase
+          .from('tutorial_submissions')
+          .update({ share_url: makecodeLink })
+          .eq('student_id', student.id)
+          .eq('mission_id', mission.id)
+          .eq('win_index', activeStepIndex + 1);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('tutorial_submissions')
+          .insert({
+            student_id: student.id,
+            mission_id: mission.id,
+            win_index: activeStepIndex + 1,
+            share_url: makecodeLink,
+            status: 'pending',
+            xp_earned: upfrontXp // <--- SAVED FROM THE ENGINE
+          });
+        if (error) throw error;
       }
-      
-      setCurrentView('roadmap');
-    }, 1500);
+
+      // 2. Handle successful DB save
+      setIsLinkModalOpen(false); 
+      setCompletedWins(prev => ({ 
+        ...prev, 
+        [activeStepIndex]: { 
+          url: makecodeLink, 
+          status: 'pending',
+          xp_earned: isUpdate ? prev[activeStepIndex].xp_earned : upfrontXp,
+          bonus_xp: isUpdate ? prev[activeStepIndex].bonus_xp : 0
+        } 
+      }));
+
+      // 3. Grant Profile XP (If first time)
+      if (!isUpdate && upfrontXp > 0) {
+        const newXp = (student.xp || 0) + upfrontXp;
+        // Update DB
+        await supabase.from('profiles').update({ xp: newXp }).eq('id', student.id);
+        // Update Local Session
+        student.xp = newXp;
+        localStorage.setItem("pioneer_session", JSON.stringify(student));
+      }
+
+      // 4. Alerts and Routing
+      if (isFinalStep) {
+        if (!isUpdate && upfrontXp > 0) {
+          alert(`UPLINK SUCCESSFUL! +${upfrontXp} XP Awarded instantly! Your teacher will review your code to award the remaining XP. Returning to HQ...`);
+        } else {
+          alert(`UPLINK UPDATED! Your teacher will review your latest code.`);
+        }
+        router.push('/trial/hub');
+        return;
+      } else {
+        if (!isUpdate && upfrontXp > 0) {
+          alert(`PROGRESS SAVED! +${upfrontXp} XP Awarded instantly! Keep up the great work.`);
+        }
+        setCurrentView('roadmap');
+      }
+
+    } catch (err: any) {
+      console.error("Submission failed:", err.message);
+      alert("Failed to save your project to the HQ Database. Please try again!");
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   return (
@@ -121,9 +220,27 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
 
                 <div className="space-y-8 relative z-10">
                   {roadmapLevels.map((level, index) => {
-                    const isCompleted = completedSteps.includes(index);
-                    const isUnlocked = index === highestUnlocked;
+                    const submissionData = completedWins[index];
+                    const isCompleted = !!submissionData;
+                    const isReviewed = submissionData?.status === 'reviewed';
+                    const isUnlocked = index <= highestUnlocked;
                     const isLocked = index > highestUnlocked;
+
+                    // --- XP BREAKDOWN MATH ---
+                    const maxBase = mission.xp_reward || 250;
+                    const standardUpfront = Math.floor(maxBase * 0.5);
+                    const totalXp = isCompleted ? ((submissionData.xp_earned || 0) + (submissionData.bonus_xp || 0)) : 0;
+                    
+                    let multiplierXp = 0;
+                    let teacherXp = 0;
+
+                    if (isCompleted) {
+                      if (!isReviewed) {
+                        multiplierXp = Math.max(0, submissionData.xp_earned - standardUpfront);
+                      } else {
+                        teacherXp = Math.max(0, submissionData.xp_earned - standardUpfront);
+                      }
+                    }
 
                     return (
                       <div key={index} className="flex gap-6 relative group">
@@ -135,7 +252,7 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
                           }`}>
                             {isCompleted ? <CheckCircle2 size={20} /> : isUnlocked ? <Play size={18} fill="currentColor" className="ml-1" /> : <Lock size={18} />}
                           </div>
-                          {isUnlocked && <div className="absolute inset-[-4px] border border-blue-500/50 rounded-full animate-ping z-0" />}
+                          {isUnlocked && !isCompleted && <div className="absolute inset-[-4px] border border-blue-500/50 rounded-full animate-ping z-0" />}
                         </div>
 
                         <div 
@@ -155,24 +272,87 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
                             <h3 className={`text-lg md:text-xl font-black uppercase italic tracking-tight ${isUnlocked ? 'text-white' : 'text-slate-300'}`}>
                               {level.title}
                             </h3>
-                            {level.isSubmission && (
-                              <span className="px-3 py-1 bg-purple-500/20 text-purple-400 rounded-full text-[9px] font-black uppercase tracking-widest border border-purple-500/30">
-                                Final Project
-                              </span>
-                            )}
+                            
+                            {/* TOP RIGHT: XP PILL OR FINAL PROJECT TAG */}
+                            <div className="flex items-center gap-2">
+                              {level.isSubmission && !isCompleted && (
+                                <span className="px-3 py-1 bg-purple-500/20 text-purple-400 rounded-full text-[9px] font-black uppercase tracking-widest border border-purple-500/30 shrink-0">
+                                  Final Project
+                                </span>
+                              )}
+                              {isCompleted && (
+                                <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.2)] shrink-0">
+                                  <Zap size={12} className="fill-emerald-400" />
+                                  <span className="text-[10px] font-black uppercase tracking-widest">{totalXp} XP</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
+                          
                           <p className={`text-sm ${isUnlocked ? 'text-blue-100' : 'text-slate-400'} font-medium leading-relaxed line-clamp-2`}>
                             {level.content}
                           </p>
 
-                          {isUnlocked && (
+                          {isUnlocked && !isCompleted && (
                             <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-blue-400 group-hover:text-blue-300">
                               <Play size={14} fill="currentColor" /> {level.isSubmission ? "Initiate Final Uplink" : "Start Component"}
                             </div>
                           )}
+                          
                           {isCompleted && (
                             <div className="mt-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-emerald-500">
-                              <CheckCircle2 size={14} /> Verified
+                              <CheckCircle2 size={14} /> {isReviewed ? "Reviewed & Locked" : "Submitted (Awaiting Teacher Review)"}
+                            </div>
+                          )}
+
+                          {/* FOOTER: CALCULATION BREAKDOWN */}
+                          {isCompleted && (
+                            <div className="mt-8 pt-6 border-t border-white/5">
+                              <div className="bg-black/20 rounded-[20px] p-1 border border-white/5 shadow-inner">
+                                <div className="bg-[#020617] rounded-[16px] flex flex-col">
+                                  
+                                  {/* Top Row: Automated System XP */}
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 border-b border-white/5">
+                                    <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                       <Cpu size={14} className="text-blue-500" /> System Core XP
+                                    </div>
+                                    
+                                    <div className="flex flex-wrap items-center gap-3 bg-white/5 border border-white/5 px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest">
+                                      <div className="flex items-center gap-1.5 text-slate-500">
+                                         <span>Base (50%)</span> <span className="text-white text-xs ml-1">{standardUpfront}</span>
+                                      </div>
+                                      <span className="text-slate-600">+</span>
+                                      <div className="flex items-center gap-1.5 text-slate-500">
+                                         <span>Event</span> <span className="text-purple-400 text-xs ml-1">{multiplierXp}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Bottom Row: Teacher Manual XP */}
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4">
+                                    <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                       <Target size={14} className="text-amber-500" /> HQ Review XP
+                                    </div>
+
+                                    {!isReviewed ? (
+                                      <div className="px-6 py-2 rounded-lg bg-amber-500/10 text-amber-500 border border-amber-500/20 text-[10px] font-black uppercase tracking-widest italic animate-pulse flex items-center justify-center">
+                                        Under Review
+                                      </div>
+                                    ) : (
+                                      <div className="flex flex-wrap items-center gap-3 bg-white/5 border border-white/5 px-4 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest">
+                                        <div className="flex items-center gap-1.5 text-slate-500">
+                                          <span>Teacher</span> <span className="text-emerald-400 text-xs ml-1">{teacherXp}</span>
+                                        </div>
+                                        <span className="text-slate-600">+</span>
+                                        <div className="flex items-center gap-1.5 text-slate-500">
+                                          <span>Bonus</span> <span className="text-amber-400 text-xs ml-1">{submissionData.bonus_xp || 0}</span>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                </div>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -225,34 +405,65 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
                   {/* ACTION BUTTONS */}
                   <div className="w-full flex flex-col md:flex-row gap-4 justify-center items-center">
                     
-                    {/* Launch Tutorial Button */}
-                    {!roadmapLevels[activeStepIndex].isSubmission && (
-                      <button 
-                        onClick={handleLaunchTutorial}
-                        className="w-full md:w-auto py-5 px-8 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black uppercase tracking-widest text-sm transition-all shadow-[0_0_30px_rgba(59,130,246,0.4)] hover:shadow-[0_0_50px_rgba(59,130,246,0.6)] hover:scale-105 hover:-translate-y-1 flex items-center justify-center gap-3"
-                      >
-                        <ExternalLink size={20} /> 1. Launch Tutorial
-                      </button>
-                    )}
+                    {completedWins[activeStepIndex] ? (
+                      // === COMPLETED STATE UI ===
+                      <>
+                        <div className={`w-full md:w-auto py-5 px-8 rounded-2xl font-black uppercase tracking-widest text-sm border flex items-center justify-center gap-3 ${completedWins[activeStepIndex].status === 'reviewed' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>
+                           <CheckCircle2 size={20} /> {completedWins[activeStepIndex].status === 'reviewed' ? 'Reviewed & Locked' : 'Submitted for Review'}
+                        </div>
+                        <button 
+                          onClick={() => window.open(completedWins[activeStepIndex].url, "_blank")}
+                          className="w-full md:w-auto py-5 px-8 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-black uppercase tracking-widest text-sm transition-all flex items-center justify-center gap-3"
+                        >
+                           <ExternalLink size={20} /> Review My Code
+                        </button>
 
-                    {/* Mark Complete / Submit Button (Opens Modal) */}
-                    <button 
-                      onClick={() => setIsLinkModalOpen(true)}
-                      disabled={!roadmapLevels[activeStepIndex].isSubmission && !tutorialLaunched}
-                      className={`w-full md:w-auto py-5 px-8 rounded-2xl font-black uppercase tracking-widest text-sm transition-all flex items-center justify-center gap-3 ${
-                        (roadmapLevels[activeStepIndex].isSubmission || tutorialLaunched) 
-                          ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_30px_rgba(16,185,129,0.3)] hover:scale-105 hover:-translate-y-1' 
-                          : 'bg-white/5 text-slate-500 cursor-not-allowed'
-                      }`}
-                    >
-                      {roadmapLevels[activeStepIndex].isSubmission ? (
-                        <><UploadCloud size={20} /> Initiate System Uplink</>
-                      ) : tutorialLaunched ? (
-                        <><CheckCircle2 size={20} /> 2. Mark Complete</>
-                      ) : (
-                        <><Lock size={20} /> 2. Share your link</>
-                      )}
-                    </button>
+                        {/* Edit Button (Only visible if NOT reviewed yet) */}
+                        {completedWins[activeStepIndex].status !== 'reviewed' && (
+                          <button 
+                            onClick={() => {
+                              setMakecodeLink(completedWins[activeStepIndex].url);
+                              setIsLinkModalOpen(true);
+                            }}
+                            className="w-full md:w-auto py-5 px-8 rounded-2xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 font-black uppercase tracking-widest text-sm transition-all flex items-center justify-center gap-3"
+                          >
+                             <Edit2 size={20} /> Edit Link
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      // === NOT YET COMPLETED STATE UI ===
+                      <>
+                        {/* Launch Tutorial Button */}
+                        {!roadmapLevels[activeStepIndex].isSubmission && (
+                          <button 
+                            onClick={handleLaunchTutorial}
+                            className="w-full md:w-auto py-5 px-8 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black uppercase tracking-widest text-sm transition-all shadow-[0_0_30px_rgba(59,130,246,0.4)] hover:shadow-[0_0_50px_rgba(59,130,246,0.6)] hover:scale-105 hover:-translate-y-1 flex items-center justify-center gap-3"
+                          >
+                            <ExternalLink size={20} /> 1. Launch Tutorial
+                          </button>
+                        )}
+
+                        {/* Mark Complete / Submit Button (Opens Modal) */}
+                        <button 
+                          onClick={() => setIsLinkModalOpen(true)}
+                          disabled={!roadmapLevels[activeStepIndex].isSubmission && !tutorialLaunched}
+                          className={`w-full md:w-auto py-5 px-8 rounded-2xl font-black uppercase tracking-widest text-sm transition-all flex items-center justify-center gap-3 ${
+                            (roadmapLevels[activeStepIndex].isSubmission || tutorialLaunched) 
+                              ? 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_30px_rgba(16,185,129,0.3)] hover:scale-105 hover:-translate-y-1' 
+                              : 'bg-white/5 text-slate-500 cursor-not-allowed'
+                          }`}
+                        >
+                          {roadmapLevels[activeStepIndex].isSubmission ? (
+                            <><UploadCloud size={20} /> Initiate System Uplink</>
+                          ) : tutorialLaunched ? (
+                            <><CheckCircle2 size={20} /> 2. Mark Complete</>
+                          ) : (
+                            <><Lock size={20} /> 2. Share your link</>
+                          )}
+                        </button>
+                      </>
+                    )}
 
                   </div>
                 </div>
@@ -288,11 +499,15 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
               </div>
               
               <h3 className="text-2xl font-black uppercase italic tracking-tight text-white mb-2">
-                Verify Progress
+                {completedWins[activeStepIndex] ? 'Update Submission' : 'Submit Progress'}
               </h3>
               <p className="text-slate-300 text-base font-medium mb-6 leading-relaxed">
-                <strong className="text-white font-black">Paste your tutorial share link</strong> below so one of our teachers can review your logic. Who knows, you might get <strong className="text-purple-400 font-black">extra XP for creativity</strong> or bonus points if you found a sneaky bug in our tutorial!
+                <strong className="text-white font-black">{completedWins[activeStepIndex] ? 'Update your tutorial share link' : 'Paste your tutorial share link'}</strong> below so one of our teachers can review your logic. 
                 
+                {/* Notice the condition here changed to just check if it's the first time they are submitting this step! */}
+                {!completedWins[activeStepIndex] && (
+                   <span className="block mt-2 text-emerald-400"><strong className="font-black">You will immediately receive 50% of the Base XP</strong> just for submitting, and the rest when a teacher reviews it!</span>
+                )}
               </p>
 
               <div className="space-y-4">
@@ -312,7 +527,7 @@ export default function PioneerSimulator({ mission }: { mission: any }) {
                     makecodeLink.length > 10 ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_20px_rgba(147,51,234,0.4)]' : 'bg-white/5 text-slate-500 cursor-not-allowed'
                   }`}
                 >
-                  {isVerifying ? <><Zap className="animate-pulse" size={18} /> Processing...</> : <><CheckCircle2 size={18} /> Submit & Verify</>}
+                  {isVerifying ? <><Zap className="animate-pulse" size={18} /> Processing...</> : <><CheckCircle2 size={18} /> {completedWins[activeStepIndex] ? 'Update & Save' : 'Submit & Save'}</>}
                 </button>
               </div>
             </motion.div>

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, LayoutDashboard, Save, Loader2, Link as LinkIcon, BookOpen,
-  Target, FileText, Copy, CheckCircle2, Info, Settings, Plus, X 
+  Target, FileText, Copy, CheckCircle2, Info, Settings, Plus, X, ExternalLink, Edit2
 } from "lucide-react";
 
 export default function TrialMissionEditor({ courseId }: { courseId: string }) {
@@ -19,13 +19,15 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
   
   // Cards / Wins State
   const [cards, setCards] = useState<any[]>([]);
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   // Modal State
   const [showWinsModal, setShowWinsModal] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
   const [newFieldName, setNewFieldName] = useState("");
   const [showAddField, setShowAddField] = useState(false);
+
+  // Edit Mode State for URLs
+  const [editingUrls, setEditingUrls] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     fetchMissions();
@@ -42,7 +44,6 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
           )
         `)
         .eq('modules.course_id', courseId)
-        // FIX #1: Order by the actual order_index in the DB instead of created_at
         .order('order_index', { ascending: true });
 
       if (error) throw error;
@@ -95,9 +96,9 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
 
   const handleAddNewWin = () => {
     const newOrder = cards.length > 0 ? Math.max(...cards.map(c => Number(c.order) || 0)) + 1 : 1;
-    const newWin = { order: newOrder, title: `Win ${newOrder}`, content: "", tutorial_url: "" };
+    const newWin = { order: newOrder, title: `Win ${newOrder}`, content: "", tutorial_url: "", markdown_url: "" };
     setCards([...cards, newWin]);
-    setActiveTab(cards.length); // Switch to the newly created tab
+    setActiveTab(cards.length); 
   };
 
   const handleRemoveWin = (index: number) => {
@@ -110,10 +111,8 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
 
   const handleAddNewField = () => {
     if (!newFieldName.trim()) return;
-    // Sanitize the key (lowercase, underscores)
     const key = newFieldName.trim().replace(/\s+/g, '_').toLowerCase();
     
-    // Apply the new key to ALL cards so it becomes a standard schema field
     const updatedCards = cards.map(c => ({
       ...c,
       [key]: c[key] !== undefined ? c[key] : "" 
@@ -122,13 +121,6 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
     setCards(updatedCards);
     setNewFieldName("");
     setShowAddField(false);
-  };
-
-  const copyToClipboard = (text: string, index: number) => {
-    if (!text) return;
-    navigator.clipboard.writeText(text);
-    setCopiedIndex(index);
-    setTimeout(() => setCopiedIndex(null), 2000);
   };
 
   const handleSave = async () => {
@@ -197,8 +189,7 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
     );
   }
 
-  // Determine standard vs dynamic keys for the Modal
-  const STANDARD_KEYS = ['order', 'title', 'content', 'tutorial_url', 'markdown_code'];
+  const STANDARD_KEYS = ['order', 'title', 'content', 'tutorial_url', 'markdown_url', 'markdown_code'];
   const allCardKeys = Array.from(new Set(cards.flatMap(c => Object.keys(c))));
   const dynamicKeys = allCardKeys.filter(k => !STANDARD_KEYS.includes(k));
 
@@ -232,7 +223,6 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
                 >
                   {missions.map((m) => (
                     <option key={m.id} value={m.id} className="bg-slate-900">
-                      {/* FIX #2: Display actual order_index */}
                       {m.order_index}. {m.title}
                     </option>
                   ))}
@@ -257,13 +247,11 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Mission Title */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mission Title</label>
               <input type="text" value={activeMission?.title || ""} onChange={(e) => handleMissionFieldChange('title', e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none font-bold" />
             </div>
 
-            {/* Sandbox Type */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Sandbox Type</label>
               <select value={activeMission?.sandbox_type || ""} onChange={(e) => handleMissionFieldChange('sandbox_type', e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none">
@@ -273,13 +261,11 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
               </select>
             </div>
 
-            {/* Video URL */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Video URL</label>
               <input type="url" value={activeMission?.video_url || ""} onChange={(e) => handleMissionFieldChange('video_url', e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none font-mono" placeholder="https://..." />
             </div>
 
-            {/* Unlock Date */}
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Unlock Date</label>
               <input 
@@ -293,7 +279,6 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
               />
             </div>
 
-            {/* Group: Numbers */}
             <div className="grid grid-cols-3 gap-4 md:col-span-2">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Order Index</label>
@@ -309,13 +294,11 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
               </div>
             </div>
 
-            {/* Secret Code */}
             <div className="space-y-2 md:col-span-2">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Secret Code (Optional)</label>
               <input type="text" value={activeMission?.secret_code || ""} onChange={(e) => handleMissionFieldChange('secret_code', e.target.value)} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none font-mono" />
             </div>
 
-            {/* Lore Text (Mission Intro) */}
             <div className="space-y-2 md:col-span-2 pt-2 border-t border-white/5">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center">
                 Mission Intro
@@ -415,7 +398,6 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
                       {/* --- STANDARD JSON FIELDS --- */}
                       <div className="space-y-6">
                         
-                        {/* FIX #3: Replaced Grid with Flexbox for massive horizontal space for Title */}
                         <div className="flex gap-4">
                           <div className="space-y-2 w-24 shrink-0">
                             <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest font-mono">"order"</label>
@@ -437,17 +419,78 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
                           <input type="url" value={cards[activeTab]?.tutorial_url || ""} onChange={(e) => handleCardFieldChange(activeTab, 'tutorial_url', e.target.value)} className="w-full bg-[#020617] border border-purple-500/30 rounded-xl px-4 py-3 text-sm text-white focus:border-purple-500 outline-none font-mono" placeholder="https://..." />
                         </div>
 
-                        {/* Always show markdown field now so they can add it easily! */}
+                        {/* --- NEW: MARKDOWN STORAGE URL --- */}
                         <div className="space-y-2 pt-4 border-t border-white/5">
                           <div className="flex items-center justify-between">
-                            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest font-mono flex items-center gap-2"><FileText size={12}/> "markdown_code"</label>
-                            <button onClick={() => copyToClipboard(cards[activeTab]?.markdown_code || "", activeTab)} className="text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-white flex items-center gap-1 bg-white/5 hover:bg-white/10 px-2 py-1 rounded transition-colors">
-                              {copiedIndex === activeTab ? <><CheckCircle2 size={10} className="text-emerald-400"/> Copied</> : <><Copy size={10}/> Copy Code</>}
-                            </button>
+                            <label className="text-[10px] font-black text-emerald-400 uppercase tracking-widest font-mono flex items-center gap-2">
+                              <FileText size={12}/> "markdown_url"
+                            </label>
+                            {cards[activeTab]?.markdown_url && (
+                              <a 
+                                href={cards[activeTab].markdown_url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-[9px] font-black uppercase tracking-widest text-emerald-400 hover:text-white flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-3 py-1.5 rounded transition-colors"
+                              >
+                                View File <ExternalLink size={10}/>
+                              </a>
+                            )}
                           </div>
-                          <textarea value={cards[activeTab]?.markdown_code || ""} onChange={(e) => handleCardFieldChange(activeTab, 'markdown_code', e.target.value)} className="w-full min-h-[150px] bg-[#020617] border border-emerald-500/20 rounded-xl p-4 text-slate-300 focus:border-emerald-500 outline-none resize-y font-mono text-xs leading-relaxed custom-scrollbar shadow-inner" placeholder="## Step 1..."/>
+                          
+                          {(!cards[activeTab]?.markdown_url || editingUrls[activeTab]) ? (
+                            <div className="relative">
+                              <input 
+                                type="url"
+                                autoFocus={!!editingUrls[activeTab]}
+                                value={cards[activeTab]?.markdown_url || ""} 
+                                onChange={(e) => handleCardFieldChange(activeTab, 'markdown_url', e.target.value)} 
+                                className="w-full bg-[#020617] border border-emerald-500/50 rounded-xl px-4 py-3 pr-12 text-sm text-white focus:border-emerald-400 outline-none font-mono" placeholder="https://..."
+                              />
+                              {cards[activeTab]?.markdown_url && (
+                                <button 
+                                  onClick={() => setEditingUrls({...editingUrls, [activeTab]: false})}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-emerald-500 hover:bg-emerald-400 rounded-lg text-black transition-colors"
+                                  title="Lock URL"
+                                >
+                                  <CheckCircle2 size={14} />
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between w-full bg-emerald-500/5 border border-emerald-500/20 rounded-xl px-4 py-3 group">
+                              <div className="flex items-center gap-3 overflow-hidden">
+                                <LinkIcon size={14} className="text-emerald-500/50 shrink-0" />
+                                <span className="text-sm text-white font-mono truncate">{cards[activeTab].markdown_url}</span>
+                              </div>
+                              <button 
+                                onClick={() => setEditingUrls({...editingUrls, [activeTab]: true})} 
+                                className="ml-4 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg text-emerald-400 transition-colors shrink-0 flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest opacity-0 group-hover:opacity-100 focus:opacity-100"
+                              >
+                                <Edit2 size={12}/> Edit
+                              </button>
+                            </div>
+                          )}
+                          <p className="text-[9px] text-slate-500 font-bold italic mt-1 ml-1">Paste the public URL of the .md file hosted in your Supabase bucket.</p>
                         </div>
                       </div>
+
+                      {/* Clean out old markdown_code if it exists */}
+                      {cards[activeTab]?.markdown_code !== undefined && (
+                        <div className="mt-4 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                          <p className="text-xs text-amber-500 font-bold mb-2">Legacy Field Detected</p>
+                          <p className="text-[10px] text-amber-400/80 mb-3">This Win still has old Markdown code stored in the database. Please clear it out to save space.</p>
+                          <button 
+                            onClick={() => {
+                              const updatedCards = [...cards];
+                              delete updatedCards[activeTab].markdown_code;
+                              setCards(updatedCards);
+                            }}
+                            className="text-[9px] font-black uppercase tracking-widest bg-amber-500 text-black px-3 py-1.5 rounded hover:bg-amber-400"
+                          >
+                            Delete Legacy Data
+                          </button>
+                        </div>
+                      )}
 
                       {/* --- DYNAMIC JSON FIELDS --- */}
                       {dynamicKeys.length > 0 && (

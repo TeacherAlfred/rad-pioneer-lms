@@ -133,7 +133,7 @@ export default function LinearCourseEditor({ courseId }: { courseId: string }) {
   };
 
   const handleViewMission = (mission: Mission) => {
-    let safeMission = { ...mission };
+    const safeMission = { ...mission };
     if (typeof safeMission.mission_config === 'string') {
       try { safeMission.mission_config = JSON.parse(safeMission.mission_config); } catch (e) {}
     }
@@ -143,7 +143,7 @@ export default function LinearCourseEditor({ courseId }: { courseId: string }) {
   };
 
   const handleOpenMissionEdit = (mission: Mission) => {
-    let safeMission = { ...mission };
+    const safeMission = { ...mission };
     if (typeof safeMission.mission_config === 'string') {
       try { safeMission.mission_config = JSON.parse(safeMission.mission_config); } catch (e) {}
     }
