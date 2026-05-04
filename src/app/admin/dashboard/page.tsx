@@ -137,25 +137,58 @@ export default function AdminDashboard() {
          });
       }
 
-      // NEW: Fetch Pending Reviews AND Missions to map XP
-      const [subsRes, missionsRes] = await Promise.all([
+      // NEW: Fetch Pending Reviews from BOTH tables and Missions to map XP
+      const [techArchiveRes, tutSubsRes, missionsRes] = await Promise.all([
         supabase.from('tech_archive').select('*, profiles!inner(display_name, metadata)').eq('review_status', 'pending'),
-        supabase.from('missions').select('id, xp_reward')
+        supabase.from('tutorial_submissions').select('*').eq('status', 'pending'),
+        supabase.from('missions').select('id, xp_reward, title')
       ]);
 
       const missionsMap = new Map();
       if (missionsRes.data) {
-        missionsRes.data.forEach(m => missionsMap.set(m.id, m.xp_reward));
+        missionsRes.data.forEach((m: any) => missionsMap.set(m.id, { xp: m.xp_reward, title: m.title }));
       }
 
-      if (subsRes.data) {
-        const enrichedSubs = subsRes.data.map(sub => {
+      let combinedPending: any[] = [];
+
+      // 1. Process standard Tech Archive submissions
+      if (techArchiveRes.data) {
+        const enrichedTech = techArchiveRes.data.map((sub: any) => {
            let max = sub.potential_xp || 0;
-           if (max === 0) max = missionsMap.get(sub.mission_id) || 0;
-           return { ...sub, potential_xp: max }; 
+           if (max === 0) max = missionsMap.get(sub.mission_id)?.xp || 0;
+           return { ...sub, potential_xp: max, source_table: 'tech_archive' }; 
         });
-        setPendingSubmissions(enrichedSubs);
+        combinedPending = [...combinedPending, ...enrichedTech];
       }
+
+      // 2. Process Trial/MakeCode submissions (Fetch profiles manually due to schema setup)
+      if (tutSubsRes.data && tutSubsRes.data.length > 0) {
+        const studentIds = [...new Set(tutSubsRes.data.map((s: any) => s.student_id))];
+        const { data: profilesData } = await supabase.from('profiles').select('id, display_name, metadata').in('id', studentIds);
+        
+        const profileMap = new Map();
+        if (profilesData) {
+          profilesData.forEach(p => profileMap.set(p.id, p));
+        }
+
+        const enrichedSubs = tutSubsRes.data.map((sub: any) => {
+           const missionData = missionsMap.get(sub.mission_id);
+           return {
+             ...sub,
+             title: missionData ? `${missionData.title} (MakeCode Win ${sub.win_index})` : 'MakeCode Submission',
+             media_url: sub.share_url, // Maps to the ReviewCard's expected URL property
+             potential_xp: missionData?.xp || 250,
+             xp_earned: sub.xp_earned || 0, // <--- READ FROM DB
+             bonus_xp: sub.bonus_xp || 0, // <--- READ FROM DB
+             review_status: sub.status,
+             profiles: profileMap.get(sub.student_id) || { display_name: 'Unknown Pioneer', metadata: {} },
+             source_table: 'tutorial_submissions'
+           };
+        });
+        combinedPending = [...combinedPending, ...enrichedSubs];
+      }
+
+      setPendingSubmissions(combinedPending);
 
       const { count: studentCount } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'student');
       const { count: requestCount } = await supabase.from('registrations').select('*', { count: 'exact', head: true }).eq('status', 'new');
@@ -215,8 +248,6 @@ export default function AdminDashboard() {
     const finalAwarded = isNaN(awardedXp) ? 0 : awardedXp;
     const finalBonus = isNaN(bonusXp) ? 0 : bonusXp;
 
-  
-
     const maxBonus = Math.floor((submission.potential_xp || 0) * 0.1);
     if (finalBonus > maxBonus) {
       return alert(`Bonus cannot exceed ${maxBonus} XP (10% limit)`);
@@ -225,6 +256,7 @@ export default function AdminDashboard() {
     const totalToGive = finalAwarded + finalBonus;
 
     try {
+      // 1. Give the student their XP
       const { data: profile } = await supabase.from('profiles').select('xp, metadata').eq('id', submission.student_id).single();
       
       if (profile) {
@@ -244,19 +276,32 @@ export default function AdminDashboard() {
         }).eq('id', submission.student_id);
       }
 
-      await supabase
-        .from('tech_archive')
-        .update({
-          review_status: 'reviewed',
-          xp_earned: (submission.xp_earned || 0) + totalToGive, 
-          metadata: { 
-            ...(submission.metadata || {}), 
-            teacher_notes: justification,
-            bonus_awarded: finalBonus,
-            admin_id_awarded: currentUser?.id
-          }
-        })
-        .eq('id', submission.id);
+      // 2. Route the status update back to the correct source table!
+      if (submission.source_table === 'tutorial_submissions') {
+        await supabase
+          .from('tutorial_submissions')
+          .update({ 
+            status: 'reviewed',
+            xp_earned: (submission.xp_earned || 0) + totalToGive,
+            bonus_xp: (submission.bonus_xp || 0) + finalBonus // <--- TRACK BONUS SEPARATELY
+          })
+          .eq('id', submission.id);
+      } else {
+        await supabase
+          .from('tech_archive')
+          .update({
+            review_status: 'reviewed',
+            xp_earned: (submission.xp_earned || 0) + totalToGive, 
+            teacher_xp_awarded: (submission.teacher_xp_awarded || 0) + finalBonus, // Used by tech_archive
+            metadata: { 
+              ...(submission.metadata || {}), 
+              teacher_notes: justification,
+              bonus_awarded: (submission.metadata?.bonus_awarded || 0) + finalBonus,
+              admin_id_awarded: currentUser?.id
+            }
+          })
+          .eq('id', submission.id);
+      }
 
       fetchHeartbeat(); // Refresh data
     } catch (err) {
@@ -746,9 +791,15 @@ export default function AdminDashboard() {
                       
                       {(() => {
                         const maxPossible = sub.potential_xp || 100;
-                        const alreadyEarned = sub.xp_earned || 0;
-                        const remainingBase = Math.max(0, maxPossible - alreadyEarned);
                         const maxBonus = Math.floor(maxPossible * 0.1);
+                        
+                        const totalEarned = sub.xp_earned || 0;
+                        const existingBonus = sub.source_table === 'tutorial_submissions' 
+                          ? (sub.bonus_xp || 0) 
+                          : (sub.teacher_xp_awarded || sub.metadata?.bonus_awarded || 0);
+                        
+                        const baseEarned = totalEarned - existingBonus;
+                        const remainingBase = Math.max(0, maxPossible - baseEarned);
 
                         return (
                           <>
@@ -769,7 +820,7 @@ export default function AdminDashboard() {
                                  </p>
                                  <span className="text-blue-500/30">|</span>
                                  <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">
-                                   Already Earned: <span className="text-white">{alreadyEarned} XP</span>
+                                   Already Earned: <span className="text-white">{totalEarned} XP</span>
                                  </p>
                                </div>
                                

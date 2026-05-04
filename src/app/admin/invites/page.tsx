@@ -78,7 +78,7 @@ export default function InvitesCommandCenter() {
       defaultTrialEnd.setDate(today.getDate() + 14);
     }
     
-    let defaultInviteExpiry = new Date(today);
+    const defaultInviteExpiry = new Date(today);
     defaultInviteExpiry.setDate(today.getDate() + 7);
 
     setPlannedDate(today.toISOString().split('T')[0]);
@@ -424,8 +424,8 @@ export default function InvitesCommandCenter() {
       }
 
       let globalIndex = 0;
-      let updatePromises: any[] = [];
-      let insertPayload: any[] = [];
+      const updatePromises: any[] = [];
+      const insertPayload: any[] = [];
 
       for (const id of selectedProspectIds) {
         const existing = prospects.find(p => p.id === id);

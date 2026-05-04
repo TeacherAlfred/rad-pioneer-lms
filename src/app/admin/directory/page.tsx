@@ -250,7 +250,7 @@ export default function DirectoryPage() {
   const filteredProfiles = profiles.filter(p => {
     if (p.role !== 'guardian') return false; 
     const matchesSearch = p.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.metadata?.email?.toLowerCase().includes(searchQuery.toLowerCase());
-    let matchesRole = roleFilter === "all" || (roleFilter === "review" && p.requires_review === true);
+    const matchesRole = roleFilter === "all" || (roleFilter === "review" && p.requires_review === true);
     const matchesStatus = statusFilter === "all" || p.status === statusFilter;
     return matchesSearch && matchesRole && matchesStatus;
   }).sort((a, b) => {
