@@ -96,7 +96,7 @@ export default function ReferralInvitePage() {
       const today = new Date();
       const launchDate = new Date('2026-05-01T00:00:00');
       const trialStart = today > launchDate ? today : launchDate;
-      let trialEnd = new Date(trialStart);
+      const trialEnd = new Date(trialStart);
       trialEnd.setDate(trialEnd.getDate() + 14);
 
       const guardianId = crypto.randomUUID();
