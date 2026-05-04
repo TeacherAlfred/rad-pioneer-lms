@@ -282,9 +282,12 @@ export default function TeacherSchedulePage() {
           </div>
         </div>
         
-        <button onClick={handleGenerateLink} disabled={isGeneratingLink} className="flex items-center justify-center gap-2 px-6 py-3.5 bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] md:text-xs transition-all shadow-[0_0_20px_rgba(217,70,239,0.3)] hover:scale-105 w-full sm:w-auto">
-          {isGeneratingLink ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />} Generate Booking Link
-        </button>
+        {/* Only show Generate Booking Link to Admins */}
+        {currentUser?.role === 'admin' && (
+          <button onClick={handleGenerateLink} disabled={isGeneratingLink} className="flex items-center justify-center gap-2 px-6 py-3.5 bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] md:text-xs transition-all shadow-[0_0_20px_rgba(217,70,239,0.3)] hover:scale-105 w-full sm:w-auto">
+            {isGeneratingLink ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />} Generate Booking Link
+          </button>
+        )}
       </div>
 
       {/* APPROVAL INBOX (For Selected Context) */}
