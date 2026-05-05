@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Cpu, Gamepad2, Sparkles, CheckCircle2, AlertTriangle, Lock,
+  Cpu, Gamepad2, Sparkles, CheckCircle2, AlertTriangle, Lock, TrendingUp,
   ChevronRight, ShieldCheck, Clock, Loader2, Target, Users, Minus, Plus, X, UserPlus,
   ChevronDown, ChevronUp, Star, MessageSquareHeart, ChevronLeft, Edit2, ArrowRight, Share2, Check,
   CreditCard, GraduationCap, Zap, Mail, CalendarDays
@@ -392,41 +392,60 @@ export default function VIPInvitePage() {
         <div className="lg:col-span-7 space-y-8 md:space-y-10">
           <div className="space-y-5 md:space-y-6">
             <h1 className="text-[8.5vw] sm:text-6xl font-black tracking-tighter uppercase italic leading-[0.9] text-slate-900 flex flex-col">
-              <span>Future-Proof</span>
-              <span>Your Child</span>
-              <span className="text-[4vw] sm:text-3xl lg:text-4xl text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-800 mt-1 pb-1">
-                Without Breaking The Bank.
-              </span>
-            </h1>
+            <span>Invest In Your</span>
+            <span>Child's Future</span>
+            <span className="text-[4vw] sm:text-3xl lg:text-4xl text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-900 mt-1 pb-1">
+              At a Fraction of the Cost.
+            </span>
+          </h1>
             <p className="text-[15px] sm:text-lg text-slate-600 font-medium leading-relaxed max-w-xl">
-              With the rising cost of living, providing your child with premium education shouldn't have to suffer. We are turning screen time into skill time with our self-paced coding LMS.
+              Stop worrying about expensive tutoring or passive screen time. We give your child the tools to become a creator in the digital economy through a fun, self-paced journey they actually enjoy.
             </p>
-            <button onClick={handleOpenWizard} className="w-full sm:w-auto mt-4 px-8 py-4 bg-blue-600 hover:bg-blue-50 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 group hover:-translate-y-1">
-              Claim 14-Day Free Trial <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            <button onClick={handleOpenWizard} className="w-full sm:w-auto mt-4 px-8 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 group hover:-translate-y-1">
+              Unlock Full Access <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
             </button>
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:gap-6">
-            <div className="bg-white p-3 sm:p-4 rounded-3xl border border-blue-100 shadow-[0_10px_40px_-10px_rgba(37,99,235,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(37,99,235,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
-              <div className="bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
-                <Cpu className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
-              </div>
-              <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
-                <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Critical Problem Solving</h3>
-                <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">Coding forces kids to break down complex problems into manageable, logical steps.</p>
-              </div>
-            </div>
-            
-            <div className="bg-white p-3 sm:p-4 rounded-3xl border border-emerald-100 shadow-[0_10px_40px_-10px_rgba(16,185,129,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(16,185,129,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
-              <div className="bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
-                <Gamepad2 className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
-              </div>
-              <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
-                <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Creators, Not Consumers</h3>
-                <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">Shift them from just playing games to understanding how to build them.</p>
-              </div>
-            </div>
-          </div>
+  {/* CARD 1: MENTAL EDGE / ACADEMIC IMPACT */}
+  <div className="bg-white p-3 sm:p-4 rounded-3xl border border-blue-100 shadow-[0_10px_40px_-10px_rgba(37,99,235,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(37,99,235,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
+    <div className="bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
+      <Cpu className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
+    </div>
+    <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
+      <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Give Them a Mental Edge</h3>
+      <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+        Coding teaches your child to handle frustration and think logically - transferable skills that improve their focus and performance in <strong>STEM subjects</strong>.
+      </p>
+    </div>
+  </div>
+  
+  {/* CARD 2: PRODUCTIVE HOBBY / SCREEN TIME TRANSFORMATION */}
+  <div className="bg-white p-3 sm:p-4 rounded-3xl border border-emerald-100 shadow-[0_10px_40px_-10px_rgba(16,185,129,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(16,185,129,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
+    <div className="bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
+      <Gamepad2 className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
+    </div>
+    <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
+      <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Productive Screen Time</h3>
+      <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+        Transform <strong>"mindless scrolling"</strong> into a high-value hobby. Watch them build their own robotic solutions, digital worlds and games instead of being passive consumers.
+      </p>
+    </div>
+  </div>
+
+  {/* CARD 3: FUTURE CAREER / GLOBAL SKILLS */}
+  <div className="bg-white p-3 sm:p-4 rounded-3xl border border-indigo-100 shadow-[0_10px_40px_-10px_rgba(79,70,229,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(79,70,229,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
+    <div className="bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
+      <TrendingUp className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
+    </div>
+    <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
+      <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Future-Proof Their Career</h3>
+      <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+        Equip them with the most in-demand skill on the planet. Whether they become engineers or entrepreneurs, <strong>digital skills</strong> are the "new literacy" they need to succeed in the 21st Century.
+      </p>
+    </div>
+  </div>
+</div>
         </div>
 
         <div id="claim-section" className="lg:col-span-5 relative scroll-mt-6">
@@ -452,7 +471,7 @@ export default function VIPInvitePage() {
                   </div>
 
                   <button onClick={handleOpenWizard} className="w-full px-8 py-4 sm:py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs sm:text-sm transition-all shadow-xl shadow-blue-600/20 flex items-center justify-center gap-2 group hover:-translate-y-1">
-                    Claim 14-Day Free Trial <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                    Unlock Full Access <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
                   </button>
                   <div className="text-center flex items-center justify-center gap-1.5 text-slate-400">
                     <ShieldCheck size={12}/> <span className="text-[9px] font-bold uppercase tracking-widest">No Credit Card Required</span>
@@ -599,7 +618,7 @@ export default function VIPInvitePage() {
                       </div>
                       <div className="relative group focus-within:bg-blue-50/30 transition-colors border-b border-slate-100 p-3 pl-4">
                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-focus-within:text-blue-600 mb-0.5 block transition-colors">
-                          Secure Email Address
+                          Your Email Address
                         </label>
                         <input 
                           type="email" 
@@ -842,8 +861,8 @@ export default function VIPInvitePage() {
                         Most Popular
                       </div>
                       <div className="bg-slate-800/60 rounded-[28px] p-6 border border-slate-700">
-                         <h3 className="text-white font-black italic text-xl uppercase tracking-tighter">Fast-Track Upgrade</h3>
-                         <p className="text-slate-400 text-[11px] font-medium mt-1 leading-relaxed">Skip the trial line and permanently lock in the discounted pioneer tier.</p>
+                         <h3 className="text-white font-black italic text-xl uppercase tracking-tighter">Secure Your Status</h3>
+                         <p className="text-slate-400 text-[11px] font-medium mt-1 leading-relaxed">Lock in your lifetime discount today and skip the administrative queue. Perfect for parents ready to start the transformation immediately.</p>
                          
                          <ul className="mt-5 space-y-2.5 mb-6">
                            <li className="flex items-start gap-2.5 text-[11px] font-bold text-slate-300">
@@ -852,9 +871,7 @@ export default function VIPInvitePage() {
                            <li className="flex items-start gap-2.5 text-[11px] font-bold text-slate-300">
                              <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5"/> Permanent LMS Access Discount*
                            </li>
-                           <li className="flex items-start gap-2.5 text-[11px] font-bold text-amber-400 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
-                             <Sparkles size={14} className="text-amber-500 shrink-0 mt-0.5"/> BONUS: Free 1-on-1 Getting started session! (online)
-                           </li>
+                           <li className="flex items-start gap-2.5 text-[11px] font-bold text-amber-400 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20"><Sparkles size={14} className="text-amber-500 shrink-0 mt-0.5"/>EXCLUSIVE: Free 1-on-1 Online "Kickstart" session to ensure your child hits the ground running!</li>
                          </ul>
 
                          {/* Upgraded CTA */}
@@ -870,8 +887,8 @@ export default function VIPInvitePage() {
 
                     {/* STANDARD TRIAL CARD (Repositioned as the downgrade option) */}
                     <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 mt-4">
-                       <h3 className="text-slate-600 font-black italic text-sm uppercase tracking-tighter">14-Day Free Trial</h3>
-                       <p className="text-slate-500 text-[10px] font-medium mt-1 mb-4 leading-relaxed">Get 14 days of full platform access to test the waters before deciding. Standard rates apply post-trial.</p>
+                       <h3 className="text-slate-600 font-black italic text-sm uppercase tracking-tighter">14-Day Full Access Trial</h3>
+                       <p className="text-slate-500 text-[10px] font-medium mt-1 mb-4 leading-relaxed">Get 14 days of full access to one of our courses to test the waters before deciding. Standard rates apply post-trial.</p>
                        
                        <button 
                          onClick={() => handleComplete('trial')} 
@@ -921,7 +938,7 @@ export default function VIPInvitePage() {
               <div className="w-8 h-8 rounded-full bg-purple-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-purple-600 fill-purple-600"/></div>
             </div>
             <div className="relative z-10 flex items-center gap-2">
-              <span className="text-sm font-black text-slate-900 tracking-tight">See what parents are saying</span>
+              <span className="text-sm font-black text-slate-900 tracking-tight">Click here to read some reviews from our parents.</span>
               <MessageSquareHeart size={18} className="text-rose-500" />
             </div>
           </button>
@@ -931,12 +948,14 @@ export default function VIPInvitePage() {
           <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none"><Target size={120}/></div>
           <div className="relative z-10">
             <span className="px-3 py-1 bg-white/10 border border-white/20 rounded-lg text-[9px] font-black uppercase tracking-widest text-blue-300 mb-4 inline-block">Action-Taker's Pricing</span>
-            <h3 className="text-xl sm:text-2xl font-black italic uppercase tracking-tight mb-4">Why is it so affordable?</h3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-6">Those who get the most out of our platform are the ones who show up regularly. We are offering massive discounts, but they come with one condition: <strong className="text-white">Accountability.</strong></p>
+            <h3 className="text-xl sm:text-2xl font-black italic uppercase tracking-tight mb-4">Why is this subsidized?</h3>
+            <p className="text-slate-300 text-sm leading-relaxed mb-6">
+              Our mission is to make digital skills education accessible to every African home. We've dropped the price to make this a "no-brainer" for you, provided you help us keep your child <strong className="text-white">engaged and consistent.</strong>
+            </p>
             <ul className="space-y-4">
-              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Start with a completely free <strong className="text-white">14-Day Full Access Trial</strong>.</span></li>
+              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Start with a completely free <strong className="text-white">14-Day Full Course Access Trial</strong>.</span></li>
               <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Upgrade anytime during the trial. Your paid months only begin <strong className="text-white">after your trial ends</strong>.</span></li>
-              <li className="flex items-start gap-3"><AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Maintain an average of doing <strong className="text-white">1 lesson per week</strong> to avoid forfeiting the discount.</span></li>
+              <li className="flex items-start gap-3"><AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">To keep the discount, ensure your child completes at least <strong className="text-white">one lesson per week</strong>. We reward consistency, not just sign-ups.</span></li>
             </ul>
             <div className="mt-8 p-4 bg-white/5 border border-white/10 rounded-2xl flex items-start sm:items-center gap-4">
               <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center shrink-0 mt-1 sm:mt-0"><Sparkles size={16}/></div>

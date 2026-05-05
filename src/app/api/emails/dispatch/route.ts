@@ -69,8 +69,7 @@ export async function POST(req: Request) {
                 Your quotation payment must be received and cleared at least 24 hours prior to your scheduled lesson time.
               </p>
             </div>
-            <p>Click below to log into your Parent Dashboard and use your complimentary Coaching Credit to book your timeslot.</p>
-            <a href="${baseUrl}/login?coach_id=edcc886a-1585-4ccc-9440-da8131073fb7" style="display: inline-block; padding: 12px 24px; background-color: #10b981; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 10px;">Book Session Now</a>
+            <p>We will contact you shortly to book your session based on the time slot that works best for you.</p>
           </div>
         `
       });

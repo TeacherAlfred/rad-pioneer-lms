@@ -8,13 +8,14 @@ import {
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
   GraduationCap, Eye, Bell, CalendarDays, Building2, Send, 
   Inbox, Calculator, Key, Brain, Cpu, Trophy, ExternalLink, FileText,
-  BarChart3, Globe, ImagePlus
+  BarChart3, Globe, ImagePlus, UserCog, Terminal, Database, Server
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import MediaDesk from "@/components/admin/MediaDesk";
+import RoleSwitcherModal from "@/components/admin/RoleSwitcherModal";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -25,7 +26,7 @@ export default function AdminDashboard() {
   // Dashboard UI State
   const [selectedStat, setSelectedStat] = useState<null | string>(null);
   const [activeMetricTab, setActiveMetricTab] = useState<'overview' | 'leads' | 'finance' | 'learning'>('overview');
-  const [activeSectorTab, setActiveSectorTab] = useState<'growth' | 'core' | 'admin'>('growth');
+  const [activeSectorTab, setActiveSectorTab] = useState<'growth' | 'core' | 'admin' | 'dev'>('growth');
 
   // Unified Registration Alerts
   const [newRegistrations, setNewRegistrations] = useState<any[]>([]);
@@ -40,8 +41,9 @@ export default function AdminDashboard() {
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [reviewTeacherFilter, setReviewTeacherFilter] = useState<string>('all');
 
-  // --- REFACTORED: Media Desk State ---
+  // Modals & Tools State
   const [isMediaModalOpen, setIsMediaModalOpen] = useState(false);
+  const [isRoleSwitcherOpen, setIsRoleSwitcherOpen] = useState(false);
 
   // Stats State
   const [stats, setStats] = useState({
@@ -376,7 +378,7 @@ export default function AdminDashboard() {
     </motion.div>
   );
 
-  const groupedSectors = {
+  const groupedSectors: Record<string, any> = {
     growth: {
       title: "Growth & Acquisition",
       desc: "Manage top-of-funnel leads, invites, and external campaigns.",
@@ -414,6 +416,16 @@ export default function AdminDashboard() {
         { label: 'System Auth/MFA', icon: Key, path: '/admin/setup-mfa', color: 'hover:border-zinc-500' },
         { label: 'Verification', icon: CheckCircle2, path: '/admin/verify', color: 'hover:border-zinc-400' },
         { label: 'Web Analytics', icon: Globe, path: '/admin/analytics', color: 'hover:border-cyan-400' },
+      ]
+    },
+    dev: {
+      title: "System & Engineering",
+      desc: "Developer tools, role impersonation, and environment testing.",
+      items: [
+        { label: 'Role Impersonation', icon: UserCog, onClick: () => setIsRoleSwitcherOpen(true), color: 'hover:border-violet-500' },
+        { label: 'API Logs', icon: Terminal, path: '/admin/logs', color: 'hover:border-zinc-500' },
+        { label: 'Database UI', icon: Database, path: '/admin/db', color: 'hover:border-emerald-500' },
+        { label: 'Server Config', icon: Server, path: '/admin/server', color: 'hover:border-blue-500' },
       ]
     }
   };
@@ -589,10 +601,11 @@ export default function AdminDashboard() {
         {/* SECTORS HUB (TABBED) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-8 border-t border-white/10">
           <div className="lg:col-span-2 space-y-6">
-            <div className="flex bg-[#0f172a] p-1.5 rounded-2xl border border-white/10 w-fit">
+            <div className="flex flex-wrap gap-2 bg-[#0f172a] p-1.5 rounded-2xl border border-white/10 w-fit">
               <button onClick={() => setActiveSectorTab('growth')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'growth' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>Growth & Acquisition</button>
               <button onClick={() => setActiveSectorTab('core')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'core' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>Core Operations</button>
               <button onClick={() => setActiveSectorTab('admin')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeSectorTab === 'admin' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>Admin & Infrastructure</button>
+              <button onClick={() => setActiveSectorTab('dev')} className={`px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-1.5 ${activeSectorTab === 'dev' ? 'bg-violet-600/20 text-violet-400 shadow-sm border border-violet-500/20' : 'text-slate-500 hover:text-slate-300'}`}><Terminal size={12}/> System & Dev</button>
             </div>
 
             <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 md:p-10 min-h-[400px]">
@@ -603,12 +616,26 @@ export default function AdminDashboard() {
                     <p className="text-slate-500 text-xs mt-1 font-medium">{groupedSectors[activeSectorTab].desc}</p>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {groupedSectors[activeSectorTab].items.map((item, i) => (
-                      <Link key={i} href={item.path} className={`p-5 bg-[#0f172a] border border-transparent hover:bg-white/5 rounded-[24px] transition-all flex flex-col gap-4 group ${item.color}`}>
-                        <item.icon size={20} className="text-slate-500 group-hover:text-white transition-colors" />
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-300 group-hover:text-white transition-colors">{item.label}</span>
-                      </Link>
-                    ))}
+                    {groupedSectors[activeSectorTab].items.map((item: any, i: number) => {
+                      const commonClasses = `text-left p-5 bg-[#0f172a] border border-transparent hover:bg-white/5 rounded-[24px] transition-all flex flex-col gap-4 group ${item.color}`;
+                      const Icon = item.icon;
+
+                      if (item.onClick) {
+                        return (
+                          <button key={i} onClick={item.onClick} className={commonClasses}>
+                            <Icon size={20} className="text-slate-500 group-hover:text-white transition-colors" />
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-300 group-hover:text-white transition-colors">{item.label}</span>
+                          </button>
+                        );
+                      }
+
+                      return (
+                        <Link key={i} href={item.path} className={commonClasses}>
+                          <Icon size={20} className="text-slate-500 group-hover:text-white transition-colors" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-300 group-hover:text-white transition-colors">{item.label}</span>
+                        </Link>
+                      );
+                    })}
                   </div>
                 </motion.div>
               </AnimatePresence>
@@ -914,8 +941,10 @@ export default function AdminDashboard() {
         )}
       </AnimatePresence>
 
-      {/* --- RENDER THE COMPONENTIZED MEDIA DESK --- */}
+      {/* --- RENDER MODALS --- */}
       <MediaDesk isOpen={isMediaModalOpen} onClose={() => setIsMediaModalOpen(false)} />
+      
+      <RoleSwitcherModal isOpen={isRoleSwitcherOpen} onClose={() => setIsRoleSwitcherOpen(false)} />
 
     </div>
   );
