@@ -65,6 +65,69 @@ export default function InvitesCommandCenter() {
   const [showQueueModal, setShowQueueModal] = useState(false);
   const [queueIndex, setQueueIndex] = useState(0);
 
+  // --- NEW: Dispatch Date State ---
+  const [dispatchDate, setDispatchDate] = useState<string>("");
+
+  // --- NEW: Mark as Sent Modal State ---
+  const [showMarkSentModal, setShowMarkSentModal] = useState<any>(null);
+  const [markSentDate, setMarkSentDate] = useState<string>("");
+  const [markSentChannel, setMarkSentChannel] = useState<string>("WhatsApp");
+
+  useEffect(() => {
+    if (showMarkSentModal) {
+      if (showMarkSentModal.metadata?.invite_generated_at) {
+        setMarkSentDate(showMarkSentModal.metadata.invite_generated_at.split('T')[0]);
+      } else {
+        setMarkSentDate(new Date().toISOString().split('T')[0]);
+      }
+      setMarkSentChannel(showMarkSentModal.metadata?.dispatch_channel || 'WhatsApp');
+    }
+  }, [showMarkSentModal]);
+
+  const handleMarkAsSentSubmit = async () => {
+    if (!showMarkSentModal) return;
+    try {
+      const dateObj = new Date(markSentDate);
+      const now = new Date();
+      dateObj.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+
+      const updatedMeta = {
+        ...showMarkSentModal.metadata,
+        invite_generated_at: dateObj.toISOString(),
+        dispatch_channel: markSentChannel
+      };
+
+      // Auto-update status to "Invite Sent" if it was "Invite Planned" or "New Lead"
+      const newStatus = (showMarkSentModal.status === 'Invite Planned' || showMarkSentModal.status === 'New Lead') 
+        ? 'Invite Sent' 
+        : showMarkSentModal.status;
+
+      const updatedLead = { ...showMarkSentModal, status: newStatus, metadata: updatedMeta };
+      
+      // Optimistic UI Update
+      setProspects(prev => prev.map(p => p.id === updatedLead.id ? updatedLead : p));
+      
+      await supabase.from('prospects').update({ status: newStatus, metadata: updatedMeta }).eq('id', showMarkSentModal.id);
+      
+      confetti({ particleCount: 100, spread: 60, origin: { y: 0.6 } });
+      setShowMarkSentModal(null);
+    } catch (err) {
+      console.error("Failed to mark as sent", err);
+      alert("Failed to save dispatch record.");
+    }
+  };
+
+  // Initialize the dispatch date whenever a lead is opened
+  useEffect(() => {
+    if (selectedLeadModal) {
+      if (selectedLeadModal.metadata?.invite_generated_at) {
+        setDispatchDate(selectedLeadModal.metadata.invite_generated_at.split('T')[0]);
+      } else {
+        setDispatchDate(new Date().toISOString().split('T')[0]);
+      }
+    }
+  }, [selectedLeadModal]);
+
   useEffect(() => {
     fetchProspects();
     
@@ -108,7 +171,7 @@ export default function InvitesCommandCenter() {
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -535,7 +598,7 @@ export default function InvitesCommandCenter() {
     
     const formats = {
       whatsapp: `Hi ${firstName}! 🚀\n\nA message from *RAD Academy*. As our revamped website launches this weekend, we are gifting you a personal RAD LMS Access invite.\n\nAs part of the launch, we are offering you a 14-Day Free Trial and an exclusive discount if you decide to upgrade.\n\nClaim your trial license here before it expires:\n${link}\n\nYou are welcome to contact Teacher Alfred if you have any questions.\n\nRegards,\n*RAD Academy Team*`,
-      email: `Subject: Your VIP RAD Academy Access Invite 🚀\n\nHi ${firstName},\n\nI've officially secured your VIP access to the RAD Academy Learning Management System.\n\nWe're subsidizing licenses for parents who are serious about future-proofing their children. You get a 14-Day Full Access Trial, and if you claim it via the link below, you'll lock in our heavily discounted "Action-Taker's Pricing" forever.\n\nClaim your VIP access here:\n${link}\n\nCan't wait to see your child inside the portal.\n\nBest,\nRAD Academy Team`,
+      email: `Subject: Turn your child's screen time into future skills 🚀\n\nHi ${firstName},\n\nInstead of just playing games or watching videos, what if your child could start building them?\n\nI’ve secured your 14-Day Full Access Trial to the newly launched RAD Academy platform. We built this specifically for parents who want to future-proof their kids and turn everyday screen time into a powerful advantage.\n\nWhat your child gets:\n• Hands-on building: They won't just watch tutorials; they will code and build actual working tech.\n• Future-ready skills: They will develop the critical problem-solving and logical thinking skills needed to thrive.\n• Creative confidence: They shift from being consumers of technology to confident creators.\n\nWhat you get:\nBy activating your trial through the private link below, you automatically lock in our heavily subsidized "Action-Taker's Pricing" for life.\n\nClaim your VIP access and get them started today:\n${link}\n\nI can't wait to see what your child builds inside the portal.\n\nBest,\nAlfred Chingombe\nRAD Academy Team`,
       linkedin: `Hi ${firstName}, great connecting! As discussed, I've organized a VIP invite for you to trial our new coding LMS. You can claim your 14-day free access and lock in the discounted tier right here: ${link} Let me know when you're set up!`
     };
     return formats[type];
@@ -548,6 +611,71 @@ export default function InvitesCommandCenter() {
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Copy failed', err);
+    }
+  };
+
+  // --- Date Change Handler ---
+  const handleDispatchDateChange = async (newDate: string) => {
+    setDispatchDate(newDate);
+    if (!selectedLeadModal) return;
+
+    try {
+      const dateObj = new Date(newDate);
+      const now = new Date();
+      dateObj.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+
+      const updatedMeta = {
+        ...selectedLeadModal.metadata,
+        invite_generated_at: dateObj.toISOString()
+      };
+
+      const updatedLead = { ...selectedLeadModal, metadata: updatedMeta };
+      setSelectedLeadModal(updatedLead);
+      setProspects(prev => prev.map(p => p.id === updatedLead.id ? updatedLead : p));
+
+      await supabase.from('prospects').update({ metadata: updatedMeta }).eq('id', selectedLeadModal.id);
+    } catch (err) {
+       console.error("Failed to update date", err);
+    }
+  };
+
+  // --- Dispatch Channel Updater ---
+  const handleUpdateDispatchChannel = async (channel: string) => {
+    if (!selectedLeadModal) return;
+    try {
+      const currentChannel = selectedLeadModal.metadata?.dispatch_channel;
+      const newChannel = currentChannel === channel ? null : channel; 
+      
+      let newGeneratedAt = selectedLeadModal.metadata?.invite_generated_at;
+      
+      // If we are applying a channel, ensure the dispatch date is recorded
+      if (newChannel) {
+        const dateObj = new Date(dispatchDate || new Date().toISOString().split('T')[0]);
+        const now = new Date();
+        dateObj.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+        newGeneratedAt = dateObj.toISOString();
+      }
+
+      const updatedMeta = { 
+        ...selectedLeadModal.metadata, 
+        dispatch_channel: newChannel,
+        invite_generated_at: newGeneratedAt
+      };
+      
+      // Auto-update status to "Invite Sent" if it was "Invite Planned"
+      const newStatus = (newChannel && selectedLeadModal.status === 'Invite Planned') 
+        ? 'Invite Sent' 
+        : selectedLeadModal.status;
+
+      // Optimistic UI Update
+      const updatedLead = { ...selectedLeadModal, status: newStatus, metadata: updatedMeta };
+      setSelectedLeadModal(updatedLead);
+      setProspects(prev => prev.map(p => p.id === updatedLead.id ? updatedLead : p));
+
+      await supabase.from('prospects').update({ status: newStatus, metadata: updatedMeta }).eq('id', selectedLeadModal.id);
+    } catch (err) {
+      console.error("Failed to update channel", err);
+      alert("Failed to update dispatch channel");
     }
   };
 
@@ -635,9 +763,6 @@ export default function InvitesCommandCenter() {
     }
   };
 
-  // UPGRADE: Map directly from tableSelectedIds against the raw 'prospects' array.
-  // This prevents the queue from shrinking mid-session if a real-time DB update
-  // suddenly causes a lead to fail the active table filters.
   const queueLeads = tableSelectedIds
     .map(id => prospects.find(p => p.id === id))
     .filter(Boolean);
@@ -647,12 +772,13 @@ export default function InvitesCommandCenter() {
   const handleNextQueueLead = async () => {
     if (!activeQueueLead) return;
     
-    // Optional telemetry: Auto-mark as sent when advancing
+    // Auto-mark as sent and tag as WhatsApp when advancing queue
     try {
       const meta = activeQueueLead.metadata || {};
       const newMeta = {
         ...meta,
-        invite_generated_at: new Date().toISOString()
+        invite_generated_at: new Date().toISOString(),
+        dispatch_channel: 'WhatsApp' // Auto tag it since it's the WhatsApp queue
       };
       await supabase.from('prospects').update({ 
         status: 'Invite Sent', 
@@ -665,7 +791,6 @@ export default function InvitesCommandCenter() {
     if (queueIndex < queueLeads.length - 1) {
       setQueueIndex(queueIndex + 1);
     } else {
-      // Finished
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
       setShowQueueModal(false);
       setTableSelectedIds([]);
@@ -752,12 +877,12 @@ export default function InvitesCommandCenter() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-black uppercase tracking-widest text-slate-300 flex items-center gap-2">
                 <Users size={16} className="text-blue-500"/> Campaign Ledger
-                {(activeFilter !== 'all' || recencyDays !== '' || tagFilterMode !== 'all' || searchQuery !== '') && (
-                  <button onClick={clearFilters} className="ml-2 px-2.5 py-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 text-[9px] rounded-lg cursor-pointer hover:bg-blue-500 hover:text-white transition-colors flex items-center gap-1">
-                    Clear Filters <X size={10}/>
-                  </button>
-                )}
               </h3>
+              {(activeFilter !== 'all' || recencyDays !== '' || tagFilterMode !== 'all' || searchQuery !== '') && (
+                <button onClick={clearFilters} className="ml-2 px-2.5 py-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 text-[9px] rounded-lg cursor-pointer hover:bg-blue-500 hover:text-white transition-colors flex items-center gap-1">
+                  Clear Filters <X size={10}/>
+                </button>
+              )}
             </div>
             
             <div className="flex flex-wrap items-center gap-3 w-full">
@@ -871,9 +996,14 @@ export default function InvitesCommandCenter() {
                       if (progress === 'Guardian Details Completed') progressColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
                       if (progress === 'Completed') progressColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
 
-                      const sentDateStr = p.metadata?.invite_generated_at 
-                        ? new Date(p.metadata.invite_generated_at).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) 
-                        : 'Pending';
+                      let sentDateStr = 'Pending';
+                      if (p.metadata?.invite_generated_at && p.status !== 'Invite Planned') {
+                        sentDateStr = new Date(p.metadata.invite_generated_at).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                      } else if (p.metadata?.planned_invite_date) {
+                        sentDateStr = `Planned: ${new Date(p.metadata.planned_invite_date).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' })}`;
+                      } else if (p.created_at) {
+                        sentDateStr = `Added: ${new Date(p.created_at).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' })}`;
+                      }
 
                       return (
                         <tr key={p.id} onClick={() => toggleTableSelection(p.id)} className={`hover:bg-white/[0.04] transition-colors group cursor-pointer ${isSelected ? 'bg-blue-500/5' : ''}`}>
@@ -938,9 +1068,16 @@ export default function InvitesCommandCenter() {
                             </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
-                             <span className={`text-[10px] font-bold ${sentDateStr === 'Pending' ? 'text-slate-600' : 'text-slate-300'}`}>
-                               {sentDateStr}
-                             </span>
+                             <div className="flex flex-col items-start gap-1">
+                               <span className={`text-[10px] font-bold ${sentDateStr === 'Pending' ? 'text-slate-600' : 'text-slate-300'}`}>
+                                 {sentDateStr}
+                               </span>
+                               {p.metadata?.dispatch_channel && (
+                                 <span className="text-[8px] font-black uppercase tracking-widest text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
+                                   via {p.metadata.dispatch_channel}
+                                 </span>
+                               )}
+                             </div>
                           </td>
                           <td className="px-6 py-4 text-right whitespace-nowrap">
                             <div className="flex justify-end items-center gap-2">
@@ -953,6 +1090,13 @@ export default function InvitesCommandCenter() {
                                   <CheckCircle2 size={14} /> Convert
                                 </button>
                               )}
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); setShowMarkSentModal(p); }} 
+                                className="p-2 bg-emerald-500/10 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded-lg transition-colors border border-emerald-500/20"
+                                title="Mark as Sent"
+                              >
+                                <Check size={14} />
+                              </button>
                               <button onClick={(e) => { e.stopPropagation(); setShowPreviewModal(`${window.location.origin}/invite/${p.id}`); }} className="p-2 bg-white/5 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors border border-white/5"><Eye size={14} /></button>
                               <button onClick={(e) => { e.stopPropagation(); setShowShareModal(p); }} className={`p-2 rounded-lg transition-colors border ${p.status === 'Invite Planned' ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-600 hover:text-white border-purple-500/20' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-600 hover:text-white border-blue-500/20'}`}>
                                 {p.status === 'Invite Planned' ? <Send size={14} /> : <Share2 size={14} />}
@@ -971,7 +1115,7 @@ export default function InvitesCommandCenter() {
 
       </div>
 
-      {/* --- NEW: QUEUE ACTION BAR --- */}
+      {/* --- QUEUE ACTION BAR --- */}
       <AnimatePresence>
         {tableSelectedIds.length > 0 && !showQueueModal && (
           <motion.div 
@@ -1009,7 +1153,7 @@ export default function InvitesCommandCenter() {
           MODALS
           ========================================== */}
 
-      {/* --- NEW: WHATSAPP QUEUE MODAL --- */}
+      {/* --- WHATSAPP QUEUE MODAL --- */}
       <AnimatePresence>
         {showQueueModal && activeQueueLead && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
@@ -1045,7 +1189,6 @@ export default function InvitesCommandCenter() {
                       let phone = activeQueueLead.phone.replace(/\D/g, '');
                       if (phone.startsWith('0')) phone = '27' + phone.substring(1);
                       
-                      // UPGRADED: Deep link directly to the native app
                       const url = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`;
                       window.location.href = url;
                     }}
@@ -1176,6 +1319,43 @@ export default function InvitesCommandCenter() {
                     <p className="text-[9px] font-black uppercase tracking-widest text-blue-400 mb-1">Trial Ends</p>
                     <p className="text-sm font-black text-blue-400">{selectedLeadModal.metadata?.custom_trial_end ? new Date(selectedLeadModal.metadata.custom_trial_end).toLocaleDateString() : (selectedLeadModal.metadata?.trial_end ? new Date(selectedLeadModal.metadata.trial_end).toLocaleDateString() : 'N/A')}</p>
                   </div>
+                </div>
+
+                {/* --- DISPATCH CHANNEL TRACKER --- */}
+                <div className="bg-[#020617] border border-white/5 rounded-2xl p-5 mt-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                            <Send size={12}/> Dispatch Details
+                        </h4>
+                        <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10">
+                            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400">Sent On:</label>
+                            <input 
+                              type="date" 
+                              value={dispatchDate}
+                              onChange={(e) => handleDispatchDateChange(e.target.value)}
+                              className="bg-transparent text-[10px] font-bold text-white focus:outline-none [color-scheme:dark] cursor-pointer"
+                            />
+                        </div>
+                    </div>
+                    
+                    <div className="flex flex-wrap gap-2">
+                        {['WhatsApp', 'Email', 'LinkedIn', 'Facebook', 'Other'].map(channel => {
+                            const isActive = selectedLeadModal.metadata?.dispatch_channel === channel;
+                            return (
+                                <button
+                                    key={channel}
+                                    onClick={() => handleUpdateDispatchChannel(channel)}
+                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all border ${
+                                        isActive 
+                                        ? 'bg-blue-500/20 text-blue-400 border-blue-500/30 shadow-inner' 
+                                        : 'bg-white/5 text-slate-400 border-transparent hover:bg-white/10 hover:text-slate-300'
+                                    }`}
+                                >
+                                    {channel}
+                                </button>
+                            )
+                        })}
+                    </div>
                 </div>
 
                 {selectedLeadModal.metadata?.children && selectedLeadModal.metadata.children.length > 0 && (
@@ -1347,7 +1527,7 @@ export default function InvitesCommandCenter() {
                   ) : (
                     <div className="space-y-4">
                       
-                      {/* --- NEW: CSV UPLOAD ZONE --- */}
+                      {/* --- CSV UPLOAD ZONE --- */}
                       <div className="bg-blue-500/5 border-2 border-dashed border-blue-500/30 rounded-2xl p-6 flex flex-col items-center justify-center text-center group hover:bg-blue-500/10 hover:border-blue-500/50 transition-all relative">
                         <UploadCloud className="text-blue-400 mb-3" size={32} />
                         <h4 className="text-sm font-black text-white uppercase tracking-widest mb-1">Upload CSV Export</h4>
@@ -1413,7 +1593,7 @@ export default function InvitesCommandCenter() {
                   <div className="flex items-center justify-between mb-4">
                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Global Cohort Schedule</p>
                      
-                     {/* --- NEW: Smart Batching Toggle --- */}
+                     {/* Smart Batching Toggle */}
                      <label className="flex items-center gap-2 cursor-pointer group">
                        <div onClick={() => setIsDripCampaign(!isDripCampaign)}>
                          {isDripCampaign ? <CheckSquare size={16} className="text-blue-400"/> : <Square size={16} className="text-slate-600 group-hover:text-white transition-colors"/>}
@@ -1435,7 +1615,6 @@ export default function InvitesCommandCenter() {
                     </div>
                   )}
 
-                  {/* --- UPGRADED: Added Invite Tag column to grid --- */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div>
                       <label className="text-[10px] font-black uppercase tracking-widest text-purple-400 ml-1 flex items-center gap-1"><Send size={10}/> {isDripCampaign ? 'Start Sending On' : 'Planned Send'}</label>
@@ -1554,6 +1733,63 @@ export default function InvitesCommandCenter() {
                 <button onClick={() => setShowPreviewModal(null)} className="p-2 bg-white/5 hover:bg-rose-500 text-slate-400 hover:text-white rounded-full transition-colors"><X size={16}/></button>
               </div>
               <iframe src={showPreviewModal} className="w-full flex-1 bg-white" title="Invite Preview" />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MARK AS SENT MODAL */}
+      <AnimatePresence>
+        {showMarkSentModal && (
+          <div className="fixed inset-0 z-[170] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowMarkSentModal(null)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
+            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-sm bg-[#0f172a] border border-emerald-500/30 rounded-[32px] shadow-2xl p-8 flex flex-col">
+              <button onClick={() => setShowMarkSentModal(null)} className="absolute top-6 right-6 p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"><X size={16}/></button>
+              
+              <div className="mb-6">
+                <h3 className="text-xl font-black uppercase italic tracking-tighter text-white flex items-center gap-2">
+                  <CheckCircle2 className="text-emerald-400" size={20}/> Mark as Sent
+                </h3>
+                <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Update dispatch record for {showMarkSentModal.name}</p>
+              </div>
+
+              <div className="space-y-5">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-2 block">Dispatch Date</label>
+                  <input 
+                    type="date" 
+                    value={markSentDate}
+                    onChange={(e) => setMarkSentDate(e.target.value)}
+                    className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-emerald-500 [color-scheme:dark] cursor-pointer"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-2 block">Platform / Channel</label>
+                  <div className="grid grid-cols-2 gap-2">
+                     {['WhatsApp', 'Email', 'LinkedIn', 'Facebook', 'Other'].map(channel => (
+                        <button
+                           key={channel}
+                           onClick={() => setMarkSentChannel(channel)}
+                           className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                              markSentChannel === channel 
+                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 shadow-inner' 
+                              : 'bg-white/5 text-slate-400 border-white/10 hover:bg-white/10 hover:text-slate-300'
+                           }`}
+                        >
+                           {channel}
+                        </button>
+                     ))}
+                  </div>
+                </div>
+
+                <button 
+                  onClick={handleMarkAsSentSubmit}
+                  className="w-full mt-4 bg-emerald-600 text-white rounded-xl py-3.5 text-xs font-black uppercase tracking-widest hover:bg-emerald-500 flex items-center justify-center gap-2 transition-all shadow-xl shadow-emerald-600/20"
+                >
+                  Save Record
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
