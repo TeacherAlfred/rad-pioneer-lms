@@ -495,18 +495,18 @@ export default function VIPInvitePage() {
                       <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 border-b border-slate-200 pb-2">What happens next?</h4>
                       
                       <div className="flex items-start gap-3">
-                        <Mail size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                        <Mail size={16} className="text-blue-500 shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-xs font-bold text-slate-900">(1 of 3) Your RAD Quotation</p>
-                          <p className="text-[10px] text-slate-500 leading-relaxed">Your discounted quote containing banking details to finalize payment.</p>
+                          <p className="text-xs font-bold text-slate-900">(1 of 3) Welcome to RAD Academy!</p>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">A secure link to set your parent password and unlock the Trial Portal while we process your upgrade.</p>
                         </div>
                       </div>
                       
                       <div className="flex items-start gap-3">
-                        <Mail size={16} className="text-blue-500 shrink-0 mt-0.5" />
+                        <Mail size={16} className="text-amber-500 shrink-0 mt-0.5" />
                         <div>
-                          <p className="text-xs font-bold text-slate-900">(2 of 3) Welcome to RAD Academy!</p>
-                          <p className="text-[10px] text-slate-500 leading-relaxed">A secure link to set your parent password and unlock the Trial Portal while we process your upgrade.</p>
+                          <p className="text-xs font-bold text-slate-900">(2 of 3) Your RAD Quotation</p>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">Your discounted quote containing banking details to finalize payment.</p>
                         </div>
                       </div>
 

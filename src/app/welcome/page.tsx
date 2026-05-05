@@ -199,7 +199,7 @@ export default function WelcomePortal() {
             }
 
             // ========================================================
-            // THE TAG MAPPER (Fixes missing agreements)
+            // THE TAG MAPPER (Fixes missing agreements & hides billing for trials)
             // ========================================================
             const { data: agreementsData } = await supabase
               .from('core_agreements')
@@ -208,10 +208,16 @@ export default function WelcomePortal() {
 
             const parentTags: string[] = [];
             
-            if (guardianData!.payment_plan_preference === 'LMS Access') {
+            // FIX: If they are Trial Active but don't have a plan set yet, force Demo LMS Access
+            let currentPlan = guardianData!.payment_plan_preference;
+            if (!currentPlan && guardianData!.funnel_stage === 'Trial Active') {
+              currentPlan = 'Demo LMS Access';
+            }
+            
+            if (currentPlan === 'LMS Access') {
               parentTags.push('Full LMS Access');
-            } else if (guardianData!.payment_plan_preference) {
-              parentTags.push(guardianData!.payment_plan_preference);
+            } else if (currentPlan) {
+              parentTags.push(currentPlan);
             }
 
             if (meta.lesson_delivery_format) {
@@ -235,11 +241,13 @@ export default function WelcomePortal() {
 
             setWizardData(prev => ({
               ...prev,
-              planType: guardianData!.payment_plan_preference || "", // Drives skip-billing pathing automatically
+              planType: currentPlan || "", // Drives skip-billing pathing automatically
               guardians: loadedGuardians,
               learners: loadedLearners,
               agreements: initialAgreementsState
             }));
+
+            setPersonalToken(token);
 
             setPersonalToken(token);
           } catch (err) {

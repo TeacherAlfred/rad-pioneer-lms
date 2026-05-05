@@ -81,15 +81,15 @@ export async function POST(req: Request) {
     if (scenario === 'trial') {
       queuePayload.push({
         to_email: email,
-        subject: 'Your 14-Day RAD Trial is Active! 🚀',
+        subject: 'Your VIP Access is Ready! 🚀',
         send_after: now.toISOString(),
         html_body: `
           <div style="font-family: sans-serif; color: #0f172a; max-w: 600px; margin: 0 auto;">
-            <h2>Hi ${firstName}, welcome to the trial!</h2>
-            <p>Your child's 14-Day Free Access pass has been successfully generated.</p>
-            <p>To begin exploring, click the link below to securely set up your child's Username and 4-digit PIN.</p>
-            <a href="${baseUrl}/lms/onboarding?id=${quoteId}" style="display: inline-block; padding: 12px 24px; background-color: #10b981; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 10px;">Setup Child Access</a>
-            <p style="margin-top: 20px;"><em>Note: You can upgrade to a paid tier at any point during your trial from the dashboard to lock in your discounted rate.</em></p>
+            <h2>Your VIP Access is Ready! 🚀</h2>
+            <p>Hi ${firstName}, welcome to the RAD Academy family!</p>
+            <p>Your child's learning environment has been successfully provisioned. To get started, click the secure link below to set your parent password, review our intake agreements, and unlock your family dashboard.</p>
+            <a href="${baseUrl}/welcome?t=${token}" style="display: inline-block; padding: 12px 24px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 10px;">Setup Parent Profile</a>
+            <p style="margin-top: 30px; font-size: 12px; color: #64748b;">Keep an eye on your inbox, your quotation and onboarding details are on the way.</p>
           </div>
         `
       });
