@@ -209,6 +209,18 @@ export default function InvitesCommandCenter() {
     return lists;
   }, [prospects]);
 
+  // --- NEW: Sent Today Counter ---
+  const sentTodayCount = useMemo(() => {
+    const today = new Date();
+    return prospects.filter(p => {
+      if (!p.metadata?.invite_generated_at) return false;
+      const sentDate = new Date(p.metadata.invite_generated_at);
+      return sentDate.getDate() === today.getDate() &&
+             sentDate.getMonth() === today.getMonth() &&
+             sentDate.getFullYear() === today.getFullYear();
+    }).length;
+  }, [prospects]);
+
   // --- Utility Generators ---
   const generateToken = () => {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -938,6 +950,15 @@ export default function InvitesCommandCenter() {
                    />
                  )}
               </div>
+
+              {/* --- NEW: Sent Today Badge --- */}
+              <div className="ml-auto flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-1 h-10 shrink-0">
+                 <Send size={14} className="text-emerald-400 shrink-0" />
+                 <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+                   Sent Today: <span className="text-white ml-1">{sentTodayCount}</span>
+                 </span>
+              </div>
+
             </div>
           </div>
           
@@ -1090,6 +1111,8 @@ export default function InvitesCommandCenter() {
                                   <CheckCircle2 size={14} /> Convert
                                 </button>
                               )}
+                              
+                              {/* NEW: MARK AS SENT BUTTON */}
                               <button 
                                 onClick={(e) => { e.stopPropagation(); setShowMarkSentModal(p); }} 
                                 className="p-2 bg-emerald-500/10 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded-lg transition-colors border border-emerald-500/20"
@@ -1097,6 +1120,7 @@ export default function InvitesCommandCenter() {
                               >
                                 <Check size={14} />
                               </button>
+
                               <button onClick={(e) => { e.stopPropagation(); setShowPreviewModal(`${window.location.origin}/invite/${p.id}`); }} className="p-2 bg-white/5 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors border border-white/5"><Eye size={14} /></button>
                               <button onClick={(e) => { e.stopPropagation(); setShowShareModal(p); }} className={`p-2 rounded-lg transition-colors border ${p.status === 'Invite Planned' ? 'bg-purple-500/10 text-purple-400 hover:bg-purple-600 hover:text-white border-purple-500/20' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-600 hover:text-white border-blue-500/20'}`}>
                                 {p.status === 'Invite Planned' ? <Send size={14} /> : <Share2 size={14} />}
@@ -1446,293 +1470,6 @@ export default function InvitesCommandCenter() {
                 </button>
               </div>
 
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* BULK GENERATOR MODAL */}
-      <AnimatePresence>
-        {showGenerateModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowGenerateModal(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-4xl bg-[#0f172a] border border-white/10 rounded-[32px] shadow-2xl p-8 flex flex-col max-h-[90vh]">
-              <button onClick={() => setShowGenerateModal(false)} className="absolute top-6 right-6 p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"><X size={16}/></button>
-              
-              <div className="mb-6 shrink-0">
-                <h3 className="text-2xl font-black uppercase italic tracking-tighter text-white">Generate Bulk Invites</h3>
-                <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Process multiple leads in one action</p>
-              </div>
-
-              <div className="flex bg-[#020617] p-1 rounded-xl border border-white/10 mb-6 shrink-0">
-                <button onClick={() => setInviteMode('new')} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${inviteMode === 'new' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500'}`}>Enter New Leads</button>
-                <button onClick={() => setInviteMode('existing')} className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${inviteMode === 'existing' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500'}`}>Select Existing Pipeline</button>
-              </div>
-
-              <form onSubmit={handleGenerate} className="flex flex-col flex-1 overflow-hidden min-h-0">
-                
-                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 mb-6">
-                  {inviteMode === 'existing' ? (
-                    <div className="space-y-3">
-                      <div className="sticky top-0 bg-[#0f172a] pt-1 pb-3 z-10 space-y-3 border-b border-white/5 mb-2">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">
-                            Select prospects ({selectedProspectIds.length} chosen)
-                          </p>
-                          {selectedProspectIds.length > 0 && (
-                            <button type="button" onClick={() => setSelectedProspectIds([])} className="text-[9px] text-blue-500 hover:text-blue-400 font-bold uppercase tracking-widest transition-colors">
-                              Clear Selection
-                            </button>
-                          )}
-                        </div>
-                        <div className="relative">
-                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
-                          <input 
-                            type="text" placeholder="Search by name or email..." 
-                            value={modalSearchQuery} onChange={(e) => setModalSearchQuery(e.target.value)}
-                            className="w-full bg-[#020617] border border-white/10 rounded-xl py-2.5 pl-9 pr-4 text-xs font-bold text-white focus:outline-none focus:border-blue-500 transition-colors"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {prospects
-                          .filter(p => !['Trial Active', 'Converted (Won)'].includes(p.status))
-                          .filter(p => p.name.toLowerCase().includes(modalSearchQuery.toLowerCase()) || p.email?.toLowerCase().includes(modalSearchQuery.toLowerCase()))
-                          .map(p => {
-                            const isSelected = selectedProspectIds.includes(p.id);
-                            const hasInvite = ['Invite Sent', 'Invite Planned'].includes(p.status) || !!p.metadata?.invite_generated_at;
-                            const sentDate = p.metadata?.invite_generated_at ? new Date(p.metadata.invite_generated_at).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' }) : null;
-
-                            return (
-                              <div key={p.id} onClick={() => { if (isSelected) setSelectedProspectIds(prev => prev.filter(id => id !== p.id)); else setSelectedProspectIds(prev => [...prev, p.id]); }} className={`p-3 rounded-xl border cursor-pointer relative flex items-center gap-3 transition-all ${isSelected ? 'bg-blue-600/10 border-blue-500/30' : hasInvite ? 'bg-white/5 border-transparent opacity-60 hover:opacity-100 hover:border-white/10' : 'bg-[#020617] border-white/5 hover:border-white/10'}`}>
-                                <div className={`absolute top-2 right-2 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${p.status === 'New Lead' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : p.status === 'Warm (Pending Close)' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : p.status === 'Lost' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
-                                  {p.status}
-                                </div>
-                                <div className={`${isSelected ? 'text-blue-500' : 'text-slate-600'} shrink-0`}>
-                                  {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
-                                </div>
-                                <div className="overflow-hidden pr-16 flex-1">
-                                  <p className={`text-sm font-bold truncate ${isSelected ? 'text-blue-100' : (hasInvite ? 'text-slate-400' : 'text-slate-300')}`}>{p.name}</p>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <p className="text-[10px] text-slate-500 truncate">{p.email}</p>
-                                    {hasInvite && sentDate && <span className="text-[8px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded whitespace-nowrap">Sent: {sentDate}</span>}
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      
-                      {/* --- CSV UPLOAD ZONE --- */}
-                      <div className="bg-blue-500/5 border-2 border-dashed border-blue-500/30 rounded-2xl p-6 flex flex-col items-center justify-center text-center group hover:bg-blue-500/10 hover:border-blue-500/50 transition-all relative">
-                        <UploadCloud className="text-blue-400 mb-3" size={32} />
-                        <h4 className="text-sm font-black text-white uppercase tracking-widest mb-1">Upload CSV Export</h4>
-                        <p className="text-[10px] font-bold text-slate-400 max-w-sm">Drag and drop your Meta/HubSpot CSV here. Must contain 'Name' and 'Email' columns.</p>
-                        <input 
-                          type="file" 
-                          accept=".csv"
-                          ref={fileInputRef}
-                          onChange={handleFileUpload}
-                          className="absolute inset-0 opacity-0 cursor-pointer"
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between sticky top-0 bg-[#0f172a] pt-1 pb-2 z-10 border-b border-white/5">
-                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Lead Data ({bulkNewLeads.length})</p>
-                         <button type="button" onClick={() => setBulkNewLeads([{ id: '1', name: '', email: '', phone: '', source: 'Manual Entry' }])} className="text-[9px] text-rose-500 font-bold uppercase tracking-widest">Clear List</button>
-                      </div>
-                      
-                      <AnimatePresence>
-                        {bulkNewLeads.map((lead: any, idx) => (
-                          <motion.div 
-                            key={lead.id} 
-                            initial={{ opacity: 0, x: -10 }} 
-                            animate={{ opacity: 1, x: 0 }} 
-                            exit={{ opacity: 0, height: 0 }} 
-                            className={`flex flex-col md:flex-row gap-3 p-3 rounded-xl border relative group mb-4 transition-all ${
-                              lead.inPipeline 
-                                ? 'opacity-50 grayscale bg-[#020617] border-white/5' 
-                                : lead.warning 
-                                  ? 'bg-amber-500/10 border-amber-500/40 shadow-[0_0_15px_rgba(245,158,11,0.1)]' 
-                                  : 'bg-[#020617] border-white/5'
-                            }`}
-                          >
-                            <div className={`absolute -left-2 -top-2 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black ${lead.inPipeline ? 'bg-slate-800 text-slate-500' : lead.warning ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-400'}`}>
-                              {idx + 1}
-                            </div>
-                            
-                            {/* Warning / Pipeline Label */}
-                            {(lead.warning || lead.inPipeline) && (
-                              <div className={`absolute -top-3 left-6 px-2 text-[8px] font-black uppercase tracking-widest flex items-center gap-1 ${lead.inPipeline ? 'bg-[#0f172a] text-slate-400' : 'bg-[#0f172a] text-amber-500'}`}>
-                                {lead.inPipeline ? <CheckCircle2 size={10} /> : <AlertTriangle size={10} />} 
-                                {lead.inPipeline ? 'Auto-Selected in Existing Pipeline Tab' : lead.warning}
-                              </div>
-                            )}
-
-                            <input readOnly={lead.inPipeline} type="text" placeholder="Lead Name *" value={lead.name} onChange={e => updateBulkRow(lead.id, 'name', e.target.value)} className="flex-1 w-full md:w-auto bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
-                            <input readOnly={lead.inPipeline} type="email" placeholder="Email Address" value={lead.email} onChange={e => updateBulkRow(lead.id, 'email', e.target.value)} className="flex-1 w-full md:w-auto bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
-                            <input readOnly={lead.inPipeline} type="tel" placeholder="Phone Number" value={lead.phone} onChange={e => updateBulkRow(lead.id, 'phone', e.target.value)} className="w-full md:w-32 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-white focus:outline-none focus:border-blue-500" />
-                            <input readOnly={lead.inPipeline} type="text" placeholder="Source" value={lead.source} onChange={e => updateBulkRow(lead.id, 'source', e.target.value)} className="w-full md:w-32 bg-transparent border-b border-white/10 px-2 py-1 text-sm font-bold text-slate-400 focus:outline-none focus:border-blue-500" />
-                            
-                            <button type="button" onClick={() => removeBulkRow(lead.id)} className={`p-2 rounded-lg transition-colors absolute right-2 top-2 md:relative md:right-auto md:top-auto ${bulkNewLeads.length === 1 ? 'opacity-20 cursor-not-allowed text-slate-600' : 'text-slate-500 hover:bg-rose-500/10 hover:text-rose-500'}`}>
-                              <Trash2 size={16} />
-                            </button>
-                          </motion.div>
-                        ))}
-                      </AnimatePresence>
-                      <button type="button" onClick={addBulkRow} className="w-full py-3 border border-dashed border-white/20 rounded-xl text-slate-400 text-xs font-black uppercase tracking-widest hover:border-blue-500 hover:text-blue-400 transition-colors flex items-center justify-center gap-2"><Plus size={14} /> Add Manual Row</button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="pt-4 border-t border-white/10 shrink-0">
-                  <div className="flex items-center justify-between mb-4">
-                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Global Cohort Schedule</p>
-                     
-                     {/* Smart Batching Toggle */}
-                     <label className="flex items-center gap-2 cursor-pointer group">
-                       <div onClick={() => setIsDripCampaign(!isDripCampaign)}>
-                         {isDripCampaign ? <CheckSquare size={16} className="text-blue-400"/> : <Square size={16} className="text-slate-600 group-hover:text-white transition-colors"/>}
-                       </div>
-                       <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">Smart Batching (Drip)</span>
-                     </label>
-                  </div>
-
-                  {isDripCampaign && (
-                    <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 mb-4 flex items-center gap-4">
-                      <div className="flex-1">
-                        <p className="text-xs font-bold text-blue-300">Paced Delivery</p>
-                        <p className="text-[9px] text-blue-400/70 mt-1 uppercase tracking-widest">Leads will be evenly staggered day-by-day starting from the planned date.</p>
-                      </div>
-                      <div className="shrink-0 w-24">
-                        <label className="text-[8px] font-black uppercase tracking-widest text-blue-400 block mb-1">Leads / Day</label>
-                        <input type="number" min="1" value={leadsPerDay} onChange={e => setLeadsPerDay(parseInt(e.target.value) || 1)} className="w-full bg-[#020617] border border-blue-500/30 rounded-lg px-3 py-1.5 text-xs font-bold text-white focus:outline-none" />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-purple-400 ml-1 flex items-center gap-1"><Send size={10}/> {isDripCampaign ? 'Start Sending On' : 'Planned Send'}</label>
-                      <input type="date" required value={plannedDate} onChange={e => setPlannedDate(e.target.value)} className="w-full mt-1 bg-purple-500/10 border border-purple-500/20 rounded-xl px-3 py-2 text-xs font-bold text-purple-300 focus:outline-none focus:border-purple-500 [color-scheme:dark]" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 flex items-center gap-1"><Calendar size={10}/> Base Link Expiry</label>
-                      <input type="date" required value={inviteExpiry} onChange={e => setInviteExpiry(e.target.value)} className="w-full mt-1 bg-[#020617] border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-slate-300 focus:outline-none focus:border-blue-500 [color-scheme:dark]" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-blue-500 ml-1 flex items-center gap-1"><Clock size={10}/> Base Trial Expiry</label>
-                      <input type="date" required value={trialExpiry} onChange={e => setTrialExpiry(e.target.value)} className="w-full mt-1 bg-blue-500/10 border border-blue-500/30 rounded-xl px-3 py-2 text-xs font-bold text-blue-400 focus:outline-none focus:border-blue-500 [color-scheme:dark]" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black uppercase tracking-widest text-indigo-400 ml-1 flex items-center gap-1"><Tag size={10}/> Invite Tag</label>
-                      <input type="text" required value={bulkInviteTag} onChange={e => setBulkInviteTag(e.target.value)} className="w-full mt-1 bg-indigo-500/10 border border-indigo-500/30 rounded-xl px-3 py-2 text-xs font-bold text-indigo-400 focus:outline-none focus:border-indigo-500" placeholder="e.g. LMS Trial" />
-                    </div>
-                  </div>
-                  
-                  {isDripCampaign && (
-                    <p className="text-[9px] text-slate-500 italic mt-3 text-center">
-                      * Expiry dates will auto-adjust forward based on each lead's actual drip send date.
-                    </p>
-                  )}
-
-                  <button type="submit" disabled={isSubmitting} className="w-full mt-6 bg-blue-600 text-white rounded-xl py-4 text-xs font-black uppercase tracking-widest hover:bg-blue-500 flex items-center justify-center gap-2 transition-all shadow-xl shadow-blue-600/20 disabled:opacity-50">
-                    {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />} 
-                    Execute {isDripCampaign ? 'Batched' : 'Bulk'} Generation ({selectedProspectIds.length + bulkNewLeads.filter(l => !l.inPipeline && l.name.trim() !== "" && (l.email.trim() !== "" || l.phone.trim() !== "")).length} Leads)
-                  </button>
-                </div>
-
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* SHARE MODAL */}
-      <AnimatePresence>
-        {showShareModal && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowShareModal(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-2xl bg-[#0f172a] border border-white/10 rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-              <div className="p-6 border-b border-white/5 bg-white/[0.02] flex items-center justify-between shrink-0">
-                <div>
-                  <h3 className="text-xl font-black uppercase italic tracking-tighter text-white">Distribute Invite</h3>
-                  <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">Link generated for {showShareModal.name}</p>
-                </div>
-                <button onClick={() => setShowShareModal(null)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors"><X size={16}/></button>
-              </div>
-
-              <div className="p-6 flex-1 overflow-y-auto custom-scrollbar space-y-6">
-                <div className="p-4 bg-[#020617] border border-white/10 rounded-2xl flex items-center justify-between gap-4">
-                  <p className="text-sm font-mono text-blue-400 truncate select-all">{`${window.location.origin}/invite/${showShareModal.id}`}</p>
-                  <button onClick={() => copyToClipboard(`${window.location.origin}/invite/${showShareModal.id}`)} className="p-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-md shrink-0">
-                    {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}
-                  </button>
-                </div>
-                <div>
-                  <div className="flex gap-2 border-b border-white/5 pb-2">
-                    <button onClick={() => setShareTab('whatsapp')} className={`px-4 py-2 rounded-t-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-colors ${shareTab === 'whatsapp' ? 'bg-emerald-500/10 text-emerald-400 border-b-2 border-emerald-500' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}><MessageSquare size={14}/> WhatsApp</button>
-                    <button onClick={() => setShareTab('email')} className={`px-4 py-2 rounded-t-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-colors ${shareTab === 'email' ? 'bg-blue-500/10 text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}><Mail size={14}/> Email</button>
-                    <button onClick={() => setShareTab('linkedin')} className={`px-4 py-2 rounded-t-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-colors ${shareTab === 'linkedin' ? 'bg-indigo-500/10 text-indigo-400 border-b-2 border-indigo-500' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}><Linkedin size={14}/> LinkedIn</button>
-                  </div>
-                  <div className="pt-4 relative group">
-                    <textarea readOnly value={getShareCopy(shareTab, showShareModal)} className="w-full h-64 bg-[#020617] border border-white/10 rounded-2xl p-5 text-sm text-slate-300 font-medium resize-none focus:outline-none custom-scrollbar" />
-                    <button onClick={() => copyToClipboard(getShareCopy(shareTab, showShareModal))} className="absolute bottom-6 right-6 px-4 py-2 bg-white/10 hover:bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-md flex items-center gap-2 border border-white/10 hover:border-transparent opacity-0 group-hover:opacity-100">
-                      {copied ? <><CheckCircle2 size={14}/> Copied</> : <><Copy size={14}/> Copy Text</>}
-                    </button>
-                  </div>
-
-                  {shareTab === 'whatsapp' && (
-                    <button
-                      onClick={() => {
-                        const text = getShareCopy('whatsapp', showShareModal);
-                        let phone = showShareModal?.phone ? showShareModal.phone.replace(/\D/g, '') : '';
-                        
-                        // Auto-format local ZA numbers (082... -> 2782...)
-                        if (phone.startsWith('0')) {
-                          phone = '27' + phone.substring(1);
-                        }
-
-                        // UPGRADED: Deep link directly to the native app
-                        const url = phone 
-                          ? `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}` 
-                          : `whatsapp://send?text=${encodeURIComponent(text)}`;
-                          
-                        window.location.href = url;
-                      }}
-                      className="w-full mt-4 py-4 bg-[#25D366] hover:bg-[#1DA851] text-white rounded-2xl font-black uppercase tracking-widest text-[11px] flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(37,211,102,0.3)]"
-                    >
-                      <MessageSquare size={16} /> Open Desktop App
-                    </button>
-                  )}
-
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* PREVIEW MODAL (IFRAME) */}
-      <AnimatePresence>
-        {showPreviewModal && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 md:p-8">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowPreviewModal(null)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="relative w-full max-w-5xl h-[90vh] bg-white rounded-[32px] shadow-2xl overflow-hidden flex flex-col border border-slate-200">
-              <div className="bg-[#0f172a] p-4 flex items-center justify-between shrink-0 border-b border-white/10">
-                <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 rounded-full bg-rose-500" />
-                  <div className="w-3 h-3 rounded-full bg-amber-500" />
-                  <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                  <span className="ml-4 text-[10px] font-mono text-slate-400 bg-black/50 px-3 py-1 rounded-md border border-white/5 truncate max-w-md">{showPreviewModal}</span>
-                </div>
-                <button onClick={() => setShowPreviewModal(null)} className="p-2 bg-white/5 hover:bg-rose-500 text-slate-400 hover:text-white rounded-full transition-colors"><X size={16}/></button>
-              </div>
-              <iframe src={showPreviewModal} className="w-full flex-1 bg-white" title="Invite Preview" />
             </motion.div>
           </div>
         )}
