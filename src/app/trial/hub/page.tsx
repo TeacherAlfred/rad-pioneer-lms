@@ -166,7 +166,7 @@ export default function PioneerTrialHub() {
 
             <div className="p-6 md:p-8 rounded-[32px] border-2 border-white/5 bg-white/5 flex flex-col md:flex-row items-center gap-6 relative">
               <div className="absolute top-4 right-6 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-yellow-500 bg-yellow-500/10 px-3 py-1.5 rounded-full">
-                <Timer size={14} /> Unlocks in 24 Hrs
+                <Timer size={14} /> Unlocks Satruday 9 May.
               </div>
 
               <div className="w-20 h-20 rounded-2xl bg-black/40 border-2 border-white/10 flex items-center justify-center shrink-0">
