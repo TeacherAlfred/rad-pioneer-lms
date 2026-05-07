@@ -20,6 +20,9 @@ export default function ItineraryManager({ studentId }: ItineraryManagerProps) {
   const [bulkInput, setBulkInput] = useState("");
   const [isUpdating, setIsUpdating] = useState<string | boolean>(false);
 
+  const [reschedulingLesson, setReschedulingLesson] = useState<any | null>(null);
+  const [newRescheduleDate, setNewRescheduleDate] = useState("");
+
   useEffect(() => {
     if (studentId) fetchSchedule();
   }, [studentId]);
@@ -122,8 +125,21 @@ export default function ItineraryManager({ studentId }: ItineraryManagerProps) {
     }
   };
 
-  // --- NEW: Direct Attendance Updater ---
+  // --- DIRECT ATTENDANCE UPDATER ---
   const handleUpdateAttendance = async (lessonId: string, newStatus: string) => {
+    // Intercept 'rescheduled' to open the modal instead of saving immediately
+    if (newStatus === 'rescheduled') {
+      const lessonToReschedule = schedule.find(l => l.id === lessonId);
+      if (lessonToReschedule) {
+        setReschedulingLesson(lessonToReschedule);
+        // Default picker to the lesson's current time
+        const tzOffset = new Date(lessonToReschedule.start_time).getTimezoneOffset() * 60000;
+        const localISOTime = (new Date(new Date(lessonToReschedule.start_time).getTime() - tzOffset)).toISOString().slice(0,16);
+        setNewRescheduleDate(localISOTime);
+      }
+      return;
+    }
+
     try {
       // Optimistic update for UI speed
       setSchedule(prev => prev.map(l => l.id === lessonId ? { ...l, attendance_status: newStatus } : l));
@@ -140,11 +156,43 @@ export default function ItineraryManager({ studentId }: ItineraryManagerProps) {
     }
   };
 
+  // --- CONFIRM RESCHEDULE ---
+  const confirmReschedule = async () => {
+    if (!reschedulingLesson || !newRescheduleDate) return;
+    setIsUpdating(true);
+    try {
+      const newDateISO = new Date(newRescheduleDate).toISOString();
+      
+      // Update UI optimistically
+      setSchedule(prev => prev.map(l => l.id === reschedulingLesson.id ? { ...l, attendance_status: 'rescheduled', start_time: newDateISO } : l));
+
+      const { error } = await supabase
+        .from('lesson_schedule')
+        .update({ 
+          attendance_status: 'rescheduled', 
+          start_time: newDateISO 
+        })
+        .eq('id', reschedulingLesson.id);
+
+      if (error) throw error;
+      
+      await fetchSchedule(); // Refetch to re-sort chronologically
+      setReschedulingLesson(null);
+    } catch (err) {
+      alert("Failed to reschedule.");
+      fetchSchedule();
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   // Helper to render the interactive attendance dropdown
   const renderAttendanceDropdown = (lesson: any) => {
     const isPastOrPresent = new Date(lesson.start_time).getTime() <= new Date().getTime();
+    const isRescheduled = lesson.attendance_status === 'rescheduled';
     
-    if (!isPastOrPresent) {
+    // If it's in the future and NOT rescheduled, just show the Pending text
+    if (!isPastOrPresent && !isRescheduled) {
       return (
         <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10">
           Pending
@@ -161,17 +209,24 @@ export default function ItineraryManager({ studentId }: ItineraryManagerProps) {
           lesson.attendance_status === 'attended' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20' :
           lesson.attendance_status === 'missed' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20' :
           lesson.attendance_status === 'apology' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20' :
-          lesson.attendance_status === 'rescheduled' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20' :
+          lesson.attendance_status === 'rescheduled' ? 'bg-blue-600 text-white border-blue-500 hover:bg-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.4)]' :
           lesson.attendance_status === 'late' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20' :
           'bg-white/5 text-slate-400 border-white/10 hover:bg-white/10'
         }`}
       >
-        <option value="pending" className="bg-[#0f172a] text-slate-300">Pending</option>
+        {isRescheduled && (
+          <option value="rescheduled" disabled className="bg-[#0f172a] text-blue-400">Confirm Attendance</option>
+        )}
+        {!isRescheduled && (
+          <option value="pending" className="bg-[#0f172a] text-slate-300">Pending</option>
+        )}
         <option value="attended" className="bg-[#0f172a] text-emerald-400">Attended</option>
         <option value="late" className="bg-[#0f172a] text-amber-400">Late</option>
         <option value="missed" className="bg-[#0f172a] text-rose-400">Missed</option>
         <option value="apology" className="bg-[#0f172a] text-amber-400">Apology</option>
-        <option value="rescheduled" className="bg-[#0f172a] text-blue-400">Resched</option>
+        {!isRescheduled && (
+          <option value="rescheduled" className="bg-[#0f172a] text-blue-400">Resched</option>
+        )}
       </select>
     );
   };
@@ -337,6 +392,34 @@ export default function ItineraryManager({ studentId }: ItineraryManagerProps) {
           </>
         )}
       </div>
+
+      {/* --- RESCHEDULE MODAL --- */}
+      <AnimatePresence>
+        {reschedulingLesson && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setReschedulingLesson(null)} className="absolute inset-0 bg-black/80 backdrop-blur-sm rounded-[40px]" />
+            <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }} className="relative w-full max-w-sm bg-[#0f172a] border border-white/10 rounded-[32px] p-8 shadow-2xl overflow-hidden z-10">
+              <h3 className="text-xl font-black italic uppercase text-white mb-2">Reschedule Session</h3>
+              <p className="text-xs text-slate-400 mb-6 font-bold">Select the new date and time for this lesson.</p>
+              
+              <input 
+                type="datetime-local" 
+                value={newRescheduleDate} 
+                onChange={e => setNewRescheduleDate(e.target.value)} 
+                className="w-full bg-[#020617] border border-blue-500/30 rounded-2xl px-4 py-4 text-sm font-bold text-white outline-none focus:border-blue-500 cursor-pointer mb-6" 
+              />
+
+              <div className="flex gap-3">
+                <button onClick={() => setReschedulingLesson(null)} className="flex-1 py-3 bg-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">Cancel</button>
+                <button onClick={confirmReschedule} disabled={isUpdating === true} className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50">
+                  {isUpdating === true ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Confirm
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }

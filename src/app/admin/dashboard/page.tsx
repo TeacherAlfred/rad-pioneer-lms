@@ -399,7 +399,8 @@ export default function AdminDashboard() {
         { label: 'Math Diagnostics', icon: Calculator, path: '/admin/math-diagnostics', color: 'hover:border-rose-400' },
         { label: 'Finance Hub', icon: CreditCard, path: '/admin/finance', color: 'hover:border-emerald-500' },
         { label: 'Student Hub', icon: Users, path: '/admin/pioneers', color: 'hover:border-emerald-400' },        
-        { label: 'Parent Hub', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' }, // LINK TO BE CHANGED
+        { label: 'Parent Hub', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' }, //        
+        { label: 'Scheduling Hub', icon: Eye, path: '/admin/roster', color: 'hover:border-orange-500' }, // LINK TO BE CHANGED
       ]
     },
     admin: {
