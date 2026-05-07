@@ -3,29 +3,22 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { 
-    Loader2, Calendar as CalendarIcon, Link as LinkIcon, 
-    Plus, User, Bell, Check, X, ChevronLeft, MapPin, Video, CheckCircle2,
-    Trash2, Save, Repeat, CalendarDays, Lock, UserMinus, Settings2, ChevronDown
+  Loader2, Calendar as CalendarIcon, Link as LinkIcon, 
+  Plus, User, Bell, Check, X, ChevronLeft, MapPin, Video, CheckCircle2,
+  Trash2, Save, Repeat, CalendarDays, Lock, UserMinus, Settings2, ChevronDown
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-type ScheduleSlot = {
+type LessonInstance = {
   id: string;
-  day_of_week: string;
-  time_slot: string;
-  status: 'available' | 'booked' | 'tentative' | 'blocked';
+  student_id: string;
+  teacher_id: string;
+  start_time: string;
+  topic: string;
   delivery_mode: 'online' | 'in-person';
-  slot_type: 'recurring' | 'once-off';
-  student_ids: string[];
-};
-
-type PendingBooking = {
-  id: string;
-  schedule_id: string;
-  teacher_schedule: {
-    day_of_week: string;
-    time_slot: string;
-  };
+  location_or_link: string;
+  attendance_status: string;
+  student?: { display_name: string };
 };
 
 const ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -33,42 +26,74 @@ const ALL_HOURS = Array.from({ length: 14 }).map((_, i) => `${(i + 7).toString()
 
 export default function TeacherSchedulePage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [schedule, setSchedule] = useState<ScheduleSlot[]>([]);
+  const [schedule, setSchedule] = useState<LessonInstance[]>([]);
   
   const [allStudents, setAllStudents] = useState<any[]>([]);
   const [myStudents, setMyStudents] = useState<any[]>([]);
-  const [pendingBookings, setPendingBookings] = useState<PendingBooking[]>([]);
+  const [pendingBookings, setPendingBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // --- NEW: ADMIN TEACHER CONTEXT STATE ---
+  // ADMIN TEACHER CONTEXT STATE
   const [educators, setEducators] = useState<any[]>([]);
   const [activeTeacherId, setActiveTeacherId] = useState<string>("");
   
-  // --- GRID CONFIGURATION STATE ---
+  // GRID CONFIGURATION STATE
   const [activeDays, setActiveDays] = useState<string[]>(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']);
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("17:00");
 
   // Modal States
-  const [activeSlotData, setActiveSlotData] = useState<{ day: string, time: string, existingSlot?: ScheduleSlot } | null>(null);
-  const [slotConfig, setSlotConfig] = useState<{ delivery: 'online'|'in-person', type: 'recurring'|'once-off', studentIds: string[], isBlocked: boolean }>({
-    delivery: 'in-person', type: 'recurring', studentIds: [], isBlocked: false
+  const [activeSlotData, setActiveSlotData] = useState<{ dateObj: Date, lessons: LessonInstance[] } | null>(null);
+  const [slotConfig, setSlotConfig] = useState<{ delivery: 'online'|'in-person', type: 'recurring'|'once-off', studentIds: string[], logistics: string }>({
+    delivery: 'in-person', type: 'recurring', studentIds: [], logistics: ''
   });
   const [selectedStudentToAdd, setSelectedStudentToAdd] = useState("");
   
-  const [approvalModal, setApprovalModal] = useState<PendingBooking | null>(null);
+  const [approvalModal, setApprovalModal] = useState<any | null>(null);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Reusable fetch function so Admins can swap contexts
+  // --- DYNAMIC CURRENT WEEK CALCULATION ---
+  const currentWeekDates = useMemo(() => {
+    const now = new Date();
+    const dayOfWeek = now.getDay(); 
+    const distanceToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - distanceToMonday);
+    monday.setHours(0, 0, 0, 0);
+
+    return Array.from({ length: 7 }).map((_, i) => {
+       const d = new Date(monday);
+       d.setDate(monday.getDate() + i);
+       return {
+         dayName: ALL_DAYS[i],
+         dateObj: d,
+         label: `${ALL_DAYS[i].substring(0,3)} ${d.getDate()}`
+       };
+    });
+  }, []);
+
   const fetchScheduleData = async (teacherId: string) => {
     setLoading(true);
     try {
-      const { data: scheduleData } = await supabase.from('teacher_schedule').select(`*`).eq('teacher_id', teacherId);
-      const { data: studentData } = await supabase.from('profiles').select('id, display_name, metadata').eq('role', 'student');
-      const { data: pendingData } = await supabase.from('pending_bookings').select(`id, schedule_id, teacher_schedule!inner(day_of_week, time_slot, teacher_id)`).eq('status', 'pending').eq('teacher_schedule.teacher_id', teacherId);
+      const weekStart = currentWeekDates[0].dateObj.toISOString();
+      const weekEnd = new Date(currentWeekDates[6].dateObj.getTime() + 24 * 60 * 60 * 1000).toISOString();
 
-      if (scheduleData) setSchedule(scheduleData as ScheduleSlot[]);
+      // Fetch actual lessons for the current week
+      const { data: scheduleData } = await supabase
+        .from('lesson_schedule')
+        .select(`*, student:profiles!lesson_schedule_student_id_fkey(display_name)`)
+        .eq('teacher_id', teacherId)
+        .gte('start_time', weekStart)
+        .lte('start_time', weekEnd);
+
+      const { data: studentData } = await supabase.from('profiles').select('id, display_name, metadata').eq('role', 'student');
+      
+      // Fallback pending bookings fetch
+      const { data: pendingData } = await supabase.from('pending_bookings').select(`*`).eq('status', 'pending');
+
+      if (scheduleData) setSchedule(scheduleData as any[]);
       if (pendingData) setPendingBookings(pendingData as any[]);
       
       if (studentData) {
@@ -91,17 +116,13 @@ export default function TeacherSchedulePage() {
     const user = JSON.parse(sessionData);
     setCurrentUser(user);
 
-    const targetId = user.id;
-
     try {
-      // If user is Admin, fetch the list of available educators
       if (user.role === 'admin') {
         const { data: edData } = await supabase.from('profiles').select('id, display_name').eq('role', 'educator').order('display_name');
         if (edData) setEducators(edData);
       }
-      
-      setActiveTeacherId(targetId);
-      await fetchScheduleData(targetId);
+      setActiveTeacherId(user.id);
+      await fetchScheduleData(user.id);
     } catch (err) {
       console.error(err);
     }
@@ -109,7 +130,6 @@ export default function TeacherSchedulePage() {
 
   useEffect(() => { loadData(); }, []);
 
-  // --- ADMIN: SWITCH TEACHER CONTEXT ---
   const handleTeacherChange = async (newTeacherId: string) => {
     setActiveTeacherId(newTeacherId);
     await fetchScheduleData(newTeacherId);
@@ -123,21 +143,36 @@ export default function TeacherSchedulePage() {
     return ALL_HOURS.slice(startIdx, endIdx + 1);
   }, [startTime, endTime]);
 
+  // UNSCHEDULED ROSTER: Students with no lesson this week
   const unassignedStudents = useMemo(() => {
-    const assignedIds = new Set(schedule.flatMap(s => s.student_ids || []));
+    const assignedIds = new Set(schedule.map(s => s.student_id));
     return myStudents.filter(s => !assignedIds.has(s.id));
   }, [myStudents, schedule]);
 
   const dailyMetrics = useMemo(() => {
-    return activeDays.map(day => {
-      const daySlots = schedule.filter(s => s.day_of_week === day && s.status === 'booked');
+    return activeDays.map(dayName => {
+      const dayData = currentWeekDates.find(d => d.dayName === dayName);
+      if (!dayData) return { day: dayName, recurring: 0, onceOff: 0 };
+      
+      const dayLessons = schedule.filter(l => new Date(l.start_time).getDate() === dayData.dateObj.getDate());
+      
       return {
-        day,
-        recurring: daySlots.filter(s => s.slot_type === 'recurring').length,
-        onceOff: daySlots.filter(s => s.slot_type === 'once-off').length,
+        day: dayName,
+        recurring: dayLessons.filter(s => !s.topic?.includes('Once-off')).length,
+        onceOff: dayLessons.filter(s => s.topic?.includes('Once-off')).length,
       };
     });
-  }, [activeDays, schedule]);
+  }, [activeDays, schedule, currentWeekDates]);
+
+  // --- GRID HELPERS ---
+  const getLessonsForSlot = (dateObj: Date, timeStr: string) => {
+    const [hours, mins] = timeStr.split(':');
+    const targetTime = new Date(dateObj);
+    targetTime.setHours(parseInt(hours), parseInt(mins), 0, 0);
+    const targetMs = targetTime.getTime();
+    
+    return schedule.filter(l => new Date(l.start_time).getTime() === targetMs);
+  };
 
   // --- ACTIONS ---
   const handleGenerateLink = async () => {
@@ -157,17 +192,22 @@ export default function TeacherSchedulePage() {
     finally { setIsGeneratingLink(false); }
   };
 
-  const openTimeslotModal = (day: string, time: string, existingSlot?: ScheduleSlot) => {
-    setActiveSlotData({ day, time, existingSlot });
-    if (existingSlot) {
+  const openTimeslotModal = (dateObj: Date, timeStr: string, slotLessons: LessonInstance[]) => {
+    const targetTime = new Date(dateObj);
+    const [hours, mins] = timeStr.split(':');
+    targetTime.setHours(parseInt(hours), parseInt(mins), 0, 0);
+
+    setActiveSlotData({ dateObj: targetTime, lessons: slotLessons });
+    
+    if (slotLessons.length > 0) {
       setSlotConfig({
-        delivery: existingSlot.delivery_mode || 'in-person',
-        type: existingSlot.slot_type || 'recurring',
-        studentIds: existingSlot.student_ids || [],
-        isBlocked: existingSlot.status === 'blocked'
+        delivery: slotLessons[0].delivery_mode || 'in-person',
+        type: slotLessons[0].topic?.includes('Once-off') ? 'once-off' : 'recurring',
+        studentIds: slotLessons.map(l => l.student_id),
+        logistics: slotLessons[0].location_or_link || ''
       });
     } else {
-      setSlotConfig({ delivery: 'in-person', type: 'recurring', studentIds: [], isBlocked: false });
+      setSlotConfig({ delivery: 'in-person', type: 'recurring', studentIds: [], logistics: '' });
     }
     setSelectedStudentToAdd("");
   };
@@ -175,75 +215,70 @@ export default function TeacherSchedulePage() {
   const handleSaveTimeslot = async () => {
     if (!activeSlotData || !activeTeacherId) return;
     setIsSaving(true);
-    const pgTime = `${activeSlotData.time}:00`;
     
-    // Auto-resolve status
-    let determinedStatus = slotConfig.studentIds.length > 0 ? 'booked' : 'available';
-    if (slotConfig.isBlocked) determinedStatus = 'blocked';
-
     try {
-      const { error } = await supabase.from('teacher_schedule').upsert({
-          teacher_id: activeTeacherId,
-          day_of_week: activeSlotData.day,
-          time_slot: pgTime,
-          status: determinedStatus,
-          delivery_mode: slotConfig.delivery,
-          slot_type: slotConfig.type,
-          student_ids: slotConfig.isBlocked ? [] : slotConfig.studentIds // Clear students if blocked
-        }, { onConflict: 'teacher_id, day_of_week, time_slot' });
+      const originalIds = activeSlotData.lessons.map(l => l.student_id);
+      const newIds = slotConfig.studentIds;
 
-      if (error) throw error;
+      const idsToRemove = originalIds.filter(id => !newIds.includes(id));
+      const idsToAdd = newIds.filter(id => !originalIds.includes(id));
+
+      const topicStr = slotConfig.type === 'once-off' ? "Once-off Session" : "Scheduled Session";
+
+      // 1. DELETE removed students from this specific slot
+      if (idsToRemove.length > 0) {
+        const lessonIdsToDelete = activeSlotData.lessons
+          .filter(l => idsToRemove.includes(l.student_id))
+          .map(l => l.id);
+          
+        await supabase.from('lesson_schedule').delete().in('id', lessonIdsToDelete);
+      }
+
+      // 2. UPDATE existing students (if delivery mode or logistics changed)
+      const idsToUpdate = originalIds.filter(id => newIds.includes(id));
+      if (idsToUpdate.length > 0) {
+        const lessonIdsToUpdate = activeSlotData.lessons
+          .filter(l => idsToUpdate.includes(l.student_id))
+          .map(l => l.id);
+
+        await supabase.from('lesson_schedule').update({
+          delivery_mode: slotConfig.delivery,
+          location_or_link: slotConfig.logistics || null,
+          topic: topicStr
+        }).in('id', lessonIdsToUpdate);
+      }
+
+      // 3. INSERT new students
+      if (idsToAdd.length > 0) {
+        const numWeeks = slotConfig.type === 'recurring' ? 12 : 1;
+        const payload: any[] = [];
+
+        for (let w = 0; w < numWeeks; w++) {
+          const lessonDate = new Date(activeSlotData.dateObj.getTime() + w * 7 * 24 * 60 * 60 * 1000);
+          
+          idsToAdd.forEach(studentId => {
+             payload.push({
+               student_id: studentId,
+               teacher_id: activeTeacherId,
+               start_time: lessonDate.toISOString(),
+               topic: topicStr,
+               delivery_mode: slotConfig.delivery,
+               location_or_link: slotConfig.logistics || null,
+               attendance_status: 'pending'
+             });
+          });
+        }
+        await supabase.from('lesson_schedule').insert(payload);
+      }
+
       await fetchScheduleData(activeTeacherId); 
     } catch (err: any) { alert(`Failed to save slot: ${err.message}`); } 
     finally { setIsSaving(false); setActiveSlotData(null); }
   };
 
-  const handleDeleteTimeslot = async () => {
-    if (!activeSlotData?.existingSlot?.id) return;
-    setIsSaving(true);
-    await supabase.from('teacher_schedule').delete().eq('id', activeSlotData.existingSlot.id);
-    await fetchScheduleData(activeTeacherId);
-    setIsSaving(false);
-    setActiveSlotData(null);
+  const toggleDay = (dayName: string) => {
+    setActiveDays(prev => prev.includes(dayName) ? prev.filter(d => d !== dayName) : [...prev, dayName].sort((a,b) => ALL_DAYS.indexOf(a) - ALL_DAYS.indexOf(b)));
   };
-
-  const handleApproveRequest = async () => {
-    if (!approvalModal || !selectedStudentToAdd) return;
-    const slotToUpdate = schedule.find(s => s.id === approvalModal.schedule_id);
-    const currentIds = slotToUpdate?.student_ids || [];
-    
-    if (slotToUpdate?.delivery_mode === 'online' && currentIds.length >= 1) {
-        alert("This online slot is already at full capacity (1). Reject request or clear the slot.");
-        return;
-    }
-
-    const newIds = [...new Set([...currentIds, selectedStudentToAdd])];
-
-    await supabase.from('teacher_schedule').update({ status: 'booked', student_ids: newIds }).eq('id', approvalModal.schedule_id);
-    await supabase.from('pending_bookings').update({ status: 'approved' }).eq('id', approvalModal.id);
-
-    setApprovalModal(null);
-    setSelectedStudentToAdd("");
-    fetchScheduleData(activeTeacherId);
-  };
-
-  const handleRejectRequest = async (pendingId: string, scheduleId: string) => {
-    if (!confirm("Reject this booking?")) return;
-    const slotToUpdate = schedule.find(s => s.id === scheduleId);
-    
-    if (slotToUpdate && (!slotToUpdate.student_ids || slotToUpdate.student_ids.length === 0)) {
-       await supabase.from('teacher_schedule').update({ status: 'available' }).eq('id', scheduleId);
-    }
-    
-    await supabase.from('pending_bookings').update({ status: 'rejected' }).eq('id', pendingId);
-    fetchScheduleData(activeTeacherId);
-  };
-
-  const toggleDay = (day: string) => {
-    setActiveDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort((a,b) => ALL_DAYS.indexOf(a) - ALL_DAYS.indexOf(b)));
-  };
-
-  const getSlotDetails = (day: string, time: string) => schedule.find(s => s.day_of_week === day && s.time_slot.startsWith(time));
 
   if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
 
@@ -290,30 +325,21 @@ export default function TeacherSchedulePage() {
         )}
       </div>
 
-      {/* APPROVAL INBOX (For Selected Context) */}
+      {/* APPROVAL INBOX (Fallback/Legacy) */}
       {pendingBookings.length > 0 && (
         <div className="max-w-7xl mx-auto mb-8 bg-amber-500/10 border border-amber-500/20 rounded-3xl p-6 shadow-xl">
           <h2 className="text-amber-500 font-black uppercase tracking-widest text-sm mb-4 flex items-center gap-2">
             <Bell size={16} /> Pending Approvals ({pendingBookings.length})
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-            {pendingBookings.map(req => (
-              <div key={req.id} className="bg-[#020617]/50 border border-white/5 p-4 rounded-2xl flex justify-between items-center">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-1">{req.teacher_schedule.day_of_week}</p>
-                  <p className="text-lg font-bold text-white">{req.teacher_schedule.time_slot.substring(0,5)}</p>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => handleRejectRequest(req.id, req.schedule_id)} className="w-10 h-10 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition-colors"><X size={16} /></button>
-                  <button onClick={() => setApprovalModal(req)} className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white flex items-center justify-center transition-colors"><Check size={16} /></button>
-                </div>
-              </div>
-            ))}
+             <div className="bg-[#020617]/50 border border-white/5 p-4 rounded-2xl flex justify-between items-center text-xs text-amber-200">
+               Review pending bookings in the master database.
+             </div>
           </div>
         </div>
       )}
 
-      {/* --- NEW SUMMARY COMMAND PANEL --- */}
+      {/* SUMMARY COMMAND PANEL */}
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         
         {/* Config Panel */}
@@ -366,7 +392,7 @@ export default function TeacherSchedulePage() {
         {/* Unassigned Students Alert */}
         <div className={`backdrop-blur-xl border rounded-3xl p-6 shadow-xl flex flex-col h-full ${unassignedStudents.length > 0 ? 'bg-amber-500/10 border-amber-500/20' : 'bg-[#0f172a]/50 border-white/10'}`}>
            <h2 className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 mb-4 ${unassignedStudents.length > 0 ? 'text-amber-500' : 'text-slate-400'}`}>
-              <UserMinus size={14}/> Unscheduled Roster
+              <UserMinus size={14}/> Unscheduled This Week
            </h2>
            {unassignedStudents.length === 0 ? (
              <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50">
@@ -375,7 +401,7 @@ export default function TeacherSchedulePage() {
              </div>
            ) : (
              <>
-               <div className="bg-[#020617]/50 rounded-2xl p-2 flex-1 overflow-y-auto custom-scrollbar border border-white/5 space-y-1">
+               <div className="bg-[#020617]/50 rounded-2xl p-2 flex-1 overflow-y-auto custom-scrollbar border border-white/5 space-y-1 max-h-[150px] lg:max-h-full">
                  {unassignedStudents.map(s => (
                    <div key={s.id} className="flex items-center justify-between px-3 py-2 bg-white/5 rounded-xl">
                      <span className="text-xs font-bold text-white truncate">{s.display_name}</span>
@@ -396,26 +422,33 @@ export default function TeacherSchedulePage() {
           <div className="min-w-[800px]" style={{ minWidth: `${activeDays.length * 150}px` }}>
               <div className="flex border-b border-white/10 bg-black/60 shadow-inner">
                 <div className="w-20 shrink-0 p-4 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest border-r border-white/5">Time</div>
-                {activeDays.map(day => (
-                    <div key={day} className="flex-1 p-4 text-center text-xs md:text-sm font-black text-white uppercase tracking-widest border-r border-white/5 last:border-0">{day}</div>
-                ))}
+                {activeDays.map(dayName => {
+                   const dayData = currentWeekDates.find(d => d.dayName === dayName);
+                   return (
+                     <div key={dayName} className="flex-1 p-4 text-center text-xs md:text-sm font-black text-white uppercase tracking-widest border-r border-white/5 last:border-0">
+                       {dayData?.label}
+                     </div>
+                   );
+                })}
               </div>
 
               {dynamicHours.map(time => (
               <div key={time} className="flex border-b border-white/5 last:border-0 transition-colors hover:bg-white/[0.01]">
                   <div className="w-20 shrink-0 p-2 flex items-center justify-center text-[10px] md:text-xs font-bold text-slate-500 border-r border-white/5 bg-black/40">{time}</div>
                   
-                  {activeDays.map(day => {
-                    const slot = getSlotDetails(day, time);
-                    const isTentative = slot?.status === 'tentative';
+                  {activeDays.map(dayName => {
+                    const dayData = currentWeekDates.find(d => d.dayName === dayName);
+                    if (!dayData) return <div key={dayName} className="flex-1 border-r border-white/5" />;
+
+                    const slotLessons = getLessonsForSlot(dayData.dateObj, time);
                     
-                    if (!slot) {
+                    if (slotLessons.length === 0) {
                       // BLANK SLOT
                       return (
                         <button
-                            key={`${day}-${time}`}
-                            onClick={() => openTimeslotModal(day, time)}
-                            className="flex-1 relative p-1.5 md:p-2 border-r border-white/5 last:border-0 h-20 transition-all flex flex-col items-center justify-center group outline-none hover:bg-white/5 cursor-pointer"
+                            key={`${dayName}-${time}`}
+                            onClick={() => openTimeslotModal(dayData.dateObj, time, [])}
+                            className="flex-1 relative p-1.5 md:p-2 border-r border-white/5 last:border-0 h-24 transition-all flex flex-col items-center justify-center group outline-none hover:bg-white/5 cursor-pointer"
                         >
                             <div className="w-8 h-8 rounded-full border border-dashed border-slate-600 flex items-center justify-center group-hover:border-white/30 transition-colors">
                                 <Plus size={14} className="text-slate-600 group-hover:text-white transition-colors" />
@@ -424,54 +457,35 @@ export default function TeacherSchedulePage() {
                       )
                     }
 
-                    // BLOCKED SLOT
-                    if (slot.status === 'blocked') {
-                       return (
-                        <button
-                            key={`${day}-${time}`}
-                            onClick={() => openTimeslotModal(day, time, slot)}
-                            className="flex-1 relative p-1.5 md:p-2 border-r border-white/5 last:border-0 h-20 transition-all flex flex-col items-center justify-center group outline-none bg-rose-500/5 hover:bg-rose-500/10 cursor-pointer shadow-inner"
-                        >
-                            <Lock size={16} className="text-rose-500/50 mb-1" />
-                            <span className="text-[8px] font-black uppercase text-rose-500/50 tracking-widest">Blocked</span>
-                        </button>
-                       )
-                    }
-
                     // CONFIGURED SLOT
-                    const isOnline = slot.delivery_mode === 'online';
-                    const isRecurring = slot.slot_type === 'recurring';
-                    const assignedCount = slot.student_ids?.length || 0;
-                    const baseColor = isRecurring ? 'blue' : 'purple';
+                    const isOnline = slotLessons[0].delivery_mode === 'online';
+                    const isOnceOff = slotLessons[0].topic?.includes('Once-off');
+                    const baseColor = isOnceOff ? 'purple' : 'blue';
                     const Icon = isOnline ? Video : MapPin;
 
                     return (
                         <button
-                          key={`${day}-${time}`}
-                          onClick={() => !isTentative && openTimeslotModal(day, time, slot)}
-                          disabled={isTentative}
-                          className={`flex-1 relative p-1.5 md:p-2 border-r border-white/5 last:border-0 h-20 transition-all flex flex-col items-center justify-center gap-1.5 group outline-none focus:bg-white/5 cursor-pointer ${
-                              isTentative ? 'bg-amber-500/10 cursor-not-allowed shadow-inner' : `bg-${baseColor}-500/10 hover:bg-${baseColor}-500/20 shadow-inner`
-                          }`}
+                          key={`${dayName}-${time}`}
+                          onClick={() => openTimeslotModal(dayData.dateObj, time, slotLessons)}
+                          className={`flex-1 relative p-1.5 md:p-2 border-r border-white/5 last:border-0 h-24 transition-all flex flex-col items-center justify-center gap-1.5 group outline-none focus:bg-white/5 cursor-pointer bg-${baseColor}-500/10 hover:bg-${baseColor}-500/20 shadow-inner`}
                         >
-                          {isTentative ? (
-                              <span className="text-[7px] md:text-[8px] font-black uppercase text-amber-500 tracking-widest bg-amber-500/10 border border-amber-500/20 px-1.5 py-1 rounded-md text-center shadow-inner leading-tight">Awaiting<br/>Approval</span>
-                          ) : (
-                              <>
-                                <div className={`w-8 h-8 rounded-lg bg-${baseColor}-500/20 flex items-center justify-center border border-${baseColor}-500/30 shadow-[0_0_15px_rgba(0,0,0,0.2)] shrink-0`}>
-                                    <Icon size={12} className={`text-${baseColor}-400`} />
-                                </div>
-                                <span className={`text-[10px] font-bold text-${baseColor}-100 text-center leading-tight line-clamp-1 px-1`}>
-                                  {assignedCount === 0 ? <span className="italic text-slate-400 text-[9px]">Open Slot</span> :
-                                  assignedCount === 1 ? (() => {
-                                      const name = allStudents.find(s => s.id === slot.student_ids[0])?.display_name || "Unknown";
-                                      return name.split(' ')[0]; 
-                                  })() :
-                                  `${assignedCount} Students`
-                                  }
+                            <div className={`w-8 h-8 rounded-lg bg-${baseColor}-500/20 flex items-center justify-center border border-${baseColor}-500/30 shadow-[0_0_15px_rgba(0,0,0,0.2)] shrink-0`}>
+                                <Icon size={12} className={`text-${baseColor}-400`} />
+                            </div>
+                            
+                            <div className={`flex flex-col items-center px-1 w-full text-center leading-tight`}>
+                              {slotLessons.length > 2 ? (
+                                <span className={`text-[10px] font-bold text-${baseColor}-100 w-full block`}>
+                                  {slotLessons.length} Students
                                 </span>
-                              </>
-                          )}
+                              ) : (
+                                slotLessons.map(l => (
+                                  <span key={l.id} className={`text-[10px] font-bold text-${baseColor}-100 truncate w-full block`}>
+                                    {l.student?.display_name.split(' ')[0] || "Unknown"}
+                                  </span>
+                                ))
+                              )}
+                            </div>
                         </button>
                     );
                   })}
@@ -489,145 +503,98 @@ export default function TeacherSchedulePage() {
       <AnimatePresence>
       {activeSlotData && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[200] p-4">
-          <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-[#0f172a] border border-white/10 p-6 md:p-8 rounded-[32px] max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+          <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-[#0f172a] border border-white/10 p-6 md:p-8 rounded-[32px] max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.5)]">
             
             <div className="flex justify-between items-start mb-6 border-b border-white/5 pb-4">
                <div>
                   <h3 className="text-2xl font-black italic uppercase tracking-tighter text-white">Manage Timeslot</h3>
-                  <p className="text-slate-400 text-sm mt-1">Configuring slot for <strong className="text-white">{activeSlotData.day} at {activeSlotData.time}</strong></p>
+                  <p className="text-slate-400 text-sm mt-1">
+                    Configuring slot for <strong className="text-white">{activeSlotData.dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric'})}</strong> at {activeSlotData.dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </p>
                </div>
-               {/* Quick Block Toggle Button */}
-               <button 
-                  onClick={() => setSlotConfig(p => ({...p, isBlocked: !p.isBlocked}))}
-                  className={`p-2 rounded-xl border transition-all ${slotConfig.isBlocked ? 'bg-rose-500/20 border-rose-500/40 text-rose-500' : 'bg-white/5 border-white/10 text-slate-500 hover:text-white'}`}
-                  title={slotConfig.isBlocked ? "Unblock Slot" : "Block Slot"}
-               >
-                 <Lock size={18} />
-               </button>
+               <button onClick={() => setActiveSlotData(null)} className="text-slate-500 hover:text-white transition-colors p-2 bg-white/5 hover:bg-white/10 rounded-full shrink-0"><X size={20} /></button>
             </div>
             
-            {slotConfig.isBlocked ? (
-              <div className="py-8 text-center bg-rose-500/5 border border-rose-500/10 rounded-2xl mb-8">
-                <Lock size={32} className="mx-auto text-rose-500/50 mb-3" />
-                <p className="text-sm font-bold text-rose-400">This slot is locked.</p>
-                <p className="text-xs text-rose-400/70 mt-1">No bookings can be made here.</p>
+            <div className="space-y-6">
+              {/* Type Toggles */}
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => setSlotConfig(p => ({...p, delivery: 'in-person'}))} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.delivery === 'in-person' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
+                  <MapPin size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">In-Person</span>
+                </button>
+                <button onClick={() => { if (slotConfig.studentIds.length > 1) return alert("Online slots max 1 student. Remove students first."); setSlotConfig(p => ({...p, delivery: 'online'})) }} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.delivery === 'online' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
+                  <Video size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">Online</span>
+                </button>
               </div>
-            ) : (
-              <div className="space-y-6">
-                {/* Type Toggles */}
-                <div className="grid grid-cols-2 gap-3">
-                  <button onClick={() => setSlotConfig(p => ({...p, delivery: 'in-person'}))} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.delivery === 'in-person' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
-                    <MapPin size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">In-Person</span>
-                  </button>
-                  <button onClick={() => { if (slotConfig.studentIds.length > 1) return alert("Online slots max 1 student. Remove students first."); setSlotConfig(p => ({...p, delivery: 'online'})) }} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.delivery === 'online' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
-                    <Video size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">Online</span>
-                  </button>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => setSlotConfig(p => ({...p, type: 'recurring'}))} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.type === 'recurring' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
+                  <Repeat size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">Recurring</span>
+                </button>
+                <button onClick={() => setSlotConfig(p => ({...p, type: 'once-off'}))} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.type === 'once-off' ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
+                  <CalendarDays size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">Once-Off</span>
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Logistics / Meeting Link</label>
+                <input type="text" value={slotConfig.logistics} onChange={e => setSlotConfig(p => ({...p, logistics: e.target.value}))} placeholder="Link or Location..." className="w-full bg-[#020617] border border-white/10 rounded-xl p-3 text-sm font-bold text-white outline-none focus:border-blue-500 transition-colors" />
+              </div>
+
+              {/* Roster Management */}
+              <div className="bg-black/40 border border-white/5 rounded-2xl p-4">
+                <div className="flex justify-between items-center mb-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Current Roster</p>
+                  <span className="text-xs font-bold text-white bg-white/10 px-2 py-0.5 rounded">{slotConfig.studentIds.length}</span>
                 </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button onClick={() => setSlotConfig(p => ({...p, type: 'recurring'}))} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.type === 'recurring' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
-                    <Repeat size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">Recurring</span>
-                  </button>
-                  <button onClick={() => setSlotConfig(p => ({...p, type: 'once-off'}))} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.type === 'once-off' ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
-                    <CalendarDays size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">Once-Off</span>
-                  </button>
-                </div>
-
-                {/* Roster Management */}
-                <div className="bg-black/40 border border-white/5 rounded-2xl p-4">
-                  <div className="flex justify-between items-center mb-4">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Current Roster</p>
-                    <span className="text-xs font-bold text-white bg-white/10 px-2 py-0.5 rounded">{slotConfig.studentIds.length}</span>
-                  </div>
-                  
-                  <div className="space-y-2 mb-4 max-h-32 overflow-y-auto custom-scrollbar pr-2">
-                    {slotConfig.studentIds.length === 0 ? (
-                      <p className="text-xs text-slate-500 italic font-bold">No students assigned. <br/>Saving will keep slot open for bookings.</p>
-                    ) : (
-                      slotConfig.studentIds.map(id => {
-                        const s = allStudents.find(stu => stu.id === id);
-                        return (
-                          <div key={id} className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-lg group">
-                            <span className="text-sm font-bold text-white">{s?.display_name || "Unknown"}</span>
-                            <button onClick={() => setSlotConfig(p => ({...p, studentIds: p.studentIds.filter(sid => sid !== id)}))} className="text-rose-500 opacity-50 hover:opacity-100 transition-opacity"><X size={14}/></button>
-                          </div>
-                        )
-                      })
-                    )}
-                  </div>
-
-                  {myStudents.length > 0 && (slotConfig.delivery === 'in-person' || slotConfig.studentIds.length === 0) && (
-                      <div className="relative">
-                          <select 
-                              className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white outline-none focus:border-blue-500 transition-colors appearance-none font-bold text-sm shadow-inner"
-                              value={selectedStudentToAdd}
-                              onChange={(e) => {
-                                const newId = e.target.value;
-                                if(newId && !slotConfig.studentIds.includes(newId)) setSlotConfig(p => ({...p, studentIds: [...p.studentIds, newId]}));
-                                setSelectedStudentToAdd("");
-                              }}
-                          >
-                              <option value="" disabled>+ Assign a student to this slot...</option>
-                              {myStudents.filter(s => !slotConfig.studentIds.includes(s.id)).map(s => (
-                                  <option key={s.id} value={s.id}>{s.display_name}</option>
-                              ))}
-                          </select>
-                          <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">▼</div>
-                      </div>
+                
+                <div className="space-y-2 mb-4 max-h-32 overflow-y-auto custom-scrollbar pr-2">
+                  {slotConfig.studentIds.length === 0 ? (
+                    <p className="text-xs text-slate-500 italic font-bold">No students assigned.</p>
+                  ) : (
+                    slotConfig.studentIds.map(id => {
+                      const s = allStudents.find(stu => stu.id === id);
+                      return (
+                        <div key={id} className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-lg group">
+                          <span className="text-sm font-bold text-white">{s?.display_name || "Unknown"}</span>
+                          <button onClick={() => setSlotConfig(p => ({...p, studentIds: p.studentIds.filter(sid => sid !== id)}))} className="text-rose-500 opacity-50 hover:opacity-100 transition-opacity"><X size={14}/></button>
+                        </div>
+                      )
+                    })
                   )}
-                  {slotConfig.delivery === 'online' && slotConfig.studentIds.length >= 1 && (
-                    <div className="p-3 border border-amber-500/20 bg-amber-500/10 rounded-xl mt-2">
-                        <p className="text-[9px] text-amber-500 font-bold uppercase tracking-widest text-center">Online capacity reached (1 Max)</p>
+                </div>
+
+                {myStudents.length > 0 && (slotConfig.delivery === 'in-person' || slotConfig.studentIds.length === 0) && (
+                    <div className="relative mt-2">
+                        <select 
+                            className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white outline-none focus:border-blue-500 transition-colors appearance-none font-bold text-sm shadow-inner"
+                            value={selectedStudentToAdd}
+                            onChange={(e) => {
+                              const newId = e.target.value;
+                              if(newId && !slotConfig.studentIds.includes(newId)) setSlotConfig(p => ({...p, studentIds: [...p.studentIds, newId]}));
+                              setSelectedStudentToAdd("");
+                            }}
+                        >
+                            <option value="" disabled>+ Assign a student to this slot...</option>
+                            {myStudents.filter(s => !slotConfig.studentIds.includes(s.id)).map(s => (
+                                <option key={s.id} value={s.id}>{s.display_name}</option>
+                            ))}
+                        </select>
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">▼</div>
                     </div>
-                  )}
-                </div>
+                )}
+                {slotConfig.delivery === 'online' && slotConfig.studentIds.length >= 1 && (
+                  <div className="p-3 border border-amber-500/20 bg-amber-500/10 rounded-xl mt-2">
+                      <p className="text-[9px] text-amber-500 font-bold uppercase tracking-widest text-center">Online capacity reached (1 Max)</p>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
 
             <div className="flex gap-3 mt-8">
               <button onClick={() => setActiveSlotData(null)} className="flex-1 py-4 rounded-xl border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/5 transition-colors text-slate-300">Cancel</button>
-              
-              {/* Reset/Delete Button */}
-              {activeSlotData.existingSlot && (
-                  <button onClick={handleDeleteTimeslot} disabled={isSaving} className="px-4 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition-colors" title="Clear Slot Entirely"><Trash2 size={16}/></button>
-              )}
-              
-              <button onClick={handleSaveTimeslot} disabled={isSaving} className={`flex-1 py-4 rounded-xl disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest hover:scale-[1.02] transition-all flex items-center justify-center gap-2 ${slotConfig.isBlocked ? 'bg-rose-600 hover:bg-rose-500 shadow-[0_0_20px_rgba(225,29,72,0.3)]' : 'bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.3)]'}`}>
-                {isSaving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} {slotConfig.isBlocked ? 'Lock Slot' : 'Save Slot'}
+              <button onClick={handleSaveTimeslot} disabled={isSaving} className={`flex-1 py-4 rounded-xl disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-widest hover:scale-[1.02] transition-all flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.3)]`}>
+                {isSaving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} Update & Save
               </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
-      </AnimatePresence>
-
-      {/* PARENT APPROVAL MODAL */}
-      <AnimatePresence>
-      {approvalModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[200] p-4">
-          <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-[#0f172a] border border-white/10 p-6 md:p-8 rounded-[32px] max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.5)]">
-            <h3 className="text-2xl font-black italic uppercase mb-2 tracking-tighter text-white">Approve Booking</h3>
-            <p className="text-slate-400 text-sm mb-6 border-b border-white/5 pb-4">Assigning for <strong className="text-white">{approvalModal.teacher_schedule.day_of_week} at {approvalModal.teacher_schedule.time_slot.substring(0,5)}</strong></p>
-            
-            {myStudents.length === 0 ? (
-                <div className="bg-amber-500/10 border border-amber-500/20 text-amber-500 p-4 rounded-xl text-xs mb-6 text-center font-bold">No students currently assigned to you.</div>
-            ) : (
-                <div className="relative mb-6">
-                    <select 
-                        className="w-full bg-black/50 border border-white/10 rounded-2xl p-4 text-white outline-none focus:border-blue-500 transition-colors appearance-none font-bold text-sm shadow-inner"
-                        value={selectedStudentToAdd}
-                        onChange={(e) => setSelectedStudentToAdd(e.target.value)}
-                    >
-                        <option value="" disabled>Select a student to approve...</option>
-                        {myStudents.map(s => <option key={s.id} value={s.id}>{s.display_name}</option>)}
-                    </select>
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">▼</div>
-                </div>
-            )}
-
-            <div className="flex gap-4">
-              <button onClick={() => setApprovalModal(null)} className="flex-1 py-4 rounded-xl border border-white/10 text-[10px] font-black uppercase tracking-widest hover:bg-white/5 transition-colors text-slate-300">Cancel</button>
-              <button onClick={handleApproveRequest} disabled={!selectedStudentToAdd} className="flex-1 py-4 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest shadow-[0_0_20px_rgba(59,130,246,0.3)] hover:scale-[1.02] transition-all">Confirm Approval</button>
             </div>
           </motion.div>
         </div>
