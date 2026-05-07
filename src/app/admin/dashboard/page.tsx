@@ -397,10 +397,9 @@ export default function AdminDashboard() {
       items: [
         { label: 'LMS Academy', icon: BookOpen, path: '/admin/courses', color: 'hover:border-blue-400' },
         { label: 'Math Diagnostics', icon: Calculator, path: '/admin/math-diagnostics', color: 'hover:border-rose-400' },
-        { label: 'Pioneer Ledger', icon: Users, path: '/admin/pioneers', color: 'hover:border-emerald-400' },
-        { label: 'Student Hub', icon: GraduationCap, path: '/admin/student', color: 'hover:border-cyan-400' },
-        { label: 'Parent Portals', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' },
-        { label: 'Teacher Portal', icon: LayoutDashboard, path: '/teacher/dashboard', color: 'hover:border-orange-400' },
+        { label: 'Finance Hub', icon: CreditCard, path: '/admin/finance', color: 'hover:border-emerald-500' },
+        { label: 'Student Hub', icon: Users, path: '/admin/pioneers', color: 'hover:border-emerald-400' },        
+        { label: 'Parent Hub', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' }, // LINK TO BE CHANGED
       ]
     },
     admin: {
@@ -415,17 +414,19 @@ export default function AdminDashboard() {
         { label: 'Growth Blueprint', icon: Target, path: '/admin/blueprint', color: 'hover:border-fuchsia-500' },
         { label: 'System Auth/MFA', icon: Key, path: '/admin/setup-mfa', color: 'hover:border-zinc-500' },
         { label: 'Verification', icon: CheckCircle2, path: '/admin/verify', color: 'hover:border-zinc-400' },
-        { label: 'Web Analytics', icon: Globe, path: '/admin/analytics', color: 'hover:border-cyan-400' },
       ]
     },
     dev: {
       title: "System & Engineering",
       desc: "Developer tools, role impersonation, and environment testing.",
       items: [
-        { label: 'Role Impersonation', icon: UserCog, onClick: () => setIsRoleSwitcherOpen(true), color: 'hover:border-violet-500' },
-        { label: 'API Logs', icon: Terminal, path: '/admin/logs', color: 'hover:border-zinc-500' },
-        { label: 'Database UI', icon: Database, path: '/admin/db', color: 'hover:border-emerald-500' },
-        { label: 'Server Config', icon: Server, path: '/admin/server', color: 'hover:border-blue-500' },
+        { label: 'Role Impersonation', icon: UserCog, onClick: () => setIsRoleSwitcherOpen(true), color: 'hover:border-slate-500' },
+        { label: 'Parent Portals', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' },
+        { label: 'Teacher Portal', icon: LayoutDashboard, path: '/teacher/dashboard', color: 'hover:border-orange-400' },
+        { label: 'Web Analytics', icon: Globe, path: '/admin/analytics', color: 'hover:border-cyan-400' },
+        { label: 'API Logs', icon: Terminal, path: '/admin/logs', color: 'hover:border-violet-500' },
+        { label: 'Database UI', icon: Database, path: '/admin/db', color: 'hover:border-violet-500' },
+        { label: 'Server Config', icon: Server, path: '/admin/server', color: 'hover:border-violet-500' },
       ]
     }
   };
