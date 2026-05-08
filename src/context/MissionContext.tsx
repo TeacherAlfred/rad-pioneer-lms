@@ -15,46 +15,56 @@ interface MissionState {
     name: string;
     xpRequired: number;
   } | null;
-  blueprint: Record<string, any>; // Stores active choices for the current mission
+  blueprint: Record<string, any>;
 }
 
 const MissionContext = createContext<any>(null);
 
 export function MissionProvider({ children, initialStats }: { children: React.ReactNode, initialStats: any }) {
-  // 2. Safe Fallback: If no student is logged in, use "Explorer" defaults
-  const defaultStats = {
+  // 2. Safe Fallback: Standardize the shape so the app never reads 'undefined'
+  const defaultStats: MissionState = {
     xp: 0,
     currentLevel: { name: "Explorer", code: "EXPLORER", accentColor: "#94a3b8", xpRequired: 0 },
     nextLevel: { name: "Builder", xpRequired: 100 },
     blueprint: {}
   };
 
-  const [stats, setStats] = useState<MissionState>(initialStats || defaultStats);
+  // Initialize with default, then override only if initialStats actually has data
+  const [stats, setStats] = useState<MissionState>(() => {
+    if (initialStats && Object.keys(initialStats).length > 0) {
+      return { ...defaultStats, ...initialStats };
+    }
+    return defaultStats;
+  });
+
   const [showLevelUp, setShowLevelUp] = useState(false);
   const [pendingXp, setPendingXp] = useState<{amount: number, id: number} | null>(null);
   
+  // Guard the ref initialization
   const prevLevelCode = useRef(initialStats?.currentLevel?.code || "EXPLORER");
 
-  // Sync state if initialStats changes (e.g., after login)
+  // Sync state if initialStats changes (e.g., after loading finishes)
   useEffect(() => {
-    if (initialStats) {
+    if (initialStats && Object.keys(initialStats).length > 0) {
       setStats(prev => ({ ...prev, ...initialStats }));
-      prevLevelCode.current = initialStats.currentLevel?.code;
+      // Use optional chaining here to prevent crash during sync
+      if (initialStats.currentLevel?.code) {
+        prevLevelCode.current = initialStats.currentLevel.code;
+      }
     }
   }, [initialStats]);
 
-  // LEVEL UP WATCHER: The "Celebration" Trigger
+  // LEVEL UP WATCHER: Added optional chaining (?.) to prevent "Cannot read property of undefined"
   useEffect(() => {
-    const currentCode = stats.currentLevel.code;
-    if (currentCode !== prevLevelCode.current) {
+    const currentCode = stats?.currentLevel?.code;
+    if (currentCode && currentCode !== prevLevelCode.current) {
       setShowLevelUp(true);
       prevLevelCode.current = currentCode;
     }
-  }, [stats.currentLevel.code]);
+  }, [stats?.currentLevel?.code]); // Added optional chaining here too
 
   // MISSION ACTIONS
   const awardXP = async (amount: number, actionKey: string, ids: any) => {
-    // Optimistic Update
     setPendingXp({ amount, id: Date.now() });
     setStats(prev => ({ ...prev, xp: prev.xp + amount }));
 
@@ -75,7 +85,6 @@ export function MissionProvider({ children, initialStats }: { children: React.Re
   };
 
   const updateBlueprint = (key: string, value: any) => {
-    // This makes the sidebar update instantly when a student types/selects
     setStats(prev => ({
       ...prev,
       blueprint: { ...prev.blueprint, [key]: value }

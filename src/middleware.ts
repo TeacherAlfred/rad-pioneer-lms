@@ -2,6 +2,13 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  
+  const url = request.nextUrl.clone()
+
+  if (url.pathname.startsWith('/student')) {
+    return NextResponse.next();
+  }
+
   // 1. Create an initial response
   let supabaseResponse = NextResponse.next({
     request,
@@ -36,7 +43,6 @@ export async function middleware(request: NextRequest) {
   console.log("Middleware Check - User ID:", user?.id || "NONE");
 
   // 4. THE REDIRECT LOGIC
-  const url = request.nextUrl.clone()
 
   // IF YOU are logged in, funnel you to admin
   if (user?.id === 'adfefd6c-954c-4e13-9423-5519aa89980a') {
