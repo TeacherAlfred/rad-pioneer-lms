@@ -1,6 +1,7 @@
 "use client";
 
 import { MissionProvider } from "@/context/MissionContext";
+import FloatingStudentChat from "@/components/student/FloatingStudentChat";
 
 export default function DashboardClientWrapper({ 
   children, 
@@ -12,6 +13,8 @@ export default function DashboardClientWrapper({
   return (
     <MissionProvider initialStats={initialStats}>
       {children}
+      {/* Drops the global chat into every page wrapped by this component */}
+      <FloatingStudentChat />
     </MissionProvider>
   );
 }
