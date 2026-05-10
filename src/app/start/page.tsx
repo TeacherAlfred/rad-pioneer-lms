@@ -87,7 +87,7 @@ export default function PublicTrialSignup() {
       const guardianId = crypto.randomUUID();
       const onboardingToken = generateToken();
 
-      // 1. Create Trial Guardian Profile (ACCOUNT_TIER: TRIAL)
+      // 1. Create Trial Guardian Profile
       const guardianProfile = {
         id: guardianId, 
         role: 'guardian', 
@@ -95,7 +95,7 @@ export default function PublicTrialSignup() {
         onboarding_token: onboardingToken,
         status: 'active', 
         funnel_stage: 'Trial Active', 
-        account_tier: 'trial', 
+        account_tier: 'lms_trial', 
         metadata: JSON.stringify({ 
           email: formData.email, 
           phone: formData.phone, 
@@ -172,7 +172,7 @@ export default function PublicTrialSignup() {
       <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-emerald-200/30 rounded-full blur-[120px] pointer-events-none" />
 
       {/* Header */}
-      <header className="relative z-20 px-6 py-6 lg:px-12 flex items-center justify-between max-w-7xl mx-auto w-full shrink-0">
+      <header className="relative z-20 px-6 py-4 lg:py-6 lg:px-12 flex items-center justify-between max-w-7xl mx-auto w-full shrink-0">
         <div className="w-[100px] md:w-[130px]">
           <Image 
             src="https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/rad-assets/branding/RAD-Logo.png" 
@@ -186,20 +186,21 @@ export default function PublicTrialSignup() {
         </div>
       </header>
 
-      {/* Main Content - Bulletproof Grid Layout */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-4 lg:py-8 grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-16 items-center relative z-10">
+      {/* MAIN LAYOUT: Flexbox ensures Form is strictly on top for mobile */}
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-2 lg:py-8 flex flex-col lg:flex-row gap-10 lg:gap-16 items-start relative z-10">
         
-        {/* LEFT COLUMN: Pitch & Proof */}
-        <div className="lg:col-span-7 flex flex-col justify-center space-y-8 w-full max-w-2xl mx-auto lg:max-w-none">
+        {/* === LEFT COLUMN: Media & Proof (Mobile: Bottom, Desktop: Left) === */}
+        <div className="w-full lg:w-7/12 flex flex-col space-y-8 order-2 lg:order-1">
           
-          <div className="space-y-4">
+          {/* DESKTOP HOOK (Hidden on mobile to save space) */}
+          <div className="hidden lg:block space-y-4">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 border border-blue-100 text-blue-600 text-[10px] font-black uppercase tracking-widest">
               <Cpu size={14} /> Intake Now Open
             </div>
-            <h1 className="text-4xl sm:text-5xl lg:text-[54px] font-black uppercase italic tracking-tighter text-slate-900 leading-[1.05]">
+            <h1 className="text-[54px] font-black uppercase italic tracking-tighter text-slate-900 leading-[1.05]">
               Turn Their Screen Time Into A <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-emerald-500">Superpower.</span>
             </h1>
-            <p className="text-sm sm:text-base text-slate-600 leading-relaxed font-medium lg:pr-8">
+            <p className="text-base text-slate-600 leading-relaxed font-medium pr-8">
               Stop worrying about passive scrolling. Give your child the tools to build their own smart gadgets and develop future-proof skills—all in a safe, moderated environment.
             </p>
           </div>
@@ -224,18 +225,11 @@ export default function PublicTrialSignup() {
           </div>
 
           {/* HIGH-IMPACT PREMIUM REVIEW CAROUSEL */}
-          <div className="pt-6 w-full max-w-[560px] relative group mt-2">
-            
-            {/* Ambient Background Glow - Made much stronger and wider for Light Mode */}
+          <div className="w-full max-w-[560px] relative group mt-2">
             <div className="absolute -inset-4 bg-gradient-to-r from-blue-400/40 via-purple-400/30 to-emerald-400/40 blur-2xl -z-10 rounded-[40px] opacity-80 transition-all duration-700 group-hover:scale-105 group-hover:opacity-100" />
             
-            {/* The Floating Card */}
             <div className="relative bg-white rounded-[32px] p-8 sm:p-10 shadow-2xl shadow-blue-900/10 border border-slate-100 overflow-hidden transform transition-all duration-700 hover:-translate-y-2">
-              
-              {/* Colorful Top Edge Highlight */}
               <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-emerald-500" />
-              
-              {/* Massive Decorative Quote Mark - Opacity increased so it's visible */}
               <div className="absolute -top-6 -left-2 text-[140px] leading-none font-serif text-slate-100 select-none pointer-events-none">
                 "
               </div>
@@ -274,7 +268,6 @@ export default function PublicTrialSignup() {
                 </AnimatePresence>
               </div>
 
-              {/* Progress Indicators */}
               <div className="absolute bottom-8 right-8 flex items-center gap-2 z-20">
                 {REVIEWS.map((_, i) => (
                   <button
@@ -289,12 +282,22 @@ export default function PublicTrialSignup() {
               </div>
             </div>
           </div>
-
         </div>
 
-        {/* RIGHT COLUMN: The Form (Strictly Capped Width) */}
-        <div className="lg:col-span-5 w-full flex justify-center lg:justify-end pb-12 lg:pb-0">
-          <div className="w-full max-w-[460px]">
+        {/* === RIGHT COLUMN: The Form (Mobile: Absolute Top, Desktop: Right) === */}
+        <div className="w-full lg:w-5/12 flex flex-col justify-center lg:justify-end order-1 lg:order-2">
+          
+          {/* MOBILE-ONLY MICRO HOOK (Sits right above the form to establish trust instantly) */}
+          <div className="block lg:hidden mb-4 text-center px-2">
+            <h1 className="text-[28px] leading-[1.1] font-black uppercase italic tracking-tighter text-slate-900">
+              Turn Screen Time <br/><span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-emerald-500">Into A Superpower.</span>
+            </h1>
+            <p className="text-xs text-slate-600 mt-2 font-medium">
+              Secure your 14-Day Full Access Trial below.
+            </p>
+          </div>
+
+          <div className="w-full max-w-[460px] mx-auto">
             <AnimatePresence mode="wait">
               {!isSuccess ? (
                 <motion.div 
@@ -305,10 +308,10 @@ export default function PublicTrialSignup() {
                   <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500" />
                   
                   <div className="mb-6 text-center">
-                    <h2 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900 leading-tight">
-                      14-Day Full Robotics Access
+                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-900 leading-tight">
+                      Create Dashboard
                     </h2>
-                    <p className="text-[10px] font-bold text-slate-500 mt-2 uppercase tracking-widest">
+                    <p className="text-[10px] font-bold text-slate-500 mt-1 uppercase tracking-widest">
                       No credit card required today.
                     </p>
                   </div>
@@ -324,6 +327,7 @@ export default function PublicTrialSignup() {
                       <div>
                         <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1 mb-1.5 block">Full Name *</label>
                         <input 
+                          autoFocus
                           required type="text" placeholder="e.g. Jane Doe"
                           value={formData.parentName} onChange={e => setFormData({...formData, parentName: e.target.value})}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all"
@@ -428,7 +432,6 @@ export default function PublicTrialSignup() {
 
       {/* Premium Apple-Style Footer */}
       <footer className="relative z-20 mt-12 lg:mt-20 bg-slate-50/50 backdrop-blur-2xl">
-        {/* Soft fading divider line */}
         <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-slate-200 to-transparent" />
 
         <div className="max-w-7xl mx-auto px-6 lg:px-12 py-10 sm:py-12">
@@ -436,7 +439,6 @@ export default function PublicTrialSignup() {
 
             {/* Left: Brand & Copyright */}
             <div className="flex flex-col items-center md:items-start gap-4">
-              {/* Logo with cinematic glow reveal */}
               <div className="relative group cursor-pointer">
                 <div className="absolute inset-0 bg-blue-400/20 blur-2xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
                 <Image
