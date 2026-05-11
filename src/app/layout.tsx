@@ -6,6 +6,7 @@ import LevelUpCelebration from "@/components/effects/LevelUpCelebration";
 import { PHProvider } from './providers'; // <-- 1. IMPORT POSTHOG PROVIDER
 import AnalyticsTracker from "@/components/AnalyticsTracker"; // <-- IMPORT TRACKER
 import AdminReturnBanner from "@/components/admin/AdminReturnBanner";
+import PresenceBroadcaster from "@/components/effects/PresenceBroadcaster";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -43,6 +44,7 @@ export default function RootLayout({
         >
           <AdminReturnBanner />
           <AnalyticsTracker /> {/* 3. ADD THE ANALYTICS TRACKER */}
+          <PresenceBroadcaster />
           <MissionProvider initialStats={mockInitialStats}>
             {children}
             <LevelUpCelebration />

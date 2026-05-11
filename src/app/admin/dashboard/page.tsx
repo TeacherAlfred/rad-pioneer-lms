@@ -14,8 +14,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import MediaDesk from "@/components/admin/MediaDesk";
 import RoleSwitcherModal from "@/components/admin/RoleSwitcherModal";
+import LivePresenceWidget from "@/components/admin/LivePresenceWidget";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -127,10 +127,12 @@ export default function AdminDashboard() {
     try {
       const sessionData = localStorage.getItem("pioneer_session");
       if (!sessionData) { router.push("/login"); return; }
+      
       const localUser = JSON.parse(sessionData);
+      setCurrentUser(localUser); // <-- FIX: Set immediately so the widget renders!
       
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
-      if (profile) setCurrentUser(profile);
+      if (profile) setCurrentUser(profile); // Overwrite with rich data if it exists
 
       // Fetch Global XP Config
       const { data: xpData } = await supabase.from('system_settings').select('*').eq('id', 1).single();
@@ -399,7 +401,7 @@ export default function AdminDashboard() {
         { label: 'Math Diagnostics', icon: Calculator, path: '/admin/math-diagnostics', color: 'hover:border-rose-400' },
         { label: 'Finance Hub', icon: CreditCard, path: '/admin/finance', color: 'hover:border-emerald-500' },
         { label: 'Student Hub', icon: Users, path: '/admin/pioneers', color: 'hover:border-emerald-400' },        
-        { label: 'Parent Hub', icon: Eye, path: '/admin/parents', color: 'hover:border-pink-500' }, //        
+        { label: 'Parent Directory', icon: Eye, path: '/admin/directory', color: 'hover:border-pink-500' }, //        
         { label: 'Scheduling Hub', icon: Eye, path: '/admin/roster', color: 'hover:border-orange-500' }, // LINK TO BE CHANGED
       ]
     },
@@ -504,9 +506,12 @@ export default function AdminDashboard() {
           </div>
           
           <div className="flex flex-wrap items-center gap-3">
-            <button onClick={() => setIsMediaModalOpen(true)} className="px-6 py-4 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg flex items-center gap-2">
+            <Link 
+              href="/admin/media" 
+              className="px-6 py-4 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg flex items-center gap-2 w-fit"
+            >
               <ImagePlus size={14} /> Open Media Desk
-            </button>
+            </Link>
             <button onClick={() => setIsXpModalOpen(true)} className="px-6 py-4 bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all shadow-lg flex items-center gap-2">
               <Trophy size={14} /> XP Events
             </button>
@@ -944,9 +949,11 @@ export default function AdminDashboard() {
       </AnimatePresence>
 
       {/* --- RENDER MODALS --- */}
-      <MediaDesk isOpen={isMediaModalOpen} onClose={() => setIsMediaModalOpen(false)} />
       
       <RoleSwitcherModal isOpen={isRoleSwitcherOpen} onClose={() => setIsRoleSwitcherOpen(false)} />
+
+      {/* --- NEW: LIVE PRESENCE TRACKER --- */}
+      {currentUser && <LivePresenceWidget currentUser={currentUser} />}
 
     </div>
   );
