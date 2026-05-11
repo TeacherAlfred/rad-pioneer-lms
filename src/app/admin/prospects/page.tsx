@@ -7,13 +7,23 @@ import {
   Calendar, Clock, Target, ClipboardList, Loader2, ArrowRight, 
   ArrowLeft, Trash2, CheckCircle2, User, Users, FilterX, 
   FileText, FileSignature, MessageCircle, CheckSquare, Square, Send,
-  ExternalLink, UserPlus
+  ExternalLink, UserPlus, ShieldAlert
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 
 const STATUS_OPTIONS = ["New Lead", "Attempted Contact", "Engaged", "Warm (Pending Close)", "Converted (Won)", "Lost"];
 const SOURCE_OPTIONS = ["Meta Ad - Polokwane Bootcamp", "Meta Ad - General", "Google Search", "Referral", "Website Contact Form", "Other"];
+
+// The precise values from your database constraint
+const TIER_OPTIONS = [
+  { value: "lms_trial", label: "LMS Trial (14 Days)" },
+  { value: "lms_access", label: "LMS Access (Paid)" },
+  { value: "bootcamp", label: "Bootcamp Only" },
+  { value: "full", label: "Full Access (LMS + Classes)" },
+  { value: "none", label: "None / Pending" },
+  { value: "rad_alumni", label: "RAD Alumni" }
+];
 
 const formatWhatsAppNumber = (phone: string) => {
   if (!phone) return "";
@@ -47,6 +57,10 @@ export default function ProspectsCRM() {
   const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false); 
   const [newLogText, setNewLogText] = useState("");
   const [newLogType, setNewLogType] = useState("Note");
+
+  // --- CONVERSION MODAL STATE ---
+  const [isConvertModalOpen, setIsConvertModalOpen] = useState(false);
+  const [selectedTier, setSelectedTier] = useState("lms_trial");
 
   // --- WHATSAPP SEQUENCER STATE ---
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -139,7 +153,6 @@ export default function ProspectsCRM() {
     const prospect = prospects.find(p => p.id === currentId);
     
     if (prospect && prospect.phone) {
-      // Extract just the first name for a friendlier greeting
       const firstName = prospect.name.split(' ')[0] || prospect.name;
       const finalMsg = waTemplate.replace(/\{\{name\}\}/gi, firstName);
       const url = `whatsapp://send?phone=${formatWhatsAppNumber(prospect.phone)}&text=${encodeURIComponent(finalMsg)}`;
@@ -159,17 +172,17 @@ export default function ProspectsCRM() {
   };
 
   // --- CONVERT PROSPECT TO PROFILE ---
-  const handleConvertToProfile = async () => {
+  const handleInitiateConversion = () => {
     if (!selectedProspect) return;
-    
     if (!selectedProspect.email) {
       alert("Cannot convert: Prospect must have a valid email address to create a login account.");
       return;
     }
+    setIsConvertModalOpen(true);
+  };
 
-    const confirm = window.confirm(`Convert ${selectedProspect.name} into an official Guardian profile and generate login credentials?`);
-    if (!confirm) return;
-
+  const executeConversion = async () => {
+    setIsConvertModalOpen(false);
     setIsProcessing(true);
     try {
       const response = await fetch('/api/prospects/convert', {
@@ -180,7 +193,8 @@ export default function ProspectsCRM() {
           name: selectedProspect.name,
           email: selectedProspect.email,
           phone: selectedProspect.phone,
-          source: selectedProspect.source
+          source: selectedProspect.source,
+          accountTier: selectedTier 
         })
       });
 
@@ -195,8 +209,7 @@ export default function ProspectsCRM() {
       setSelectedProspect(updatedProspect);
       setProspects(prospects.map(p => p.id === selectedProspect.id ? updatedProspect : p));
       
-      // Show the temporary password to the Admin
-      alert(`SUCCESS: ${selectedProspect.name} is now an official Guardian!\n\nTemporary Password: ${data.tempPassword}\n\nPlease share this with the parent so they can log in.`);
+      alert(`SUCCESS: ${selectedProspect.name} is now an official Guardian on the [${selectedTier}] tier!\n\nTemporary Password: ${data.tempPassword}\n\nPlease share this with the parent so they can log in.`);
       
     } catch (err: any) {
       console.error("Conversion error:", err);
@@ -675,7 +688,7 @@ export default function ProspectsCRM() {
                     {!isCreating && selectedProspect?.status !== 'Converted (Won)' && (
                       <button 
                         type="button"
-                        onClick={handleConvertToProfile}
+                        onClick={handleInitiateConversion} 
                         disabled={isProcessing}
                         className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase italic text-xs rounded-xl shadow-lg transition-colors flex items-center justify-center gap-2 mb-3 disabled:opacity-50"
                         title="Promote to Database Profile"
@@ -822,16 +835,76 @@ export default function ProspectsCRM() {
       )}
 
       {/* =========================================
+          CONVERSION TIER SELECTION MODAL
+          (Fixed absolutely to viewport to prevent clipping)
+          ========================================= */}
+      <AnimatePresence>
+        {isConvertModalOpen && (
+          <div className="fixed top-0 left-0 w-screen h-screen z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{opacity: 0, scale: 0.95}} 
+              animate={{opacity: 1, scale: 1}} 
+              exit={{opacity: 0, scale: 0.95}}
+              className="bg-[#0f172a] border border-emerald-500/30 rounded-[40px] p-8 max-w-lg w-full shadow-2xl flex flex-col pointer-events-auto"
+            >
+              <div className="flex justify-between items-center mb-6">
+                 <h2 className="text-2xl font-black uppercase italic text-white flex items-center gap-3">
+                   <UserPlus className="text-emerald-500"/> Account Setup
+                 </h2>
+                 <button type="button" onClick={() => setIsConvertModalOpen(false)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400">
+                   <X size={16}/>
+                 </button>
+              </div>
+              
+              <div className="space-y-6">
+                 <div className="bg-emerald-500/10 border border-emerald-500/20 p-5 rounded-2xl flex items-start gap-4">
+                   <ShieldAlert className="text-emerald-500 shrink-0 mt-1" size={24}/>
+                   <div>
+                     <p className="text-sm font-bold text-emerald-400 mb-1">Select Access Tier</p>
+                     <p className="text-xs text-slate-300 leading-relaxed">
+                       You are creating an official login for <strong>{selectedProspect?.name}</strong>. Please select the specific account tier to apply to their new profile.
+                     </p>
+                   </div>
+                 </div>
+
+                 <div className="space-y-2">
+                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2 block">Account Tier</label>
+                   <select 
+                     value={selectedTier} 
+                     onChange={e => setSelectedTier(e.target.value)} 
+                     className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 text-sm font-bold text-white outline-none focus:border-emerald-500 custom-scrollbar cursor-pointer"
+                   >
+                     {TIER_OPTIONS.map(tier => (
+                       <option key={tier.value} value={tier.value}>{tier.label}</option>
+                     ))}
+                   </select>
+                 </div>
+              </div>
+
+              <div className="mt-8 pt-6 border-t border-white/5 flex gap-3">
+                <button type="button" onClick={() => setIsConvertModalOpen(false)} className="flex-1 py-4 rounded-xl bg-white/5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
+                  Cancel
+                </button>
+                <button type="button" onClick={executeConversion} className="flex-[2] py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-900/20">
+                  <CheckCircle2 size={16}/> Confirm & Convert
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* =========================================
           WHATSAPP SEQUENCER MODAL
           ========================================= */}
       <AnimatePresence>
         {isSequencerOpen && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="fixed top-0 left-0 w-screen h-screen z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
             <motion.div 
               initial={{opacity:0, scale:0.95}} 
               animate={{opacity:1, scale:1}} 
               exit={{opacity:0, scale:0.95}}
-              className="bg-[#0f172a] border border-[#25D366]/30 rounded-[40px] p-8 max-w-2xl w-full shadow-2xl flex flex-col"
+              className="bg-[#0f172a] border border-[#25D366]/30 rounded-[40px] p-8 max-w-2xl w-full shadow-2xl flex flex-col pointer-events-auto"
             >
               {/* Header */}
               <div className="flex justify-between items-center mb-6">
@@ -890,9 +963,9 @@ export default function ProspectsCRM() {
             initial={{ opacity: 0, scale: 0.95 }} 
             animate={{ opacity: 1, scale: 1 }} 
             exit={{ opacity: 0, scale: 0.95 }} 
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 md:p-8"
+            className="fixed top-0 left-0 w-screen h-screen z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 md:p-8"
           >
-            <div className="w-full max-w-6xl h-full max-h-[90vh] bg-[#020617] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl shadow-fuchsia-900/20 flex flex-col relative">
+            <div className="w-full max-w-6xl h-full max-h-[90vh] bg-[#020617] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl shadow-fuchsia-900/20 flex flex-col relative pointer-events-auto">
               
               <div className="flex items-center justify-between p-6 border-b border-white/5 bg-white/[0.02]">
                 <div className="flex items-center gap-3">
@@ -952,7 +1025,7 @@ function SuccessModal({ message, onClose }: { message: string | null, onClose: (
   return (
     <AnimatePresence>
       {message && (
-        <div className="fixed bottom-10 right-10 z-[300] flex justify-end pointer-events-none">
+        <div className="fixed bottom-10 right-10 z-[9999] flex justify-end pointer-events-none">
           <motion.div 
             initial={{ opacity: 0, y: 50, scale: 0.9 }} 
             animate={{ opacity: 1, y: 0, scale: 1 }} 

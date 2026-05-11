@@ -9,13 +9,14 @@ const supabaseAdmin = createClient(
 
 export async function POST(req: Request) {
   try {
-    const { prospectId, name, email, phone, source } = await req.json();
+    // 1. EXTRACT: We added accountTier here to receive it from the frontend
+    const { prospectId, name, email, phone, source, accountTier } = await req.json();
 
     if (!email) {
       return NextResponse.json({ error: "Prospect must have an email address to create an account." }, { status: 400 });
     }
 
-    // 1. Create the user in Supabase Auth
+    // 2. Create the user in Supabase Auth
     // We generate a random temporary password that satisfies basic security requirements
     const tempPassword = Math.random().toString(36).slice(-10) + 'A1!';
     
@@ -35,7 +36,7 @@ export async function POST(req: Request) {
 
     const authUserId = authData.user.id;
 
-    // 2. Handle the Profile Row
+    // 3. Handle the Profile Row
     // Check if your database triggers auto-created a profile when the Auth user was made
     const { data: existingProfile } = await supabaseAdmin
       .from('profiles')
@@ -43,11 +44,20 @@ export async function POST(req: Request) {
       .eq('auth_user_id', authUserId)
       .single();
 
+    // Determine the unified funnel stage based on the tier
+    let assignedFunnelStage = 'Onboarding';
+    if (accountTier === 'lms_trial' || accountTier === 'lms_access' || accountTier === 'full') {
+      assignedFunnelStage = 'Active (LMS Access)';
+    } else if (accountTier === 'bootcamp') {
+      assignedFunnelStage = 'Active (Bootcamp)';
+    }
+
     const profileData = {
       role: 'guardian',
       display_name: name,
       status: 'active',
-      funnel_stage: 'Active (Paid Client)',
+      funnel_stage: assignedFunnelStage, // <-- THE FIX: Inject the smart stage
+      account_tier: accountTier || 'lms_trial',
       metadata: {
         email: email,
         phone: phone || "",
@@ -72,7 +82,7 @@ export async function POST(req: Request) {
       if (insertProfileError) throw insertProfileError;
     }
 
-    // 3. Mark the Prospect as Converted
+    // 4. Mark the Prospect as Converted
     const { error: prospectError } = await supabaseAdmin
       .from('prospects')
       .update({ status: 'Converted (Won)', updated_at: new Date().toISOString() })

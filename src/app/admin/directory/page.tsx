@@ -13,14 +13,20 @@ import { motion, AnimatePresence } from "framer-motion";
 const FUNNEL_STAGES = [
   "Lead",
   "Onboarding",
-  "Active (Paid Client)",
+  "Active (LMS Access)", // <-- NEW UNIFIED STAGE
+  "Active (Bootcamp)",
   "Paused",
   "Churned"
 ];
 
 const getFunnelBadgeStyle = (stage: string) => {
   switch(stage) {
-    case 'Active (Paid Client)': return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10';
+    // We added the new stage and kept the old 'Paid Client'/'Trial' as fallbacks so old records don't lose their color
+    case 'Active (LMS Access)': 
+    case 'Active (Paid Client)': 
+    case 'Trial Active': 
+      return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10';
+    case 'Active (Bootcamp)': return 'text-teal-400 border-teal-500/20 bg-teal-500/10';
     case 'Onboarding': return 'text-blue-400 border-blue-500/20 bg-blue-500/10';
     case 'Lead': return 'text-purple-400 border-purple-500/20 bg-purple-500/10';
     case 'Paused': return 'text-amber-400 border-amber-500/20 bg-amber-500/10';
@@ -84,6 +90,10 @@ export default function DirectoryPage() {
   const [customMessage, setCustomMessage] = useState("");
 
   const [tick, setTick] = useState(0);
+
+  // NEW: Add Pioneer State
+  const [isAddPioneerModalOpen, setIsAddPioneerModalOpen] = useState(false);
+  const [newPioneerData, setNewPioneerData] = useState({ name: "", dob: "", grade: "" });
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -314,6 +324,7 @@ export default function DirectoryPage() {
           payment_plan_preference: workspaceEditData.payment_plan_preference,
           funnel_stage: workspaceEditData.funnel_stage,
           lead_source: workspaceEditData.lead_source,
+          account_tier: workspaceEditData.account_tier,
           onboarding_token: workspaceEditData.onboarding_token, 
           updated_at: new Date().toISOString(), 
           metadata: cleanMeta
@@ -349,6 +360,7 @@ export default function DirectoryPage() {
           requires_review: false,
           previous_state: {},
           inactive_since: workspaceEditData.status === 'inactive' ? workspaceEditData.inactive_since : null,
+          account_tier: workspaceEditData.account_tier,
           onboarding_token: workspaceEditData.onboarding_token, 
           updated_at: new Date().toISOString(), 
           metadata: cleanMeta
@@ -424,6 +436,40 @@ export default function DirectoryPage() {
       const email = workspaceEditData?.metadata?.email;
       if (!email) return alert("No email address on file for this guardian.");
       window.open(`mailto:${email}?subject=${encodeURIComponent("Welcome to RAD Academy")}&body=${encodeURIComponent(customMessage)}`, '_blank');
+    }
+  };
+
+  const handleAddPioneer = async () => {
+    if (!newPioneerData.name.trim()) return alert("Pioneer name is required.");
+    setIsProcessing(true);
+    try {
+      // Inherit the tier from the primary guardian, safely fallback to 'none' just in case
+      const parentTier = selectedProfileLeadGuardian?.account_tier || 'none';
+
+      const payload = {
+        role: 'student',
+        display_name: newPioneerData.name,
+        linked_parent_id: householdLeadId, // Links directly to the active parent
+        status: 'active',
+        account_tier: parentTier, // <-- THE FIX: Explicitly set to match the parent
+        metadata: {
+          dob: newPioneerData.dob,
+          grade: newPioneerData.grade
+        }
+      };
+      
+      const { error } = await supabase.from('profiles').insert([payload]);
+      if (error) throw error;
+      
+      await fetchDirectory(); // Instantly refreshes the UI
+      setIsAddPioneerModalOpen(false);
+      setNewPioneerData({ name: "", dob: "", grade: "" }); // Reset form
+      setShowSuccessModal(true); // Triggers your existing green success modal
+    } catch (err: any) {
+      console.error(err);
+      alert("Failed to add pioneer: " + err.message);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -587,9 +633,20 @@ export default function DirectoryPage() {
                 )}
 
                 <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
-                  <h3 className="text-xl font-black uppercase text-white border-b border-white/5 pb-4 flex items-center gap-3">
-                     <GraduationCap size={20} className="text-blue-500"/> Linked Pioneers
-                  </h3>
+                  {/* --- UPDATED HEADER WITH BUTTON --- */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                    <h3 className="text-xl font-black uppercase text-white flex items-center gap-3">
+                       <GraduationCap size={20} className="text-blue-500"/> Linked Pioneers
+                    </h3>
+                    <button 
+                      onClick={() => setIsAddPioneerModalOpen(true)} 
+                      className="px-4 py-2 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-2 w-fit"
+                    >
+                      <Plus size={14} /> Add Pioneer
+                    </button>
+                  </div>
+                  {/* ---------------------------------- */}
+                  
                   {myStudents.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                        {myStudents.map(student => (
@@ -686,18 +743,18 @@ export default function DirectoryPage() {
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-2">Plan Type (Preference)</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase ml-2">Access Tier (Permissions)</label>
                         <select
-                          value={workspaceEditData?.payment_plan_preference || ""}
-                          onChange={(e) => setWorkspaceEditData({ ...workspaceEditData, payment_plan_preference: e.target.value })}
+                          value={workspaceEditData?.account_tier || "none"}
+                          onChange={(e) => setWorkspaceEditData({ ...workspaceEditData, account_tier: e.target.value })}
                           className="w-full bg-[#0f172a] rounded-xl px-4 py-3 text-sm font-bold text-white border border-white/10 outline-none focus:border-purple-500 transition-all appearance-none cursor-pointer"
                         >
-                          <option value="">Unassigned</option>
-                          <option value="Bootcamp">Bootcamp</option>
-                          <option value="Term (Monthly)">Term (Monthly)</option>
-                          <option value="Term (Upfront)">Term (Upfront)</option>
-                          <option value="Demo LMS Access">Demo LMS Access</option>
-                          <option value="Full LMS Access">Full LMS Access</option>
+                          <option value="none">None / Pending</option>
+                          <option value="lms_trial">LMS Trial (14 Days)</option>
+                          <option value="lms_access">LMS Access (Paid)</option>
+                          <option value="bootcamp">Bootcamp Only</option>
+                          <option value="full">Full Access (LMS + Classes)</option>
+                          <option value="rad_alumni">RAD Alumni</option>
                         </select>
                       </div>
 
@@ -811,6 +868,70 @@ export default function DirectoryPage() {
         )}
         </AnimatePresence>
       </div>
+
+      {/* =========================================
+          ADD PIONEER MODAL
+          ========================================= */}
+      <AnimatePresence>
+        {isAddPioneerModalOpen && (
+          <div className="fixed top-0 left-0 w-screen h-screen z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+             <motion.div 
+               initial={{ opacity: 0, scale: 0.95 }}
+               animate={{ opacity: 1, scale: 1 }}
+               exit={{ opacity: 0, scale: 0.95 }}
+               className="bg-[#0f172a] border border-blue-500/30 rounded-[40px] p-8 max-w-md w-full shadow-2xl flex flex-col pointer-events-auto"
+             >
+               <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-black uppercase italic text-white flex items-center gap-3">
+                    <UserPlus className="text-blue-500"/> Add Pioneer
+                  </h2>
+                  <button onClick={() => setIsAddPioneerModalOpen(false)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400 transition-colors">
+                    <X size={16}/>
+                  </button>
+               </div>
+               
+               <div className="space-y-5">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Pioneer Full Name *</label>
+                    <input 
+                      autoFocus
+                      value={newPioneerData.name} onChange={e => setNewPioneerData({...newPioneerData, name: e.target.value})}
+                      className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 text-sm font-bold text-white outline-none focus:border-blue-500 transition-colors"
+                      placeholder="e.g. Leo"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Date of Birth</label>
+                    <input 
+                      type="date"
+                      value={newPioneerData.dob} onChange={e => setNewPioneerData({...newPioneerData, dob: e.target.value})}
+                      className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 text-sm font-bold text-slate-300 outline-none focus:border-blue-500 transition-colors [&::-webkit-calendar-picker-indicator]:filter-[invert(1)] cursor-pointer"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Grade</label>
+                    <select 
+                      value={newPioneerData.grade} onChange={e => setNewPioneerData({...newPioneerData, grade: e.target.value})}
+                      className="w-full bg-[#020617] border border-white/10 rounded-2xl p-4 text-sm font-bold text-white outline-none focus:border-blue-500 transition-colors cursor-pointer appearance-none"
+                    >
+                      <option value="" disabled>Select Grade...</option>
+                      {[1,2,3,4,5,6,7,8,9,10,11,12].map(g => <option key={g} value={g}>Grade {g}</option>)}
+                    </select>
+                  </div>
+               </div>
+
+               <div className="mt-8 pt-6 border-t border-white/5 flex gap-3">
+                 <button onClick={() => setIsAddPioneerModalOpen(false)} className="flex-1 py-4 rounded-xl bg-white/5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
+                   Cancel
+                 </button>
+                 <button onClick={handleAddPioneer} disabled={isProcessing || !newPioneerData.name} className="flex-[2] py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50">
+                   {isProcessing ? <Loader2 size={16} className="animate-spin"/> : <Plus size={16}/>} Create Pioneer
+                 </button>
+               </div>
+             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* GREEN SUCCESS MODAL */}
       <AnimatePresence>

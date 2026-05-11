@@ -5,7 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Sparkles, Lock, User, Users, GraduationCap, CreditCard, 
   ShieldCheck, ArrowRight, ArrowLeft, CheckCircle2, ChevronRight, 
-  Check, Info, Zap, RotateCcw, UserPlus, Mail, Gamepad2, X, Loader2, Square, CheckSquare, Star, Plus, Trash2, AlertTriangle, ChevronDown
+  Check, Info, Zap, RotateCcw, UserPlus, Mail, Gamepad2, X, Loader2, Square, CheckSquare, Star, Plus, Trash2, AlertTriangle, ChevronDown,
+  Key
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -55,8 +56,9 @@ export default function WelcomePortal() {
   const [wizardData, setWizardData] = useState({
     password: "", confirmPassword: "",
     planType: "", // Stores plan type to dynamically hide steps
+    accountTier: "",
     guardians: [{ id: 'primary', name: "", email: "", phone: "", isPrimary: true, removalRequested: false }],
-    learners: [{ id: 1 as any, name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }],
+    learners: [{ id: 1 as any, name: "", dob: "", grade: "", schoolCoding: false, username: "", accessPin: "",removalRequested: false }],
     billing: { frequency: "monthly", date: "1st" },
     agreements: {} as Record<string, any>
   });
@@ -69,7 +71,9 @@ export default function WelcomePortal() {
 
   // --- DYNAMIC WIZARD PATHING ---
   // If their plan type has "LMS Access" OR "Bootcamp", remove step 3 (Billing) from the flow
-  const skipBilling = wizardData.planType?.includes("LMS Access") || wizardData.planType?.includes("Bootcamp");
+  const skipBilling = wizardData.planType?.includes("LMS Access") || 
+                      wizardData.planType?.includes("Bootcamp") ||
+                      wizardData.accountTier === "lms_trial";
   const wizardSteps = skipBilling ? [0, 1, 2, 4] : [0, 1, 2, 3, 4];
 
   // --- INITIALIZATION (Connected to Supabase) ---
@@ -84,7 +88,7 @@ export default function WelcomePortal() {
             // Fetch Guardian (Fast-Track / Paid)
             let { data: guardianData, error: guardianErr } = await supabase
               .from('profiles')
-              .select('id, display_name, metadata, funnel_stage, payment_plan_preference')
+              .select('id, display_name, metadata, funnel_stage, payment_plan_preference, account_tier')
               .eq('onboarding_token', token)
               .single();
 
@@ -116,7 +120,8 @@ export default function WelcomePortal() {
                 display_name: prospectData.name,
                 payment_plan_preference: 'Demo LMS Access', // Instantly maps to the Trial Agreements!
                 funnel_stage: prospectData.status, 
-                metadata: meta
+                metadata: meta,
+                account_tier: 'lms_trial' // ADDED: Hardcode trial tier for prospects
               };
 
               loadedGuardians = [{
@@ -129,14 +134,17 @@ export default function WelcomePortal() {
               }];
 
               const childrenData = meta.children_data || meta.children || [];
+              // For Prospects (around line 145)
               loadedLearners = childrenData.length > 0 ? childrenData.map((c: any) => ({
-                id: c.id || Date.now(),
-                name: c.name || "",
-                dob: c.dob || c.date_of_birth || "",
-                grade: c.grade || "",
-                schoolCoding: c.codingAtSchool === 'Yes' || c.school_coding === true,
-                removalRequested: false
-              })) : [{ id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }];
+                  id: c.id || Date.now(),
+                  name: c.name || "",
+                  dob: c.dob || c.date_of_birth || "",
+                  grade: c.grade || "",
+                  schoolCoding: c.codingAtSchool === 'Yes' || c.school_coding === true,
+                  username: "", // NEW
+                  accessPin: "", // NEW
+                  removalRequested: false
+              })) : [{ id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, username: "", accessPin: "", removalRequested: false }];
 
             } else {
               // ========================================================
@@ -181,20 +189,23 @@ export default function WelcomePortal() {
                 .eq('linked_parent_id', guardianData.id)
                 .eq('role', 'student');
 
+              // For standard Profiles (around line 165)
               if (learnersData && learnersData.length > 0) {
-                loadedLearners = learnersData.map((l: any) => {
-                  const lMeta = typeof l.metadata === 'string' ? JSON.parse(l.metadata) : (l.metadata || {});
-                  return {
-                    id: l.id, 
-                    name: l.display_name || "",
-                    dob: lMeta.dob || lMeta.date_of_birth || "",
-                    grade: lMeta.grade || "",
-                    schoolCoding: lMeta.school_coding || false,
-                    removalRequested: false
-                  }
-                });
+                  loadedLearners = learnersData.map((l: any) => {
+                    const lMeta = typeof l.metadata === 'string' ? JSON.parse(l.metadata) : (l.metadata || {});
+                    return {
+                      id: l.id, 
+                      name: l.display_name || "",
+                      dob: lMeta.dob || lMeta.date_of_birth || "",
+                      grade: lMeta.grade || "",
+                      schoolCoding: lMeta.school_coding || false,
+                      username: l.student_identifier || "", // NEW: Pull existing if available
+                      accessPin: l.temp_entry_pin || "", // NEW: Pull existing if available
+                      removalRequested: false
+                    }
+                  });
               } else {
-                loadedLearners = [{ id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }];
+                  loadedLearners = [{ id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, username: "", accessPin: "", removalRequested: false }];
               }
             }
 
@@ -242,6 +253,7 @@ export default function WelcomePortal() {
             setWizardData(prev => ({
               ...prev,
               planType: currentPlan || "", // Drives skip-billing pathing automatically
+              accountTier: guardianData?.account_tier || 'lms_trial', // ADDED: Push tier to state
               guardians: loadedGuardians,
               learners: loadedLearners,
               agreements: initialAgreementsState
@@ -344,7 +356,7 @@ export default function WelcomePortal() {
 
   // Tab Functions for Learners
   const handleAddLearner = () => {
-    const newLearners = [...wizardData.learners, { id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, removalRequested: false }];
+    const newLearners = [...wizardData.learners, { id: Date.now(), name: "", dob: "", grade: "", schoolCoding: false, username: "", accessPin: "", removalRequested: false }];
     setWizardData({ ...wizardData, learners: newLearners });
     setActiveLearnerTab(newLearners.length - 1);
   };
@@ -423,7 +435,11 @@ export default function WelcomePortal() {
   const isWizardNextDisabled = () => {
     if (step === 0) return !(pwdLength && pwdHasUpper && pwdHasNum && pwdMatch);
     if (step === 1) return wizardData.guardians.some(g => !g.removalRequested && (!g.name || !g.email));
-    if (step === 2) return wizardData.learners.some(l => !l.removalRequested && !l.name);
+    
+    // NEW: Check that name, username, and a 4-digit PIN exist
+    if (step === 2) return wizardData.learners.some(l => 
+      !l.removalRequested && (!l.name || !l.username || !l.accessPin || l.accessPin.length !== 4)
+    );
     
     if (step === 4) {
       return requiredAgreements.some(req => {
@@ -708,7 +724,8 @@ export default function WelcomePortal() {
                                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-1.5 block">Learner Full Name</label>
                                 <input type="text" value={wizardData.learners[activeLearnerTab].name} placeholder="e.g. Sarah Louw" onChange={e => { const nl = [...wizardData.learners]; nl[activeLearnerTab].name = e.target.value; setWizardData({...wizardData, learners: nl}); }} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-slate-900 font-bold focus:border-purple-500 outline-none transition-all pr-12" />
                               </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 border-b border-slate-100 pb-5">
                                 <div>
                                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-1.5 block">Date of Birth</label>
                                   <input type="date" value={wizardData.learners[activeLearnerTab].dob} onChange={e => { const nl = [...wizardData.learners]; nl[activeLearnerTab].dob = e.target.value; setWizardData({...wizardData, learners: nl}); }} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-slate-900 font-bold focus:border-purple-500 outline-none transition-all cursor-pointer" />
@@ -721,7 +738,38 @@ export default function WelcomePortal() {
                                   </select>
                                 </div>
                               </div>
-                              <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+
+                              {/* NEW: Platform Access Details */}
+                              <div className="bg-purple-50/50 p-4 rounded-2xl border border-purple-100/50 space-y-4">
+                                <h4 className="text-[11px] font-black uppercase tracking-widest text-purple-900 mb-2 flex items-center gap-2"><Key size={14}/> Platform Access</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                  <div>
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-1.5 block">Pioneer Username *</label>
+                                    <input 
+                                      type="text" 
+                                      value={wizardData.learners[activeLearnerTab].username} 
+                                      placeholder="e.g. CodeNinja99" 
+                                      onChange={e => { const nl = [...wizardData.learners]; nl[activeLearnerTab].username = e.target.value.replace(/[^a-zA-Z0-9_]/g, ''); setWizardData({...wizardData, learners: nl}); }} 
+                                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-slate-900 font-bold focus:border-purple-500 outline-none transition-all" 
+                                    />
+                                    <p className="text-[9px] text-slate-400 font-bold mt-1.5 ml-1">Visible on leaderboards. No spaces allowed.</p>
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 mb-1.5 block">4-Digit Access PIN *</label>
+                                    <input 
+                                      type="text" 
+                                      maxLength={4}
+                                      value={wizardData.learners[activeLearnerTab].accessPin} 
+                                      placeholder="1234" 
+                                      onChange={e => { const nl = [...wizardData.learners]; nl[activeLearnerTab].accessPin = e.target.value.replace(/\D/g, ''); setWizardData({...wizardData, learners: nl}); }} 
+                                      className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-slate-900 font-bold tracking-widest focus:border-purple-500 outline-none transition-all text-center" 
+                                    />
+                                    <p className="text-[9px] text-slate-400 font-bold mt-1.5 ml-1 text-center">Numbers only.</p>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="pt-2 flex items-center justify-between">
                                 <div>
                                   <p className="font-bold text-slate-800 text-sm">School Coding Experience?</p>
                                   <p className="text-xs text-slate-500 font-medium">Does their school offer coding/robotics?</p>
