@@ -149,6 +149,7 @@ export default function DirectoryPage() {
             payment_plan_preference: selectedProfile.payment_plan_preference || "",
             funnel_stage: selectedProfile.funnel_stage || "",
             lead_source: selectedProfile.lead_source || "",
+            account_tier: selectedProfile.account_tier || "none",
             onboarding_token: selectedProfile.onboarding_token || legacyMetaToken || "", 
             metadata: {
               ...meta, 
