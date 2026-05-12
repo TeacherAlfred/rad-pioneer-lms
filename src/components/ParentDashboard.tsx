@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Key, Zap, Flame, Calendar, Shield, TrendingUp, Link,
   ChevronRight, Loader2, AlertCircle, CheckCircle2, AlertTriangle, 
-  Trophy, Clock, Plus, Copy, BarChart3, FolderGit2, Star,
+  Trophy, Clock, Plus, Copy, BarChart3, FolderGit2, Star, PlayCircle,
   HeartHandshake, CreditCard, CalendarCheck, MessageSquare, 
   Download, Send, User, FileText, Sparkles, Share2, Award, 
   CalendarX2, RefreshCw, X, Lock, XCircle, Landmark, CalendarPlus, ArrowRight, ImagePlus
@@ -538,6 +538,27 @@ export default function ParentDashboard({ parentId, paymentPlan = "" }: { parent
               Empowering your household to redefine African dreams. Manage accounts, track progress, and secure access from your central command.
             </p>
           </div>
+
+          {/* --- GETTING STARTED GUIDES BANNER --- */}
+            <div className="mt-8 bg-gradient-to-r from-blue-600/10 to-indigo-600/10 border border-blue-500/20 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-inner max-w-2xl relative z-10">
+              <div>
+                <h4 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                  <PlayCircle className="text-blue-400" size={18} /> 
+                  Need Help Getting Started?
+                </h4>
+                <p className="text-xs text-slate-400 mt-1.5 font-medium">
+                  Watch our quick setup video to get started with the Trial Robotics Course lessons.
+                </p>
+              </div>
+              <a 
+                href="https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/support-guides/getting-started/lms-trial-login.mp4" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="shrink-0 w-full sm:w-auto text-center px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] border border-blue-400/50"
+              >
+                Watch Guide
+              </a>
+            </div>
 
           {students.length > 0 && (
             <div className="flex gap-4">

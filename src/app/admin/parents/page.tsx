@@ -5,7 +5,8 @@ import { supabase } from "@/lib/supabase";
 import { 
   Search, Users, Wallet, TrendingUp, AlertCircle, Edit, CheckCircle2, 
   X, Loader2, Save, Phone, Mail, Link as LinkIcon, FileText, Eye, UserCog, 
-  ArrowUpDown, ArrowUp, ArrowDown, EyeOff, Filter, SlidersHorizontal
+  ArrowUpDown, ArrowUp, ArrowDown, EyeOff, Filter, SlidersHorizontal,
+  ArrowLeft
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -227,6 +228,16 @@ export default function AdminParentHub() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 font-sans text-slate-900">
+
+      {/* Back Navigation */}
+      <div className="max-w-[1600px] mx-auto mb-6">
+        <button
+          onClick={() => router.push('/admin/dashboard')}
+          className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-blue-600 transition-colors px-4 py-2 bg-white border border-slate-200 rounded-xl w-fit shadow-sm hover:shadow-md hover:-translate-y-0.5"
+        >
+          <ArrowLeft size={14} /> Back to Dashboard
+        </button>
+      </div>
       
       {/* Top Level KPI Cards */}
       <div className="max-w-[1600px] mx-auto mb-8 grid grid-cols-1 md:grid-cols-4 gap-4">
