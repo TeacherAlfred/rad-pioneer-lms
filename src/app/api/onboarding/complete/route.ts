@@ -119,6 +119,8 @@ export async function POST(req: Request) {
           display_name: l.name,
           linked_parent_id: parentId,
           status: 'active',
+          student_identifier: l.username,        // <-- ADDED: Maps UI username to DB
+          temp_entry_pin: String(l.accessPin),   // <-- ADDED: Maps UI access PIN to DB
           metadata: {
             dob: l.dob,
             grade: l.grade,

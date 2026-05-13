@@ -94,7 +94,7 @@ export default function PublicTrialSignup() {
         display_name: formData.parentName, 
         onboarding_token: onboardingToken,
         status: 'active', 
-        funnel_stage: 'Trial Active', 
+        funnel_stage: 'Active (LMS Access)',
         account_tier: 'lms_trial', 
         metadata: JSON.stringify({ 
           email: formData.email, 
@@ -404,23 +404,56 @@ export default function PublicTrialSignup() {
                 <motion.div 
                   key="success"
                   initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
-                  className="bg-white rounded-[32px] p-8 sm:p-10 shadow-2xl shadow-slate-200/50 border border-emerald-200 text-center flex flex-col items-center justify-center min-h-[480px]"
+                  className="bg-white rounded-[32px] p-6 sm:p-8 shadow-2xl shadow-slate-200/50 border border-emerald-200 text-center flex flex-col items-center justify-center"
                 >
-                  <div className="w-20 h-20 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-6 shadow-inner border border-emerald-100">
-                    <CheckCircle2 size={40} />
+                  <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-4 shadow-inner border border-emerald-100 shrink-0">
+                    <CheckCircle2 size={32} />
                   </div>
-                  <h2 className="text-[28px] font-black uppercase italic tracking-tighter text-slate-900 mb-3">Request Secured!</h2>
-                  <p className="text-sm text-slate-500 font-medium leading-relaxed mb-8">
-                    Thank you, {formData.parentName.split(' ')[0]}. We have reserved {formData.childName}'s spot. 
+                  <h2 className="text-[24px] md:text-[28px] font-black uppercase italic tracking-tighter text-slate-900 mb-2">
+                    Request Secured!
+                  </h2>
+                  <p className="text-sm text-slate-500 font-medium leading-relaxed mb-6 max-w-sm mx-auto">
+                    Thank you, {formData.parentName.split(' ')[0]}. We have reserved {formData.childName}'s spot. Your unique setup link will arrive in your inbox shortly. 
                     <br/><br/>
-                    Our onboarding team is setting up your private dashboard right now. We will send your VIP access link via email and WhatsApp shortly.
+                    While you wait, watch the quick start guide below to see exactly how to set up your dashboard!
                   </p>
                   
-                  <div className="w-full p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-start gap-3 text-left">
-                    <Play size={16} className="text-blue-500 shrink-0 mt-0.5" />
-                    <div>
-                      <h4 className="text-[11px] font-black uppercase tracking-widest text-blue-900">Next Steps</h4>
-                      <p className="text-xs text-blue-700 mt-1 font-medium">Keep an eye on your inbox. Your unique setup link will arrive within 24 hours.</p>
+                  {/* Video Guides Area */}
+                  <div className="w-full text-left bg-slate-50 rounded-2xl p-5 border border-slate-100 shadow-inner">
+                    <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2">
+                      <Play size={14} className="text-blue-500" /> Getting Started Guide
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                      {/* Part 1 Video */}
+                      <div className="space-y-2.5">
+                        <div className="w-full aspect-video bg-slate-900 rounded-xl overflow-hidden border border-slate-200 shadow-sm relative">
+                          <video 
+                            autoPlay loop muted playsInline controls
+                            className="w-full h-full object-cover"
+                          >
+                            <source src="https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/support-guides/getting-started/RAD_trial_course_sign-up_p1.mp4" type="video/mp4" />
+                          </video>
+                        </div>
+                        <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest text-center">
+                          Part 1: Account Setup
+                        </p>
+                      </div>
+
+                      {/* Part 2 Video */}
+                      <div className="space-y-2.5">
+                        <div className="w-full aspect-video bg-slate-900 rounded-xl overflow-hidden border border-slate-200 shadow-sm relative">
+                          <video 
+                            autoPlay loop muted playsInline controls
+                            className="w-full h-full object-cover"
+                          >
+                            <source src="https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/support-guides/getting-started/RAD_trial_course_sign-up_p2.mp4" type="video/mp4" />
+                          </video>
+                        </div>
+                        <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest text-center">
+                          Part 2: Platform Login
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </motion.div>
