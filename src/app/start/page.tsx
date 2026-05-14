@@ -118,6 +118,26 @@ export default function PublicTrialSignup() {
       const { error: profileError } = await supabase.from('profiles').insert([guardianProfile, studentProfile]);
       if (profileError) throw profileError;
 
+      // 3b. Trigger Admin Notification (via Registrations Table)
+      const { error: regError } = await supabase.from('registrations').insert([{
+        parent_name: formData.parentName,
+        email: formData.email,
+        phone: formData.phone,
+        student_name: formData.childName,
+        student_age: parseInt(formData.childAge) || 0,
+        interested_programs: ["14-Day Free Trial"],
+        status: 'approved',
+        metadata: {
+          funnel_stage: "Active (LMS Trial)",
+          campaign: "Public Trial Offer",
+          trial_start: trialStart.toISOString()
+        }
+      }]);
+      
+      if (regError) {
+        console.error("Failed to log registration for admin alert:", regError);
+      }
+
       // 4. Create New Prospect Record
       const payload = {
         name: formData.parentName,

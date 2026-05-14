@@ -28,9 +28,6 @@ export default function AdminDashboard() {
   const [activeMetricTab, setActiveMetricTab] = useState<'overview' | 'leads' | 'finance' | 'learning'>('overview');
   const [activeSectorTab, setActiveSectorTab] = useState<'growth' | 'core' | 'admin' | 'dev'>('growth');
 
-  // Unified Registration Alerts
-  const [newRegistrations, setNewRegistrations] = useState<any[]>([]);
-
   // XP Settings State
   const [isXpModalOpen, setIsXpModalOpen] = useState(false);
   const [xpConfig, setXpConfig] = useState({ multiplier: 1.0, start_date: "", end_date: "" });
@@ -88,38 +85,6 @@ export default function AdminDashboard() {
 
     return () => { supabase.removeChannel(channel); };
   }, [currentUser]);
-
-  // --- REGISTRATIONS LISTENER: Fetch Initial ---
-  useEffect(() => {
-    const fetchAlerts = async () => {
-      const { data } = await supabase
-        .from('registrations')
-        .select('*')
-        .eq('is_acknowledged', false)
-        .order('created_at', { ascending: false });
-      
-      if (data) setNewRegistrations(data);
-    };
-
-    fetchAlerts();
-  }, []);
-
-  // --- REGISTRATIONS LISTENER: Realtime Subscription ---
-  useEffect(() => {
-    const channel = supabase.channel('admin-registration-alerts')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'registrations' },
-        (payload) => {
-          setNewRegistrations((curr) => [payload.new, ...curr]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
 
   // --- HEARTBEAT DATA FETCH ---
   async function fetchHeartbeat() {
@@ -329,11 +294,6 @@ export default function AdminDashboard() {
       }
   };
 
-  const handleAcknowledge = async (id: string) => {
-    setNewRegistrations((current) => current.filter(item => item.id !== id));
-    await supabase.from('registrations').update({ is_acknowledged: true }).eq('id', id);
-  };
-
   const handleLogout = async () => {
     localStorage.removeItem("pioneer_session");
     await supabase.auth.signOut();
@@ -445,51 +405,6 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans overflow-x-hidden text-left relative">
-      
-      {/* NOTIFICATION PANEL */}
-      <AnimatePresence>
-        {newRegistrations.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 50, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className="fixed bottom-6 right-6 lg:bottom-10 lg:right-10 z-[150] w-[calc(100%-3rem)] max-w-[360px] flex flex-col gap-4 pointer-events-none"
-          >
-            {newRegistrations.map((item) => {
-              const isMath = item.interested_programs?.[0] === "Free Math Lab";
-              return (
-                <motion.div key={item.id} layout className={`bg-[#0f172a]/95 backdrop-blur-xl border p-5 rounded-3xl flex flex-col gap-3 pointer-events-auto ${isMath ? 'border-emerald-500/40 shadow-[0_0_40px_rgba(16,185,129,0.15)]' : 'border-blue-500/40 shadow-[0_0_40px_rgba(37,99,235,0.15)]'}`}>
-                  <div className="flex items-start justify-between">
-                    <div className={`flex items-center gap-2 ${isMath ? 'text-emerald-400' : 'text-blue-400'}`}>
-                      {isMath ? <Brain size={16} className="animate-pulse" /> : <Cpu size={16} className="animate-pulse" />}
-                      <span className="text-[10px] font-black uppercase tracking-widest">{isMath ? 'Math Setup' : 'Robotics Lead'}</span>
-                    </div>
-                    <span className="text-[9px] text-slate-400 uppercase font-bold tracking-widest bg-white/5 px-2 py-0.5 rounded border border-white/5">
-                      {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="font-bold text-lg text-white leading-tight">{item.parent_name}</p>
-                    <p className="text-xs text-slate-300 mt-1">{item.email}</p>
-                    <p className="text-xs text-slate-300 mt-0.5">{item.phone}</p>
-                    {isMath && item.metadata?.pioneer_username && (
-                      <p className="text-xs text-emerald-300 mt-2 font-bold">Pioneer ID: {item.metadata.pioneer_username}</p>
-                    )}
-                    {item.interested_programs && item.interested_programs.length > 0 && (
-                      <div className={`mt-3 inline-block border px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${isMath ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-blue-500/20 text-blue-300 border-blue-500/30'}`}>
-                        {item.interested_programs[0]}
-                      </div>
-                    )}
-                  </div>
-                  <button onClick={() => handleAcknowledge(item.id)} className={`mt-2 w-full py-3 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 hover:scale-[1.02] ${isMath ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'}`}>
-                    <ShieldCheck size={14} /> Acknowledge & Close
-                  </button>
-                </motion.div>
-              );
-            })}
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <div className="max-w-7xl mx-auto space-y-12">
         
