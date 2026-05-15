@@ -9,7 +9,8 @@ import {
   ArrowLeft, FolderHeart, Plus, Search, ChevronLeft, ChevronRight, Check, AlertTriangle, BookOpen,
   Users,
   Eye,
-  EyeOff
+  EyeOff,
+  Send
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import MediaGallery from "@/components/ui/MediaGallery"; 
@@ -59,36 +60,49 @@ export default function MediaCommandCenter() {
     return galleryMedia.filter(m => m.current_tags?.some((t: any) => t.removal_requested));
   }, [galleryMedia]);
 
-  const handleAddToDispatch = (media: any) => {
-    // We assume media object contains media_tags and profiles relations
-    const tag = media.current_tags?.[0]; 
-    if (!tag || !tag.profiles?.linked_parent_id) {
+  const handleAddToDispatch = (media: any, preferredStudentId?: string) => {
+    // 1. Determine the target guardian ID based on context or cart state
+    let targetGuardianId = null;
+
+    if (dispatchCart.length > 0) {
+      targetGuardianId = dispatchCart[0].guardian_id;
+    } else if (preferredStudentId) {
+      const prefTag = media.current_tags?.find((t: any) => t.student_id === preferredStudentId);
+      targetGuardianId = prefTag?.profiles?.linked_parent_id;
+    } else {
+      targetGuardianId = media.current_tags?.[0]?.profiles?.linked_parent_id;
+    }
+
+    if (!targetGuardianId) {
       alert("This image is not tagged to a student with a registered guardian.");
       return;
     }
 
-    // Block adding if it's a different guardian (force one parent per dispatch)
-    if (dispatchCart.length > 0 && dispatchCart[0].guardian_id !== tag.profiles.linked_parent_id) {
-      alert("You are currently building a dispatch for a different parent. Please clear the cart or finish dispatching first.");
+    // 2. Validate Cart Lock
+    if (dispatchCart.length > 0 && dispatchCart[0].guardian_id !== targetGuardianId) {
+      alert(`You are currently building a dispatch for a different parent (${dispatchCart[0].student_name} - ${dispatchCart[0].guardian_name}). Please clear the cart or finish dispatching first.`);
       return;
     }
 
     // Avoid duplicates
     if (dispatchCart.some(i => i.media_id === media.id)) return;
 
-    // We assume you have the parent's info. If your SQL query for fetching media 
-    // doesn't fetch the parent profile, we might need a quick database fetch here.
-    // For now, let's assume we can fetch the guardian details quickly:
+    // 3. Find ALL siblings in this photo that belong to this specific parent
+    const siblingTags = media.current_tags?.filter((t: any) => t.profiles?.linked_parent_id === targetGuardianId);
     
-    supabase.from('profiles').select('display_name, metadata').eq('id', tag.profiles.linked_parent_id).single()
+    // Extract their first names and combine them (e.g., "Leo & Mia")
+    const combinedNames = Array.from(new Set(siblingTags.map((t: any) => t.profiles?.display_name.split(' ')[0]))).join(' & ');
+    const primaryStudentId = preferredStudentId || siblingTags[0].student_id;
+
+    supabase.from('profiles').select('display_name, metadata').eq('id', targetGuardianId).single()
       .then(({data: guardian}) => {
         if (guardian) {
           const newItem: DispatchItem = {
             media_id: media.id,
             url: media.full_url,
-            student_id: tag.student_id,
-            student_name: tag.profiles.display_name,
-            guardian_id: tag.profiles.linked_parent_id,
+            student_id: primaryStudentId,
+            student_name: combinedNames, // Stores "Leo & Mia" instead of just "Leo"
+            guardian_id: targetGuardianId,
             guardian_name: guardian.display_name,
             guardian_phone: guardian.metadata?.phone || "0000000000",
             taken_at: media.taken_at || media.created_at
@@ -425,7 +439,18 @@ export default function MediaCommandCenter() {
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                       {pendingRemovals.map(media => (
                         <div key={media.id} className="relative aspect-square bg-[#0a0f1c] rounded-xl border border-rose-500/30 overflow-hidden group">
-                           {media.signed_url ? <img src={media.signed_url} className="w-full h-full object-cover opacity-50 grayscale" /> : null}
+                           {media.signed_url ? (
+                            <img 
+                              src={media.signed_url} 
+                              onError={(e) => {
+                                e.currentTarget.src = "https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/rad-assets/branding/RAD-Logo.png";
+                                e.currentTarget.classList.remove("object-cover", "opacity-80");
+                                e.currentTarget.classList.add("object-contain", "opacity-20", "p-4", "grayscale");
+                              }}
+                              className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" 
+                              loading="lazy" 
+                            />
+                          ) : null}
                            <div className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity">
                              <button onClick={() => handleApproveRemoval(media.id, media.bucket_path)} className="text-[10px] font-black uppercase bg-rose-500 text-white px-3 py-2 rounded-lg">Approve & Delete</button>
                            </div>
@@ -719,22 +744,48 @@ export default function MediaCommandCenter() {
                       return (
                         <div key={media.id} className={`relative aspect-square rounded-2xl overflow-hidden group shadow-lg border transition-all ${isHidden ? 'border-amber-500/50 grayscale-[50%]' : 'border-white/10'}`}>
                           <img src={media.signed_url || media.full_url} className={`w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 ${isHidden ? 'opacity-40' : 'opacity-90'}`} />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                           
-                          {/* Visibility Toggle Button */}
-                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          {/* Darken background slightly on hover to make buttons pop */}
+                          <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
+                            
+                            {/* Visibility Toggle Button */}
                             <button 
                               onClick={() => handleToggleHide(media.id, selectedStatsStudent.id, isHidden)}
-                              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl transition-all hover:scale-105 ${isHidden ? 'bg-emerald-500 text-slate-900 hover:bg-emerald-400' : 'bg-amber-500 text-slate-900 hover:bg-amber-400'}`}
+                              className={`flex items-center justify-center w-28 gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl transition-all hover:scale-105 ${isHidden ? 'bg-emerald-500 text-slate-900 hover:bg-emerald-400' : 'bg-amber-500 text-slate-900 hover:bg-amber-400'}`}
                             >
                               {isHidden ? <><Eye size={14} /> Unhide</> : <><EyeOff size={14} /> Hide</>}
                             </button>
+
+                            {/* Add to Dispatch Cart Button (Only show if not hidden) */}
+                            {!isHidden && (
+                              <button 
+                                onClick={() => {
+                                  const inCart = dispatchCart.some(i => i.media_id === media.id);
+                                  if (inCart) {
+                                    setDispatchCart(prev => prev.filter(i => i.media_id !== media.id));
+                                  } else {
+                                    handleAddToDispatch(media, selectedStatsStudent.id); // <-- PASS THE ID HERE
+                                  }
+                                }}
+                                className={`flex items-center justify-center w-28 gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl transition-all hover:scale-105 ${dispatchCart.some(i => i.media_id === media.id) ? 'bg-blue-600 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}
+                              >
+                                {dispatchCart.some(i => i.media_id === media.id) ? <><CheckCircle2 size={14} /> Added</> : <><Send size={14} /> To Cart</>}
+                              </button>
+                            )}
+
                           </div>
 
                           {/* Hidden Badge */}
                           {isHidden && (
-                            <div className="absolute top-2 right-2 bg-amber-500/20 backdrop-blur-md text-amber-400 border border-amber-500/30 px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-widest flex items-center gap-1 shadow-lg">
+                            <div className="absolute top-2 right-2 bg-amber-500/20 backdrop-blur-md text-amber-400 border border-amber-500/30 px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-widest flex items-center gap-1 shadow-lg pointer-events-none">
                               <EyeOff size={10} /> Archived
+                            </div>
+                          )}
+                          
+                          {/* In Cart Badge */}
+                          {dispatchCart.some(i => i.media_id === media.id) && !isHidden && (
+                            <div className="absolute top-2 left-2 bg-blue-600 text-white px-2 py-1 rounded-md text-[8px] font-black uppercase tracking-widest flex items-center gap-1 shadow-lg pointer-events-none">
+                              <CheckCircle2 size={10} /> Queued
                             </div>
                           )}
                         </div>

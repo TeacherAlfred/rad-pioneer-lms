@@ -86,7 +86,7 @@ export default function VaultPage() {
   }
 
   const mediaPayload = vaultData.media_payload || [];
-  const kidsNames = Array.from(new Set(mediaPayload.map((m: any) => m.student_name.split(' ')[0]))).join(' & ');
+  const kidsNames = Array.from(new Set(mediaPayload.flatMap((m: any) => m.student_name.split(' & ')))).join(' & ');
 
   const tier = guardianProfile?.account_tier || 'none';
   const isEnrolled = tier === 'full' || tier === 'lms_access' || tier === 'bootcamp';

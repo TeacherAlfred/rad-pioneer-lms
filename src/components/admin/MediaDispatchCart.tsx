@@ -13,6 +13,7 @@ export interface DispatchItem {
   guardian_id: string;
   guardian_name: string;
   guardian_phone: string;
+  taken_at: string;
 }
 
 interface MediaDispatchCartProps {
@@ -33,8 +34,8 @@ export default function MediaDispatchCart({ items, onRemoveItem, onClearCart }: 
   const guardianName = items[0].guardian_name;
   const guardianPhone = items[0].guardian_phone;
   
-  // Extract unique student names for the message
-  const uniqueStudents = Array.from(new Set(items.map(i => i.student_name.split(' ')[0])));
+  // Extract unique student names for the message (safely separating siblings)
+  const uniqueStudents = Array.from(new Set(items.flatMap(i => i.student_name.split(' & '))));
   const studentNamesStr = uniqueStudents.join(' & ');
 
   // Auto-set first item as cover if none selected
@@ -57,7 +58,8 @@ export default function MediaDispatchCart({ items, onRemoveItem, onClearCart }: 
       const payload = items.map(i => ({
         media_id: i.media_id,
         url: i.url,
-        student_name: i.student_name
+        student_name: i.student_name,
+        taken_at: i.taken_at
       }));
 
       // 1. Save to Database
@@ -73,16 +75,17 @@ export default function MediaDispatchCart({ items, onRemoveItem, onClearCart }: 
 
       // 2. Generate WhatsApp URL
       const vaultUrl = `https://radacademy.co.za/vault/${token}`;
-      const message = `🚀 *RAD Academy Pioneer Update*\n\nHi ${guardianName.split(' ')[0]},\n\nAs we launch our new Premium LMS platform, we’ve been looking back at some incredible memories your pioneers (${studentNamesStr}) have built with us at RAD Academy.\n\nWe’ve put together a private highlight reel of their journey. You can view their secure media vault here:\n🔗 ${vaultUrl}\n\n*(For your family's privacy, this link will expire in 7 days).*`;
+      const message = `*RAD Academy Pioneer Update*\n\nHi ${guardianName.split(' ')[0]},\n\nAs we launch our new Premium LMS platform, we’ve been looking back at some incredible memories your pioneers (${studentNamesStr}) have built with us at RAD Academy.\n\nWe’ve put together a private highlight reel of their journey. You can view their secure media vault here:\n🔗 ${vaultUrl}\n\n*(For your family's privacy, this link will expire in 7 days).*`;
       
       // Clean phone number (remove +, spaces, leading 0 to 27 if SA)
       let phone = guardianPhone.replace(/\D/g, '');
       if (phone.startsWith('0')) phone = '27' + phone.substring(1);
 
-      const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      // Use the official api.whatsapp.com endpoint instead of the wa.me shortcut for better encoding support
+      const waUrl = `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
       
       // 3. Open WhatsApp in new tab
-      window.open(waUrl, '_blank');
+      window.open(waUrl, '_blank', 'noopener,noreferrer');
       
       setSuccessToken(token);
       setTimeout(() => {
