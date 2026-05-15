@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 import RADBillingDocument from "@/components/finance/RADBillingDocument";
 import RADStatement from "@/components/finance/RADStatement";
+import CreditNoteModal from "@/components/finance/CreditNoteModal"; // <-- Add this
 
 // --- WhatsApp Number Formatter ---
 const formatWhatsAppNumber = (phone: string) => {
@@ -50,6 +51,7 @@ export default function FinancePortal() {
   const [isGroupedByExpiry, setIsGroupedByExpiry] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCreditNoteModalOpen, setIsCreditNoteModalOpen] = useState(false);
   const [isSubmittingManual, setIsSubmittingManual] = useState(false);
   
   // --- WHATSAPP COMPOSER STATES ---
@@ -847,12 +849,21 @@ export default function FinancePortal() {
              </div>
            </Link>
 
-           {/* Manual Action Card */}
+           {/* Manual Action Card: Historical Import */}
            <div className="group h-full bg-white/[0.02] hover:bg-white/[0.04] border border-white/10 hover:border-emerald-500/50 rounded-[32px] p-8 transition-all flex flex-col justify-between relative overflow-hidden cursor-pointer" onClick={() => setIsModalOpen(true)}>
               <div className="relative z-10">
                 <div className="p-3 bg-white/5 text-slate-300 rounded-xl w-fit mb-4"><Download size={20}/></div>
                 <h3 className="text-xl font-black uppercase italic tracking-tighter text-white mb-2">Historical Import</h3>
-                <p className="text-xs font-bold text-slate-400 leading-relaxed">Manually log old Sage/Xero records to balance the new ledger.</p>
+                <p className="text-[10px] font-bold text-slate-400 leading-relaxed">Manually log old Sage/Xero records to balance.</p>
+              </div>
+           </div>
+
+           {/* Manual Action Card: Issue Credit Note */}
+           <div className="group h-full bg-white/[0.02] hover:bg-rose-500/5 border border-white/10 hover:border-rose-500/50 rounded-[32px] p-8 transition-all flex flex-col justify-between relative overflow-hidden cursor-pointer" onClick={() => setIsCreditNoteModalOpen(true)}>
+              <div className="relative z-10">
+                <div className="p-3 bg-rose-500/10 text-rose-400 rounded-xl w-fit mb-4"><FileText size={20}/></div>
+                <h3 className="text-xl font-black uppercase italic tracking-tighter text-white mb-2">Credit Notes</h3>
+                <p className="text-[10px] font-bold text-slate-400 leading-relaxed">Issue refunds or goodwill credits to active ledgers.</p>
               </div>
            </div>
 
@@ -1074,6 +1085,21 @@ export default function FinancePortal() {
               </div>
             </motion.form>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* CREDIT NOTE MODAL */}
+      <AnimatePresence>
+        {isCreditNoteModalOpen && (
+          <CreditNoteModal 
+            isOpen={isCreditNoteModalOpen} 
+            onClose={() => setIsCreditNoteModalOpen(false)} 
+            guardians={guardians}
+            onSuccess={(msg) => {
+              setSuccessMessage(msg);
+              fetchFinanceData(); // Refresh the ledger behind the scenes
+            }}
+          />
         )}
       </AnimatePresence>
 

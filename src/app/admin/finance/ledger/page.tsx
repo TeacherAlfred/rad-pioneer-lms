@@ -6,7 +6,8 @@ import {
   ArrowLeft, Search, Filter, TrendingUp, Wallet, Receipt, 
   Clock, AlertTriangle, CheckCircle2, ChevronRight, BarChart3, FileText, 
   Users, Activity, ArrowDownToLine, ArrowUpRight, DollarSign, LayoutDashboard,
-  Loader2, Target, ChevronDown, ChevronUp, Save, Settings, MessageSquare
+  Loader2, Target, ChevronDown, ChevronUp, Save, Settings, MessageSquare,
+  X, FileMinus, Copy
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -40,6 +41,9 @@ export default function FinanceLedgerPage() {
     expected: 0, invoiced: 0, collected: 0, outstanding: 0,
     speed: { onTime: 0, late1to7: 0, late8plus: 0, uncollected: 0 }
   });
+
+  // Action Modal State
+  const [activeInvoiceForModal, setActiveInvoiceForModal] = useState<any>(null);
 
   useEffect(() => {
     fetchLedgerData();
@@ -218,7 +222,8 @@ export default function FinanceLedgerPage() {
             status: inv.status,
             date: new Date(inv.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }),
             dueDate: inv.expires_at ? new Date(inv.expires_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-',
-            paidDate: (inv.status === 'paid' || inv.status === 'settled' || inv.status === 'itn_received') && (inv.paid_at || inv.updated_at) ? new Date(inv.paid_at || inv.updated_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-'
+            paidDate: (inv.status === 'paid' || inv.status === 'settled' || inv.status === 'itn_received') && (inv.paid_at || inv.updated_at) ? new Date(inv.paid_at || inv.updated_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-',
+            raw_record: inv
           }));
 
         return {
@@ -638,7 +643,11 @@ export default function FinanceLedgerPage() {
                                               <p className="text-slate-400 text-xs italic text-center py-8">No invoices generated for this year.</p>
                                             ) : (
                                               client.history.map((hist: any) => (
-                                                <div key={hist.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-slate-100 hover:border-blue-200 hover:bg-slate-50 transition-colors">
+                                                <div 
+                                                  key={hist.id} 
+                                                  onClick={(e) => { e.stopPropagation(); setActiveInvoiceForModal(hist.raw_record); }}
+                                                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all cursor-pointer shadow-sm hover:shadow-md"
+                                                >
                                                   <div className="flex items-center gap-3">
                                                     <div className={`p-2 rounded-lg ${hist.status === 'paid' ? 'bg-emerald-50 text-emerald-600' : hist.status === 'itn_received' ? 'bg-amber-50 text-amber-600' : hist.status === 'pending' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'}`}>
                                                       <Receipt size={16}/>
@@ -801,6 +810,227 @@ export default function FinanceLedgerPage() {
         </AnimatePresence>
 
       </div>
+
+      {/* INVOICE ACTION MODAL */}
+      <AnimatePresence>
+        {activeInvoiceForModal && (
+          <InvoiceActionModal 
+            invoice={activeInvoiceForModal} 
+            onClose={() => setActiveInvoiceForModal(null)}
+            router={router}
+            onSuccess={() => {
+              setActiveInvoiceForModal(null);
+              fetchLedgerData(); // Refresh the ledger behind the scenes
+            }}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------
+// INVOICE ACTION MODAL (Summary, Credit, Duplicate)
+// ---------------------------------------------------------
+
+function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: any, onClose: () => void, onSuccess: () => void, router: any }) {
+  const [view, setView] = useState<'summary' | 'credit'>('summary');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [creditReason, setCreditReason] = useState(""); // <-- ADDED REASON STATE
+  
+  // Safely parse line items
+  const parsedItems = useMemo(() => {
+    try {
+      return typeof invoice.line_items === 'string' ? JSON.parse(invoice.line_items) : (invoice.line_items || []);
+    } catch { return []; }
+  }, [invoice]);
+
+  // State for strict credit note quantities
+  const [creditItems, setCreditItems] = useState<any[]>(
+    parsedItems.map((item: any) => ({ ...item, credit_qty: 0 }))
+  );
+
+  const totalCreditValue = creditItems.reduce((sum, item) => {
+    const price = Number(item.price) || 0;
+    const qty = Number(item.credit_qty) || 0;
+    const disc = Number(item.disc) || 0;
+    return sum + (price * qty * (1 - disc / 100));
+  }, 0);
+
+  const handleDuplicate = () => {
+    // Save to local storage so the Composer page can pick it up
+    localStorage.setItem('rad_invoice_template', JSON.stringify({
+      guardian_id: invoice.guardian_id,
+      line_items: parsedItems,
+      global_note: invoice.metadata?.global_note || ""
+    }));
+    router.push('/admin/finance/composer?template=true');
+  };
+
+  const handleIssueCredit = async () => {
+    if (totalCreditValue <= 0) return alert("Credit amount must be greater than zero.");
+    if (!creditReason.trim()) return alert("Please provide a reason for this credit note for audit purposes."); // <-- VALIDATION
+    
+    setIsSubmitting(true);
+
+    try {
+      const issueDate = new Date().toISOString();
+      const creditRef = `CN-${Date.now().toString().slice(-6)}`;
+      
+      // Filter out items that have 0 credit quantity, AND append the reason to the description
+      const activeCreditItems = creditItems.filter(i => i.credit_qty > 0).map(i => ({
+        desc: `Credit: ${i.desc} - ${creditReason}`, // <-- REASON APPENDED TO ITEM
+        price: i.price,
+        qty: i.credit_qty,
+        disc: i.disc
+      }));
+
+      // 1. Log Credit Note
+      const { error: docError } = await supabase.from('billing_records').insert([{
+        guardian_id: invoice.guardian_id,
+        total_amount: totalCreditValue,
+        status: 'settled',
+        doc_type: 'credit_note',
+        invoice_number: Date.now().toString().slice(-6),
+        payment_reference: creditRef,
+        created_at: issueDate,
+        line_items: activeCreditItems
+      }]);
+      if (docError) throw docError;
+
+      // 2. Log Offset Payment
+      const { error: paymentError } = await supabase.from('payments').insert([{
+        parent_id: invoice.guardian_id,
+        amount: totalCreditValue,
+        status: 'completed',
+        description: `Applied Credit against INV-${invoice.invoice_number}. Reason: ${creditReason}`, // <-- REASON APPENDED TO LEDGER
+        paid_at: issueDate,
+        created_at: issueDate
+      }]);
+      if (paymentError) throw paymentError;
+
+      onSuccess();
+    } catch (err: any) {
+      alert("Failed to issue credit: " + err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+      <motion.div 
+        initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+        className="relative bg-white border border-slate-200 rounded-[32px] w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+      >
+        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+          <div>
+            <h2 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900 leading-none">
+              {view === 'summary' ? `INV-${invoice.invoice_number}` : 'Issue Credit Note'}
+            </h2>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2">
+              {view === 'summary' ? 'Invoice Summary & Actions' : `Crediting against INV-${invoice.invoice_number}`}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-900 transition-colors bg-white p-2 rounded-full border border-slate-200 shadow-sm"><X size={20} /></button>
+        </div>
+
+        <div className="p-8 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
+          {view === 'summary' ? (
+            <>
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6">
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 border-b border-slate-200 pb-2">Original Line Items</h4>
+                <div className="space-y-3">
+                  {parsedItems.map((item: any, idx: number) => (
+                    <div key={idx} className="flex justify-between items-center text-sm">
+                      <span className="font-bold text-slate-700">{item.qty}x {item.desc}</span>
+                      <span className="font-black text-slate-900">R {(item.price * item.qty * (1 - (item.disc || 0)/100)).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 pt-4 border-t border-slate-200 flex justify-between items-center">
+                  <span className="text-xs font-black uppercase tracking-widest text-slate-500">Invoice Total</span>
+                  <span className="text-lg font-black text-blue-600">R {Number(invoice.total_amount).toLocaleString()}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 pt-4">
+                <button onClick={() => setView('credit')} className="flex flex-col items-center justify-center gap-3 p-6 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-2xl transition-colors group">
+                  <FileMinus size={24} className="text-rose-500 group-hover:scale-110 transition-transform" />
+                  <div className="text-center">
+                    <span className="block text-sm font-black text-rose-700">Issue Credit</span>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-rose-500/70">Partial or Full</span>
+                  </div>
+                </button>
+                <button onClick={handleDuplicate} className="flex flex-col items-center justify-center gap-3 p-6 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-2xl transition-colors group">
+                  <Copy size={24} className="text-blue-500 group-hover:scale-110 transition-transform" />
+                  <div className="text-center">
+                    <span className="block text-sm font-black text-blue-700">Duplicate to New</span>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-blue-500/70">Use as Template</span>
+                  </div>
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-4">
+                <p className="text-xs font-bold text-slate-500 bg-amber-50 text-amber-700 p-4 rounded-xl border border-amber-200">
+                  Select the quantity of each item you wish to credit. The exact original selling prices will be maintained to ensure ledger accuracy.
+                </p>
+                {creditItems.map((item, idx) => (
+                  <div key={idx} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 bg-slate-50 border border-slate-200 rounded-xl gap-4">
+                    <div className="flex-1">
+                      <p className="font-bold text-sm text-slate-900">{item.desc}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">Orig. Qty: {item.qty} @ R{item.price}</p>
+                    </div>
+                    <div className="flex items-center gap-3 w-full sm:w-auto bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Qty to Credit:</label>
+                      <input 
+                        type="number" min="0" max={item.qty} value={item.credit_qty}
+                        onChange={(e) => {
+                          const val = Math.min(item.qty, Math.max(0, Number(e.target.value)));
+                          const newItems = [...creditItems];
+                          newItems[idx].credit_qty = val;
+                          setCreditItems(newItems);
+                        }}
+                        className="w-16 bg-slate-100 border-none rounded-md px-2 py-1 text-center font-black text-rose-600 outline-none focus:ring-2 focus:ring-rose-500"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* REASON INPUT FIELD */}
+              <div className="space-y-2 pt-2">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Reason for Credit *</label>
+                <input 
+                  required type="text" placeholder="e.g. Goodwill discount, sibling dropped out, overcharged..." 
+                  value={creditReason} onChange={e => setCreditReason(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 transition-all"
+                />
+              </div>
+
+              <div className="mt-8 p-6 bg-rose-50 border border-rose-200 rounded-2xl flex justify-between items-center">
+                <span className="text-xs font-black uppercase tracking-widest text-rose-700">Total Credit Value</span>
+                <span className="text-2xl font-black text-rose-600">R {totalCreditValue.toLocaleString()}</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {view === 'credit' && (
+          <div className="p-8 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-6 shrink-0">
+            <button onClick={() => setView('summary')} className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-900 transition-colors">Back</button>
+            <button 
+              onClick={handleIssueCredit} disabled={isSubmitting || totalCreditValue === 0 || !creditReason.trim()}
+              className="bg-rose-600 text-white px-8 py-4 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-rose-500 transition-all disabled:opacity-50 shadow-md shadow-rose-600/20 flex items-center gap-2"
+            >
+              {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <FileMinus size={16} />} Issue Credit Note
+            </button>
+          </div>
+        )}
+      </motion.div>
     </div>
   );
 }
