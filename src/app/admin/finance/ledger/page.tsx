@@ -869,7 +869,7 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
 
   const handleIssueCredit = async () => {
     if (totalCreditValue <= 0) return alert("Credit amount must be greater than zero.");
-    if (!creditReason.trim()) return alert("Please provide a reason for this credit note for audit purposes."); // <-- VALIDATION
+    if (!creditReason.trim()) return alert("Please provide a reason for this credit note for audit purposes."); 
     
     setIsSubmitting(true);
 
@@ -877,15 +877,15 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
       const issueDate = new Date().toISOString();
       const creditRef = `CN-${Date.now().toString().slice(-6)}`;
       
-      // Filter out items that have 0 credit quantity, AND append the reason to the description
+      // Filter out items that have 0 credit quantity, AND append the reason
       const activeCreditItems = creditItems.filter(i => i.credit_qty > 0).map(i => ({
-        desc: `Credit: ${i.desc} - ${creditReason}`, // <-- REASON APPENDED TO ITEM
+        desc: `Credit: ${i.desc} - ${creditReason}`, 
         price: i.price,
         qty: i.credit_qty,
         disc: i.disc
       }));
 
-      // 1. Log Credit Note
+      // 1. Log Credit Note (The Paper Trail)
       const { error: docError } = await supabase.from('billing_records').insert([{
         guardian_id: invoice.guardian_id,
         total_amount: totalCreditValue,
@@ -898,16 +898,41 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
       }]);
       if (docError) throw docError;
 
-      // 2. Log Offset Payment
+      // 2. Log Offset Payment (The Ledger Balancer)
       const { error: paymentError } = await supabase.from('payments').insert([{
         parent_id: invoice.guardian_id,
         amount: totalCreditValue,
         status: 'completed',
-        description: `Applied Credit against INV-${invoice.invoice_number}. Reason: ${creditReason}`, // <-- REASON APPENDED TO LEDGER
+        description: `Applied Credit against INV-${invoice.invoice_number}. Reason: ${creditReason}`, 
         paid_at: issueDate,
         created_at: issueDate
       }]);
       if (paymentError) throw paymentError;
+
+      // ---------------------------------------------------------
+      // 3. UPDATE ORIGINAL INVOICE (The Missing Link!)
+      // ---------------------------------------------------------
+      const currentPaid = Number(invoice.amount_paid) || 0;
+      const newPaidAmount = currentPaid + totalCreditValue;
+      const invTotal = Number(invoice.total_amount) || 0;
+      
+      // Determine new status based on whether the credit cleared the whole invoice
+      let newStatus = invoice.status;
+      if (newPaidAmount >= invTotal) {
+        newStatus = 'settled'; // Fully credited/paid
+      } else if (newPaidAmount > 0) {
+        newStatus = 'partially_paid'; // Only partially credited
+      }
+
+      const { error: updateError } = await supabase
+        .from('billing_records')
+        .update({ 
+          amount_paid: newPaidAmount,
+          status: newStatus
+        })
+        .eq('id', invoice.id);
+
+      if (updateError) throw updateError;
 
       onSuccess();
     } catch (err: any) {

@@ -156,12 +156,15 @@ export default function StatementView() {
     const amount = Number(pay.amount) || 0;
     const dateObj = new Date(pay.paid_at || pay.created_at);
     
+    // Use the actual database description. If empty, use a graceful fallback.
+    const actualDescription = pay.description?.trim() ? pay.description : 'Payment Allocated';
+
     rawTransactions.push({
       type: 'credit',
       dateObj: dateObj,
       date: dateObj.toLocaleDateString('en-ZA'),
-      ref: pay.description?.includes('Ref:') ? pay.description : `PAY-${pay.id.substring(0,6).toUpperCase()}`,
-      desc: 'Payment Received - Thank You',
+      ref: pay.description?.includes('Ref:') ? pay.description : `CN-${pay.id.substring(0,6).toUpperCase()}`,
+      desc: actualDescription, // <-- NOW PULLING FROM DB
       debit: null,
       credit: amount
     });
