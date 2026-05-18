@@ -86,7 +86,7 @@ export default function ClaimOfferPage() {
             From Gaming to <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">Engineering.</span>
           </h1>
           <p className="text-slate-400 md:text-lg max-w-xl mx-auto">
-            Claim your child's free coding trial or tournament prize today. 
+            Claim your child's free coding trial or participation prize today. 
           </p>
         </div>
       </div>
@@ -158,10 +158,10 @@ export default function ClaimOfferPage() {
                   </div>
                   <div>
                     <span className={`block text-sm font-bold transition-colors ${isWinner ? 'text-amber-100' : 'text-slate-300'}`}>
-                      My child was a Robotics Challenge Winner! 🏆
+                      My child participated in the Robotics Challenge! 🏆
                     </span>
                     <span className={`block text-xs mt-1 leading-relaxed ${isWinner ? 'text-amber-200' : 'text-slate-500'}`}>
-                      Check this box if your child was one of the 8 finalists. We will contact you to arrange your VIP prizes.
+                      Check this box if your child was one of the 8 participants. We will contact you to arrange your prizes.
                     </span>
                   </div>
                 </label>
@@ -190,7 +190,7 @@ export default function ClaimOfferPage() {
                 </div>
                 <div>
                   <span className={`block text-sm font-bold flex items-center gap-2 ${needsCall ? 'text-blue-100' : 'text-slate-300'}`}><HelpCircle size={14} className="text-slate-500"/> I have a few questions.</span>
-                  <span className="block text-xs text-slate-500 mt-0.5">Send me a link to book a quick Q&A call first.</span>
+                  <span className="block text-xs text-slate-500 mt-0.5">I would like to get some clarity first.</span>
                 </div>
               </div>
             </div>
