@@ -71,37 +71,42 @@ export default function AdminNotificationListener() {
     }
   };
 
-  // 1. Initial Load: Fetch all unacknowledged alerts so they survive page refreshes
+  // 1. Initial Load: Fetch unacknowledged alerts from BOTH tables
   useEffect(() => {
     const fetchAlerts = async () => {
-      const { data } = await supabase
+      // Fetch LMS Registrations
+      const { data: regs } = await supabase
         .from('registrations')
         .select('*')
-        .eq('is_acknowledged', false)
-        .order('created_at', { ascending: false });
+        .eq('is_acknowledged', false);
       
-      if (data) setNotifications(data);
+      // Fetch Landing Page Prospects
+      const { data: leads } = await supabase
+        .from('prospects')
+        .select('*')
+        .eq('status', 'New Lead');
+
+      // Combine and sort so the newest pops up first
+      const combined = [...(regs || []), ...(leads || [])].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      
+      setNotifications(combined);
     };
 
     fetchAlerts();
   }, []);
 
-  // 2. Realtime Listener: Catch new ones while navigating
+  // 2. Realtime Listener: Listen to INSERTs on BOTH tables
   useEffect(() => {
     const channel = supabase
       .channel('global-admin-alerts')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'registrations',
-        },
-        (payload) => {
-          // Push new alerts to the top of the stack (NO auto-dismiss timeout)
-          setNotifications((prev) => [payload.new, ...prev]);
-        }
-      )
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'registrations' }, (payload) => {
+        setNotifications((prev) => [payload.new, ...prev]);
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'prospects' }, (payload) => {
+        setNotifications((prev) => [payload.new, ...prev]);
+      })
       .subscribe();
 
     return () => {
@@ -109,16 +114,20 @@ export default function AdminNotificationListener() {
     };
   }, []);
 
-  // 3. Acknowledge Action: Clears it from DB and removes it from the screen
-  const handleAcknowledge = async (id: string, redirect: boolean = false) => {
+  // 3. Acknowledge Action: Clears it based on which table it came from
+  const handleAcknowledge = async (item: any, redirect: boolean = false) => {
     // Optimistically remove from UI instantly
-    setNotifications((prev) => prev.filter(n => n.id !== id));
+    setNotifications((prev) => prev.filter(n => n.id !== item.id));
     
-    // Update database in the background
-    await supabase.from('registrations').update({ is_acknowledged: true }).eq('id', id);
+    // Check if it's a prospect or a registration
+    if (item.status !== undefined) {
+      await supabase.from('prospects').update({ status: 'Contacted' }).eq('id', item.id);
+    } else {
+      await supabase.from('registrations').update({ is_acknowledged: true }).eq('id', item.id);
+    }
 
     if (redirect) {
-      router.push('/admin/leads'); // Adjust route if your leads page is different
+      router.push('/admin/leads');
     }
   };
 
@@ -128,9 +137,13 @@ export default function AdminNotificationListener() {
     <div className="fixed bottom-6 right-6 lg:bottom-10 lg:right-10 z-[9999] w-[calc(100%-3rem)] max-w-[360px] flex flex-col-reverse gap-4 pointer-events-none max-h-[85vh] overflow-y-auto no-scrollbar">
       <AnimatePresence>
         {notifications.map((item) => {
-          const prog = item.interested_programs?.[0];
+          // Normalize the data since Prospects and Registrations use different column names
+          const displayName = item.parent_name || item.name; 
+          const prog = item.interested_programs?.[0] || item.source;
+          
           const isMath = prog === "Free Math Lab";
           const isTrial = prog === "14-Day Free Trial";
+          const isRobotics = prog === "Irene Primary WhatsApp Flyer";
           
           return (
             <motion.div
@@ -139,14 +152,14 @@ export default function AdminNotificationListener() {
               initial={{ opacity: 0, x: 50, scale: 0.95 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95, x: 50 }}
-              className={`bg-slate-900 border rounded-2xl p-5 shadow-[0_10px_40px_rgba(0,0,0,0.5)] pointer-events-auto flex flex-col gap-3 shrink-0 ${isMath ? 'border-emerald-500/30' : 'border-blue-500/30'}`}
+              className={`bg-slate-900 border rounded-2xl p-5 shadow-[0_10px_40px_rgba(0,0,0,0.5)] pointer-events-auto flex flex-col gap-3 shrink-0 ${isMath ? 'border-emerald-500/30' : isRobotics ? 'border-indigo-500/30' : 'border-blue-500/30'}`}
             >
               {/* Header */}
               <div className="flex justify-between items-start">
-                <div className={`flex items-center gap-2 ${isMath ? 'text-emerald-400' : isTrial ? 'text-purple-400' : 'text-blue-400'}`}>
+                <div className={`flex items-center gap-2 ${isMath ? 'text-emerald-400' : isRobotics ? 'text-indigo-400' : 'text-blue-400'}`}>
                   {isMath ? <Brain size={16} className="animate-pulse" /> : <Cpu size={16} className="animate-pulse" />}
                   <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
-                    <BellRing size={10}/> {isMath ? 'Math Setup' : isTrial ? '14-Day LMS Trial' : 'Robotics Lead'}
+                    <BellRing size={10}/> {isMath ? 'Math Setup' : isRobotics ? 'Robotics Lead' : 'LMS Lead'}
                   </span>
                 </div>
                 <span className="text-[9px] text-slate-400 uppercase font-bold tracking-widest bg-white/5 px-2 py-0.5 rounded border border-white/5 text-right">
@@ -156,19 +169,21 @@ export default function AdminNotificationListener() {
 
               {/* Body */}
               <div>
-                <p className="font-bold text-lg text-white leading-tight">{item.parent_name}</p>
+                <p className="font-bold text-lg text-white leading-tight">{displayName}</p>
                 <p className="text-xs text-slate-300 mt-1">{item.email}</p>
                 <p className="text-xs text-slate-300 mt-0.5">{item.phone}</p>
                 
+                {/* Specifics based on lead type */}
                 {isMath && item.metadata?.pioneer_username && (
                   <p className="text-xs text-emerald-300 mt-2 font-bold">Pioneer ID: {item.metadata.pioneer_username}</p>
                 )}
-                
-                {item.interested_programs && item.interested_programs.length > 0 && (
-                  <div className={`mt-3 inline-block border px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${isMath ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : isTrial ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'}`}>
-                    {item.interested_programs[0]}
-                  </div>
+                {isRobotics && item.metadata?.student_grade && (
+                  <p className="text-xs text-indigo-300 mt-2 font-bold">Child Grade: {item.metadata.student_grade}</p>
                 )}
+                
+                <div className={`mt-3 inline-block border px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${isMath ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : isRobotics ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' : 'bg-blue-500/10 text-blue-400 border-blue-500/20'}`}>
+                  {prog}
+                </div>
               </div>
 
               {/* Actions */}
@@ -182,14 +197,14 @@ export default function AdminNotificationListener() {
                   {purgingId === item.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 </button>
                 <button 
-                  onClick={() => handleAcknowledge(item.id, false)} 
+                  onClick={() => handleAcknowledge(item, false)} 
                   className="flex-1 py-3 text-slate-400 bg-white/5 hover:bg-white/10 hover:text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-colors border border-white/5 flex items-center justify-center gap-1.5"
                 >
                   <ShieldCheck size={14} /> Clear
                 </button>
                 <button 
-                  onClick={() => handleAcknowledge(item.id, true)} 
-                  className={`flex-1 py-3 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-1.5 hover:-translate-y-0.5 ${isMath ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'}`}
+                  onClick={() => handleAcknowledge(item, true)} 
+                  className={`flex-1 py-3 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-lg flex items-center justify-center gap-1.5 hover:-translate-y-0.5 ${isMath ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20' : isRobotics ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-900/20' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'}`}
                 >
                   View Lead <ChevronRight size={14} />
                 </button>
