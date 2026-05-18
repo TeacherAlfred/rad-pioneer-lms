@@ -27,7 +27,7 @@ export default function RADStatement({ guardianId, name, email, phone, transacti
           />
           <div className="space-y-1.5 text-xs font-medium text-slate-400">
             <p className="font-black text-white text-sm uppercase tracking-widest mb-3">RAD Academy (Pty) Ltd</p>
-            <p className="flex items-center gap-2"><Phone size={14}/> 076 706 5959</p>
+            <p className="flex items-center gap-2"><Phone size={14}/> 076 906 5959</p>
             <p className="flex items-center gap-2"><Mail size={14}/> info@radacademy.co.za</p>
           </div>
         </div>
