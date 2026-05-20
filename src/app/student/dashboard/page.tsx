@@ -34,15 +34,20 @@ export default function DashboardPage() {
   const isLmsOnly = !metadata?.account_tier || metadata.account_tier !== 'full';
   const isPreLaunchLms = isLmsOnly && new Date() < new Date("2026-05-08T23:59:59+02:00");
 
+  // --- NEW: XP Event Expiry Logic ---
+  // Set this to whenever the event actually ended
+  const XP_EVENT_END_DATE = new Date("2026-05-14T23:59:59+02:00"); 
+  const isXpEventActive = new Date() < XP_EVENT_END_DATE;
+
   useEffect(() => {
-    if (!loading && !isLmsOnly) {
+    if (!loading && !isLmsOnly && isXpEventActive) {
       const hasSeenEvent = sessionStorage.getItem("xp_event_may_2026");
       if (!hasSeenEvent) {
         const timer = setTimeout(() => setShowXpEventModal(true), 1200);
         return () => clearTimeout(timer);
       }
     }
-  }, [loading, isLmsOnly]);
+  }, [loading, isLmsOnly, isXpEventActive]);
 
   const closeXpModal = () => {
     setShowXpEventModal(false);
@@ -65,7 +70,9 @@ export default function DashboardPage() {
     <DashboardClientWrapper initialStats={stats}>
       <main className={`min-h-screen relative overflow-hidden text-left bg-[#020617] ${isPreLaunchLms ? '' : 'lg:mr-80'}`}>
         
-        <XpEventModal isOpen={showXpEventModal} onClose={closeXpModal} timeLeft={timeLeft} />
+        {isXpEventActive && (
+          <XpEventModal isOpen={showXpEventModal} onClose={closeXpModal} timeLeft={timeLeft} />
+        )}
 
         <div className="max-w-4xl lg:max-w-5xl mx-auto p-4 sm:p-6 md:p-12 space-y-8 md:space-y-10 relative z-10 pb-12 md:pb-20">
           
