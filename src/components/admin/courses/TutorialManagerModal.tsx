@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Edit3, Trash2, Save, FileText, Link as LinkIcon, Loader2, BookOpen } from "lucide-react";
+import { X, Plus, Trash2, Save, FileText, Link as LinkIcon, Loader2, BookOpen, EyeOff, Eye } from "lucide-react";
 
 interface TutorialManagerModalProps {
   tutorialIds: string[]; // Array of UUIDs passed from the Component Editor
@@ -39,7 +39,13 @@ export default function TutorialManagerModal({ tutorialIds, onUpdateTutorialIds,
         .order('created_at', { ascending: true });
 
       if (error) throw error;
-      setTutorials(data || []);
+      
+      // Sort the fetched data to perfectly match the order of the tutorialIds array
+      const sortedData = (data || []).sort((a, b) => {
+        return tutorialIds.indexOf(a.id) - tutorialIds.indexOf(b.id);
+      });
+      
+      setTutorials(sortedData);
     } catch (err) {
       console.error("Failed to fetch tutorials", err);
     } finally {
@@ -50,28 +56,24 @@ export default function TutorialManagerModal({ tutorialIds, onUpdateTutorialIds,
   const handleSaveTutorial = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    
+    const payload = {
+      title: editingComponentPayload.title,
+      description: editingComponentPayload.description,
+      url: editingComponentPayload.url,
+      xp_value: editingComponentPayload.xp_value,
+      markdown_code: editingComponentPayload.markdown_code,
+      is_hidden: editingComponentPayload.is_hidden || false
+    };
+
     try {
       if (editingTutorial.id) {
         // UPDATE EXISTING
-        const { error } = await supabase.from('makecode_tutorials').update({
-          title: editingComponentPayload.title,
-          description: editingComponentPayload.description,
-          url: editingComponentPayload.url,
-          xp_value: editingComponentPayload.xp_value,
-          markdown_code: editingComponentPayload.markdown_code
-        }).eq('id', editingTutorial.id);
-        
+        const { error } = await supabase.from('makecode_tutorials').update(payload).eq('id', editingTutorial.id);
         if (error) throw error;
       } else {
         // CREATE NEW
-        const { data, error } = await supabase.from('makecode_tutorials').insert([{
-          title: editingComponentPayload.title,
-          description: editingComponentPayload.description,
-          url: editingComponentPayload.url,
-          xp_value: editingComponentPayload.xp_value,
-          markdown_code: editingComponentPayload.markdown_code
-        }]).select().single();
-
+        const { data, error } = await supabase.from('makecode_tutorials').insert([payload]).select().single();
         if (error) throw error;
         
         // Pass the new ID up to the parent component's state
@@ -96,7 +98,7 @@ export default function TutorialManagerModal({ tutorialIds, onUpdateTutorialIds,
 
   const openNewTutorial = () => {
     setEditingTutorial({
-      title: '', description: '', url: '', xp_value: 50, markdown_code: ''
+      title: '', description: '', url: '', xp_value: 50, markdown_code: '', is_hidden: false
     });
   };
 
@@ -140,9 +142,16 @@ export default function TutorialManagerModal({ tutorialIds, onUpdateTutorialIds,
                 <div className="text-center py-10 text-[10px] font-black uppercase tracking-widest text-slate-600 italic">No Tutorials Attached</div>
               ) : (
                 tutorials.map((tut, idx) => (
-                  <div key={tut.id} className={`bg-white/[0.03] border rounded-2xl p-4 cursor-pointer transition-all group ${editingTutorial?.id === tut.id ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'border-white/10 hover:border-white/30'}`} onClick={() => setEditingTutorial(tut)}>
+                  <div key={tut.id} className={`bg-white/[0.03] border rounded-2xl p-4 cursor-pointer transition-all group ${editingTutorial?.id === tut.id ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'border-white/10 hover:border-white/30'} ${tut.is_hidden ? 'opacity-60' : ''}`} onClick={() => setEditingTutorial(tut)}>
                     <div className="flex justify-between items-start">
-                      <p className="text-sm font-bold text-white leading-tight pr-2">{idx + 1}. {tut.title}</p>
+                      <div className="pr-2">
+                        <p className={`text-sm font-bold leading-tight ${tut.is_hidden ? 'text-slate-400 line-through decoration-slate-600' : 'text-white'}`}>
+                          {tut.title}
+                        </p>
+                        {tut.is_hidden && (
+                          <span className="inline-block mt-1 bg-red-500/20 text-red-400 text-[8px] font-black uppercase px-2 py-0.5 rounded border border-red-500/20">Hidden (WIP)</span>
+                        )}
+                      </div>
                       <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                         <button 
                           type="button" 
@@ -179,18 +188,30 @@ export default function TutorialManagerModal({ tutorialIds, onUpdateTutorialIds,
               <form onSubmit={handleSaveTutorial} className="flex-1 flex flex-col h-full overflow-hidden">
                 <div className="flex-1 overflow-y-auto p-8 custom-scrollbar flex flex-col gap-6">
                   
-                  {/* Top Meta Data - REWRITTEN FOR FLAWLESS RESPONSIVENESS */}
+                  {/* Top Meta Data */}
                   <div className="bg-black/20 p-6 rounded-3xl border border-white/5 space-y-5">
                     
-                    {/* Row 1: Title & XP */}
+                    {/* Row 1: Title, XP, and Status */}
                     <div className="flex flex-col lg:flex-row gap-5">
                       <div className="flex-1 space-y-2">
                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Tutorial Title</label>
                         <input required value={editingComponentPayload.title} onChange={e => setEditingTutorial({...editingTutorial, title: e.target.value})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none font-bold" />
                       </div>
-                      <div className="lg:w-32 space-y-2">
+                      
+                      <div className="w-32 space-y-2 shrink-0">
                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">XP Value</label>
                         <input required type="number" value={editingComponentPayload.xp_value} onChange={e => setEditingTutorial({...editingTutorial, xp_value: parseInt(e.target.value) || 0})} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-yellow-500 focus:border-blue-500 outline-none font-black text-center" />
+                      </div>
+
+                      <div className="w-auto space-y-2 shrink-0">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Visibility</label>
+                        <button
+                          type="button"
+                          onClick={() => setEditingTutorial({...editingTutorial, is_hidden: !editingComponentPayload.is_hidden})}
+                          className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border font-bold text-xs transition-colors ${editingComponentPayload.is_hidden ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'}`}
+                        >
+                          {editingComponentPayload.is_hidden ? <><EyeOff size={14}/> Hidden (WIP)</> : <><Eye size={14}/> Visible</>}
+                        </button>
                       </div>
                     </div>
 
