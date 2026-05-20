@@ -58,7 +58,8 @@ export default function MakecodeSandboxPage() {
       try {
         // We also fetch the existing tech_archive to pre-fill completed tutorials
         const [tutRes, enrollRes, archiveRes] = await Promise.all([
-          supabase.from('makecode_tutorials').select('*'),
+          // ADDED: .eq('is_hidden', false) to filter out WIP missions!
+          supabase.from('makecode_tutorials').select('*').eq('is_hidden', false),
           supabase.from('enrollments').select('id, sandbox_state').eq('student_id', user.id).eq('course_id', course_id).single(),
           supabase.from('tech_archive').select('mission_id, media_url').eq('student_id', user.id).eq('type', 'makecode_tutorial')
         ]);
@@ -79,11 +80,16 @@ export default function MakecodeSandboxPage() {
         if (archiveRes.data) {
           const restoredProgress: Record<string, boolean> = {};
           const restoredUrls: Record<string, string> = {};
+          
           archiveRes.data.forEach(arch => {
-            const tutId = arch.mission_id.replace('tut-', '');
+            // DEFENSIVE CHECK: Skip if mission_id is null or undefined
+            if (!arch.mission_id) return; 
+
+            const tutId = String(arch.mission_id).replace('tut-', '');
             restoredProgress[tutId] = true;
             if (arch.media_url) restoredUrls[tutId] = arch.media_url;
           });
+          
           setTrainingProgress(restoredProgress);
           setSubmissionUrls(restoredUrls);
         }
@@ -129,13 +135,19 @@ export default function MakecodeSandboxPage() {
   const masteredBeginnerCount = beginnerHardware.filter(h => sandboxState.used_inputs.includes(h.id) || sandboxState.used_outputs.includes(h.id)).length;
   const isBeginnerMastered = beginnerHardware.length > 0 && masteredBeginnerCount >= beginnerHardware.length;
 
-  // Tutorial Logic Split by Component
+  // Tutorial Logic Split by Component (Now explicitly sorted by array order)
   const inputTutorials = useMemo(() => {
-    return tutorials.filter(t => (selectedInput?.tutorial_ids || []).includes(t.id));
+    const ids = selectedInput?.tutorial_ids || [];
+    return tutorials
+      .filter(t => ids.includes(t.id))
+      .sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
   }, [selectedInput, tutorials]);
 
   const outputTutorials = useMemo(() => {
-    return tutorials.filter(t => (selectedOutput?.tutorial_ids || []).includes(t.id));
+    const ids = selectedOutput?.tutorial_ids || [];
+    return tutorials
+      .filter(t => ids.includes(t.id))
+      .sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
   }, [selectedOutput, tutorials]);
 
   const activeTutorials = useMemo(() => {
