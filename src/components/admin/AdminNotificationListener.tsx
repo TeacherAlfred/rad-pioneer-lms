@@ -71,30 +71,54 @@ export default function AdminNotificationListener() {
     }
   };
 
-  // 1. Initial Load: Fetch unacknowledged alerts from BOTH tables
+  // 1. Initial Load: Fetch unacknowledged alerts
+  const fetchAlerts = async () => {
+    // Fetch ONLY truly unacknowledged items
+    const { data: regs } = await supabase
+      .from('registrations')
+      .select('id, created_at, parent_name, email, phone, interested_programs, metadata')
+      .eq('is_acknowledged', false);
+    
+    // Fetch ONLY truly 'New Lead' prospects
+    const { data: leads } = await supabase
+      .from('prospects')
+      .select('id, created_at, name, email, phone, source, metadata')
+      .eq('status', 'New Lead');
+
+    const combined = [...(regs || []), ...(leads || [])].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    
+    setNotifications(combined);
+  };
+
   useEffect(() => {
-    const fetchAlerts = async () => {
-      // Fetch LMS Registrations
-      const { data: regs } = await supabase
-        .from('registrations')
-        .select('*')
-        .eq('is_acknowledged', false);
-      
-      // Fetch Landing Page Prospects
-      const { data: leads } = await supabase
-        .from('prospects')
-        .select('*')
-        .eq('status', 'New Lead');
-
-      // Combine and sort so the newest pops up first
-      const combined = [...(regs || []), ...(leads || [])].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-      
-      setNotifications(combined);
-    };
-
     fetchAlerts();
+    
+    const channel = supabase
+      .channel('global-admin-alerts')
+      // Ensure we listen for updates too, to remove items if they change status elsewhere
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'registrations' }, (payload) => {
+        setNotifications((prev) => [payload.new, ...prev]);
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'registrations' }, (payload) => {
+        if (payload.new.is_acknowledged === true) {
+          setNotifications((prev) => prev.filter(n => n.id !== payload.new.id));
+        }
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'prospects' }, (payload) => {
+        setNotifications((prev) => [payload.new, ...prev]);
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'prospects' }, (payload) => {
+        if (payload.new.status !== 'New Lead') {
+          setNotifications((prev) => prev.filter(n => n.id !== payload.new.id));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // 2. Realtime Listener: Listen to INSERTs on BOTH tables

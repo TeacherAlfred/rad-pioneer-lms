@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { Save, Loader2, Plus, Trash2, Clock, CalendarDays, ShieldAlert, Eye } from "lucide-react";
 
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DAYS = ['Sunday','Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 export default function AvailabilityManager() {
   const [slots, setSlots] = useState<any[]>([]);
@@ -27,7 +27,7 @@ export default function AvailabilityManager() {
   }
 
   const addSlot = () => {
-    setSlots([...slots, { day_of_week: 'Monday', start_time: '09:00', end_time: '12:00' }]);
+    setSlots([...slots, { day_of_week: 'Sunday', start_time: '10:00', end_time: '13:00' }]);
   };
 
   const updateSlot = (index: number, field: string, value: string) => {
