@@ -145,8 +145,8 @@ export default function PublicTrialSignup() {
         name: formData.parentName,
         email: formData.email,
         phone: formData.phone,
-        status: 'Trial Active',
-        source: 'Public Trial Form',
+        status: 'New Lead', 
+        source: '14-Day Free Trial',
         metadata: {
           children: [{ name: formData.childName, age: formData.childAge }],
           children_data: [{ id: '1', name: formData.childName, age: formData.childAge }],
