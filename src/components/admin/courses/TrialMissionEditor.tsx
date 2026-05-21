@@ -6,12 +6,13 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowLeft, LayoutDashboard, Save, Loader2, Link as LinkIcon, BookOpen,
-  Target, FileText, Copy, CheckCircle2, Info, Settings, Plus, X, ExternalLink, Edit2
+  Target, FileText, Copy, CheckCircle2, Info, Settings, Plus, X, ExternalLink, Edit2, Trash2
 } from "lucide-react";
 
 export default function TrialMissionEditor({ courseId }: { courseId: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   
   // Mission Data
   const [missions, setMissions] = useState<any[]>([]);
@@ -79,6 +80,49 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
       } else {
         setCards([]); 
       }
+    } else {
+      setCards([]);
+    }
+  };
+
+  // --- NEW: CREATE MISSION HANDLER ---
+  const handleCreateNewMission = async () => {
+    // We need a module_id. We'll inherit it from the currently active mission.
+    const currentModuleId = activeMission?.module_id || missions[0]?.module_id;
+    if (!currentModuleId) return alert("Error: No module reference found to attach this mission to.");
+
+    setIsCreating(true);
+    try {
+      const newOrderIndex = missions.length > 0 ? Math.max(...missions.map(m => m.order_index)) + 1 : 1;
+      
+      const newMissionDraft = {
+        module_id: currentModuleId,
+        title: "New Untitled Mission",
+        order_index: newOrderIndex,
+        sandbox_type: "none",
+        xp_reward: 500,
+        secret_xp_bonus: 100,
+        mission_config: { steps: [] } // Ensures JSON doesn't break the editor
+      };
+
+      const { data, error } = await supabase
+        .from('missions')
+        .insert([newMissionDraft])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Update state and load the new draft into the editor
+      const updatedMissions = [...missions, data];
+      setMissions(updatedMissions);
+      loadMissionIntoEditor(data);
+
+    } catch (err: any) {
+      console.error("Creation error:", err);
+      alert("Failed to create new mission.");
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -209,31 +253,44 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
           </div>
           
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 border-b border-white/10 pb-6">
-            <div className="space-y-4">
+            <div className="space-y-4 w-full md:w-auto flex-1">
               <h1 className="text-4xl font-black uppercase italic tracking-tighter text-white leading-none">Mission Database</h1>
-              <div className="flex items-center gap-3 bg-white/5 p-2 rounded-xl border border-white/10">
-                <Target size={16} className="text-blue-400 ml-2" />
-                <select 
-                  value={activeMission?.id || ""} 
-                  onChange={(e) => {
-                    const selected = missions.find(m => m.id === e.target.value);
-                    if (selected) loadMissionIntoEditor(selected);
-                  }}
-                  className="bg-transparent text-white font-bold outline-none border-none py-1 pr-4 cursor-pointer focus:ring-0 text-sm"
+              
+              {/* --- UPDATED: SELECT & ADD MISSION ROW --- */}
+              <div className="flex items-center gap-3 w-full max-w-md">
+                <div className="flex-1 flex items-center gap-3 bg-white/5 p-2 rounded-xl border border-white/10">
+                  <Target size={16} className="text-blue-400 ml-2 shrink-0" />
+                  <select 
+                    value={activeMission?.id || ""} 
+                    onChange={(e) => {
+                      const selected = missions.find(m => m.id === e.target.value);
+                      if (selected) loadMissionIntoEditor(selected);
+                    }}
+                    className="w-full bg-transparent text-white font-bold outline-none border-none py-1 pr-4 cursor-pointer focus:ring-0 text-sm truncate"
+                  >
+                    {missions.map((m) => (
+                      <option key={m.id} value={m.id} className="bg-slate-900">
+                        {m.order_index}. {m.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <button 
+                  onClick={handleCreateNewMission} 
+                  disabled={isCreating}
+                  title="Add New Mission"
+                  className="shrink-0 p-3 bg-blue-600/20 text-blue-400 hover:bg-blue-600/40 hover:text-white border border-blue-500/50 rounded-xl transition-colors disabled:opacity-50"
                 >
-                  {missions.map((m) => (
-                    <option key={m.id} value={m.id} className="bg-slate-900">
-                      {m.order_index}. {m.title}
-                    </option>
-                  ))}
-                </select>
+                  {isCreating ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                </button>
               </div>
             </div>
             
             <button 
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center gap-2 bg-emerald-600 text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-emerald-500 shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50 mt-2 md:mt-0"
+              className="flex items-center justify-center gap-2 bg-emerald-600 text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest text-xs hover:bg-emerald-500 shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50 mt-2 md:mt-0 shrink-0"
             >
               {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Commit to DB
             </button>
