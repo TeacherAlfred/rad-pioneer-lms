@@ -5,7 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Sparkles, ShieldCheck, Rocket, BrainCircuit, 
   CheckCircle2, Loader2, Lock, Play, Cpu, Linkedin, MessageSquare,
-  Link, Mail
+  Link, Mail,
+  User,
+  GraduationCap
 } from "lucide-react";
 import Image from "next/image";
 import confetti from "canvas-confetti";
@@ -336,21 +338,29 @@ export default function PublicTrialSignup() {
                     </p>
                   </div>
 
-                  <form onSubmit={handleSubmit} className="space-y-5">
-                    {/* Parent Details */}
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-                        <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-[10px] font-black">1</span>
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Your Details</h4>
+                  <form onSubmit={handleSubmit} className="space-y-6">
+  
+                    {/* PARENT DETAILS CARD */}
+                    <div className="bg-blue-50/50 border border-blue-100 rounded-3xl p-5 md:p-6 space-y-4">
+                      
+                      {/* Header */}
+                      <div className="flex items-center gap-3 border-b border-blue-100/50 pb-4 mb-2">
+                        <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center shadow-inner shrink-0">
+                          <User size={20} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black uppercase tracking-widest text-slate-800">Parent / Guardian</h4>
+                          <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider mt-0.5">Primary Contact Info</p>
+                        </div>
                       </div>
                       
+                      {/* Fields */}
                       <div>
                         <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1 mb-1.5 block">Full Name *</label>
                         <input 
-                          autoFocus
-                          required type="text" placeholder="e.g. Jane Doe"
+                          autoFocus required type="text" placeholder="e.g. Jane Doe"
                           value={formData.parentName} onChange={e => setFormData({...formData, parentName: e.target.value})}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all shadow-sm"
                         />
                       </div>
                       
@@ -359,7 +369,7 @@ export default function PublicTrialSignup() {
                         <input 
                           required type="email" placeholder="jane@example.com"
                           value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all shadow-sm"
                         />
                       </div>
 
@@ -368,25 +378,33 @@ export default function PublicTrialSignup() {
                         <input 
                           required type="tel" placeholder="082 123 4567"
                           value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all"
+                          className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all shadow-sm"
                         />
                       </div>
                     </div>
 
-                    {/* Child Details */}
-                    <div className="space-y-4 pt-2">
-                      <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-                        <span className="w-5 h-5 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-[10px] font-black">2</span>
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Pioneer Details</h4>
+                    {/* CHILD DETAILS CARD */}
+                    <div className="bg-purple-50/50 border border-purple-100 rounded-3xl p-5 md:p-6 space-y-4">
+                      
+                      {/* Header */}
+                      <div className="flex items-center gap-3 border-b border-purple-100/50 pb-4 mb-2">
+                        <div className="w-10 h-10 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center shadow-inner shrink-0">
+                          <GraduationCap size={20} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black uppercase tracking-widest text-slate-800">Pioneer Details</h4>
+                          <p className="text-[10px] font-bold text-purple-500 uppercase tracking-wider mt-0.5">The Student</p>
+                        </div>
                       </div>
 
+                      {/* Fields */}
                       <div className="grid grid-cols-3 gap-3">
                         <div className="col-span-2">
                           <label className="text-[10px] font-bold uppercase tracking-widest text-slate-500 ml-1 mb-1.5 block">Child's Name *</label>
                           <input 
                             required type="text" placeholder="e.g. Leo"
                             value={formData.childName} onChange={e => setFormData({...formData, childName: e.target.value})}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 transition-all"
+                            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 transition-all shadow-sm"
                           />
                         </div>
                         <div className="col-span-1">
@@ -394,14 +412,14 @@ export default function PublicTrialSignup() {
                           <input 
                             required type="number" min="5" max="18" placeholder="Age"
                             value={formData.childAge} onChange={e => setFormData({...formData, childAge: e.target.value})}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 transition-all"
+                            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold text-slate-900 focus:outline-none focus:border-purple-500 focus:ring-4 focus:ring-purple-500/10 transition-all shadow-sm"
                           />
                         </div>
                       </div>
                     </div>
 
-                    {/* Submit */}
-                    <div className="pt-6">
+                    {/* Submit Section */}
+                    <div className="pt-2">
                       <button 
                         type="submit" 
                         disabled={isSubmitting}
@@ -417,6 +435,7 @@ export default function PublicTrialSignup() {
                         <ShieldCheck size={14} className="text-emerald-500" /> By continuing, you secure the discounted tier rate.
                       </p>
                     </div>
+                    
                   </form>
                 </motion.div>
               ) : (
