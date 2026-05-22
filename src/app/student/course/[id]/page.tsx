@@ -106,14 +106,25 @@ export default function CourseLandingPage() {
           }
         }
 
-        // 3. Fetch Progress (Tech Archive & Quizzes)
-        const [archiveRes, quizRes] = await Promise.all([
+        // 3. Fetch Progress (Tech Archive, Quizzes, & Tutorial Submissions)
+        const [archiveRes, quizRes, submissionsRes] = await Promise.all([
+          // RESTORED: Strict check for standard courses (Must be 'completed' by a teacher)
           supabase.from('tech_archive').select('mission_id, xp_earned, type').eq('student_id', localUser.id).eq('status', 'completed'),
-          supabase.from('quiz_attempts').select('module_id, passed, score').eq('student_id', localUser.id)
+          
+          supabase.from('quiz_attempts').select('module_id, passed, score').eq('student_id', localUser.id),
+          
+          // ADDED: Lenient check for MakeCode Trials (Any submission unlocks the next step)
+          supabase.from('tutorial_submissions').select('mission_id').eq('student_id', localUser.id)
         ]);
 
         const techArchive = archiveRes.data || [];
-        const completedMissions = new Set(techArchive.map(t => t.mission_id));
+        const tutorialSubmissions = submissionsRes.data || [];
+        
+        // Combine all approved standard missions AND all submitted trial missions into one Set
+        const completedMissions = new Set([
+          ...techArchive.map(t => t.mission_id),
+          ...tutorialSubmissions.map(s => s.mission_id)
+        ]);
         
         const quizMap = (quizRes.data || []).reduce((acc: any, curr: any) => {
           if (!acc[curr.module_id]) acc[curr.module_id] = { passed: false, bestScore: 0 };
