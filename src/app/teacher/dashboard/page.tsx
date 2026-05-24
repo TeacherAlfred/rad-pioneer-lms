@@ -8,7 +8,8 @@ import {
   Shield, Clock, Laptop, CheckCircle2, ChevronLeft, CalendarCheck, Loader2, X, Edit2, Save, MapPin, Video,
   Repeat, CheckSquare, Square, UserPlus, Globe, User, LogOut, Trash2, ChevronDown, LayoutDashboard, TrendingUp, Trophy, FileText, Check, XCircle, CalendarRange, Bell,
   CalendarDays,
-  Zap
+  Zap,
+  Copy
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, usePathname } from "next/navigation";
@@ -18,6 +19,8 @@ import BulkScheduleManager from "@/components/dashboard/BulkScheduleManager";
 import SevenDayHorizon from "@/components/dashboard/SevenDayHorizon";
 import AddSingleLessonModal from "@/components/dashboard/AddSingleLessonModal";
 import LapsedStudentsTracker from "@/components/dashboard/LapsedStudentsTracker";
+
+import TeacherCatchupQueue from '@/components/TeacherCatchupQueue';
 
 // ==========================================
 // MAIN COMPONENT
@@ -38,6 +41,7 @@ export default function TeacherDashboard() {
   const [unreadStudentIds, setUnreadStudentIds] = useState<Set<string>>(new Set());
   const [unreadOnlyFilter, setUnreadOnlyFilter] = useState(false);
   const [metricDrilldown, setMetricDrilldown] = useState<string | null>(null);
+  const [isCatchupModalOpen, setIsCatchupModalOpen] = useState(false);
   const [isBulkScheduleOpen, setIsBulkScheduleOpen] = useState(false);
   const [editingLessonGroup, setEditingLessonGroup] = useState<any | null>(null);
   
@@ -553,6 +557,9 @@ export default function TeacherDashboard() {
              <button onClick={() => setIsBulkScheduleOpen(true)} className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-white text-black rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg">
                <CalendarDays size={14}/> Bulk Schedule
              </button>
+             <button onClick={() => setIsCatchupModalOpen(true)} className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-500/20 transition-all shadow-lg">
+                <Activity size={14}/> Catch-Ups
+            </button>
            </div>
         </div>
 
@@ -588,6 +595,58 @@ export default function TeacherDashboard() {
       </div>
 
       {/* MODALS */}
+      <AnimatePresence>
+        {isCatchupModalOpen && currentUser && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsCatchupModalOpen(false)} className="absolute inset-0 bg-black/90 backdrop-blur-xl" />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0, y: 20 }} 
+              animate={{ scale: 1, opacity: 1, y: 0 }} 
+              exit={{ scale: 0.95, opacity: 0, y: 20 }} 
+              className="relative w-full max-w-4xl bg-[#0a0f1c] border border-white/10 rounded-[32px] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+            >
+              <div className="p-6 md:p-8 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6 bg-white/[0.02] shrink-0">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-amber-500/20 text-amber-400 rounded-2xl border border-amber-500/30 shrink-0">
+                    <CalendarDays size={24} />
+                  </div>
+                  <div>
+                      <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white leading-none">Catch-Up Requests</h2>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-2">Confirm or decline pending reschedules</p>
+                  </div>
+                </div>
+
+                {/* --- NEW: Public URL Copy Box --- */}
+                <div className="w-full sm:w-auto flex flex-col gap-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Your Public Booking Link</span>
+                  <div className="flex items-center gap-2">
+                    <div className="bg-[#020617] border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-400 font-mono select-all truncate max-w-[200px] md:max-w-[250px]">
+                      {`${typeof window !== 'undefined' ? window.location.origin : ''}/catchup/${currentUser.id}`}
+                    </div>
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${typeof window !== 'undefined' ? window.location.origin : ''}/catchup/${currentUser.id}`);
+                        showToast("Booking link copied to clipboard!", "success");
+                      }}
+                      className="p-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 rounded-xl transition-all"
+                      title="Copy Link"
+                    >
+                      <Copy size={16} />
+                    </button>
+                  </div>
+                </div>
+                {/* -------------------------------- */}
+
+                <button type="button" onClick={() => setIsCatchupModalOpen(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors p-2 bg-white/5 hover:bg-white/10 rounded-full"><X size={20} /></button>
+              </div>
+              
+              <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1 bg-[#020617]">
+                 <TeacherCatchupQueue teacherId={currentUser.id} />
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <MetricDrilldownModal 
         metric={metricDrilldown} 
         pendingSubmissions={pendingSubmissions} 

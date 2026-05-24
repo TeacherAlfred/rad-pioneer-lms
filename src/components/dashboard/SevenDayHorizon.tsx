@@ -16,6 +16,7 @@ interface SevenDayHorizonProps {
 export default function SevenDayHorizon({ viewScope, currentUser, availabilities, onEditLesson, onAddLesson, refreshTrigger }: SevenDayHorizonProps) {
   const [loading, setLoading] = useState(true);
   const [lessons, setLessons] = useState<any[]>([]);
+  const [catchups, setCatchups] = useState<any[]>([]);
 
   useEffect(() => {
     fetchUpcomingLessons();
@@ -28,6 +29,7 @@ export default function SevenDayHorizon({ viewScope, currentUser, availabilities
       now.setHours(0, 0, 0, 0);
       const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
+      // 1. Base Query for Standard Lessons
       let query = supabase
         .from('lesson_schedule')
         .select(`
@@ -37,15 +39,33 @@ export default function SevenDayHorizon({ viewScope, currentUser, availabilities
         .gte('start_time', now.toISOString())
         .lt('start_time', nextWeek.toISOString());
 
+      // 2. Base Query for Catch-up Sessions
+      let catchupQuery = supabase
+        .from('catchup_sessions')
+        .select(`
+          id, session_date, status, teacher_id, teams_link,
+          catchup_bookings ( student_name )
+        `)
+        .gte('session_date', now.toISOString())
+        .lt('session_date', nextWeek.toISOString());
+
+      // Apply Filters
       if (viewScope === 'my_roster' && currentUser) {
         query = query.eq('teacher_id', currentUser.id);
+        catchupQuery = catchupQuery.eq('teacher_id', currentUser.id);
       } else if (viewScope !== 'global') {
         query = query.eq('teacher_id', viewScope);
+        catchupQuery = catchupQuery.eq('teacher_id', viewScope);
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
-      setLessons(data || []);
+      // Execute Concurrently
+      const [lessonRes, catchupRes] = await Promise.all([query, catchupQuery]);
+      
+      if (lessonRes.error) throw lessonRes.error;
+      if (catchupRes.error) throw catchupRes.error;
+
+      setLessons(lessonRes.data || []);
+      setCatchups(catchupRes.data || []); // <-- Store the catchups
     } catch (err) {
       console.error("Failed to fetch 7-Day Horizon:", err);
     } finally {
@@ -92,6 +112,28 @@ export default function SevenDayHorizon({ viewScope, currentUser, availabilities
          location: "TBD", 
          link: null
        });
+
+       catchups.forEach((c: any) => {
+        const d = new Date(c.session_date);
+        const isDraft = c.status === 'Draft'; // Draft means nobody has booked it yet
+        
+        rawLessons.push({
+          is_catchup: true,
+          is_open_slot: isDraft, 
+          lessonId: c.id,
+          teacherId: c.teacher_id,
+          dateObj: d,
+          dateTs: d.getTime(),
+          topic: isDraft ? "Open Catch-Up Slot" : "Catch-Up Lesson",
+          studentId: isDraft ? "open" : "catchup-booked",
+          studentName: isDraft ? "No one booked yet" : c.catchup_bookings?.map((b:any) => b.student_name).join(', '),
+          course: "Catch-Up",
+          delivery: 'online', // Catchups are online via MS Teams
+          location: 'MS Teams',
+          link: c.teams_link,
+          status: c.status
+        });
+      });
     });
 
     const groupedMap = new Map<string, any>();
@@ -99,9 +141,12 @@ export default function SevenDayHorizon({ viewScope, currentUser, availabilities
       // --- CRITICAL FIX: Include teacherId and logistics in the grouping key ---
       // This ensures different teachers' classes at the same time stay in their own separate cards!
       const logisticsStr = lesson.delivery === 'online' ? lesson.link : lesson.location;
-      const key = lesson.is_open_slot 
-        ? `open-${lesson.lessonId}` 
-        : `${lesson.dateTs}-${lesson.teacherId}-${lesson.topic}-${lesson.delivery}-${logisticsStr}`;
+      // Isolate catch-ups completely, otherwise group normally
+      const key = lesson.is_catchup 
+        ? `catchup-${lesson.lessonId}` 
+        : lesson.is_open_slot 
+          ? `open-${lesson.lessonId}` 
+          : `${lesson.dateTs}-${lesson.teacherId}-${lesson.topic}-${lesson.delivery}-${logisticsStr}`;
 
       if (!groupedMap.has(key)) {
         groupedMap.set(key, { ...lesson, key: key, attendees: [{ studentId: lesson.studentId, studentName: lesson.studentName, lessonId: lesson.lessonId }] });
@@ -167,24 +212,37 @@ export default function SevenDayHorizon({ viewScope, currentUser, availabilities
                     const isOnline = lesson.delivery === 'online';
                     const isMissingLogistics = (isOnline && !lesson.link) || (!isOnline && !lesson.location);
                     
-                    const displayText = lesson.is_open_slot 
-                      ? "OPEN SLOT" 
-                      : (!isOnline && lesson.location ? lesson.location : lesson.attendees.map((a:any) => a.studentName).join(', '));
+                    let displayText = '';
+                    if (lesson.is_catchup) {
+                       displayText = lesson.is_open_slot ? "UNBOOKED CATCH-UP" : lesson.studentName;
+                    } else if (lesson.is_open_slot) {
+                       displayText = "OPEN SLOT";
+                    } else {
+                       displayText = (!isOnline && lesson.location ? lesson.location : lesson.attendees.map((a:any) => a.studentName).join(', '));
+                    }
 
                     return (
                       <div 
                         key={lesson.key || `${lesson.dateTs}-${lessonIdx}`} 
-                        onClick={() => !lesson.is_open_slot && onEditLesson(lesson)}
+                        // Prevent the Edit Modal from opening for Catch-Ups or Open Slots
+                        onClick={() => !lesson.is_open_slot && !lesson.is_catchup && onEditLesson(lesson)}
                         className={`bg-[#020617] rounded-2xl p-3 flex flex-col gap-1.5 relative ${
-                          lesson.is_open_slot ? 'border-2 border-dashed border-white/10 cursor-default opacity-80' : 'border border-white/5 hover:border-purple-500/50 transition-colors cursor-pointer group'
+                          lesson.is_open_slot && !lesson.is_catchup ? 'border-2 border-dashed border-white/10 cursor-default opacity-80' :
+                          lesson.is_catchup && lesson.is_open_slot ? 'border-2 border-dashed border-amber-500/30 cursor-default opacity-90 bg-amber-500/5' :
+                          lesson.is_catchup ? 'border border-amber-500/50 bg-amber-500/10 cursor-default' : 
+                          'border border-white/5 hover:border-purple-500/50 transition-colors cursor-pointer group'
                         }`}
                       >
-                        {!lesson.is_open_slot && (
+                        {!lesson.is_open_slot && !lesson.is_catchup && (
                           <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-slate-500 hover:text-white transition-opacity">
                             <Edit2 size={12}/>
                           </div>
                         )}
-                        <p className={`text-xs font-black pr-5 ${lesson.is_open_slot ? 'text-slate-400' : isOnline ? 'text-purple-400' : 'text-emerald-400'}`}>
+                        <p className={`text-xs font-black pr-5 ${
+                          lesson.is_catchup ? 'text-amber-400' : 
+                          lesson.is_open_slot ? 'text-slate-400' : 
+                          isOnline ? 'text-purple-400' : 'text-emerald-400'
+                        }`}>
                           {new Date(lesson.dateTs).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                         </p>
                         <div className="flex items-start gap-1.5">

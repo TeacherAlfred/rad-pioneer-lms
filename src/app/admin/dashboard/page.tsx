@@ -16,6 +16,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import RoleSwitcherModal from "@/components/admin/RoleSwitcherModal";
 import LivePresenceWidget from "@/components/admin/LivePresenceWidget";
+import AdminCatchupDispatch from '@/components/AdminCatchupDispatch';
+import AdminSlotGenerator from "@/components/AdminSlotGenerator";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -56,7 +58,8 @@ export default function AdminDashboard() {
     invitesSent: 0,
     trialsActive: 0,
     trialsConverted: 0,
-    expiredUnclaimed: 0
+    expiredUnclaimed: 0,
+    pendingCatchups: 0
   });
 
   useEffect(() => {
@@ -190,8 +193,13 @@ export default function AdminDashboard() {
         }
       });
 
+      // FETCH CATCHUP STATS
+      const { count: catchupSessionCount } = await supabase.from('catchup_sessions').select('*', { count: 'exact', head: true }).in('status', ['Pending Admin Link', 'Pending Admin Reassignment']);
+      const { count: nextMonthCount } = await supabase.from('catchup_bookings').select('*', { count: 'exact', head: true }).eq('status', 'Moved to Next Month');
+
       setStats(prev => ({
         ...prev,
+        pendingCatchups: (catchupSessionCount || 0) + (nextMonthCount || 0),
         totalStudents: studentCount || 0,
         pendingRequests: requestCount || 0,
         monthlyRevenue: totalRevenue,
@@ -492,6 +500,7 @@ export default function AdminDashboard() {
                   <StatCard id="pioneers" label="Active Pioneers" value={stats.totalStudents} icon={Users} color="text-blue-400" />
                   <StatCard id="leads" label="Active Leads" value={stats.activeLeads} icon={Target} color="text-fuchsia-400" />
                   <StatCard id="growth" label="Conversion Rate" customValue={`${stats.conversionRate}%`} icon={TrendingUp} color="text-orange-400" />
+                  <StatCard id="catchups" label="Catch-Up Actions" value={stats.pendingCatchups} icon={CalendarDays} color="text-amber-400" />
                 </motion.div>
               )}
               {activeMetricTab === 'leads' && (
@@ -588,69 +597,89 @@ export default function AdminDashboard() {
 
       </div>
 
-      {/* STAT DETAIL MODAL */}
+      {/* STAT DETAIL & CATCHUP MODAL */}
       <AnimatePresence>
         {selectedStat && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setSelectedStat(null)} className="absolute inset-0 bg-black/90 backdrop-blur-xl" />
-            <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-lg bg-[#0f172a] border border-white/10 rounded-[40px] p-10 shadow-2xl overflow-hidden">
-              <Zap className="absolute -right-8 -top-8 size-48 opacity-[0.02] text-blue-500" />
+            
+            {/* IF IT IS THE CATCHUP MODAL (Wider, Custom Components) */}
+            {selectedStat === 'catchups' ? (
+              <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-5xl bg-[#0a0f1c] border border-white/10 rounded-[40px] p-8 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="flex justify-between items-start mb-6 shrink-0">
+                   <h2 className="text-3xl font-black italic uppercase tracking-tighter text-white flex items-center gap-3">
+                     <CalendarDays className="text-amber-500" size={32}/> Catch-Up Command
+                   </h2>
+                   <button onClick={() => setSelectedStat(null)} className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"><X size={20}/></button>
+                </div>
+                <div className="overflow-y-auto custom-scrollbar flex-1 space-y-8 pr-2">
+                   <AdminSlotGenerator />
+                   <AdminCatchupDispatch />
+                </div>
+              </motion.div>
+            ) : (
               
-              <div className="flex justify-between items-start mb-8">
-                <h2 className="text-4xl font-black italic uppercase tracking-tighter text-white">
-                  {selectedStat === 'revenue' ? 'Financial_Report' : 
-                   selectedStat === 'pioneers' ? 'Pioneer_Metrics' : 
-                   selectedStat === 'leads' || selectedStat === 'newLeads' ? 'Pipeline_Pulse' : 
-                   selectedStat === 'growth' || selectedStat === 'won' ? 'Conversion_Stats' :
-                   selectedStat === 'sent' || selectedStat === 'trials' || selectedStat === 'converted' || selectedStat === 'expired' ? 'Growth_Engine' : 'Stats'}
-                </h2>
-                <button onClick={(e) => { e.stopPropagation(); setSelectedStat(null); }} className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all z-50 relative"><X size={20}/></button>
-              </div>
-
-              {(selectedStat === 'leads' || selectedStat === 'growth' || selectedStat === 'won') ? (
-                <div className="space-y-4 mb-10 relative z-10">
-                  <div className="flex justify-between items-center p-5 bg-white/5 rounded-2xl border border-white/5">
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Fresh Leads (Meta)</span>
-                    <span className="text-2xl font-black text-blue-400 italic">{stats.newLeads}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-5 bg-white/5 rounded-2xl border border-white/5">
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Warm / Pending Close</span>
-                    <span className="text-2xl font-black text-amber-400 italic">{stats.warmLeads}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-5 bg-green-500/10 rounded-2xl border border-green-500/20">
-                    <span className="text-[10px] font-black uppercase text-green-400 tracking-widest">Total Converted (Won)</span>
-                    <span className="text-2xl font-black text-green-400 italic">{stats.wonProspects}</span>
-                  </div>
+              /* OTHERWISE, THE STANDARD STAT MODAL */
+              <motion.div initial={{ scale: 0.9, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0, y: 20 }} className="relative w-full max-w-lg bg-[#0f172a] border border-white/10 rounded-[40px] p-10 shadow-2xl overflow-hidden">
+                <Zap className="absolute -right-8 -top-8 size-48 opacity-[0.02] text-blue-500" />
+                
+                <div className="flex justify-between items-start mb-8">
+                  <h2 className="text-4xl font-black italic uppercase tracking-tighter text-white">
+                    {selectedStat === 'revenue' ? 'Financial_Report' : 
+                     selectedStat === 'pioneers' ? 'Pioneer_Metrics' : 
+                     selectedStat === 'leads' || selectedStat === 'newLeads' ? 'Pipeline_Pulse' : 
+                     selectedStat === 'growth' || selectedStat === 'won' ? 'Conversion_Stats' :
+                     selectedStat === 'sent' || selectedStat === 'trials' || selectedStat === 'converted' || selectedStat === 'expired' ? 'Growth_Engine' : 'Stats'}
+                  </h2>
+                  <button onClick={() => setSelectedStat(null)} className="p-3 rounded-full bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all z-50 relative"><X size={20}/></button>
                 </div>
-              ) : (
-                <div className="space-y-6 mb-10 relative z-10">
-                  <div className="p-8 bg-white/5 rounded-3xl border border-white/10 text-center">
-                    <p className="text-[10px] font-black text-slate-500 uppercase mb-2 tracking-widest">Selected Metric Volume</p>
-                    <p className="text-6xl font-black italic text-white">
-                      {selectedStat === 'revenue' ? `R${stats.monthlyRevenue.toLocaleString()}` : 
-                       selectedStat === 'pioneers' ? stats.totalStudents :
-                       selectedStat === 'sent' ? stats.invitesSent :
-                       selectedStat === 'trials' ? stats.trialsActive :
-                       selectedStat === 'converted' ? stats.trialsConverted :
-                       selectedStat === 'expired' ? stats.expiredUnclaimed :
-                       selectedStat === 'requests' ? stats.pendingRequests :
-                       selectedStat === 'newLeads' ? stats.newLeads : '0'
-                      }
-                    </p>
-                  </div>
-                </div>
-              )}
 
-              <div className="flex gap-4 relative z-10">
-                <button onClick={() => setSelectedStat(null)} className="flex-1 py-4 bg-white/5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:text-white text-slate-400 transition-colors">Close</button>
-                <Link 
-                  href={`/admin/${['sent', 'trials', 'converted', 'expired'].includes(selectedStat) ? 'invites' : selectedStat === 'revenue' ? 'finance' : selectedStat === 'pioneers' ? 'pioneers' : 'leads'}`}
-                  className="flex-1 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest text-center flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 transition-all"
-                >
-                  Deep Dive <ArrowUpRight size={14} />
-                </Link>
-              </div>
-            </motion.div>
+                {(selectedStat === 'leads' || selectedStat === 'growth' || selectedStat === 'won') ? (
+                  <div className="space-y-4 mb-10 relative z-10">
+                    <div className="flex justify-between items-center p-5 bg-white/5 rounded-2xl border border-white/5">
+                      <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Fresh Leads (Meta)</span>
+                      <span className="text-2xl font-black text-blue-400 italic">{stats.newLeads}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-5 bg-white/5 rounded-2xl border border-white/5">
+                      <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Warm / Pending Close</span>
+                      <span className="text-2xl font-black text-amber-400 italic">{stats.warmLeads}</span>
+                    </div>
+                    <div className="flex justify-between items-center p-5 bg-green-500/10 rounded-2xl border border-green-500/20">
+                      <span className="text-[10px] font-black uppercase text-green-400 tracking-widest">Total Converted (Won)</span>
+                      <span className="text-2xl font-black text-green-400 italic">{stats.wonProspects}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6 mb-10 relative z-10">
+                    <div className="p-8 bg-white/5 rounded-3xl border border-white/10 text-center">
+                      <p className="text-[10px] font-black text-slate-500 uppercase mb-2 tracking-widest">Selected Metric Volume</p>
+                      <p className="text-6xl font-black italic text-white">
+                        {selectedStat === 'revenue' ? `R${stats.monthlyRevenue.toLocaleString()}` : 
+                         selectedStat === 'pioneers' ? stats.totalStudents :
+                         selectedStat === 'sent' ? stats.invitesSent :
+                         selectedStat === 'trials' ? stats.trialsActive :
+                         selectedStat === 'converted' ? stats.trialsConverted :
+                         selectedStat === 'expired' ? stats.expiredUnclaimed :
+                         selectedStat === 'requests' ? stats.pendingRequests :
+                         selectedStat === 'newLeads' ? stats.newLeads : '0'
+                        }
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-4 relative z-10">
+                  <button onClick={() => setSelectedStat(null)} className="flex-1 py-4 bg-white/5 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:text-white text-slate-400 transition-colors">Close</button>
+                  <Link 
+                    href={`/admin/${['sent', 'trials', 'converted', 'expired'].includes(selectedStat) ? 'invites' : selectedStat === 'revenue' ? 'finance' : selectedStat === 'pioneers' ? 'pioneers' : 'leads'}`}
+                    className="flex-1 py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest text-center flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 transition-all"
+                  >
+                    Deep Dive <ArrowUpRight size={14} />
+                  </Link>
+                </div>
+              </motion.div>
+            )}
+            
           </div>
         )}
       </AnimatePresence>
