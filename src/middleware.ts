@@ -39,11 +39,7 @@ export async function middleware(request: NextRequest) {
   // 3. IMPORTANT: Use getUser() to validate the session
   const { data: { user } } = await supabase.auth.getUser()
 
-  // DEBUG LOG - Check your terminal again after this change
-  console.log("Middleware Check - User ID:", user?.id || "NONE");
-
   // 4. THE REDIRECT LOGIC
-
   // IF YOU are logged in, funnel you to admin
   if (user?.id === 'adfefd6c-954c-4e13-9423-5519aa89980a') {
     if (url.pathname === '/' || url.pathname === '/staff/dashboard' || url.pathname === '/login') {
