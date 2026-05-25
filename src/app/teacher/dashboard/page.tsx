@@ -621,11 +621,11 @@ export default function TeacherDashboard() {
                   <span className="text-[9px] font-black uppercase tracking-widest text-slate-500 ml-1">Your Public Booking Link</span>
                   <div className="flex items-center gap-2">
                     <div className="bg-[#020617] border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-400 font-mono select-all truncate max-w-[200px] md:max-w-[250px]">
-                      {`${typeof window !== 'undefined' ? window.location.origin : ''}/catchup/${currentUser.id}`}
+                      {`${typeof window !== 'undefined' ? window.location.origin : ''}/catchup/${currentUser.display_name?.split(' ')[0].toLowerCase()}`}
                     </div>
                     <button 
                       onClick={() => {
-                        navigator.clipboard.writeText(`${typeof window !== 'undefined' ? window.location.origin : ''}/catchup/${currentUser.id}`);
+                        navigator.clipboard.writeText(`${typeof window !== 'undefined' ? window.location.origin : ''}/catchup/${currentUser.display_name?.split(' ')[0].toLowerCase()}`);
                         showToast("Booking link copied to clipboard!", "success");
                       }}
                       className="p-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 rounded-xl transition-all"
