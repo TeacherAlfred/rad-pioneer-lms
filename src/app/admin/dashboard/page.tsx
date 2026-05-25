@@ -194,8 +194,7 @@ export default function AdminDashboard() {
       });
 
       // FETCH CATCHUP STATS
-      const { count: catchupSessionCount } = await supabase.from('catchup_sessions').select('*', { count: 'exact', head: true }).in('status', ['Pending Admin Link', 'Pending Admin Reassignment']);
-      const { count: nextMonthCount } = await supabase.from('catchup_bookings').select('*', { count: 'exact', head: true }).eq('status', 'Moved to Next Month');
+      const { count: catchupSessionCount } = await supabase.from('catchup_sessions').select('*', { count: 'exact', head: true }).in('status', ['Pending Admin Link', 'Pending Admin Reassignment']);      const { count: nextMonthCount } = await supabase.from('catchup_bookings').select('*', { count: 'exact', head: true }).eq('status', 'Moved to Next Month');
 
       setStats(prev => ({
         ...prev,

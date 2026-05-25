@@ -56,6 +56,7 @@ export default function ParentBookingPortal() {
         .from('catchup_sessions')
         .select('id, session_date')
         .eq('teacher_id', teacherData.id)
+        .neq('status', 'Pending Admin Reassignment')
         .gte('session_date', new Date().toISOString())
         .order('session_date', { ascending: true })
         .limit(4);

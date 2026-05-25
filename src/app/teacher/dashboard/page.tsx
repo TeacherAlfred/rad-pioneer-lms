@@ -42,6 +42,7 @@ export default function TeacherDashboard() {
   const [unreadOnlyFilter, setUnreadOnlyFilter] = useState(false);
   const [metricDrilldown, setMetricDrilldown] = useState<string | null>(null);
   const [isCatchupModalOpen, setIsCatchupModalOpen] = useState(false);
+  const [pendingCatchupsCount, setPendingCatchupsCount] = useState(0);
   const [isBulkScheduleOpen, setIsBulkScheduleOpen] = useState(false);
   const [editingLessonGroup, setEditingLessonGroup] = useState<any | null>(null);
   
@@ -219,6 +220,14 @@ export default function TeacherDashboard() {
       
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', localUser.id).single();
       if (profile) setCurrentUser(profile);
+
+      const { count: catchupCount } = await supabase
+        .from('catchup_sessions')
+        .select('*', { count: 'exact', head: true })
+        .eq('teacher_id', localUser.id)
+        .eq('status', 'Pending Teacher');
+        
+      setPendingCatchupsCount(catchupCount || 0);
 
       const [studentsRes, guardiansRes, coursesRes, enrollmentsRes, educatorsRes, availRes, techArchiveRes, tutSubsRes, missionsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'student').order('display_name', { ascending: true }),
@@ -557,9 +566,27 @@ export default function TeacherDashboard() {
              <button onClick={() => setIsBulkScheduleOpen(true)} className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-white text-black rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all shadow-lg">
                <CalendarDays size={14}/> Bulk Schedule
              </button>
-             <button onClick={() => setIsCatchupModalOpen(true)} className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-500/20 transition-all shadow-lg">
+             <button 
+                onClick={() => {
+                  setIsCatchupModalOpen(true);
+                  // Optionally clear the pulse immediately on click for better UX
+                  setPendingCatchupsCount(0); 
+                }} 
+                className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all relative ${
+                  pendingCatchupsCount > 0 
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.5)] animate-pulse' 
+                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-lg hover:bg-amber-500/20'
+                }`}
+              >
                 <Activity size={14}/> Catch-Ups
-            </button>
+                
+                {/* The Floating Badge */}
+                {pendingCatchupsCount > 0 && (
+                  <span className="absolute -top-2 -right-2 bg-amber-500 text-white text-[10px] px-2 py-0.5 rounded-full shadow-lg border border-[#020617] animate-none">
+                    {pendingCatchupsCount}
+                  </span>
+                )}
+              </button>
            </div>
         </div>
 
