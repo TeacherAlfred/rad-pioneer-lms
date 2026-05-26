@@ -591,7 +591,7 @@ export default function FinanceLedgerPage() {
                                                   const amountStr = `R ${client.balance.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                                                   const link = `${window.location.origin}/statement/${client.id}`;
                                                   
-                                                  const msg = `Dear ${firstName},\n\nFind below a link to your latest statement as at ${today}, showing an amount of ${amountStr} that is outstanding.\nWe are in the process of moving our invoicing system and may have missed a payment. If so, please let us know ASAP.\n\n${link}\n\nRegards,\nRAD Academy`;
+                                                  const msg = `Dear ${firstName},\n\nFind below a link to your latest statement as at ${today}, showing an amount of ${amountStr} that is outstanding.\nIf there is a payment not reflected please let us know.\n\n${link}\n\nRegards,\nRAD Academy`;
                                                   
                                                   let phoneParam = "";
                                                   if (client.phone) {
