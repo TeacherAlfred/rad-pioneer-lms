@@ -60,11 +60,12 @@ export default function FinanceLedgerPage() {
         if (profile) setCurrentUser(profile);
       }
 
-      const [profilesRes, enrollmentsRes, billingRes] = await Promise.all([
+      const [profilesRes, enrollmentsRes, billingRes, paymentsRes] = await Promise.all([
         supabase.from('profiles').select('id, display_name, role, linked_parent_id, metadata'),
         supabase.from('enrollments').select('student_id, courses(title)'),
         // NOTE: Declined/Draft invoices are safely ignored here due to the .in() filter
-        supabase.from('billing_records').select('*').eq('doc_type', 'invoice').in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid', 'itn_received']).order('created_at', { ascending: false })
+        supabase.from('billing_records').select('*').eq('doc_type', 'invoice').in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid', 'itn_received']).order('created_at', { ascending: false }),
+        supabase.from('payments').select('parent_id, amount').in('status', ['completed', 'successful', 'paid', 'settled'])
       ]);
 
       if (profilesRes.error) throw profilesRes.error;
@@ -72,6 +73,7 @@ export default function FinanceLedgerPage() {
       const profiles = profilesRes.data || [];
       const enrollments = enrollmentsRes.data || [];
       const invoices = billingRes.data || [];
+      const payments = paymentsRes.data || [];
 
       // Separate profiles
       const guardians = profiles.filter(p => p.role === 'guardian' || p.role === 'admin');
@@ -129,14 +131,13 @@ export default function FinanceLedgerPage() {
                    : isTerm ? 'Term' : 'Bootcamp';
 
         const lastInv = myInvoices.length > 0 ? myInvoices[0] : null;
+        const myPayments = payments.filter((p: any) => p.parent_id === guardian.id);
         
-        let accBalance = 0;
-        myInvoices.forEach(inv => {
-          const amt = Number(inv.total_amount) || 0;
-          if (inv.status === 'pending' || inv.status === 'overdue' || inv.status === 'partially_paid' || inv.status === 'itn_received') {
-            accBalance += Math.max(0, amt - Number(inv.amount_paid || 0));
-          }
-        });
+        // GLOBAL ACCOUNT BALANCE: Total Billed - Total Paid (Cash + Offsets)
+        const totalBilled = myInvoices.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+        const totalPaid = myPayments.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
+        
+        let accBalance = totalBilled - totalPaid;
 
         // --- NEW PROJECTION LOGIC (Profile Driven) ---
         let nextInvDate = "Not Set";
