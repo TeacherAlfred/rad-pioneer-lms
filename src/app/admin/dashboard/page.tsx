@@ -353,6 +353,7 @@ export default function AdminDashboard() {
       desc: "Manage top-of-funnel leads, invites, and external campaigns.",
       items: [
         { label: 'Prospects', icon: Target, path: '/admin/prospects', color: 'hover:border-fuchsia-500' },
+        { label: 'Acquisitions', icon: Send, path: '/admin/acquisition', color: 'hover:border-purple-500' },
         { label: 'Leads', icon: Inbox, path: '/admin/leads', color: 'hover:border-blue-500' },
         { label: 'Add a Guardian', icon: UserPlus, path: '/admin/intake', color: 'hover:border-blue-400' },
         { label: 'Outbound Invites', icon: Send, path: '/admin/invites', color: 'hover:border-purple-500' },
@@ -365,12 +366,13 @@ export default function AdminDashboard() {
       desc: "Manage active students, course delivery, and platform users.",
       items: [
         { label: 'LMS Academy', icon: BookOpen, path: '/admin/courses', color: 'hover:border-blue-400' },
-        { label: 'Math Diagnostics', icon: Calculator, path: '/admin/math-diagnostics', color: 'hover:border-rose-400' },
         { label: 'Finance Hub', icon: CreditCard, path: '/admin/finance', color: 'hover:border-emerald-500' },
-        { label: 'Bookings', icon: Calculator, path: '/admin/bookings', color: 'hover:border-rose-400' },
         { label: 'Availability', icon: Calculator, path: '/admin/bookings/availability', color: 'hover:border-rose-400' },
-        { label: 'Student Hub', icon: Users, path: '/admin/pioneers', color: 'hover:border-emerald-400' },        
-        { label: 'Parent Directory', icon: Eye, path: '/admin/directory', color: 'hover:border-pink-500' }, //        
+        { label: 'Student Hub', icon: Users, path: '/admin/pioneers', color: 'hover:border-emerald-400' },     
+        { label: 'Student Tracker', icon: Calculator, path: '/admin/students/tracker', color: 'hover:border-emerald-400' },        
+        { label: 'Parent Directory', icon: Eye, path: '/admin/directory', color: 'hover:border-pink-500' }, //   
+        { label: 'Math Diagnostics', icon: Calculator, path: '/admin/math-diagnostics', color: 'hover:border-rose-400' },  
+        { label: 'Bookings', icon: Calculator, path: '/admin/bookings', color: 'hover:border-rose-400' },   
         { label: 'Scheduling Hub', icon: Eye, path: '/admin/roster', color: 'hover:border-orange-500' }, // LINK TO BE CHANGED
       ]
     },
