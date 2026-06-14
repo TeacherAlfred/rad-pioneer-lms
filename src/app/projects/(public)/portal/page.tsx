@@ -723,9 +723,78 @@ export default function ClientPortal() {
                   )}
 
                   {activeTask.type === 'links' && (
-                    <div className={`flex items-center gap-3 rounded-2xl border px-4 py-3 md:py-4 transition-colors ${formData[activeTask.id] ? 'border-green-500/30 bg-white' : 'border-black/10 bg-white focus-within:border-black/40'}`}>
-                      <LinkIcon size={16} className={formData[activeTask.id] ? 'text-green-500' : 'text-black/30'} />
-                      <input type="text" disabled={clientData.isLocked} value={formData[activeTask.id] || ""} onChange={(e) => handleDataChange(activeTask.id, e.target.value)} placeholder="https://..." className="w-full bg-transparent text-sm outline-none placeholder:text-black/20" />
+                    <div className="space-y-4">
+                      {/* 1. Paste Web Link Input */}
+                      <div className="flex gap-2">
+                        <div className="flex-1 flex items-center gap-3 rounded-2xl border px-4 py-3 border-black/10 bg-white focus-within:border-black/40 transition-colors">
+                          <LinkIcon size={16} className="text-black/30" />
+                          <input
+                            type="text"
+                            id={`only-link-input-${activeTask.id}`}
+                            disabled={clientData.isLocked}
+                            placeholder="Paste web link here..."
+                            className="w-full bg-transparent text-sm outline-none placeholder:text-black/20"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const val = e.currentTarget.value.trim();
+                                if (val) {
+                                  const currentData = formData[activeTask.id];
+                                  const newData = Array.isArray(currentData) ? [...currentData, val] : (currentData ? [currentData, val] : [val]);
+                                  handleDataChange(activeTask.id, newData);
+                                  e.currentTarget.value = "";
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                        <button 
+                          onClick={() => {
+                            const input = document.getElementById(`only-link-input-${activeTask.id}`) as HTMLInputElement;
+                            const val = input?.value.trim();
+                            if (val) {
+                              const currentData = formData[activeTask.id];
+                              const newData = Array.isArray(currentData) ? [...currentData, val] : (currentData ? [currentData, val] : [val]);
+                              handleDataChange(activeTask.id, newData);
+                              input.value = "";
+                            }
+                          }}
+                          disabled={clientData.isLocked}
+                          className="bg-[#1A1A1A] text-white px-5 rounded-2xl disabled:opacity-50 hover:bg-black/80 transition-colors text-xs font-bold uppercase tracking-widest"
+                        >
+                          Add
+                        </button>
+                      </div>
+
+                      {/* 2. The Link Grid View */}
+                      {formData[activeTask.id] && (
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-4 border-t border-black/5">
+                          {(Array.isArray(formData[activeTask.id]) ? formData[activeTask.id] : [formData[activeTask.id]]).map((url: string, index: number) => {
+                            if (!url) return null;
+
+                            return (
+                              <div key={index} className="relative aspect-square rounded-xl overflow-hidden border border-black/10 group bg-black/5">
+                                {/* Render Pasted Web Link Card */}
+                                <div className="w-full h-full flex flex-col items-center justify-center text-blue-600 p-4 bg-blue-50/50">
+                                  <LinkIcon size={24} className="mb-2" />
+                                  <span className="text-[10px] font-medium text-center truncate w-full break-all px-2">
+                                    {url.replace(/^https?:\/\//, '')}
+                                  </span>
+                                </div>
+                                
+                                {/* Hover Delete Button */}
+                                <button 
+                                  onClick={() => handleRemoveFile(activeTask.id, url)} 
+                                  disabled={clientData.isLocked}
+                                  className="absolute top-2 right-2 p-2 bg-white/90 text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-50 disabled:hidden"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
 
