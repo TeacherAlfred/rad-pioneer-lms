@@ -325,7 +325,7 @@ export default function ClientPortal() {
             <motion.div key="login" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="w-full max-w-md flex flex-col items-center text-center mt-12 md:mt-24">
               <div className="mb-8 flex h-16 w-16 items-center justify-center rounded-full bg-black/5"><Lock className="text-black/40" /></div>
               <h1 className="font-serif text-4xl md:text-5xl tracking-tight mb-4">Project Access</h1>
-              <form onSubmit={handleLogin} className="w-full mt-8">
+              <form onSubmit={handleLogin} className="w-full mt-8 flex flex-col items-center">
                 <input 
                   type="text" 
                   value={accessCode} 
@@ -335,7 +335,24 @@ export default function ClientPortal() {
                   placeholder={placeholderText} 
                   className={`w-full bg-transparent border-b-2 py-4 text-center text-xl md:text-2xl font-serif tracking-[0.2em] uppercase outline-none placeholder:text-black/20 transition-all ${error ? 'border-red-500 text-red-500' : 'border-black/10 focus:border-black'}`} 
                 />
-                <button type="submit" disabled={isLoggingIn} className="mt-10 flex w-full items-center justify-center gap-3 rounded-full bg-[#1A1A1A] px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-white hover:bg-black/80 disabled:opacity-50">
+                
+                {/* INLINE ERROR MESSAGE */}
+                <div className="h-6 mt-3 w-full">
+                  <AnimatePresence>
+                    {error && (
+                      <motion.p 
+                        initial={{ opacity: 0, y: -10 }} 
+                        animate={{ opacity: 1, y: 0 }} 
+                        exit={{ opacity: 0, y: -10 }} 
+                        className="text-[10px] font-bold uppercase tracking-widest text-red-500 text-center"
+                      >
+                        Invalid Code. Please try again.
+                      </motion.p>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                <button type="submit" disabled={isLoggingIn} className="mt-4 flex w-full items-center justify-center gap-3 rounded-full bg-[#1A1A1A] px-8 py-4 text-[10px] font-bold uppercase tracking-widest text-white hover:bg-black/80 disabled:opacity-50 transition-all">
                   {isLoggingIn ? "Verifying..." : <>Unlock Portal <ArrowRight size={14} /></>}
                 </button>
               </form>
