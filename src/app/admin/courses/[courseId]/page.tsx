@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import LinearCourseEditor from "@/components/admin/courses/LinearCourseEditor";
 import MakecodeCourseEditor from "@/components/admin/courses/MakecodeCourseEditor";
 import TrialMissionEditor from "@/components/admin/courses/TrialMissionEditor";
+import VideoHubEditor from "@/components/admin/courses/VideoHubEditor";
 
 // Simple UUID regex
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -59,6 +60,10 @@ export default function CourseEditorDispatcher({ params }: { params: Promise<{ c
   // FIX: Match the exact string from your database!
   if (templateType === 'makecode_trial') {
     return <TrialMissionEditor courseId={courseId} />;
+  }
+
+  if (templateType === 'video_hub_sandbox') {
+    return <VideoHubEditor courseId={courseId} />;
   }
 
   return <LinearCourseEditor courseId={courseId} />;

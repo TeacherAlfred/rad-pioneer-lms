@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { 
   ChevronLeft, Lock, CheckCircle2, Loader2, 
   Zap, BarChart3, ChevronDown, ChevronUp, ShieldCheck, 
-  ShieldAlert, Clock, CalendarClock, Cpu, LayoutDashboard
+  ShieldAlert, Clock, CalendarClock, Cpu, LayoutDashboard,
+  Video
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -13,6 +14,10 @@ import DashboardClientWrapper from "@/components/dashboard/DashboardClientWrappe
 import ProfileSidebar from "@/components/dashboard/ProfileSidebar";
 import { motion, AnimatePresence } from "framer-motion";
 import { calculateDiminishingXP, calculateEventXp } from "@/lib/xp-engine";
+
+import DashboardSkeleton from "@/components/dashboard/DashboardSkeleton";
+import NextMissionWidget from "@/components/dashboard/NextMissionWidget";
+import EmptyCourseState from "@/components/dashboard/EmptyCourseState";
 
 // Safely parse JSON configs from Supabase
 const safeParse = (data: any) => {
@@ -33,6 +38,7 @@ const getEngineTag = (templateType: string) => {
   if (templateType.includes("makecode")) return "MakeCode Sandbox";
   if (templateType.includes("python")) return "Python Sandbox";
   if (templateType.includes("scratch")) return "Scratch Sandbox";
+  if (templateType === 'video_hub_sandbox') return "Video Hub & Workspace";
   return "Interactive Sandbox";
 };
 
@@ -108,19 +114,14 @@ export default function CourseLandingPage() {
 
         // 3. Fetch Progress (Tech Archive, Quizzes, & Tutorial Submissions)
         const [archiveRes, quizRes, submissionsRes] = await Promise.all([
-          // RESTORED: Strict check for standard courses (Must be 'completed' by a teacher)
           supabase.from('tech_archive').select('mission_id, xp_earned, type').eq('student_id', localUser.id).eq('status', 'completed'),
-          
           supabase.from('quiz_attempts').select('module_id, passed, score').eq('student_id', localUser.id),
-          
-          // ADDED: Lenient check for MakeCode Trials (Any submission unlocks the next step)
           supabase.from('tutorial_submissions').select('mission_id').eq('student_id', localUser.id)
         ]);
 
         const techArchive = archiveRes.data || [];
         const tutorialSubmissions = submissionsRes.data || [];
         
-        // Combine all approved standard missions AND all submitted trial missions into one Set
         const completedMissions = new Set([
           ...techArchive.map(t => t.mission_id),
           ...tutorialSubmissions.map(s => s.mission_id)
@@ -222,20 +223,17 @@ export default function CourseLandingPage() {
         });
 
         if (currentCourse.template_type === 'makecode_sandbox') {
-          // AWAIT the diminishing XP calculation
           nextRewardXP = await calculateDiminishingXP(150, customLogicCount);
         } else {
-          // Use 'for...of' loops so we can safely use 'await'
           for (const mod of processedModules) {
             for (const m of mod.missions) {
               if (m.status === 'unlocked' && !foundNextMission) {
-                // AWAIT the global multiplier check for standard missions
                 nextRewardXP = await calculateEventXp(m.xp_reward || 50); 
                 foundNextMission = true;
-                break; // Stop looking once we found the next mission
+                break;
               }
             }
-            if (foundNextMission) break; // Break out of the outer loop too
+            if (foundNextMission) break;
           }
         }
 
@@ -253,7 +251,7 @@ export default function CourseLandingPage() {
     fetchCourseDetails();
   }, [router, courseId]);
 
-  if (loading) return <div className="h-screen bg-[#020617] flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>;
+  if (loading) return <DashboardClientWrapper initialStats={{}}><DashboardSkeleton isPreLaunchLms={false} /></DashboardClientWrapper>;
 
   const currentXP = userProfile?.xp || 0;
   const isEngineer = currentXP >= 1000;
@@ -267,13 +265,12 @@ export default function CourseLandingPage() {
     nextLevel: { xpRequired: isEngineer ? 2500 : 1000 }
   };
 
-  const isSandbox = courseData?.template_type === 'makecode_sandbox';
+  const isMakecodeSandbox = courseData?.template_type === 'makecode_sandbox';
+  const isVideoHub = courseData?.template_type === 'video_hub_sandbox';
 
-  // --- HARDWARE UNLOCK LOGIC ---
   const functionalHardware = courseHardware.filter(h => h.category === 'input' || h.category === 'output');
   const beginnerHardware = functionalHardware.filter(h => h.unlock_tier === 'beginner');
   
-  // They are considered to have mastered the core if they have used EVERY beginner component at least once.
   const isBeginnerMastered = beginnerHardware.length > 0 && beginnerHardware.every(h => 
     (sandboxState?.used_inputs || []).includes(h.id) || 
     (sandboxState?.used_outputs || []).includes(h.id)
@@ -343,10 +340,10 @@ export default function CourseLandingPage() {
           </header>
 
           <section className="space-y-4 md:space-y-6">
-            {isSandbox ? (
+            {isMakecodeSandbox ? (
               
               /* =========================================
-                 SANDBOX COURSE PORTAL & LOADOUT GRID
+                 MAKECODE SANDBOX COURSE PORTAL
                  ========================================= */
               <div className="relative bg-[#020617] border border-blue-500/20 rounded-[32px] md:rounded-[56px] text-center shadow-[0_0_50px_rgba(59,130,246,0.1)] overflow-hidden flex flex-col items-center justify-center mt-6 group">
                 <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(59,130,246,0.05)_50%,transparent_75%)] bg-[length:20px_20px] animate-[shimmer_2s_linear_infinite]" />
@@ -382,7 +379,6 @@ export default function CourseLandingPage() {
                     
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 md:gap-4">
                       {courseHardware.map(h => {
-                        const isReference = h.category === 'reference';
                         const isMastered = (sandboxState?.used_inputs || []).includes(h.id) || (sandboxState?.used_outputs || []).includes(h.id);
                         const isAdvanced = h.unlock_tier === 'advanced';
                         const isLocked = isAdvanced && !isBeginnerMastered;
@@ -422,6 +418,36 @@ export default function CourseLandingPage() {
                     <Zap size={18} className="animate-pulse" /> Initialize Logic Lab
                   </button>
                 </div>
+              </div>
+
+            ) : isVideoHub ? (
+              
+              /* =========================================
+                 NEW: VIDEO HUB COURSE PORTAL
+                 ========================================= */
+              <div className="relative bg-[#020617] border border-blue-500/20 rounded-[32px] md:rounded-[56px] text-center shadow-[0_0_50px_rgba(59,130,246,0.1)] overflow-hidden flex flex-col items-center justify-center mt-6 p-10 md:p-14 group">
+                 <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 z-0" />
+                 
+                 <div className="relative z-10 flex flex-col items-center">
+                   <div className="w-20 h-20 bg-blue-500/10 border border-blue-500/30 rounded-3xl flex items-center justify-center shadow-[0_0_40px_rgba(59,130,246,0.2)] mb-6 group-hover:scale-105 transition-transform">
+                     <Video className="w-10 h-10 text-blue-400" />
+                   </div>
+                   
+                   <h2 className="text-3xl md:text-5xl font-black uppercase tracking-tighter text-white italic drop-shadow-lg mb-3">
+                     Video Hub Enabled
+                   </h2>
+                   
+                   <p className="text-slate-400 mb-10 max-w-lg mx-auto text-sm md:text-base">
+                     Access your categorized video guides and interactive checklist to complete this external build.
+                   </p>
+                   
+                   <button 
+                     onClick={() => router.push(`/student/video-hub/${courseData.id}`)}
+                     className="px-12 py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black uppercase italic tracking-widest text-sm transition-all shadow-xl shadow-blue-600/20 active:scale-95"
+                   >
+                     Open Workstation
+                   </button>
+                 </div>
               </div>
 
             ) : modules.length === 0 ? (
