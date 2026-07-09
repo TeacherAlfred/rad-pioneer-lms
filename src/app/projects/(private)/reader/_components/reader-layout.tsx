@@ -14,20 +14,14 @@ interface ReaderLayoutProps {
 }
 
 export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
-  // --- THE FIX: THE STREAM LOCK ---
-  // By placing the server's fileUrl into a local useState, we lock the URL on initial load.
-  // When Server Actions trigger background UI refreshes, the PDF viewer won't receive a 
-  // newly signed AWS/R2 URL, preventing the canvas from unmounting and resetting to page 1.
   const [activeStreamUrl] = useState(fileUrl);
-  // --------------------------------
-
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
-  // Progress State
+  // Set default to false so mobile users see the book first
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
   const [readingProgress, setReadingProgress] = useState<number>(book.reading_progress || 0);
   const [isSavingProgress, setIsSavingProgress] = useState(false);
   
-  // Notes State
   const [notes, setNotes] = useState<any[]>([]);
   const [activeExcerpt, setActiveExcerpt] = useState("");
   const [activePage, setActivePage] = useState(0);
@@ -54,14 +48,13 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
     } catch (error) {
       console.error("Failed to save progress", error);
     }
-    // Small delay just to give visual feedback that the save completed
     setTimeout(() => setIsSavingProgress(false), 500);
   };
 
   const handleTextSelected = (text: string, pageNum: number) => {
     setActiveExcerpt(text);
     setActivePage(pageNum);
-    setIsSidebarOpen(true); // Auto-open sidebar when text is grabbed
+    setIsSidebarOpen(true); // Automatically slides out on highlight
   };
 
   const handleSaveNote = async () => {
@@ -88,22 +81,22 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
   return (
     <div className="flex flex-col h-screen bg-slate-50 overflow-hidden relative">
       
-      <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 flex-shrink-0 z-10 shadow-sm">
-        <div className="flex items-center gap-4">
+      <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 flex-shrink-0 z-10 shadow-sm relative">
+        <div className="flex items-center gap-4 z-20">
           <Link href="/projects/reader" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
           </Link>
           <div className="border-l border-slate-200 h-6"></div>
-          <div>
-            <h1 className="text-sm font-bold text-slate-900 truncate max-w-[300px]">{book.title}</h1>
+          <div className="hidden sm:block">
+            <h1 className="text-sm font-bold text-slate-900 truncate max-w-[200px] md:max-w-[300px]">{book.title}</h1>
             <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{book.author || "Unknown Author"}</p>
           </div>
         </div>
 
-        {/* --- PROGRESS BAR & SAVE BUTTON --- */}
-        <div className="flex items-center gap-6">
-          <div className="flex flex-col items-center justify-center w-48">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{readingProgress}% Complete</span>
+        {/* PROGRESS BAR & SAVE BUTTON */}
+        <div className="absolute left-1/2 -translate-x-1/2 flex flex-col md:flex-row items-center gap-2 md:gap-6 z-10 w-[140px] md:w-auto">
+          <div className="flex flex-col items-center justify-center w-full md:w-48">
+            <span className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 hidden md:block">{readingProgress}% Complete</span>
             <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
               <div 
                 className="bg-emerald-500 h-full rounded-full transition-all duration-300"
@@ -114,22 +107,24 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
           <button 
             onClick={handleSaveProgress}
             disabled={isSavingProgress}
-            className="text-[10px] font-bold uppercase tracking-wider px-3 py-1.5 bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 rounded-md transition-colors disabled:opacity-50 min-w-[110px]"
+            className="text-[9px] md:text-[10px] font-bold uppercase tracking-wider px-2 py-1 md:px-3 md:py-1.5 bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 rounded-md transition-colors disabled:opacity-50 min-w-[80px] md:min-w-[110px]"
           >
             {isSavingProgress ? "Saved!" : "Log Progress"}
           </button>
         </div>
 
-        <div className="flex items-center gap-4">
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`p-2 rounded-md transition-colors ${isSidebarOpen ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'}`}>
+        <div className="flex items-center gap-4 z-20">
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`p-2 rounded-md transition-colors relative ${isSidebarOpen ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'}`}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            {notes.length > 0 && !isSidebarOpen && (
+              <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full border border-white"></span>
+            )}
           </button>
         </div>
       </header>
 
       <main className="flex flex-1 overflow-hidden relative">
         <section className="flex-1 transition-all duration-300 relative bg-slate-100/50 flex flex-col items-center justify-center overflow-hidden">
-          {/* Note: We now pass the locked activeStreamUrl instead of the dynamic fileUrl */}
           {book.file_type === 'pdf' && activeStreamUrl ? (
             <PdfViewer 
               url={activeStreamUrl} 
@@ -144,16 +139,29 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
           )}
         </section>
 
-        {/* Right Pane: Notes Sidebar */}
-        <aside className={`bg-white border-l border-slate-200 transition-all duration-300 ease-in-out flex flex-col ${isSidebarOpen ? 'w-80 md:w-96 translate-x-0' : 'w-0 translate-x-full opacity-0'}`}>
+        {/* Mobile Backdrop Overlay */}
+        <div 
+          className={`md:hidden absolute inset-0 bg-slate-900/20 backdrop-blur-sm z-30 transition-opacity duration-300 ${isSidebarOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
+          onClick={() => setIsSidebarOpen(false)}
+        />
+
+        {/* Right Pane: Notes Sidebar (Mobile Absolute Overlay, Desktop Flex Shrink) */}
+        <aside 
+          className={`bg-white border-l border-slate-200 transition-all duration-300 ease-in-out flex flex-col absolute md:relative top-0 right-0 h-full z-40 
+          ${isSidebarOpen ? 'w-full sm:w-96 md:w-80 lg:w-96 translate-x-0 opacity-100 shadow-2xl md:shadow-none' : 'w-full sm:w-96 md:w-0 translate-x-full md:translate-x-0 opacity-0'}`}
+        >
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900">Margin Notes</h3>
-            <span className="text-xs font-semibold text-slate-400">{notes.length} Notes</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold text-slate-400">{notes.length} Notes</span>
+              <button className="md:hidden p-1 text-slate-400" onClick={() => setIsSidebarOpen(false)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            </div>
           </div>
           
           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
             
-            {/* Draft Note Area */}
             {activeExcerpt && (
               <div className="p-4 bg-indigo-50/50 border-b border-indigo-100">
                 <div className="flex items-center justify-between mb-2">
@@ -179,7 +187,6 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
               </div>
             )}
 
-            {/* Existing Notes Feed */}
             <div className="p-4 space-y-4">
               {notes.length === 0 && !activeExcerpt ? (
                 <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center mt-4">
