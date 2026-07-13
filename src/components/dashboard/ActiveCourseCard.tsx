@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Cpu, Map, Zap, ShieldCheck, ChevronRight, Shield, BatteryCharging } from "lucide-react";
+import { Cpu, Map, Zap, ShieldCheck, ChevronRight, Shield, BatteryCharging, Video } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -10,7 +10,11 @@ export default function ActiveCourseCard({ enrollment, progressStats, isPreLaunc
   if (!courseData) return null;
   
   const activeTask = enrollment.active_task;
-  const isSandbox = courseData?.template_type === 'makecode_sandbox';
+  
+  // Update: Break out the different sandbox types
+  const isMakecodeSandbox = courseData?.template_type === 'makecode_sandbox';
+  const isVideoHub = courseData?.template_type === 'video_hub_sandbox';
+  
   const sandboxState = enrollment.sandbox_state || { used_inputs: [], used_outputs: [] };
 
   return (
@@ -26,7 +30,7 @@ export default function ActiveCourseCard({ enrollment, progressStats, isPreLaunc
           </div>
 
           <div className="bg-black/40 border border-white/5 rounded-2xl p-5 md:p-6 space-y-6 shadow-inner">
-            {isSandbox ? (
+            {isMakecodeSandbox || isVideoHub ? (
               <div>
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1.5">
@@ -125,7 +129,9 @@ export default function ActiveCourseCard({ enrollment, progressStats, isPreLaunc
 
       {/* RIGHT SIDE: THE MAIN CTA */}
       <div className="md:w-[45%] relative bg-[#020617] flex flex-col overflow-hidden min-h-[260px] md:min-h-0">
-        {isSandbox ? (
+        
+        {/* SCENARIO 1: Legacy MakeCode Sandbox */}
+        {isMakecodeSandbox ? (
           <div className="relative z-10 p-6 md:p-8 flex flex-col h-full items-center justify-center text-center">
             <div className="mb-4">
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
@@ -144,6 +150,29 @@ export default function ActiveCourseCard({ enrollment, progressStats, isPreLaunc
               <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Enter Logic Lab</span>
             </button>
           </div>
+
+        /* SCENARIO 2: The New Video Hub (Scratch & Robotics) */
+        ) : isVideoHub ? (
+          <div className="relative z-10 p-6 md:p-8 flex flex-col h-full items-center justify-center text-center">
+            <div className="mb-4">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
+                Active Training
+              </span>
+            </div>
+            <h3 className="text-2xl md:text-3xl font-black text-white italic uppercase tracking-tighter leading-tight drop-shadow-md mb-8">
+              Mission Control
+            </h3>
+            <button 
+              onClick={() => router.push(`/student/video-hub/${courseData.id}`)}
+              className="w-full py-5 px-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:-translate-y-1 active:scale-95 relative overflow-hidden group shadow-2xl bg-gradient-to-r from-blue-600 to-indigo-500 text-white hover:shadow-[0_0_40px_rgba(59,130,246,0.6)]"
+            >
+              <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent skew-x-12" />
+              <Video className="w-6 h-6 animate-pulse" />
+              <span className="font-black uppercase tracking-widest text-sm md:text-base italic">Enter Video Hub</span>
+            </button>
+          </div>
+
+        /* SCENARIO 3: Legacy Linear Course with an Active Task */
         ) : activeTask ? (
           <>
             <div className="absolute inset-0 z-0">
@@ -197,6 +226,8 @@ export default function ActiveCourseCard({ enrollment, progressStats, isPreLaunc
               )}
             </div>
           </>
+
+        /* SCENARIO 4: Course Completed / No Active Task */
         ) : (
           <div className="relative z-10 p-6 md:p-8 flex flex-col items-center justify-center h-full text-center bg-black/40">
             <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 2 }} className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 mb-4">

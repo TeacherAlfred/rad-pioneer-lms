@@ -7,6 +7,8 @@ import LinearCourseEditor from "@/components/admin/courses/LinearCourseEditor";
 import MakecodeCourseEditor from "@/components/admin/courses/MakecodeCourseEditor";
 import TrialMissionEditor from "@/components/admin/courses/TrialMissionEditor";
 import VideoHubEditor from "@/components/admin/courses/VideoHubEditor";
+// NEW: Import the new editor for the video_makecode hardware courses
+import VideoMakecodeHubEditor from "@/components/admin/courses/VideoMakecodeHubEditor"; 
 
 // Simple UUID regex
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -15,6 +17,7 @@ export default function CourseEditorDispatcher({ params }: { params: Promise<{ c
   const { courseId } = use(params);
   
   const [templateType, setTemplateType] = useState<string | null>(null);
+  const [sandboxType, setSandboxType] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,14 +29,28 @@ export default function CourseEditorDispatcher({ params }: { params: Promise<{ c
 
     async function checkTemplateType() {
       try {
+        // Look up the template type AND peek at the first mission's sandbox_type
         const { data, error } = await supabase
           .from('courses')
-          .select('template_type')
+          .select(`
+            template_type,
+            modules (
+              missions (
+                sandbox_type
+              )
+            )
+          `)
           .eq('id', courseId)
           .single();
           
         if (error) throw error;
+        
         setTemplateType(data.template_type);
+        
+        // Safely extract the sandbox_type from the first module's first mission
+        const firstMissionSandbox = data.modules?.[0]?.missions?.[0]?.sandbox_type;
+        setSandboxType(firstMissionSandbox || null);
+
       } catch (err) {
         console.error("Failed to route course template type", err);
       } finally {
@@ -57,12 +74,17 @@ export default function CourseEditorDispatcher({ params }: { params: Promise<{ c
     return <MakecodeCourseEditor courseId={courseId} />;
   }
   
-  // FIX: Match the exact string from your database!
   if (templateType === 'makecode_trial') {
     return <TrialMissionEditor courseId={courseId} />;
   }
 
   if (templateType === 'video_hub_sandbox') {
+    // Branch the Video Hub UX based on whether it is hardware (MakeCode) or software (Scratch)
+    if (sandboxType === 'video_makecode') {
+      return <VideoMakecodeHubEditor courseId={courseId} />;
+    }
+    
+    // Default fallback for video_scratch or legacy video hub courses
     return <VideoHubEditor courseId={courseId} />;
   }
 
