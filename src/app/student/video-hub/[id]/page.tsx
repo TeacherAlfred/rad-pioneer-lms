@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import { supabase } from "@/lib/supabase";
-import { Check, PlayCircle, Loader2, ArrowLeft, Copy, Puzzle, CheckSquare, Cpu, Rocket, Code2, X } from "lucide-react";
+import { Check, PlayCircle, Loader2, ArrowLeft, Copy, Puzzle, CheckSquare, Cpu, Rocket, Code2, X, Info } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -85,6 +85,7 @@ export default function VideoHubViewerPage({ params }: { params: Promise<{ id: s
     ...v,
     category: v.category || "Getting started",
     topic: v.topic || "General",
+    explainer_text: v.explainer_text || "",
     objectives: Array.isArray(v.objectives) ? v.objectives : [],
     extensions: Array.isArray(v.extensions) ? v.extensions : []
   }));
@@ -300,9 +301,28 @@ export default function VideoHubViewerPage({ params }: { params: Promise<{ id: s
             <div className="flex-1 flex flex-col lg:flex-row gap-6">
               <div className="flex-1 flex flex-col">
                 {activeVideo ? (
-                  <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-black rounded-3xl overflow-hidden shadow-2xl ring-1 ring-slate-900/5 aspect-video w-full">
-                    <video key={activeVideo.id} src={activeVideo.url} controls autoPlay className="w-full h-full object-contain outline-none" />
-                  </motion.div>
+                  <div className="flex flex-col gap-6 w-full">
+                    {/* EXPLAINER TEXT BLOCK */}
+                    {activeVideo.explainer_text && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }} 
+                        animate={{ opacity: 1, y: 0 }} 
+                        className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm"
+                      >
+                        <div className="flex items-center gap-2 mb-3">
+                          <Info size={18} className="text-blue-500" />
+                          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Context</h3>
+                        </div>
+                        <p className="text-slate-700 font-medium leading-relaxed whitespace-pre-wrap">
+                          {activeVideo.explainer_text}
+                        </p>
+                      </motion.div>
+                    )}
+                    
+                    <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-black rounded-3xl overflow-hidden shadow-2xl ring-1 ring-slate-900/5 aspect-video w-full">
+                      <video key={activeVideo.id} src={activeVideo.url} controls autoPlay className="w-full h-full object-contain outline-none" />
+                    </motion.div>
+                  </div>
                 ) : (
                   <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm min-h-[500px] flex-1">
                     <h2 className={`text-3xl font-black mb-2 ${CATEGORY_STYLES[activeCategory || ""]?.text || "text-slate-900"}`}>{activeTopic}</h2>
