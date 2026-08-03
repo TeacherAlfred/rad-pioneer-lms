@@ -54,6 +54,23 @@ export default function VIPInvitePage() {
   const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
   const [shareCopied, setShareCopied] = useState(false);
 
+  // --- NEW: IDENTITY TRACKING ENGINE ---
+  const trackVisit = async (name: string) => {
+    try {
+      await supabase.from('analytics_events').insert({
+        event_type: 'page_view',
+        url_path: window.location.pathname,
+        user_identifier: name, // This maps the ID to a human-readable name in Telemetry Node
+        metadata: {
+          invite_id: inviteId,
+          is_identified_lead: true
+        }
+      });
+    } catch (err) {
+      console.error("Analytics ping failed", err);
+    }
+  };
+
   useEffect(() => {
     if (inviteId) fetchInviteData();
   }, [inviteId]);
@@ -68,6 +85,11 @@ export default function VIPInvitePage() {
       setParentName(data.name || "");
       setEmail(data.email || "");
       setPhone(data.phone || "");
+
+      // Identify the person in Telemetry Node as soon as data arrives
+      if (data.name) {
+        trackVisit(data.name);
+      }
 
       // 2. Silently calculate active tier based on converted leads
       const { count } = await supabase.from('prospects').select('*', { count: 'exact', head: true }).eq('status', 'Converted (Won)');
@@ -90,7 +112,21 @@ export default function VIPInvitePage() {
     if (!prospectData) return; 
     try {
       const updatedMeta = { ...prospectData.metadata, form_progress: stepName, last_active: new Date().toISOString() };
+      
+      // Update the Prospect record
       await supabase.from('prospects').update({ metadata: updatedMeta }).eq('id', inviteId);
+      
+      // Push an event to Telemetry Node attributed to this specific parent
+      await supabase.from('analytics_events').insert({
+        event_type: 'form_navigation',
+        url_path: window.location.pathname,
+        user_identifier: prospectData.name || "Unknown Lead",
+        metadata: {
+          step: stepName,
+          invite_id: inviteId
+        }
+      });
+
       setProspectData({ ...prospectData, metadata: updatedMeta });
     } catch (err) {
       console.error("Telemetry failed", err);
@@ -115,6 +151,10 @@ export default function VIPInvitePage() {
       }).eq('id', inviteId);
       
       setProspectData({ ...prospectData, name: parentName, email: email, phone: phone, metadata: updatedMeta });
+      
+      // Telemetry Update
+      await trackProgress('Step 1 Completed');
+
     } catch (e) {
       console.error("Auto-save failed", e);
     }
@@ -132,7 +172,6 @@ export default function VIPInvitePage() {
     const validChildren = children.filter(c => c.name.trim() !== "");
     if (validChildren.length !== numKids) return alert("Please provide the names for all your children.");
     
-    // Reset scroll state for Step 3
     setStep3ScrollPos({ isTop: true, isBottom: false });
     setWizardStep(3); 
     trackProgress('Student Details Completed');
@@ -159,15 +198,12 @@ export default function VIPInvitePage() {
     }
   };
 
-  // --- THE MASTER SUBMISSION ENGINE (Handles both paths & creates user profiles!) ---
   const handleComplete = async (path: 'fast-track' | 'trial') => {
     setIsCompleting(true);
     const validChildren = children.filter(c => c.name.trim() !== "");
 
     try {
       const today = new Date();
-      
-      // Calculate Trial Dates for BOTH paths now
       const launchDate = new Date('2026-05-01T00:00:00');
       const trialStart = today > launchDate ? today : launchDate;
       let trialEnd = new Date(trialStart);
@@ -178,33 +214,27 @@ export default function VIPInvitePage() {
       const onboardingToken = generateToken();
 
       if (path === 'fast-track') {
-        // ==========================================
-        // PATH A: UPGRADE & FAST-TRACK (PLG Conversion)
-        // ==========================================
         setChosenPath('fast-track');
         
-        // 1. Create Guardian Profile (ACCOUNT_TIER: TRIAL - Wait for Payment to Upgrade)
         const guardianProfile = {
           id: guardianId, role: 'guardian', display_name: parentName, onboarding_token: onboardingToken,
           status: 'active', funnel_stage: 'Trial Active', payment_plan_preference: 'LMS Access',
-          account_tier: 'trial', // <--- STILL TRIAL. Grants immediate Walled Garden access.
+          account_tier: 'trial', 
           metadata: JSON.stringify({ 
             email: email, 
             phone: phone, 
             booking_credits: 0,
             trial_start: trialStart.toISOString(), 
             trial_end: trialEnd.toISOString(),
-            fast_track_pending: true // Tag them so admin knows to process upgrade upon payment
+            fast_track_pending: true 
           })
         };
 
-        // 2. Create Student Profiles
         const studentProfiles = validChildren.map((c: any) => ({
           id: crypto.randomUUID(), role: 'student', display_name: c.name, linked_parent_id: guardianId,
           status: 'active', metadata: JSON.stringify({ date_of_birth: c.dob, school_coding: c.codingAtSchool === 'Yes' })
         }));
 
-        // 3. Generate Quote
         const expiryDate = new Date();
         expiryDate.setDate(expiryDate.getDate() + 1);
         expiryDate.setHours(23, 59, 59, 999);
@@ -225,7 +255,6 @@ export default function VIPInvitePage() {
           }
         };
 
-        // 4. Execute Referral Bonus
         if (prospectData.metadata?.referred_by_id) {
           const { data: refProspect } = await supabase.from('prospects').select('status, metadata').eq('id', prospectData.metadata.referred_by_id).single();
           if (refProspect?.status === 'Converted (Won)' && refProspect.metadata?.converted_profile_id) {
@@ -238,7 +267,6 @@ export default function VIPInvitePage() {
           }
         }
 
-        // 5. Save to DB
         await supabase.from('profiles').insert([guardianProfile, ...studentProfiles]);
         await supabase.from('billing_records').insert([quotationRecord]);
         
@@ -258,14 +286,11 @@ export default function VIPInvitePage() {
         });
         
         confetti({ particleCount: 300, spread: 120, origin: { y: 0.6 }, colors: ['#f59e0b', '#10b981', '#3b82f6'] });
+        await trackProgress('Conversion: Fast-Track');
 
       } else {
-        // ==========================================
-        // PATH B: 14-DAY FREE TRIAL
-        // ==========================================
         setChosenPath('trial');
         
-        // 1. Create Guardian Profile (ACCOUNT_TIER: TRIAL)
         const guardianProfile = {
           id: guardianId, 
           role: 'guardian', 
@@ -273,11 +298,10 @@ export default function VIPInvitePage() {
           onboarding_token: onboardingToken,
           status: 'active', 
           funnel_stage: 'Trial Active', 
-          account_tier: 'trial', // <--- GRANTS WALLED GARDEN ACCESS
+          account_tier: 'trial', 
           metadata: JSON.stringify({ email: email, phone: phone, trial_start: trialStart.toISOString(), trial_end: trialEnd.toISOString() })
         };
 
-        // 2. Create Student Profiles
         const studentProfiles = validChildren.map((c: any) => ({
           id: crypto.randomUUID(), 
           role: 'student', 
@@ -287,7 +311,6 @@ export default function VIPInvitePage() {
           metadata: JSON.stringify({ date_of_birth: c.dob, school_coding: c.codingAtSchool === 'Yes' })
         }));
 
-        // 3. Save Trial Profiles to DB
         await supabase.from('profiles').insert([guardianProfile, ...studentProfiles]);
 
         const updatedMeta = { 
@@ -298,7 +321,7 @@ export default function VIPInvitePage() {
           trial_end: trialEnd.toISOString(), 
           accepted_date: today.toISOString(), 
           form_progress: 'Completed Trial',
-          converted_profile_id: guardianId // Link prospect to the new profile
+          converted_profile_id: guardianId 
         };
 
         await supabase.from('prospects').update({ name: parentName, email: email, phone: phone, status: 'Trial Active', metadata: updatedMeta }).eq('id', inviteId);
@@ -310,12 +333,13 @@ export default function VIPInvitePage() {
             scenario: 'trial',
             name: parentName,
             email: email,
-            token: onboardingToken, // Pass the token so they can set a password!
+            token: onboardingToken, 
             quoteId: inviteId 
           })
         });
 
         confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 }, colors: ['#3b82f6', '#6366f1'] });
+        await trackProgress('Conversion: Trial');
       }
 
       setIsSuccess(true);
@@ -338,8 +362,6 @@ export default function VIPInvitePage() {
       console.error('Copy failed', err);
     }
   };
-
-  const scrollToForm = () => document.getElementById('claim-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const faqs = [
     { q: "Do I need to enter credit card details for the trial?", a: "No! The 14-day trial is completely free and requires zero payment details. You only pay if you explicitly choose to upgrade after seeing the value." },
@@ -407,45 +429,42 @@ export default function VIPInvitePage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:gap-6">
-  {/* CARD 1: MENTAL EDGE / ACADEMIC IMPACT */}
-  <div className="bg-white p-3 sm:p-4 rounded-3xl border border-blue-100 shadow-[0_10px_40px_-10px_rgba(37,99,235,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(37,99,235,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
-    <div className="bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
-      <Cpu className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
-    </div>
-    <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
-      <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Give Them a Mental Edge</h3>
-      <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-        Coding teaches your child to handle frustration and think logically - transferable skills that improve their focus and performance in <strong>STEM subjects</strong>.
-      </p>
-    </div>
-  </div>
-  
-  {/* CARD 2: PRODUCTIVE HOBBY / SCREEN TIME TRANSFORMATION */}
-  <div className="bg-white p-3 sm:p-4 rounded-3xl border border-emerald-100 shadow-[0_10px_40px_-10px_rgba(16,185,129,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(16,185,129,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
-    <div className="bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
-      <Gamepad2 className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
-    </div>
-    <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
-      <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Productive Screen Time</h3>
-      <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-        Transform <strong>"mindless scrolling"</strong> into a high-value hobby. Watch them build their own robotic solutions, digital worlds and games instead of being passive consumers.
-      </p>
-    </div>
-  </div>
+            <div className="bg-white p-3 sm:p-4 rounded-3xl border border-blue-100 shadow-[0_10px_40px_-10px_rgba(37,99,235,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(37,99,235,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
+              <div className="bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
+                <Cpu className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
+              </div>
+              <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
+                <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Give Them a Mental Edge</h3>
+                <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                  Coding teaches your child to handle frustration and think logically - transferable skills that improve their focus and performance in <strong>STEM subjects</strong>.
+                </p>
+              </div>
+            </div>
+            
+            <div className="bg-white p-3 sm:p-4 rounded-3xl border border-emerald-100 shadow-[0_10px_40px_-10px_rgba(16,185,129,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(16,185,129,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
+              <div className="bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
+                <Gamepad2 className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
+              </div>
+              <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
+                <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Productive Screen Time</h3>
+                <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                  Transform <strong>"mindless scrolling"</strong> into a high-value hobby. Watch them build their own robotic solutions, digital worlds and games instead of being passive consumers.
+                </p>
+              </div>
+            </div>
 
-  {/* CARD 3: FUTURE CAREER / GLOBAL SKILLS */}
-  <div className="bg-white p-3 sm:p-4 rounded-3xl border border-indigo-100 shadow-[0_10px_40px_-10px_rgba(79,70,229,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(79,70,229,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
-    <div className="bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
-      <TrendingUp className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
-    </div>
-    <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
-      <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Future-Proof Their Career</h3>
-      <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-        Equip them with the most in-demand skill on the planet. Whether they become engineers or entrepreneurs, <strong>digital skills</strong> are the "new literacy" they need to succeed in the 21st Century.
-      </p>
-    </div>
-  </div>
-</div>
+            <div className="bg-white p-3 sm:p-4 rounded-3xl border border-indigo-100 shadow-[0_10px_40px_-10px_rgba(79,70,229,0.2)] hover:shadow-[0_10px_40px_-10px_rgba(79,70,229,0.35)] hover:-translate-y-1 transition-all duration-300 flex items-stretch gap-4 sm:gap-5">
+              <div className="bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0 w-[28%] max-w-[100px] min-h-[90px]">
+                <TrendingUp className="w-[65%] h-[65%] opacity-90 drop-shadow-sm" strokeWidth={1.5} />
+              </div>
+              <div className="text-left flex flex-col justify-center flex-1 py-2 pr-2">
+                <h3 className="font-black text-slate-900 tracking-tight leading-tight mb-1 sm:mb-1.5 text-base sm:text-lg">Future-Proof Their Career</h3>
+                <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                  Equip them with the most in-demand skill on the planet. Whether they become engineers or entrepreneurs, <strong>digital skills</strong> are the "new literacy" they need to succeed in the 21st Century.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div id="claim-section" className="lg:col-span-5 relative scroll-mt-6">
@@ -456,7 +475,7 @@ export default function VIPInvitePage() {
                 <div className="text-center mb-6 sm:mb-8 border-b border-slate-100 pb-6">
                   <div className="space-y-3">
                     <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto border border-blue-100"><ShieldCheck size={20}/></div>
-                    <h3 className="text-xl font-black text-slate-900 uppercase italic leading-tight">VIP Access Invite<br/><span className="text-blue-600">Exclusively for {prospectData.name.split(' ')[0]}</span></h3>
+                    <h3 className="text-xl font-black text-slate-900 uppercase italic leading-tight">VIP Access Invite<br/><span className="text-blue-600">Exclusively for {prospectData.name?.split(' ')[0] || "You"}</span></h3>
                   </div>
                 </div>
 
@@ -482,7 +501,6 @@ export default function VIPInvitePage() {
             ) : (
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="text-center space-y-6">
                 
-                {/* DYNAMIC SUCCESS SCREEN BASED ON PATH */}
                 {chosenPath === 'fast-track' ? (
                   <>
                     <div className="w-24 h-24 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-2 shadow-inner border border-amber-200"><Zap size={48} /></div>
@@ -561,9 +579,7 @@ export default function VIPInvitePage() {
         </div>
       </div>
 
-      {/* =========================================================
-          WIZARD MODAL (Multi-step Form with PLG Upsell)
-          ========================================================= */}
+      {/* --- WIZARD MODAL --- */}
       <AnimatePresence>
         {wizardStep > 0 && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
@@ -575,9 +591,7 @@ export default function VIPInvitePage() {
               className="flex flex-col relative w-full max-w-md bg-white rounded-[32px] shadow-2xl overflow-hidden max-h-[85vh]"
             >
               
-              {/* =========================================
-                  STEP 1: GUARDIAN DETAILS
-                  ========================================= */}
+              {/* STEP 1: GUARDIAN DETAILS */}
               {wizardStep === 1 && (
                 <>
                   <div className="shrink-0 pt-8 px-8 pb-4 bg-white z-20">
@@ -689,16 +703,10 @@ export default function VIPInvitePage() {
                       Confirm Identity & Continue <ArrowRight size={16} />
                     </button>
                   </div>
-                  <div className="absolute bottom-1 left-0 right-0 flex justify-center items-center gap-1.5 pb-2 text-slate-400 z-20 pointer-events-none">
-                    <ShieldCheck size={12} />
-                    <span className="text-[8px] font-black uppercase tracking-[0.2em]">Secure 256-Bit SSL Encryption</span>
-                  </div>
                 </>
               )}
 
-              {/* =========================================
-                  STEP 2: STUDENT DETAILS
-                  ========================================= */}
+              {/* STEP 2: STUDENT DETAILS */}
               {wizardStep === 2 && (
                 <>
                   <div className="shrink-0 pt-8 px-8 pb-4 bg-white z-20">
@@ -814,9 +822,7 @@ export default function VIPInvitePage() {
                 </>
               )}
 
-              {/* =========================================
-                  STEP 3: FINAL SELECTION (RE-ENGINEERED)
-                  ========================================= */}
+              {/* STEP 3: FINAL SELECTION */}
               {wizardStep === 3 && (
                 <>
                   <div className="shrink-0 pt-8 px-8 pb-4 bg-white z-20">
@@ -835,14 +841,12 @@ export default function VIPInvitePage() {
                     </div>
                   </div>
 
-                  {/* Scroll Up Button Indicator */}
                   <div className={`absolute top-28 left-0 right-0 h-16 bg-gradient-to-b from-white to-transparent pointer-events-none flex items-start justify-center pt-2 transition-opacity duration-300 z-30 ${step3ScrollPos.isTop ? 'opacity-0' : 'opacity-100'}`}>
                     <button onClick={scrollStep3Up} className="pointer-events-auto bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-md border border-slate-200 text-slate-500 hover:text-blue-600 transition-colors">
                       <ChevronUp size={16} />
                     </button>
                   </div>
 
-                  {/* Scrollable Form Content */}
                   <div 
                     ref={step3ScrollRef}
                     onScroll={(e) => {
@@ -855,7 +859,7 @@ export default function VIPInvitePage() {
                     className="flex-1 overflow-y-auto no-scrollbar px-8 pb-10 relative space-y-4"
                   >
                     
-                    {/* FAST TRACK CARD (The "Pro" Tier) */}
+                    {/* FAST TRACK CARD */}
                     <div className="bg-slate-900 rounded-3xl p-1 relative overflow-hidden shadow-2xl shadow-slate-900/20 mt-2">
                       <div className="absolute top-0 right-0 bg-amber-500 text-slate-900 text-[8px] font-black uppercase tracking-widest px-3 py-1.5 rounded-bl-xl z-10 shadow-sm">
                         Most Popular
@@ -871,10 +875,9 @@ export default function VIPInvitePage() {
                            <li className="flex items-start gap-2.5 text-[11px] font-bold text-slate-300">
                              <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5"/> Permanent LMS Access Discount*
                            </li>
-                           <li className="flex items-start gap-2.5 text-[11px] font-bold text-amber-400 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20"><Sparkles size={14} className="text-amber-500 shrink-0 mt-0.5"/>EXCLUSIVE: Free 1-on-1 Online "Kickstart" session to ensure your child hits the ground running!</li>
+                           <li className="flex items-start gap-2.5 text-[11px] font-bold text-amber-400 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20"><Sparkles size={14} className="text-amber-500 shrink-0 mt-0.5"/>EXCLUSIVE: Free 1-on-1 Online "Kickstart" session!</li>
                          </ul>
 
-                         {/* Upgraded CTA */}
                          <button 
                            onClick={() => handleComplete('fast-track')} 
                            disabled={isCompleting} 
@@ -885,10 +888,10 @@ export default function VIPInvitePage() {
                       </div>
                     </div>
 
-                    {/* STANDARD TRIAL CARD (Repositioned as the downgrade option) */}
+                    {/* TRIAL CARD */}
                     <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 mt-4">
                        <h3 className="text-slate-600 font-black italic text-sm uppercase tracking-tighter">14-Day Full Access Trial</h3>
-                       <p className="text-slate-500 text-[10px] font-medium mt-1 mb-4 leading-relaxed">Get 14 days of full access to one of our courses to test the waters before deciding. Standard rates apply post-trial.</p>
+                       <p className="text-slate-500 text-[10px] font-medium mt-1 mb-4 leading-relaxed">Get 14 days of full access to test the waters before deciding. Standard rates apply post-trial.</p>
                        
                        <button 
                          onClick={() => handleComplete('trial')} 
@@ -899,7 +902,6 @@ export default function VIPInvitePage() {
                        </button>
                     </div>
 
-                    {/* Simple text back button */}
                     <div className="pt-2 pb-6 text-center">
                       <button 
                         onClick={() => setWizardStep(2)} 
@@ -911,13 +913,11 @@ export default function VIPInvitePage() {
 
                   </div>
 
-                  {/* Scroll Down Button Indicator */}
                   <div className={`absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-white via-white to-transparent pointer-events-none flex items-end justify-center pb-6 transition-opacity duration-300 z-30 ${step3ScrollPos.isBottom ? 'opacity-0' : 'opacity-100'}`}>
                     <button onClick={scrollStep3Down} className="pointer-events-auto bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-md border border-slate-200 animate-bounce text-slate-500 hover:text-blue-600 transition-colors">
                       <ChevronDown size={16} />
                     </button>
                   </div>
-
                 </>
               )}
 
@@ -926,85 +926,30 @@ export default function VIPInvitePage() {
         )}
       </AnimatePresence>
 
-      <div className="max-w-3xl mx-auto px-5 md:px-12 pb-24 mt-8">
-        <div className="flex justify-center mb-12">
-          <button onClick={() => setShowReviews(true)} className="group relative px-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 flex items-center gap-3 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-50 to-purple-50 opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="relative z-10 flex -space-x-2.5">
-              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-emerald-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-emerald-600 fill-emerald-600"/></div>
-              <div className="w-8 h-8 rounded-full bg-purple-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-purple-600 fill-purple-600"/></div>
-            </div>
-            <div className="relative z-10 flex items-center gap-2">
-              <span className="text-sm font-black text-slate-900 tracking-tight">Click here to read some reviews from our parents.</span>
-              <MessageSquareHeart size={18} className="text-rose-500" />
-            </div>
-          </button>
-        </div>
-
-        <div className="bg-gradient-to-br from-slate-900 to-blue-950 p-6 sm:p-8 md:p-10 rounded-[32px] md:rounded-[40px] text-white shadow-2xl relative overflow-hidden mb-12">
-          <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none"><Target size={120}/></div>
-          <div className="relative z-10">
-            <span className="px-3 py-1 bg-white/10 border border-white/20 rounded-lg text-[9px] font-black uppercase tracking-widest text-blue-300 mb-4 inline-block">Action-Taker's Pricing</span>
-            <h3 className="text-xl sm:text-2xl font-black italic uppercase tracking-tight mb-4">Why is this subsidized?</h3>
-            <p className="text-slate-300 text-sm leading-relaxed mb-6">
-              Our mission is to make digital skills education accessible to every African home. We've dropped the price to make this a "no-brainer" for you, provided you help us keep your child <strong className="text-white">engaged and consistent.</strong>
-            </p>
-            <ul className="space-y-4">
-              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Start with a completely free <strong className="text-white">14-Day Full Course Access Trial</strong>.</span></li>
-              <li className="flex items-start gap-3"><CheckCircle2 size={18} className="text-emerald-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">Upgrade anytime during the trial. Your paid months only begin <strong className="text-white">after your trial ends</strong>.</span></li>
-              <li className="flex items-start gap-3"><AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5"/><span className="text-sm font-medium text-slate-300">To keep the discount, ensure your child completes at least <strong className="text-white">one lesson per week</strong>. We reward consistency, not just sign-ups.</span></li>
-            </ul>
-            <div className="mt-8 p-4 bg-white/5 border border-white/10 rounded-2xl flex items-start sm:items-center gap-4">
-              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-500/20 text-blue-400 rounded-full flex items-center justify-center shrink-0 mt-1 sm:mt-0"><Sparkles size={16}/></div>
-              <div>
-                <p className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-blue-300 mb-1">Bonus Offer</p>
-                <p className="text-xs sm:text-sm font-bold text-white leading-tight">Pay for 4 months and get <span className="text-emerald-400">1 free 1-on-1 coaching session</span> PLUS get a <span className="text-emerald-400">1 month LMS Access gift voucher!</span></p>
-              </div>
-            </div>
+      {/* --- FOOTER & REVIEWS --- */}
+      <div className="max-w-3xl mx-auto px-5 md:px-12 pb-24 mt-8 text-center">
+        <button onClick={() => setShowReviews(true)} className="group relative px-6 py-4 bg-white border border-slate-200 rounded-2xl shadow-lg hover:shadow-xl transition-all hover:-translate-y-1 flex items-center gap-3 overflow-hidden mx-auto">
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-50 to-purple-50 opacity-0 group-hover:opacity-100 transition-opacity" />
+          <div className="relative z-10 flex -space-x-2.5">
+            {[1,2,3,4,5].map(i => <div key={i} className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center shrink-0"><Star size={12} className="text-blue-600 fill-blue-600"/></div>)}
           </div>
-        </div>
-
-        <div className="text-center mb-8"><h2 className="text-3xl font-black text-slate-900 italic uppercase tracking-tighter">Frequently Asked Questions</h2></div>
-        <div className="space-y-4">
-          {faqs.map((faq, index) => (
-            <div key={index} className={`bg-white border rounded-2xl overflow-hidden transition-all duration-300 ${openFaq === index ? 'border-blue-500 shadow-lg shadow-blue-500/10' : 'border-slate-200 shadow-sm hover:border-slate-300'}`}>
-              <button onClick={() => setOpenFaq(openFaq === index ? null : index)} className="w-full flex items-center justify-between p-5 md:p-6 text-left">
-                <span className={`font-black tracking-tight pr-4 ${openFaq === index ? 'text-blue-600' : 'text-slate-900'}`}>{faq.q}</span>
-                <ChevronDown size={20} className={`shrink-0 transition-transform duration-300 ${openFaq === index ? 'rotate-180 text-blue-600' : 'text-slate-400'}`} />
-              </button>
-              <AnimatePresence>
-                {openFaq === index && (
-                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                    <div className="px-5 md:px-6 pb-6 pt-2 text-sm text-slate-600 leading-relaxed border-t border-slate-100">{faq.a}</div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ))}
-        </div>
+          <span className="relative z-10 text-sm font-black text-slate-900 tracking-tight">Parent Reviews</span>
+        </button>
       </div>
 
       <AnimatePresence>
         {showReviews && (
-          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 md:p-10">
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowReviews(false)} className="absolute inset-0 bg-black/90 backdrop-blur-sm" />
-            <motion.div initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }} className="relative w-full max-w-xl bg-white rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
-                <div><h3 className="text-2xl font-black uppercase italic tracking-tighter text-slate-900">Parent Reviews</h3><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Feedback from our community</p></div>
-                <button onClick={() => setShowReviews(false)} className="p-2 bg-slate-200 hover:bg-slate-300 rounded-full text-slate-600 transition-colors"><X size={16}/></button>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="relative w-full max-w-xl bg-white rounded-[32px] overflow-hidden flex flex-col max-h-[90vh]">
+              <div className="p-6 bg-slate-50 flex justify-between items-center shrink-0">
+                <h3 className="text-xl font-black uppercase italic text-slate-900">Parent Feedback</h3>
+                <button onClick={() => setShowReviews(false)} className="p-2 bg-slate-200 rounded-full"><X size={16}/></button>
               </div>
-              <div className="relative group flex-1 bg-slate-100 p-6 flex items-center justify-center overflow-hidden">
-                <button onClick={() => setCurrentReviewIndex((prev) => (prev - 1 + reviewImages.length) % reviewImages.length)} className="absolute left-4 z-10 p-3 bg-white/80 backdrop-blur-sm rounded-full shadow-lg text-slate-600 hover:bg-white hover:text-blue-600 transition-all opacity-0 group-hover:opacity-100"><ChevronLeft size={20} /></button>
-                <button onClick={() => setCurrentReviewIndex((prev) => (prev + 1) % reviewImages.length)} className="absolute right-4 z-10 p-3 bg-white/80 backdrop-blur-sm rounded-full shadow-lg text-slate-600 hover:bg-white hover:text-blue-600 transition-all opacity-0 group-hover:opacity-100"><ChevronRight size={20} /></button>
-                <AnimatePresence mode="wait">
-                  <motion.img key={currentReviewIndex} src={reviewImages[currentReviewIndex]} alt={`Parent Review ${currentReviewIndex + 1}`} initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} transition={{ duration: 0.3 }} className="max-w-full max-h-full object-contain rounded-2xl shadow-md" />
-                </AnimatePresence>
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 p-1.5 bg-black/10 backdrop-blur-sm rounded-full">
-                  {reviewImages.map((_, index) => <div key={index} className={`w-1.5 h-1.5 rounded-full transition-all ${currentReviewIndex === index ? 'bg-blue-600 w-3' : 'bg-white'}`}/>)}
-                </div>
+              <div className="flex-1 bg-slate-100 p-6 flex items-center justify-center overflow-hidden">
+                <img src={reviewImages[currentReviewIndex]} className="max-w-full max-h-full object-contain rounded-2xl" />
+                <button onClick={() => setCurrentReviewIndex((prev) => (prev - 1 + reviewImages.length) % reviewImages.length)} className="absolute left-4 p-3 bg-white/80 rounded-full shadow-lg"><ChevronLeft size={20} /></button>
+                <button onClick={() => setCurrentReviewIndex((prev) => (prev + 1) % reviewImages.length)} className="absolute right-4 p-3 bg-white/80 rounded-full shadow-lg"><ChevronRight size={20} /></button>
               </div>
             </motion.div>
           </div>

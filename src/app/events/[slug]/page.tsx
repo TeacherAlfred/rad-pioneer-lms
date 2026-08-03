@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { getEventBySlug, captureEventSignup } from "@/app/actions/events";
+import { getEventBySlug, captureEventSignup } from "../../actions/events";
 import { 
   CalendarDays, MapPin, Clock, Cpu, Zap, CheckCircle2,
   ShieldCheck, Loader2, AlertCircle, Sparkles, User, Phone, Rocket, Check, Gift, Mail

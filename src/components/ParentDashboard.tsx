@@ -133,14 +133,37 @@ export default function ParentDashboard({ parentId, paymentPlan = "" }: { parent
     try {
       const { data, error } = await supabase
         .from('tech_archive')
-        .select('id, created_at, snapshot_url, missions(title, metadata)')
+        .select('id, created_at, media_url, missions(*)')
         .eq('student_id', studentId)
         .eq('status', 'approved')
         .order('created_at', { ascending: false });
       
-      if (!error && data) setPortfolios(data);
-    } catch (err) {
-      console.error("Portfolio fetch error", err);
+      // PREVENT CRASH & FORCE ERROR DETAILS TO PRINT
+      if (error) {
+        console.error("Exact Supabase Error:", JSON.stringify(error, null, 2));
+        setPortfolios([]); // Gracefully show an empty portfolio instead of crashing
+        return; 
+      }
+
+      if (data) {
+        const r2Url = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
+        
+        const enrichedPortfolios = data.map(item => {
+          const isFullUrl = item.media_url?.startsWith('http');
+          
+          return {
+            ...item,
+            snapshot_url: item.media_url 
+              ? (isFullUrl ? item.media_url : `${r2Url}/${item.media_url}`)
+              : null
+          };
+        });
+        
+        setPortfolios(enrichedPortfolios);
+      }
+    } catch (err: any) {
+      console.error("Portfolio fetch error details:", err.message);
+      setPortfolios([]); // Graceful fallback
     }
   };
 
@@ -1566,7 +1589,7 @@ export default function ParentDashboard({ parentId, paymentPlan = "" }: { parent
                                 
                                 if (bookingMode === 'reschedule') {
                                   const msg = `Hi Coach, I have rescheduled ${selectedChild?.display_name.split(' ')[0]}'s lesson from ${oldLessonDetails} to ${newTimeFormatted}. Thank you!`;
-                                  window.open(`https://wa.me/27767065959?text=${encodeURIComponent(msg)}`, '_blank');
+                                  window.open(`https://wa.me/27769065959?text=${encodeURIComponent(msg)}`, '_blank');
                                   showToast("Lesson rescheduled successfully. WhatsApp opened to notify the academy.", "success");
                                 } else {
                                   await supabase.from('coach_messages').insert([{

@@ -163,7 +163,7 @@ export default function StatementView() {
       type: 'credit',
       dateObj: dateObj,
       date: dateObj.toLocaleDateString('en-ZA'),
-      ref: pay.description?.includes('Ref:') ? pay.description : `CN-${pay.id.substring(0,6).toUpperCase()}`,
+      ref: pay.description?.includes('Ref:') ? pay.description : "-",
       desc: actualDescription, // <-- NOW PULLING FROM DB
       debit: null,
       credit: amount

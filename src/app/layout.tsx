@@ -1,3 +1,4 @@
+import {ClerkProvider} from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -42,13 +43,15 @@ export default function RootLayout({
           className={`${geistSans.variable} ${geistMono.variable} min-h-full bg-slate-950 text-slate-50 antialiased`}
           suppressHydrationWarning
         >
-          <AdminReturnBanner />
-          <AnalyticsTracker /> {/* 3. ADD THE ANALYTICS TRACKER */}
-          <PresenceBroadcaster />
-          <MissionProvider initialStats={mockInitialStats}>
+          <ClerkProvider>
+            <AdminReturnBanner />
+            <AnalyticsTracker /> {/* 3. ADD THE ANALYTICS TRACKER */}
+            <PresenceBroadcaster />
+            <MissionProvider initialStats={mockInitialStats}>
             {children}
             <LevelUpCelebration />
-          </MissionProvider>
+            </MissionProvider>
+          </ClerkProvider>
         </body>
       </PHProvider>
     </html>

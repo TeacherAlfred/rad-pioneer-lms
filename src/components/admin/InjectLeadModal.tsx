@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { X, User, Phone, Mail, Globe, MapPin, Loader2, Save, Search, ArrowDownToLine, AlertTriangle, ExternalLink } from 'lucide-react';
+import { X, User, Phone, Mail, Globe, MapPin, Loader2, Save, Search, ArrowDownToLine, AlertTriangle, ExternalLink, CalendarClock, MessageSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
-const INITIAL_SOURCES = ['LinkedIn', 'Meta Ad', 'Referral', 'Website', 'Cold Outreach', 'Event', 'Other'];
+const INITIAL_SOURCES = ['LinkedIn', 'Meta Ad', 'Referral', 'Website', 'Cold Outreach', 'Event', 'Irene Voucher Claim', 'Other'];
 
 interface InjectLeadModalProps {
   isOpen: boolean;
@@ -22,6 +22,11 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  
+  // Set default date for "tomorrow"
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const defaultDate = tomorrow.toISOString().split('T')[0];
   
   // CRM Import Search
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -40,8 +45,14 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
     full_name: '',
     contact_number: '',
     email: '',
-    lead_source: 'LinkedIn',
-    location: ''
+    lead_source: 'Irene Voucher Claim',
+    location: '',
+    stage: 'Contacted',
+    warmth: 'Cold',
+    // Safety Net Fields
+    scheduleAction: true,
+    actionDate: defaultDate,
+    actionNote: 'Follow up on initial Irene intro message.',
   });
 
   // Fetch unique sources from existing leads to populate the dropdown
@@ -138,6 +149,7 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
     }
 
     setNewLead({
+      ...newLead,
       full_name: prospect.name || '',
       contact_number: prospect.phone || '',
       email: prospect.email || '',
@@ -160,7 +172,18 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
   };
 
   const resetForm = () => {
-    setNewLead({ full_name: '', contact_number: '', email: '', lead_source: availableSources[0] || 'LinkedIn', location: '' });
+    setNewLead({ 
+      full_name: '', 
+      contact_number: '', 
+      email: '', 
+      lead_source: availableSources.includes('Irene Voucher Claim') ? 'Irene Voucher Claim' : availableSources[0] || 'LinkedIn', 
+      location: '',
+      stage: 'Contacted',
+      warmth: 'Cold',
+      scheduleAction: true,
+      actionDate: defaultDate,
+      actionNote: 'Follow up on initial Irene intro message.'
+    });
     setDuplicateLead(null);
     setSearchResults([]);
     setShowDropdown(false);
@@ -177,31 +200,60 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
 
   const handleAddLead = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLead.full_name.trim()) return alert("Name is required");
+    if (!newLead.contact_number) return alert("Contact number is required");
     
     const finalSource = isCustomSource ? customSourceText.trim() : newLead.lead_source;
     if (isCustomSource && !finalSource) return alert("Please enter a custom lead source.");
 
+    // Auto-generate name if left blank (Pending Name - Last 4 digits)
+    let finalName = newLead.full_name.trim();
+    if (!finalName) {
+      const cleanNum = newLead.contact_number.replace(/\D/g, '');
+      const last4 = cleanNum.length >= 4 ? cleanNum.slice(-4) : Math.floor(1000 + Math.random() * 9000).toString();
+      finalName = `Pending Name - ${last4}`;
+    }
+
     setIsSubmitting(true);
     try {
-      const { data, error } = await supabase.from('growth_leads').insert([{
+      // 1. Insert the Lead
+      const { data: insertedLead, error: leadError } = await supabase.from('growth_leads').insert([{
         admin_id: adminId,
-        full_name: newLead.full_name,
+        full_name: finalName,
         contact_number: newLead.contact_number,
         email: newLead.email,
         lead_source: finalSource,
         location: newLead.location,
-        stage: 'Sourced',
-        warmth: 'Cold'
+        stage: newLead.stage,
+        warmth: newLead.warmth
       }]).select('id').single();
 
-      if (error) throw error;
+      if (leadError) throw leadError;
+
+      // 2. Inject Safety Net Action
+      if (newLead.scheduleAction && insertedLead) {
+        const { error: actionError } = await supabase
+          .from('growth_interactions')
+          .insert({
+            lead_id: insertedLead.id,
+            admin_id: adminId,
+            status: 'Planned',
+            contact_method: 'WhatsApp',
+            interaction_type: 'WhatsApp',
+            planned_date: newLead.actionDate,
+            notes: newLead.actionNote
+          });
+
+        if (actionError) {
+          // Properly logging stringified error to prevent {} silent failure
+          console.error("Failed to schedule action:", JSON.stringify(actionError, null, 2));
+        }
+      }
 
       setIsRedirecting(true);
       
       // Delay navigation slightly so the loading state is visible and DB settles
       setTimeout(() => {
-        router.push(`/admin/acquisition/${data.id}`);
+        router.push(`/admin/acquisition/${insertedLead.id}`);
         onSuccess();
         resetForm();
       }, 1200);
@@ -215,26 +267,26 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
           <motion.div 
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             exit={{ opacity: 0 }} 
             onClick={!isRedirecting ? handleClose : undefined} 
-            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" 
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" 
           />
           <motion.div 
             initial={{ scale: 0.95, opacity: 0, y: 20 }} 
             animate={{ scale: 1, opacity: 1, y: 0 }} 
             exit={{ scale: 0.95, opacity: 0, y: 20 }} 
-            className="relative w-full max-w-lg bg-white border border-slate-200 rounded-[32px] p-8 shadow-2xl overflow-visible"
+            className="relative w-full max-w-xl bg-white border border-slate-200 rounded-[32px] p-8 shadow-2xl my-8"
           >
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h2 className="text-2xl font-black italic uppercase tracking-tighter text-slate-900 flex items-center gap-2">
                   <ArrowDownToLine className="text-fuchsia-500" size={24}/> Inject Lead
                 </h2>
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">Search CRM or create new</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">Shoot First, Ask Later</p>
               </div>
               <button disabled={isRedirecting} onClick={handleClose} className="p-2 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-900 transition-colors border border-slate-200 disabled:opacity-50"><X size={16}/></button>
             </div>
@@ -271,67 +323,62 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
 
             <form onSubmit={handleAddLead} className="space-y-5">
               
-              {/* Auto-Complete Search Field */}
-              <div className="space-y-2 relative" ref={dropdownRef}>
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 flex items-center gap-1.5 justify-between">
-                  <span className="flex items-center gap-1.5"><User size={12}/> Full Name *</span>
-                  {isSearching && <Loader2 size={10} className="animate-spin text-fuchsia-500" />}
-                </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 flex items-center gap-1.5"><Phone size={12}/> Phone *</label>
+                  <input required type="tel" disabled={isRedirecting} value={newLead.contact_number} onChange={e => setNewLead({...newLead, contact_number: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-fuchsia-500 focus:ring-2 focus:ring-fuchsia-500/20 transition-all disabled:opacity-50" placeholder="+27..." />
+                </div>
                 
-                <div className="relative">
-                  <input 
-                    required 
-                    type="text" 
-                    disabled={isRedirecting}
-                    value={newLead.full_name} 
-                    onChange={e => setNewLead({...newLead, full_name: e.target.value})} 
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-fuchsia-500 focus:ring-2 focus:ring-fuchsia-500/20 transition-all disabled:opacity-50" 
-                    placeholder="Search prospect or type new name..." 
-                    autoComplete="off"
-                  />
-                  {newLead.full_name.length > 0 && <Search size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />}
-                </div>
+                {/* Auto-Complete Search Field */}
+                <div className="space-y-2 relative" ref={dropdownRef}>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 flex items-center gap-1.5 justify-between">
+                    <span className="flex items-center gap-1.5"><User size={12}/> Full Name <span className="text-slate-400 font-medium normal-case tracking-normal">(Optional)</span></span>
+                    {isSearching && <Loader2 size={10} className="animate-spin text-fuchsia-500" />}
+                  </label>
+                  
+                  <div className="relative">
+                    <input 
+                      type="text" 
+                      disabled={isRedirecting}
+                      value={newLead.full_name} 
+                      onChange={e => setNewLead({...newLead, full_name: e.target.value})} 
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-fuchsia-500 focus:ring-2 focus:ring-fuchsia-500/20 transition-all disabled:opacity-50" 
+                      placeholder="Leave blank to auto-generate" 
+                      autoComplete="off"
+                    />
+                    {newLead.full_name.length > 0 && <Search size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />}
+                  </div>
 
-                {/* Dropdown Results for importing CRM Prospects */}
-                <AnimatePresence>
-                  {showDropdown && searchResults.length > 0 && !isRedirecting && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: -5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -5 }}
-                      className="absolute z-50 top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden"
-                    >
-                      <div className="p-2 bg-slate-50 border-b border-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-400">
-                        Import Data from Prospects CRM
-                      </div>
-                      <div className="max-h-48 overflow-y-auto">
-                        {searchResults.map((prospect) => (
-                          <div 
-                            key={prospect.id} 
-                            onClick={() => handleSelectProspect(prospect)}
-                            className="p-3 hover:bg-fuchsia-50 cursor-pointer border-b border-slate-50 last:border-0 transition-colors group"
-                          >
-                            <p className="text-sm font-black text-slate-800 group-hover:text-fuchsia-600 transition-colors">{prospect.name}</p>
-                            <div className="flex gap-3 mt-1 text-[10px] font-bold text-slate-500">
-                              {prospect.email && <span>{prospect.email}</span>}
-                              {prospect.phone && <span>{prospect.phone}</span>}
+                  {/* Dropdown Results for importing CRM Prospects */}
+                  <AnimatePresence>
+                    {showDropdown && searchResults.length > 0 && !isRedirecting && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        className="absolute z-50 top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden"
+                      >
+                        <div className="p-2 bg-slate-50 border-b border-slate-100 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                          Import Data from Prospects CRM
+                        </div>
+                        <div className="max-h-48 overflow-y-auto">
+                          {searchResults.map((prospect) => (
+                            <div 
+                              key={prospect.id} 
+                              onClick={() => handleSelectProspect(prospect)}
+                              className="p-3 hover:bg-fuchsia-50 cursor-pointer border-b border-slate-50 last:border-0 transition-colors group"
+                            >
+                              <p className="text-sm font-black text-slate-800 group-hover:text-fuchsia-600 transition-colors">{prospect.name}</p>
+                              <div className="flex gap-3 mt-1 text-[10px] font-bold text-slate-500">
+                                {prospect.email && <span>{prospect.email}</span>}
+                                {prospect.phone && <span>{prospect.phone}</span>}
+                              </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 flex items-center gap-1.5"><Phone size={12}/> Phone</label>
-                  <input type="tel" disabled={isRedirecting} value={newLead.contact_number} onChange={e => setNewLead({...newLead, contact_number: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-fuchsia-500 focus:ring-2 focus:ring-fuchsia-500/20 transition-all disabled:opacity-50" placeholder="+27..." />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-1 flex items-center gap-1.5"><Mail size={12}/> Email</label>
-                  <input type="email" disabled={isRedirecting} value={newLead.email} onChange={e => setNewLead({...newLead, email: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-fuchsia-500 focus:ring-2 focus:ring-fuchsia-500/20 transition-all disabled:opacity-50" placeholder="john@example.com" />
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               </div>
 
@@ -370,6 +417,40 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
                 </div>
               </div>
 
+              {/* SAFETY NET: Schedule Next Action */}
+              <div className="border border-fuchsia-200 bg-fuchsia-50/50 rounded-2xl p-5 mt-6">
+                <label className="flex items-center gap-3 cursor-pointer mb-4 w-fit">
+                  <input 
+                    type="checkbox" 
+                    checked={newLead.scheduleAction} 
+                    onChange={e => setNewLead({...newLead, scheduleAction: e.target.checked})}
+                    className="w-4 h-4 rounded text-fuchsia-600 focus:ring-fuchsia-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-fuchsia-900 flex items-center gap-2">
+                    <CalendarClock size={14} /> Enable Safety Net
+                  </span>
+                </label>
+
+                <AnimatePresence>
+                  {newLead.scheduleAction && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                      <div className="space-y-4 pt-1">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-black uppercase tracking-widest text-fuchsia-700 ml-1">Follow-up Date</label>
+                            <input type="date" required={newLead.scheduleAction} value={newLead.actionDate} onChange={e => setNewLead({...newLead, actionDate: e.target.value})} className="w-full bg-white border border-fuchsia-200 rounded-xl px-4 py-3 text-sm text-slate-900 outline-none focus:border-fuchsia-500 transition-colors" />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-black uppercase tracking-widest text-fuchsia-700 ml-1 flex items-center gap-2"><MessageSquare size={12}/> Action Note</label>
+                            <input type="text" required={newLead.scheduleAction} value={newLead.actionNote} onChange={e => setNewLead({...newLead, actionNote: e.target.value})} className="w-full bg-white border border-fuchsia-200 rounded-xl px-4 py-3 text-sm text-slate-900 outline-none focus:border-fuchsia-500 transition-colors" placeholder="What needs to happen?" />
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               <div className="pt-4 flex gap-4">
                 <button type="button" disabled={isRedirecting} onClick={handleClose} className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-black uppercase text-[10px] tracking-widest transition-colors disabled:opacity-50">Cancel</button>
                 <button type="submit" disabled={isSubmitting || isRedirecting} className="flex-[2] py-4 bg-fuchsia-600 hover:bg-fuchsia-700 text-white rounded-xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-fuchsia-600/20 transition-all disabled:opacity-50">
@@ -378,7 +459,7 @@ export default function InjectLeadModal({ isOpen, onClose, onSuccess, adminId }:
                   ) : isSubmitting ? (
                     <><Loader2 size={16} className="animate-spin" /> Saving...</>
                   ) : (
-                    <><Save size={16}/> Save Lead</>
+                    <><Save size={16}/> Inject & Track Lead</>
                   )}
                 </button>
               </div>

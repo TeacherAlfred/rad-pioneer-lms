@@ -13,15 +13,20 @@ import { motion, AnimatePresence } from "framer-motion";
 const FUNNEL_STAGES = [
   "Lead",
   "Onboarding",
-  "Active (LMS Access)", // <-- NEW UNIFIED STAGE
+  "Active (Term)",
+  "Active (LMS Access)", 
   "Active (Bootcamp)",
   "Paused",
   "Churned"
 ];
 
+// Added Unassigned for the summary cards
+const ALL_STAGES_WITH_UNASSIGNED = [...FUNNEL_STAGES, "Unassigned"];
+
 const getFunnelBadgeStyle = (stage: string) => {
   switch(stage) {
-    // We added the new stage and kept the old 'Paid Client'/'Trial' as fallbacks so old records don't lose their color
+    case 'Active (Term)': 
+      return 'text-indigo-400 border-indigo-500/20 bg-indigo-500/10';
     case 'Active (LMS Access)': 
     case 'Active (Paid Client)': 
     case 'Trial Active': 
@@ -33,6 +38,32 @@ const getFunnelBadgeStyle = (stage: string) => {
     case 'Churned': return 'text-rose-400 border-rose-500/20 bg-rose-500/10';
     default: return 'text-slate-400 border-slate-500/20 bg-slate-500/10';
   }
+};
+
+const getCardStyle = (stage: string, isSelected: boolean) => {
+  const base = "p-4 rounded-2xl border transition-all flex flex-col gap-1 items-start text-left ";
+  if (!isSelected) return base + "bg-white/5 border-white/5 hover:border-white/20 hover:bg-white/10 opacity-60 hover:opacity-100 text-white";
+  
+  switch(stage) {
+    case 'Active (Term)': return base + "bg-indigo-500/10 border-indigo-500/50 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.15)] opacity-100";
+    case 'Active (LMS Access)': return base + "bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.15)] opacity-100";
+    case 'Active (Bootcamp)': return base + "bg-teal-500/10 border-teal-500/50 text-teal-400 shadow-[0_0_15px_rgba(20,184,166,0.15)] opacity-100";
+    case 'Onboarding': return base + "bg-blue-500/10 border-blue-500/50 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.15)] opacity-100";
+    case 'Lead': return base + "bg-purple-500/10 border-purple-500/50 text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.15)] opacity-100";
+    case 'Paused': return base + "bg-amber-500/10 border-amber-500/50 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.15)] opacity-100";
+    case 'Churned': return base + "bg-rose-500/10 border-rose-500/50 text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.15)] opacity-100";
+    default: return base + "bg-slate-500/20 border-slate-500/50 text-slate-300 opacity-100 shadow-[0_0_15px_rgba(100,116,139,0.15)]";
+  }
+};
+
+const getWhatsAppLink = (number: string | null | undefined) => {
+  if (!number) return null;
+  const cleaned = number.replace(/\D/g, ''); 
+  let formatted = cleaned;
+  if (formatted.startsWith('0')) {
+      formatted = '27' + formatted.substring(1);
+  }
+  return formatted.length >= 9 ? `https://wa.me/${formatted}` : null; 
 };
 
 const safeParse = (val: any) => {
@@ -69,6 +100,9 @@ export default function DirectoryPage() {
   const [roleFilter, setRoleFilter] = useState<"all" | "review">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
   
+  // NEW: Multi-select funnel state
+  const [selectedFunnelStages, setSelectedFunnelStages] = useState<string[]>([]);
+  
   const [selectedProfile, setSelectedProfile] = useState<any>(null);
   const [selectedProfileLeadGuardian, setSelectedProfileLeadGuardian] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -91,7 +125,7 @@ export default function DirectoryPage() {
 
   const [tick, setTick] = useState(0);
 
-  // NEW: Add Pioneer State
+  // Pioneer State
   const [isAddPioneerModalOpen, setIsAddPioneerModalOpen] = useState(false);
   const [newPioneerData, setNewPioneerData] = useState({ name: "", dob: "", grade: "" });
 
@@ -121,21 +155,21 @@ export default function DirectoryPage() {
           let existingCrew: any[] = [];
 
           if (isSupportCrew) {
-             leadGuardianData = profiles.find(p => p.id === linkedParentId);
-             setSelectedProfileLeadGuardian(leadGuardianData);
+              leadGuardianData = profiles.find(p => p.id === linkedParentId);
+              setSelectedProfileLeadGuardian(leadGuardianData);
           } else {
-             leadGuardianData = selectedProfile;
-             setSelectedProfileLeadGuardian(leadGuardianData);
-             existingCrew = profiles
-                .filter(p => p.role === 'guardian' && (p.linked_parent_id === selectedProfile.id || p.metadata?.household_lead_id === selectedProfile.id))
-                .map(p => ({
-                    id: p.id,
-                    name: p.display_name,
-                    email: p.metadata?.email || "",
-                    phone: p.phone || p.metadata?.phone || "",
-                    relationship: p.metadata?.relationship || "Co-Guardian",
-                    isPrimaryContact: p.metadata?.is_primary_contact ?? false
-                }));
+              leadGuardianData = selectedProfile;
+              setSelectedProfileLeadGuardian(leadGuardianData);
+              existingCrew = profiles
+                 .filter(p => p.role === 'guardian' && (p.linked_parent_id === selectedProfile.id || p.metadata?.household_lead_id === selectedProfile.id))
+                 .map(p => ({
+                     id: p.id,
+                     name: p.display_name,
+                     email: p.metadata?.email || "",
+                     phone: p.phone || p.metadata?.phone || "",
+                     relationship: p.metadata?.relationship || "Co-Guardian",
+                     isPrimaryContact: p.metadata?.is_primary_contact ?? false
+                 }));
           }
 
           const meta = { ...(selectedProfile.metadata || {}) };
@@ -157,7 +191,7 @@ export default function DirectoryPage() {
               phone: meta?.phone || "",
               relationship: meta?.relationship || "Guardian",
               is_primary_contact: meta?.is_primary_contact ?? true,
-              lesson_delivery_format: meta?.lesson_delivery_format || "", // NEW: Added Delivery Format
+              lesson_delivery_format: meta?.lesson_delivery_format || "", 
               admin_notes: meta?.admin_notes || "",
               username: meta?.username || "",
               date_of_birth: meta?.date_of_birth || "",
@@ -208,6 +242,30 @@ export default function DirectoryPage() {
       setLoading(false);
     }
   }
+
+  // --- COMPUTE COUNTS FOR CARDS ---
+  const funnelCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    ALL_STAGES_WITH_UNASSIGNED.forEach(stage => counts[stage] = 0);
+    
+    profiles.forEach(p => {
+      if (p.role === 'guardian') {
+        // If they have a stage, but it's an old deprecated one, force it to 'Unassigned'
+        const stage = (p.funnel_stage && FUNNEL_STAGES.includes(p.funnel_stage)) 
+          ? p.funnel_stage 
+          : 'Unassigned';
+          
+        counts[stage]++;
+      }
+    });
+    return counts;
+  }, [profiles]);
+
+  const toggleFunnelStage = (stage: string) => {
+    setSelectedFunnelStages(prev => 
+      prev.includes(stage) ? prev.filter(s => s !== stage) : [...prev, stage]
+    );
+  };
 
   const getHighlightLevel = (profile: any) => {
     const timestamps = [
@@ -263,7 +321,15 @@ export default function DirectoryPage() {
     const matchesSearch = p.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.metadata?.email?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesRole = roleFilter === "all" || (roleFilter === "review" && p.requires_review === true);
     const matchesStatus = statusFilter === "all" || p.status === statusFilter;
-    return matchesSearch && matchesRole && matchesStatus;
+    
+    // EXACT SAME LOGIC AS THE COUNTER:
+    const pStage = (p.funnel_stage && FUNNEL_STAGES.includes(p.funnel_stage)) 
+      ? p.funnel_stage 
+      : 'Unassigned';
+      
+    const matchesFunnel = selectedFunnelStages.length === 0 || selectedFunnelStages.includes(pStage);
+
+    return matchesSearch && matchesRole && matchesStatus && matchesFunnel;
   }).sort((a, b) => {
     const highlightA = getHighlightLevel(a);
     const highlightB = getHighlightLevel(b);
@@ -444,15 +510,14 @@ export default function DirectoryPage() {
     if (!newPioneerData.name.trim()) return alert("Pioneer name is required.");
     setIsProcessing(true);
     try {
-      // Inherit the tier from the primary guardian, safely fallback to 'none' just in case
       const parentTier = selectedProfileLeadGuardian?.account_tier || 'none';
 
       const payload = {
         role: 'student',
         display_name: newPioneerData.name,
-        linked_parent_id: householdLeadId, // Links directly to the active parent
+        linked_parent_id: householdLeadId, 
         status: 'active',
-        account_tier: parentTier, // <-- THE FIX: Explicitly set to match the parent
+        account_tier: parentTier, 
         metadata: {
           dob: newPioneerData.dob,
           grade: newPioneerData.grade
@@ -462,10 +527,10 @@ export default function DirectoryPage() {
       const { error } = await supabase.from('profiles').insert([payload]);
       if (error) throw error;
       
-      await fetchDirectory(); // Instantly refreshes the UI
+      await fetchDirectory(); 
       setIsAddPioneerModalOpen(false);
-      setNewPioneerData({ name: "", dob: "", grade: "" }); // Reset form
-      setShowSuccessModal(true); // Triggers your existing green success modal
+      setNewPioneerData({ name: "", dob: "", grade: "" }); 
+      setShowSuccessModal(true); 
     } catch (err: any) {
       console.error(err);
       alert("Failed to add pioneer: " + err.message);
@@ -483,12 +548,12 @@ export default function DirectoryPage() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans text-left relative overflow-hidden">
-      <div className="max-w-7xl mx-auto space-y-10 relative z-10">
+      <div className="max-w-[1600px] mx-auto space-y-10 relative z-10">
         
         <AnimatePresence mode="wait">
         {!selectedProfile ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} key="table" className="space-y-10">
-            <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
+            <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 pb-6">
               <div className="space-y-4">
                 <Link href="/admin/dashboard" className="group flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-2 rounded-xl transition-all w-fit hover:border-purple-500/50">
                   <ArrowLeft size={16} className="text-slate-500 group-hover:text-purple-400" />
@@ -496,15 +561,34 @@ export default function DirectoryPage() {
                 </Link>
                 <h1 className="text-5xl font-black tracking-tighter uppercase italic leading-none">Guardian_<span className="text-purple-500">Directory</span></h1>
               </div>
+              
               <div className="flex gap-3">
                 <div className="bg-purple-500/10 border border-purple-500/20 p-4 rounded-2xl text-center min-w-[120px]">
                   <p className="text-[9px] font-black text-purple-400 uppercase tracking-widest">Total Guardians</p>
-                  <p className="text-2xl font-black italic">{profiles.filter(p => p.role === 'guardian' && p.status === 'active').length}</p>
+                  <p className="text-2xl font-black italic">{profiles.filter(p => p.role === 'guardian').length}</p>
                 </div>
               </div>
             </header>
 
-            <div className="flex flex-col lg:flex-row justify-between items-center gap-6 bg-white/[0.02] p-4 rounded-3xl border border-white/5">
+            {/* --- SUMMARY CARDS (Click to filter) --- */}
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 border-b border-white/5 pb-10">
+              {ALL_STAGES_WITH_UNASSIGNED.map(stage => {
+                const isSelected = selectedFunnelStages.includes(stage);
+                const count = funnelCounts[stage] || 0;
+                return (
+                  <button 
+                    key={stage} 
+                    onClick={() => toggleFunnelStage(stage)}
+                    className={getCardStyle(stage, isSelected)}
+                  >
+                    <span className="text-[10px] font-black uppercase tracking-widest line-clamp-1 truncate w-full">{stage}</span>
+                    <span className="text-2xl font-black italic">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col lg:flex-row justify-between items-center gap-6 bg-white/[0.02] p-4 rounded-3xl border border-white/5 mt-4">
               <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10 overflow-x-auto no-scrollbar max-w-full shrink-0">
                 {(["all", "review"] as const).map(role => (
                   <button key={role} onClick={() => setRoleFilter(role)} className={`px-5 py-3 rounded-xl text-[10px] font-black uppercase transition-all whitespace-nowrap ${roleFilter === role ? "bg-purple-600 text-white shadow-lg" : "text-slate-500 hover:text-white"}`}>
@@ -558,7 +642,24 @@ export default function DirectoryPage() {
                         </td>
                         <td className="px-8 py-6 text-xs text-slate-300 space-y-1">
                           {p.metadata?.email && <p className="flex items-center gap-2"><Mail size={12} className="text-slate-500"/> {p.metadata.email}</p>}
-                          {p.metadata?.phone && <p className="flex items-center gap-2"><Phone size={12} className="text-slate-500"/> {p.metadata.phone}</p>}
+                          {p.metadata?.phone && (
+                            <div className="flex items-center gap-2 group/phone">
+                              <Phone size={12} className="text-slate-500"/> 
+                              <span>{p.metadata.phone}</span>
+                              {getWhatsAppLink(p.metadata.phone) && (
+                                <a 
+                                  href={getWhatsAppLink(p.metadata.phone)!} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="text-emerald-500 hover:text-emerald-400 hover:scale-110 transition-all p-1" 
+                                  title="Send WhatsApp"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <MessageCircle size={14} />
+                                </a>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td className="px-8 py-6 text-right flex items-center justify-end gap-2 h-full">
                           {highlight && (
@@ -634,7 +735,6 @@ export default function DirectoryPage() {
                 )}
 
                 <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-10 space-y-6">
-                  {/* --- UPDATED HEADER WITH BUTTON --- */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
                     <h3 className="text-xl font-black uppercase text-white flex items-center gap-3">
                        <GraduationCap size={20} className="text-blue-500"/> Linked Pioneers
@@ -646,7 +746,6 @@ export default function DirectoryPage() {
                       <Plus size={14} /> Add Pioneer
                     </button>
                   </div>
-                  {/* ---------------------------------- */}
                   
                   {myStudents.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -806,9 +905,13 @@ export default function DirectoryPage() {
                           className="bg-transparent text-slate-400 text-xs w-full outline-none font-medium" 
                         />
                         <button 
-                          onClick={() => { 
-                            navigator.clipboard.writeText(`${typeof window !== 'undefined' ? window.location.origin : ''}/welcome?t=${workspaceEditData.onboarding_token}`); 
-                            alert("Copied to clipboard!"); 
+                          onClick={async () => { 
+                            try {
+                              await navigator.clipboard.writeText(`${typeof window !== 'undefined' ? window.location.origin : ''}/welcome?t=${workspaceEditData.onboarding_token}`); 
+                              alert("Copied to clipboard!"); 
+                            } catch (err) {
+                              console.warn("Clipboard access denied. Please manually select and copy the text.", err);
+                            }
                           }} 
                           className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-slate-300 transition-all"
                           title="Copy Link"

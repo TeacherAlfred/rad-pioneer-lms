@@ -22,6 +22,7 @@ export default function PaymentCapturePage() {
   const [clientMode, setClientMode] = useState<'b2c' | 'b2b'>('b2c');
   const [guardians, setGuardians] = useState<any[]>([]);
   const [corporateClients, setCorporateClients] = useState<any[]>([]);
+  const [activeInvoiceMap, setActiveInvoiceMap] = useState<any[]>([]);
   
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGuardian, setSelectedGuardian] = useState<any | null>(null);
@@ -41,13 +42,16 @@ export default function PaymentCapturePage() {
 
   async function fetchClients() {
     try {
-      const [guardiansRes, corporateRes] = await Promise.all([
+      const [guardiansRes, corporateRes, invoiceRes] = await Promise.all([
         supabase.from('profiles').select('id, display_name, metadata').in('role', ['guardian', 'admin']).order('display_name', { ascending: true }),
-        supabase.from('corporate_clients').select('*').order('company_name', { ascending: true })
+        supabase.from('corporate_clients').select('*').order('company_name', { ascending: true }),
+        // Fetch lightweight map of outstanding invoices to enable local searching
+        supabase.from('billing_records').select('invoice_number, guardian_id, corporate_client_id').in('status', ['pending', 'overdue', 'partially_paid'])
       ]);
       
       if (guardiansRes.data) setGuardians(guardiansRes.data);
       if (corporateRes.data) setCorporateClients(corporateRes.data);
+      if (invoiceRes.data) setActiveInvoiceMap(invoiceRes.data); // <-- ADD THIS
     } catch (err) {
       console.error(err);
     } finally {
@@ -265,18 +269,25 @@ export default function PaymentCapturePage() {
     if (!searchQuery) return clientMode === 'b2c' ? guardians : corporateClients;
     const lower = searchQuery.toLowerCase();
     
+    // Find matching invoices by converting the integer to a string for partial matching
+    const matchingInvoices = activeInvoiceMap.filter(inv => String(inv.invoice_number).includes(lower));
+    const matchingB2CIds = new Set(matchingInvoices.map(i => i.guardian_id));
+    const matchingB2BIds = new Set(matchingInvoices.map(i => i.corporate_client_id));
+
     if (clientMode === 'b2c') {
       return guardians.filter(g => 
         g.display_name.toLowerCase().includes(lower) || 
-        (g.metadata?.email || "").toLowerCase().includes(lower)
+        (g.metadata?.email || "").toLowerCase().includes(lower) ||
+        matchingB2CIds.has(g.id) // Match if they own a searched invoice
       );
     } else {
       return corporateClients.filter(c => 
         c.company_name.toLowerCase().includes(lower) || 
-        c.contact_person.toLowerCase().includes(lower)
+        c.contact_person.toLowerCase().includes(lower) ||
+        matchingB2BIds.has(c.id) // Match if they own a searched invoice
       );
     }
-  }, [guardians, corporateClients, searchQuery, clientMode]);
+  }, [guardians, corporateClients, searchQuery, clientMode, activeInvoiceMap]);
 
   if (loading) {
     return (
@@ -339,7 +350,7 @@ export default function PaymentCapturePage() {
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors" size={16} />
                 <input 
                   type="text" 
-                  placeholder={`Search ${clientMode === 'b2c' ? 'parent' : 'company'}...`} 
+                  placeholder={`Search ${clientMode === 'b2c' ? 'parent' : 'company'} or INV#...`} // <-- UPDATED PLACEHOLDER
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-10 pr-4 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 transition-all placeholder:text-slate-400 shadow-inner"

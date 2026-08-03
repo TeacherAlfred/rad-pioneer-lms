@@ -7,24 +7,32 @@ import {
   Clock, AlertTriangle, CheckCircle2, ChevronRight, BarChart3, FileText, 
   Users, Activity, ArrowDownToLine, ArrowUpRight, DollarSign, LayoutDashboard,
   Loader2, Target, ChevronDown, ChevronUp, Save, Settings, MessageSquare,
-  X, FileMinus, Copy
+  X, FileMinus, Copy, Building2
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import confetti from "canvas-confetti";
+import YearlyFinancialChart from "@/components/finance/YearlyFinancialChart";
+import MacroEconomicsCards from "@/components/finance/MacroEconomicsCards";
+import CollectionSpeedIndex from "@/components/finance/CollectionSpeedIndex";
+import MonthlyStudentChart from "@/components/finance/MonthlyStudentChart";
 
 export default function FinanceLedgerPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'ledger' | 'cashflow'>('ledger');
+  const [studentChartData, setStudentChartData] = useState<any[]>([]);
   
-  // ADDED: Current User State to track the Admin making the changes
+  // 2. Add this new state variable with your others:
+  const [yearlyChartData, setYearlyChartData] = useState<any[]>([]);
+  
+  // Current User State to track the Admin making the changes
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   // Ledger Filters
   const [searchQuery, setSearchQuery] = useState("");
-  const [planFilter, setPlanFilter] = useState<'all' | 'term' | 'bootcamp'>('all');
+  const [planFilter, setPlanFilter] = useState<'all' | 'term' | 'bootcamp' | 'corporate'>('all');
   const [sortConfig, setSortConfig] = useState<'balance' | 'next_inv' | 'name'>('balance');
 
   // Expanded Row State
@@ -52,7 +60,6 @@ export default function FinanceLedgerPage() {
   async function fetchLedgerData() {
     setLoading(true);
     try {
-      // ADDED: Fetch the logged-in admin's profile
       const sessionData = localStorage.getItem("pioneer_session");
       if (sessionData) {
         const localUser = JSON.parse(sessionData);
@@ -60,17 +67,19 @@ export default function FinanceLedgerPage() {
         if (profile) setCurrentUser(profile);
       }
 
-      const [profilesRes, enrollmentsRes, billingRes, paymentsRes] = await Promise.all([
+      // Fetch corporate_clients and include corporate_client_id in payments
+      const [profilesRes, corpClientsRes, enrollmentsRes, billingRes, paymentsRes] = await Promise.all([
         supabase.from('profiles').select('id, display_name, role, linked_parent_id, metadata'),
+        supabase.from('corporate_clients').select('*'), 
         supabase.from('enrollments').select('student_id, courses(title)'),
-        // NOTE: Declined/Draft invoices are safely ignored here due to the .in() filter
         supabase.from('billing_records').select('*').eq('doc_type', 'invoice').in('status', ['paid', 'settled', 'pending', 'overdue', 'partially_paid', 'itn_received']).order('created_at', { ascending: false }),
-        supabase.from('payments').select('parent_id, amount').in('status', ['completed', 'successful', 'paid', 'settled'])
+        supabase.from('payments').select('parent_id, corporate_client_id, amount').in('status', ['completed', 'successful', 'paid', 'settled'])
       ]);
 
       if (profilesRes.error) throw profilesRes.error;
 
       const profiles = profilesRes.data || [];
+      const corpClients = corpClientsRes.data || [];
       const enrollments = enrollmentsRes.data || [];
       const invoices = billingRes.data || [];
       const payments = paymentsRes.data || [];
@@ -83,6 +92,48 @@ export default function FinanceLedgerPage() {
       const currentYear = now.getFullYear();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+      // -------------------------------------------------------------
+      // FETCH AND PARSE STUDENT ENROLLMENT DATA (Strict DB Read)
+      // -------------------------------------------------------------
+      const { data: trackerData } = await supabase
+        .from('monthly_student_tracker')
+        .select('*')
+        .gte('tracking_month', `${currentYear}-01-01`)
+        .lte('tracking_month', `${currentYear}-12-31`);
+
+      // Initialize Array
+      const studentDataArray = Array.from({ length: 12 }, (_, i) => ({
+        name: new Date(currentYear, i, 1).toLocaleString('default', { month: 'short' }),
+        trial_online: 0,
+        term_online: 0,
+        term_in_person: 0,
+        bootcamp_online: 0,
+        bootcamp_in_person: 0
+      }));
+
+      // Pure DB Read: If it's saved in the tracker and active, count it.
+      if (trackerData) {
+        trackerData.forEach(row => {
+          if (!row.is_active) return;
+          
+          // Safely parse the "YYYY-MM-DD" string directly
+          const parts = row.tracking_month.split('-');
+          if (parts.length >= 2) {
+            const monthIdx = parseInt(parts[1], 10) - 1; // 0-indexed for array mapping
+            
+            if (monthIdx >= 0 && monthIdx <= 11) {
+              if (row.program === 'Trial' && row.tier === 'Online') studentDataArray[monthIdx].trial_online++;
+              if (row.program === 'Term' && row.tier === 'Online') studentDataArray[monthIdx].term_online++;
+              if (row.program === 'Term' && row.tier === 'In Person') studentDataArray[monthIdx].term_in_person++;
+              if (row.program === 'Bootcamp' && row.tier === 'Online') studentDataArray[monthIdx].bootcamp_online++;
+              if (row.program === 'Bootcamp' && row.tier === 'In Person') studentDataArray[monthIdx].bootcamp_in_person++;
+            }
+          }
+        });
+      }
+      
+      setStudentChartData(studentDataArray);
       
       let totalExpected = 0;
       let totalInvoiced = 0;
@@ -93,101 +144,28 @@ export default function FinanceLedgerPage() {
       let onTimeCount = 0;
       let late1to7Count = 0;
       let late8plusCount = 0;
+      // ... existing code ...
       let uncollectedCount = 0;
       let totalAssessedInvoices = 0;
 
-      const processedClients = guardians.map(guardian => {
-        // Find linked kids
-        const myKids = students.filter(s => s.linked_parent_id === guardian.id);
-        
-        // Financials (Only valid invoices are in this array)
-        const myInvoices = invoices.filter(i => i.guardian_id === guardian.id);
-        
-        // Parse Guardian Metadata for Custom Billing Schedule
-        const gMeta = typeof guardian.metadata === 'string' ? JSON.parse(guardian.metadata) : (guardian.metadata || {});
-        const billingSchedule = gMeta.billing_schedule || {};
+      // --- NEW: Categorized Array for the Chart ---
+      const monthsData = Array.from({ length: 12 }, (_, i) => ({
+        name: new Date(currentYear, i, 1).toLocaleString('default', { month: 'short' }),
+        billed_term: 0,
+        billed_bootcamp: 0,
+        billed_hardware: 0,
+        paid_term: 0,
+        paid_bootcamp: 0,
+        paid_hardware: 0,
+        uncollected: 0,
+      }));
 
-        // CRITICAL FIX: If they are NOT configured AND have NO valid invoice records, exclude them entirely.
-        if (!billingSchedule.frequency && myInvoices.length === 0) {
-          return null;
-        }
-
-        // Determine Plan Type (If any kid is in a non-bootcamp course, they are 'Term')
-        let isTerm = false;
-        myKids.forEach(kid => {
-          const myEnrollments = enrollments.filter(e => e.student_id === kid.id);
-          myEnrollments.forEach(enr => {
-            const courses: any = enr.courses;
-            const courseTitle = Array.isArray(courses) ? courses[0]?.title : courses?.title;
-            if (courseTitle && !courseTitle.toLowerCase().includes('bootcamp')) {
-              isTerm = true;
-            }
-          });
-        });
-        
-        // If the profile explicitly states frequency, use it to override the inferred plan
-        const plan = billingSchedule.frequency === 'termly' ? 'Term (Upfront)' 
-                   : billingSchedule.frequency === 'monthly' ? 'Term (Monthly)' 
-                   : isTerm ? 'Term' : 'Bootcamp';
-
-        const lastInv = myInvoices.length > 0 ? myInvoices[0] : null;
-        const myPayments = payments.filter((p: any) => p.parent_id === guardian.id);
-        
-        // GLOBAL ACCOUNT BALANCE: Total Billed - Total Paid (Cash + Offsets)
-        const totalBilled = myInvoices.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
-        const totalPaid = myPayments.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
-        
-        let accBalance = totalBilled - totalPaid;
-
-        // --- NEW PROJECTION LOGIC (Profile Driven) ---
-        let nextInvDate = "Not Set";
-        let nextInvDateObj: Date | null = null;
-        let expectedTermRev = 0;
-        const lastAmount = lastInv ? Number(lastInv.total_amount) : 0;
-        const rawNextDateStr = billingSchedule.next_invoice_date || "";
-
-        // 1. Get the exact date from the Guardian Profile
-        if (billingSchedule.next_invoice_date) {
-          nextInvDateObj = new Date(billingSchedule.next_invoice_date);
-          nextInvDate = nextInvDateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
-        } else if (plan.includes('Term') && lastInv) {
-          // Fallback if they haven't been configured yet, but we know they are a recurring client
-          const fallbackDate = new Date(lastInv.created_at);
-          fallbackDate.setMonth(fallbackDate.getMonth() + 1);
-          nextInvDateObj = fallbackDate;
-          nextInvDate = fallbackDate.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) + " (Est)";
-        } else if (plan === 'Bootcamp') {
-          nextInvDate = "-";
-        }
-
-        // 2. Calculate Expected Monthly Revenue (Target)
-        if (plan.includes('Term')) {
-          // Check if they were ALREADY invoiced this month
-          const invoicedThisMonth = lastInv && new Date(lastInv.created_at) >= startOfMonth && new Date(lastInv.created_at) <= endOfMonth;
-          
-          if (invoicedThisMonth) {
-            // They were already billed this month, so this amount is part of our monthly target baseline
-            totalExpected += lastAmount;
-          } else if (nextInvDateObj && nextInvDateObj >= startOfMonth && nextInvDateObj <= endOfMonth) {
-             // They haven't been billed yet, but their custom schedule says they will be billed this month
-             totalExpected += lastAmount; 
-          }
-          
-          // Approx remaining term projection
-          expectedTermRev = lastAmount * (billingSchedule.frequency === 'termly' ? 1 : 3); 
-        } else {
-          // Bootcamp logic (One-off)
-          expectedTermRev = lastAmount; 
-          // For one-offs, we only "expect" them in the month they actually occur
-          if (lastInv && new Date(lastInv.created_at) >= startOfMonth && new Date(lastInv.created_at) <= endOfMonth) {
-            totalExpected += lastAmount; 
-          }
-        }
-
-        // Add to Cashflow Macrostats (Month Specific)
+      // --- HELPER FUNCTION: Process Invoices for Macro Cashflow ---
+      const accumulateCashflowStats = (myInvoices: any[]) => {
         myInvoices.forEach(inv => {
           const invDate = new Date(inv.created_at);
           const amt = Number(inv.total_amount) || 0;
+          const paidAmt = Number(inv.amount_paid) || 0;
           
           if (invDate >= startOfMonth && invDate <= endOfMonth) {
             totalInvoiced += amt;
@@ -195,7 +173,52 @@ export default function FinanceLedgerPage() {
             else totalOutstanding += amt;
           }
 
-          // Collection Speed Logic (Lifetime)
+          // --- CHART LOGIC: Parse Line Items & Check Payment Speed ---
+          if (invDate.getFullYear() === currentYear) {
+            const monthIdx = invDate.getMonth();
+            
+            let isPaidOnTime = false;
+            if (inv.status === 'paid' || inv.status === 'settled') {
+              const paidDate = new Date(inv.paid_at || inv.updated_at);
+              const dueDate = inv.expires_at ? new Date(inv.expires_at) : new Date(invDate.getTime() + 24 * 60 * 60 * 1000);
+              
+              paidDate.setHours(0,0,0,0);
+              dueDate.setHours(23,59,59,999);
+
+              if (paidDate <= dueDate) isPaidOnTime = true;
+            } else {
+              monthsData[monthIdx].uncollected += (amt - paidAmt);
+            }
+
+            let items = [];
+            try {
+              items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : (inv.line_items || []);
+            } catch (e) {}
+
+            if (items.length === 0) {
+              monthsData[monthIdx].billed_term += amt;
+              if (isPaidOnTime) monthsData[monthIdx].paid_term += amt;
+            } else {
+              items.forEach((item: any) => {
+                const itemValue = (Number(item.price) * Number(item.qty)) * (1 - (Number(item.disc) || 0) / 100);
+                const desc = (item.desc || '').toLowerCase();
+                
+                // TYPE-SAFE CATEGORIZATION
+                if (desc.includes('bootcamp') || desc.includes('holiday')) {
+                  monthsData[monthIdx].billed_bootcamp += itemValue;
+                  if (isPaidOnTime) monthsData[monthIdx].paid_bootcamp += itemValue;
+                } else if (desc.includes('kit') || desc.includes('micro:bit') || desc.includes('sensor') || desc.includes('hardware') || desc.includes('robotics')) {
+                  monthsData[monthIdx].billed_hardware += itemValue;
+                  if (isPaidOnTime) monthsData[monthIdx].paid_hardware += itemValue;
+                } else {
+                  monthsData[monthIdx].billed_term += itemValue;
+                  if (isPaidOnTime) monthsData[monthIdx].paid_term += itemValue;
+                }
+              });
+            }
+          }
+
+          // --- EXISTING: Global Speed Index Logic ---
           if (amt > 0) {
             totalAssessedInvoices++;
             if (inv.status === 'paid' || inv.status === 'settled') {
@@ -211,8 +234,74 @@ export default function FinanceLedgerPage() {
             }
           }
         });
+      };
 
-        // 3. Compile Current Year History for the Dropdown
+      // --- 1. PROCESS GUARDIANS ---
+      const processedGuardians = guardians.map(guardian => {
+        const myKids = students.filter(s => s.linked_parent_id === guardian.id);
+        const myInvoices = invoices.filter(i => i.guardian_id === guardian.id);
+        
+        const gMeta = typeof guardian.metadata === 'string' ? JSON.parse(guardian.metadata) : (guardian.metadata || {});
+        const billingSchedule = gMeta.billing_schedule || {};
+
+        if (!billingSchedule.frequency && myInvoices.length === 0) return null;
+
+        let isTerm = false;
+        myKids.forEach(kid => {
+          const myEnrollments = enrollments.filter(e => e.student_id === kid.id);
+          myEnrollments.forEach(enr => {
+            const courses: any = enr.courses;
+            const courseTitle = Array.isArray(courses) ? courses[0]?.title : courses?.title;
+            if (courseTitle && !courseTitle.toLowerCase().includes('bootcamp')) {
+              isTerm = true;
+            }
+          });
+        });
+        
+        const plan = billingSchedule.frequency === 'termly' ? 'Term (Upfront)' 
+                   : billingSchedule.frequency === 'monthly' ? 'Term (Monthly)' 
+                   : isTerm ? 'Term' : 'Bootcamp';
+
+        const lastInv = myInvoices.length > 0 ? myInvoices[0] : null;
+        const myPayments = payments.filter((p: any) => p.parent_id === guardian.id);
+        
+        const totalBilled = myInvoices.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+        const totalPaid = myPayments.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
+        let accBalance = totalBilled - totalPaid;
+
+        let nextInvDate = "Not Set";
+        let nextInvDateObj: Date | null = null;
+        let expectedTermRev = 0;
+        const lastAmount = lastInv ? Number(lastInv.total_amount) : 0;
+        const rawNextDateStr = billingSchedule.next_invoice_date || "";
+
+        if (billingSchedule.next_invoice_date) {
+          nextInvDateObj = new Date(billingSchedule.next_invoice_date);
+          nextInvDate = nextInvDateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+        } else if (plan.includes('Term') && lastInv) {
+          const fallbackDate = new Date(lastInv.created_at);
+          fallbackDate.setMonth(fallbackDate.getMonth() + 1);
+          nextInvDateObj = fallbackDate;
+          nextInvDate = fallbackDate.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) + " (Est)";
+        } else if (plan === 'Bootcamp') {
+          nextInvDate = "-";
+        }
+
+        if (plan.includes('Term')) {
+          const invoicedThisMonth = lastInv && new Date(lastInv.created_at) >= startOfMonth && new Date(lastInv.created_at) <= endOfMonth;
+          if (invoicedThisMonth) totalExpected += lastAmount;
+          else if (nextInvDateObj && nextInvDateObj >= startOfMonth && nextInvDateObj <= endOfMonth) totalExpected += lastAmount; 
+          
+          expectedTermRev = lastAmount * (billingSchedule.frequency === 'termly' ? 1 : 3); 
+        } else {
+          expectedTermRev = lastAmount; 
+          if (lastInv && new Date(lastInv.created_at) >= startOfMonth && new Date(lastInv.created_at) <= endOfMonth) {
+            totalExpected += lastAmount; 
+          }
+        }
+
+        accumulateCashflowStats(myInvoices);
+
         const currentYearHistory = myInvoices
           .filter(inv => new Date(inv.created_at).getFullYear() === currentYear)
           .map(inv => ({
@@ -230,7 +319,7 @@ export default function FinanceLedgerPage() {
         return {
           id: guardian.id,
           name: guardian.display_name,
-          phone: gMeta.phone || "", // Extracted for WhatsApp
+          phone: gMeta.phone || "", 
           kids: myKids.length,
           plan,
           billingFrequency: billingSchedule.frequency || "monthly",
@@ -244,13 +333,97 @@ export default function FinanceLedgerPage() {
             status: lastInv.status
           } : null,
           nextInvDate,
-          nextInvDateObj, // Used for sorting
+          nextInvDateObj, 
           nextInvAmount: lastAmount,
-          expectedTermRev
+          expectedTermRev,
+          type: 'household'
         };
       }).filter(Boolean); 
 
-      setClients(processedClients);
+      // --- 2. PROCESS CORPORATE CLIENTS ---
+      const processedCorporate = corpClients.map(corp => {
+        const myInvoices = invoices.filter(i => i.corporate_client_id === corp.id);
+        
+        const cMeta = typeof corp.metadata === 'string' ? JSON.parse(corp.metadata) : (corp.metadata || {});
+        const billingSchedule = cMeta.billing_schedule || {};
+
+        if (!billingSchedule.frequency && myInvoices.length === 0) return null;
+
+        const plan = 'Corporate';
+        const lastInv = myInvoices.length > 0 ? myInvoices[0] : null;
+        const myPayments = payments.filter((p: any) => p.corporate_client_id === corp.id);
+        
+        const totalBilled = myInvoices.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+        const totalPaid = myPayments.reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0);
+        let accBalance = totalBilled - totalPaid;
+
+        let nextInvDate = "Not Set";
+        let nextInvDateObj: Date | null = null;
+        let expectedTermRev = 0;
+        const lastAmount = lastInv ? Number(lastInv.total_amount) : 0;
+        const rawNextDateStr = billingSchedule.next_invoice_date || "";
+
+        if (billingSchedule.next_invoice_date) {
+          nextInvDateObj = new Date(billingSchedule.next_invoice_date);
+          nextInvDate = nextInvDateObj.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+        } else if (lastInv) {
+          const fallbackDate = new Date(lastInv.created_at);
+          fallbackDate.setMonth(fallbackDate.getMonth() + 1);
+          nextInvDateObj = fallbackDate;
+          nextInvDate = fallbackDate.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) + " (Est)";
+        }
+
+        const invoicedThisMonth = lastInv && new Date(lastInv.created_at) >= startOfMonth && new Date(lastInv.created_at) <= endOfMonth;
+        if (invoicedThisMonth) totalExpected += lastAmount;
+        else if (nextInvDateObj && nextInvDateObj >= startOfMonth && nextInvDateObj <= endOfMonth) totalExpected += lastAmount; 
+        
+        expectedTermRev = lastAmount * (billingSchedule.frequency === 'termly' ? 1 : 3); 
+
+        accumulateCashflowStats(myInvoices);
+
+        const currentYearHistory = myInvoices
+          .filter(inv => new Date(inv.created_at).getFullYear() === currentYear)
+          .map(inv => ({
+            id: inv.id,
+            ref: `INV-${inv.invoice_number}`,
+            amount: Number(inv.total_amount),
+            paid: Number(inv.amount_paid || 0),
+            status: inv.status,
+            date: new Date(inv.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }),
+            dueDate: inv.expires_at ? new Date(inv.expires_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-',
+            paidDate: (inv.status === 'paid' || inv.status === 'settled' || inv.status === 'itn_received') && (inv.paid_at || inv.updated_at) ? new Date(inv.paid_at || inv.updated_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '-',
+            raw_record: inv
+          }));
+
+        return {
+          id: corp.id,
+          // UPDATED: Using company_name precisely
+          name: corp.company_name || 'Unnamed Corp',
+          phone: cMeta.phone || "", 
+          kids: 0,
+          plan,
+          billingFrequency: billingSchedule.frequency || "monthly",
+          rawNextDateStr,
+          balance: accBalance,
+          history: currentYearHistory,
+          lastStatementSent: cMeta.last_statement_sent || null,
+          lastInv: lastInv ? {
+            date: new Date(lastInv.created_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }),
+            amount: lastAmount,
+            status: lastInv.status
+          } : null,
+          nextInvDate,
+          nextInvDateObj, 
+          nextInvAmount: lastAmount,
+          expectedTermRev,
+          type: 'corporate'
+        };
+      }).filter(Boolean);
+
+      // Merge Both Client Types
+      setClients([...processedGuardians, ...processedCorporate]);
+
+      setYearlyChartData(monthsData);
 
       setCashflow({
         expected: totalExpected,
@@ -272,7 +445,7 @@ export default function FinanceLedgerPage() {
     }
   }
 
-  const handleUpdateBillingConfig = async (clientId: string) => {
+  const handleUpdateBillingConfig = async (clientId: string, type: 'household' | 'corporate') => {
     if (!editNextDate) {
       alert("Please select a valid Next Invoice Date.");
       return;
@@ -280,7 +453,8 @@ export default function FinanceLedgerPage() {
 
     setSavingConfigId(clientId);
     try {
-      const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', clientId).single();
+      const table = type === 'corporate' ? 'corporate_clients' : 'profiles';
+      const { data: profile } = await supabase.from(table).select('metadata').eq('id', clientId).single();
       if (!profile) throw new Error("Profile not found");
 
       const currentMeta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
@@ -292,12 +466,11 @@ export default function FinanceLedgerPage() {
         }
       };
 
-      const { error } = await supabase.from('profiles').update({ metadata: newMeta }).eq('id', clientId);
+      const { error } = await supabase.from(table).update({ metadata: newMeta }).eq('id', clientId);
       if (error) throw error;
 
       confetti({ particleCount: 50, spread: 60, origin: { y: 0.8 }, colors: ['#3b82f6', '#60a5fa'] });
       
-      // Refresh local data to show new dates
       await fetchLedgerData();
       
     } catch (err: any) {
@@ -325,6 +498,7 @@ export default function FinanceLedgerPage() {
     if (planFilter !== 'all') {
       if (planFilter === 'term') result = result.filter(c => c.plan.includes('Term'));
       if (planFilter === 'bootcamp') result = result.filter(c => c.plan === 'Bootcamp');
+      if (planFilter === 'corporate') result = result.filter(c => c.plan === 'Corporate');
     }
 
     // Search
@@ -410,7 +584,7 @@ export default function FinanceLedgerPage() {
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-600 transition-colors" size={18} />
                   <input 
                     type="text" 
-                    placeholder="Search by parent name..." 
+                    placeholder="Search by parent or company name..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full bg-white border border-slate-200 rounded-2xl py-3.5 pl-12 pr-4 text-sm font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all placeholder:text-slate-400 shadow-sm"
@@ -426,6 +600,7 @@ export default function FinanceLedgerPage() {
                     <option value="all">All Plans</option>
                     <option value="term">Term Clients Only</option>
                     <option value="bootcamp">Bootcamps Only</option>
+                    <option value="corporate">Corporate Clients Only</option>
                   </select>
                   <select 
                     value={sortConfig} 
@@ -445,7 +620,7 @@ export default function FinanceLedgerPage() {
                   <table className="w-full text-left whitespace-nowrap">
                     <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-500 border-b border-slate-200">
                       <tr>
-                        <th className="px-8 py-5">Household Profile</th>
+                        <th className="px-8 py-5">Account Profile</th>
                         <th className="px-6 py-5">Plan Type</th>
                         <th className="px-6 py-5">Current Balance</th>
                         <th className="px-6 py-5">Last Invoice</th>
@@ -468,19 +643,22 @@ export default function FinanceLedgerPage() {
                                   <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm border shrink-0 transition-transform ${
                                     expandedClientId === client.id ? 'bg-blue-600 text-white border-blue-700 shadow-lg scale-110' : 'bg-blue-50 text-blue-600 border-blue-100 group-hover:scale-110'
                                   }`}>
-                                    {client.name.charAt(0).toUpperCase()}
+                                    {client.type === 'corporate' ? <Building2 size={16} /> : client.name.charAt(0).toUpperCase()}
                                   </div>
                                   <div>
                                     <p className="font-black text-slate-900 text-sm group-hover:text-blue-600 transition-colors flex items-center gap-2">
                                       {client.name} 
                                       {expandedClientId === client.id ? <ChevronUp size={14} className="text-blue-500" /> : <ChevronDown size={14} className="text-slate-400 opacity-50 group-hover:opacity-100 transition-opacity" />}
                                     </p>
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{client.kids} Active {client.kids === 1 ? 'Pioneer' : 'Pioneers'}</p>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                                      {client.type === 'corporate' ? 'B2B Client' : `${client.kids} Active ${client.kids === 1 ? 'Pioneer' : 'Pioneers'}`}
+                                    </p>
                                   </div>
                                 </div>
                               </td>
                               <td className="px-6 py-6">
                                 <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${
+                                  client.plan === 'Corporate' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
                                   client.plan.includes('Term') ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-slate-100 text-slate-600 border-slate-200'
                                 }`}>
                                   {client.plan}
@@ -505,7 +683,7 @@ export default function FinanceLedgerPage() {
                                 )}
                               </td>
                               <td className="px-6 py-6">
-                                {client.plan.includes('Term') ? (
+                                {client.plan.includes('Term') || client.plan === 'Corporate' ? (
                                   <div>
                                     <p className={`text-[10px] font-black mt-1 uppercase tracking-widest flex items-center gap-1 ${client.nextInvDate === 'Not Set' ? 'text-amber-500 bg-amber-50 px-2 py-1 rounded w-fit border border-amber-200' : 'text-blue-500'}`}>
                                       <Clock size={10}/> {client.nextInvDate === 'Not Set' ? 'Config Required' : `Due: ${client.nextInvDate}`}
@@ -568,7 +746,7 @@ export default function FinanceLedgerPage() {
                                               />
                                             </div>
                                             <button 
-                                              onClick={() => handleUpdateBillingConfig(client.id)}
+                                              onClick={() => handleUpdateBillingConfig(client.id, client.type)}
                                               disabled={savingConfigId === client.id}
                                               className="w-full bg-blue-600 text-white rounded-xl py-3 text-[10px] font-black uppercase tracking-widest hover:bg-blue-500 flex items-center justify-center gap-2 transition-all disabled:opacity-50 mt-2 shadow-md shadow-blue-600/20"
                                             >
@@ -583,7 +761,7 @@ export default function FinanceLedgerPage() {
                                             <span className="flex items-center gap-2"><Receipt size={14} className="text-emerald-500" /> Account History</span>
                                             <div className="flex items-center gap-3">
                                               
-                                              {/* UPDATED: WHATSAPP STATEMENT NOTIFICATION BUTTON */}
+                                              {/* WHATSAPP STATEMENT NOTIFICATION BUTTON */}
                                               <button 
                                                 onClick={async (e) => {
                                                   e.stopPropagation();
@@ -606,7 +784,8 @@ export default function FinanceLedgerPage() {
 
                                                   // 2. Log the action to the DB and update the UI
                                                   try {
-                                                    const { data: profile } = await supabase.from('profiles').select('metadata').eq('id', client.id).single();
+                                                    const table = client.type === 'corporate' ? 'corporate_clients' : 'profiles';
+                                                    const { data: profile } = await supabase.from(table).select('metadata').eq('id', client.id).single();
                                                     if (profile) {
                                                       const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
                                                       meta.last_statement_sent = {
@@ -614,7 +793,7 @@ export default function FinanceLedgerPage() {
                                                         amount: amountStr,
                                                         admin: currentUser?.display_name?.split(' ')[0] || 'Admin'
                                                       };
-                                                      await supabase.from('profiles').update({ metadata: meta }).eq('id', client.id);
+                                                      await supabase.from(table).update({ metadata: meta }).eq('id', client.id);
 
                                                       // Update local state directly so the footer appears instantly without refetching
                                                       setClients(prev => prev.map(c => c.id === client.id ? { ...c, lastStatementSent: meta.last_statement_sent } : c));
@@ -678,7 +857,7 @@ export default function FinanceLedgerPage() {
                                             )}
                                           </div>
 
-                                          {/* NEW: STATEMENT AUDIT LOG FOOTER */}
+                                          {/* STATEMENT AUDIT LOG FOOTER */}
                                           {client.lastStatementSent && (
                                             <div className="mt-auto pt-4 border-t border-slate-100 flex items-center justify-between bg-slate-50 p-3 rounded-xl">
                                               <p className="text-[10px] font-bold text-slate-500 flex items-center gap-1.5">
@@ -705,108 +884,27 @@ export default function FinanceLedgerPage() {
             </motion.div>
 
           ) : (
-
             <motion.div key="cashflow" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
               
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-black uppercase italic tracking-widest text-slate-900 flex items-center gap-2">
-                  <Activity className="text-blue-600"/> Monthly Macro-Economics
-                </h2>
-                <span className="bg-white border border-slate-200 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 shadow-sm">
-                  {new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}
-                </span>
-              </div>
+              <MacroEconomicsCards 
+                cashflow={cashflow} 
+                currentMonth={new Date().toLocaleString('default', { month: 'long', year: 'numeric' })} 
+              />
+              
+              <CollectionSpeedIndex 
+                speed={cashflow.speed} 
+              />
 
-              {/* 4 HERO CARDS */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                
-                <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm hover:shadow-lg transition-shadow relative overflow-hidden group">
-                  <div className="absolute -right-4 -top-4 p-8 bg-blue-50 rounded-full group-hover:scale-150 transition-transform duration-500"/>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 mb-2 relative z-10 flex items-center gap-2"><Target size={14}/> Expected Rev</p>
-                  <p className="text-4xl font-black tracking-tighter text-slate-900 relative z-10">R {cashflow.expected.toLocaleString()}</p>
-                  <p className="text-xs font-bold text-slate-400 mt-2 relative z-10">Target for current month</p>
-                </div>
+              <YearlyFinancialChart 
+                data={yearlyChartData} 
+              />
 
-                <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm hover:shadow-lg transition-shadow relative overflow-hidden group">
-                  <div className="absolute -right-4 -top-4 p-8 bg-purple-50 rounded-full group-hover:scale-150 transition-transform duration-500"/>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-purple-600 mb-2 relative z-10 flex items-center gap-2"><Receipt size={14}/> Actually Invoiced</p>
-                  <p className="text-4xl font-black tracking-tighter text-slate-900 relative z-10">R {cashflow.invoiced.toLocaleString()}</p>
-                  <p className="text-xs font-bold text-slate-400 mt-2 relative z-10">Billed to clients</p>
-                </div>
-
-                <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm hover:shadow-lg transition-shadow relative overflow-hidden group">
-                  <div className="absolute -right-4 -top-4 p-8 bg-emerald-50 rounded-full group-hover:scale-150 transition-transform duration-500"/>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 mb-2 relative z-10 flex items-center gap-2"><Wallet size={14}/> Collected (Cash)</p>
-                  <p className="text-4xl font-black tracking-tighter text-slate-900 relative z-10">R {cashflow.collected.toLocaleString()}</p>
-                  <p className="text-xs font-bold text-slate-400 mt-2 relative z-10">Secured in bank</p>
-                </div>
-
-                <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm hover:shadow-lg transition-shadow relative overflow-hidden group">
-                  <div className="absolute -right-4 -top-4 p-8 bg-rose-50 rounded-full group-hover:scale-150 transition-transform duration-500"/>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-rose-600 mb-2 relative z-10 flex items-center gap-2"><AlertTriangle size={14}/> Outstanding</p>
-                  <p className="text-4xl font-black tracking-tighter text-slate-900 relative z-10">R {cashflow.outstanding.toLocaleString()}</p>
-                  <p className="text-xs font-bold text-slate-400 mt-2 relative z-10">Awaiting payment</p>
-                </div>
-
-              </div>
-
-              {/* COLLECTION SPEED BAR */}
-              <div className="bg-white border border-slate-200 rounded-[40px] p-10 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] mt-8">
-                 <h3 className="text-sm font-black uppercase tracking-widest text-slate-900 mb-8 border-b border-slate-100 pb-4 flex items-center gap-2">
-                   <TrendingUp size={16} className="text-blue-600"/> Collection Speed Index
-                 </h3>
-                 
-                 {/* Stacked Progress Bar */}
-                 <div className="w-full h-8 rounded-full overflow-hidden flex border border-slate-200 shadow-inner bg-slate-100">
-                    <motion.div initial={{ width: 0 }} animate={{ width: `${cashflow.speed.onTime}%` }} transition={{ duration: 1 }} className="h-full bg-emerald-500 relative group flex items-center justify-center">
-                       {cashflow.speed.onTime > 10 && <span className="text-[10px] font-black text-white">{cashflow.speed.onTime}%</span>}
-                    </motion.div>
-                    <motion.div initial={{ width: 0 }} animate={{ width: `${cashflow.speed.late1to7}%` }} transition={{ duration: 1, delay: 0.2 }} className="h-full bg-amber-400 relative group flex items-center justify-center">
-                       {cashflow.speed.late1to7 > 10 && <span className="text-[10px] font-black text-white">{cashflow.speed.late1to7}%</span>}
-                    </motion.div>
-                    <motion.div initial={{ width: 0 }} animate={{ width: `${cashflow.speed.late8plus}%` }} transition={{ duration: 1, delay: 0.4 }} className="h-full bg-orange-500 relative group flex items-center justify-center">
-                       {cashflow.speed.late8plus > 10 && <span className="text-[10px] font-black text-white">{cashflow.speed.late8plus}%</span>}
-                    </motion.div>
-                    <motion.div initial={{ width: 0 }} animate={{ width: `${cashflow.speed.uncollected}%` }} transition={{ duration: 1, delay: 0.6 }} className="h-full bg-rose-500 relative group flex items-center justify-center">
-                       {cashflow.speed.uncollected > 10 && <span className="text-[10px] font-black text-white">{cashflow.speed.uncollected}%</span>}
-                    </motion.div>
-                 </div>
-
-                 {/* Legend */}
-                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
-                   <div className="flex items-center gap-3">
-                     <div className="w-3 h-3 rounded-full bg-emerald-500 shrink-0"/>
-                     <div>
-                       <p className="text-xs font-bold text-slate-900">On Time</p>
-                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">0-1 Days</p>
-                     </div>
-                   </div>
-                   <div className="flex items-center gap-3">
-                     <div className="w-3 h-3 rounded-full bg-amber-400 shrink-0"/>
-                     <div>
-                       <p className="text-xs font-bold text-slate-900">Slightly Late</p>
-                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">2-7 Days</p>
-                     </div>
-                   </div>
-                   <div className="flex items-center gap-3">
-                     <div className="w-3 h-3 rounded-full bg-orange-500 shrink-0"/>
-                     <div>
-                       <p className="text-xs font-bold text-slate-900">Very Late</p>
-                       <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">8+ Days</p>
-                     </div>
-                   </div>
-                   <div className="flex items-center gap-3">
-                     <div className="w-3 h-3 rounded-full bg-rose-500 shrink-0 shadow-[0_0_10px_rgba(244,63,94,0.5)]"/>
-                     <div>
-                       <p className="text-xs font-bold text-rose-600">Uncollected</p>
-                       <p className="text-[9px] font-black uppercase tracking-widest text-rose-400">At Risk</p>
-                     </div>
-                   </div>
-                 </div>
-              </div>
+              {/* NEW ENROLLMENT GRAPH */}
+              <MonthlyStudentChart 
+                data={studentChartData} 
+              />
 
             </motion.div>
-
           )}
         </AnimatePresence>
 
@@ -837,7 +935,7 @@ export default function FinanceLedgerPage() {
 function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: any, onClose: () => void, onSuccess: () => void, router: any }) {
   const [view, setView] = useState<'summary' | 'credit'>('summary');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [creditReason, setCreditReason] = useState(""); // <-- ADDED REASON STATE
+  const [creditReason, setCreditReason] = useState("");
   
   // Safely parse line items
   const parsedItems = useMemo(() => {
@@ -859,9 +957,9 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
   }, 0);
 
   const handleDuplicate = () => {
-    // Save to local storage so the Composer page can pick it up
     localStorage.setItem('rad_invoice_template', JSON.stringify({
       guardian_id: invoice.guardian_id,
+      corporate_client_id: invoice.corporate_client_id, // ensure it copies corp ID if applicable
       line_items: parsedItems,
       global_note: invoice.metadata?.global_note || ""
     }));
@@ -878,7 +976,6 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
       const issueDate = new Date().toISOString();
       const creditRef = `CN-${Date.now().toString().slice(-6)}`;
       
-      // Filter out items that have 0 credit quantity, AND append the reason
       const activeCreditItems = creditItems.filter(i => i.credit_qty > 0).map(i => ({
         desc: `Credit: ${i.desc} - ${creditReason}`, 
         price: i.price,
@@ -889,6 +986,7 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
       // 1. Log Credit Note (The Paper Trail)
       const { error: docError } = await supabase.from('billing_records').insert([{
         guardian_id: invoice.guardian_id,
+        corporate_client_id: invoice.corporate_client_id, // Added corp routing
         total_amount: totalCreditValue,
         status: 'settled',
         doc_type: 'credit_note',
@@ -901,7 +999,8 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
 
       // 2. Log Offset Payment (The Ledger Balancer)
       const { error: paymentError } = await supabase.from('payments').insert([{
-        parent_id: invoice.guardian_id,
+        parent_id: invoice.guardian_id, // keep for schema backwards-compatibility
+        corporate_client_id: invoice.corporate_client_id,
         amount: totalCreditValue,
         status: 'completed',
         description: `Applied Credit against INV-${invoice.invoice_number}. Reason: ${creditReason}`, 
@@ -917,12 +1016,11 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
       const newPaidAmount = currentPaid + totalCreditValue;
       const invTotal = Number(invoice.total_amount) || 0;
       
-      // Determine new status based on whether the credit cleared the whole invoice
       let newStatus = invoice.status;
       if (newPaidAmount >= invTotal) {
-        newStatus = 'settled'; // Fully credited/paid
+        newStatus = 'settled'; 
       } else if (newPaidAmount > 0) {
-        newStatus = 'partially_paid'; // Only partially credited
+        newStatus = 'partially_paid'; 
       }
 
       const { error: updateError } = await supabase
@@ -940,6 +1038,62 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
       alert("Failed to issue credit: " + err.message);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const [isWhatsApping, setIsWhatsApping] = useState(false);
+
+  const handleWhatsAppDocument = async () => {
+    setIsWhatsApping(true);
+    try {
+      let phone = "";
+      let name = "Client";
+      
+      // 1. Safe fetch using select('*') exactly like the StatementView does
+      if (invoice.corporate_client_id) {
+        const { data: corp, error } = await supabase.from('corporate_clients').select('*').eq('id', invoice.corporate_client_id).single();
+        if (corp) {
+          name = corp.contact_person?.split(' ')[0] || corp.company_name;
+          const meta = typeof corp.metadata === 'string' ? JSON.parse(corp.metadata) : (corp.metadata || {});
+          phone = meta.phone || corp.phone || "";
+        }
+      } else if (invoice.guardian_id) {
+        const { data: profile, error } = await supabase.from('profiles').select('*').eq('id', invoice.guardian_id).single();
+        if (profile) {
+          name = profile.display_name?.split(' ')[0] || "Parent";
+          const meta = typeof profile.metadata === 'string' ? JSON.parse(profile.metadata) : (profile.metadata || {});
+          phone = meta.phone || profile.phone || "";
+        }
+      }
+
+      // 2. Strict Check (Now it will actually pass because the data was fetched correctly)
+      if (!phone) {
+        alert("No phone number found for this account. Please update their profile.");
+        setIsWhatsApping(false);
+        return;
+      }
+
+      // 3. Format the phone number for the WhatsApp API
+      let cleanPhone = phone.replace(/\D/g, '');
+      if (cleanPhone.startsWith('0')) cleanPhone = '27' + cleanPhone.substring(1);
+
+      // 4. Format the document details
+      const isCredit = invoice.doc_type === 'credit_note';
+      const docName = isCredit ? 'Credit Note' : 'Invoice';
+      const docRef = isCredit ? (invoice.payment_reference || `CN-${invoice.invoice_number}`) : `INV-${invoice.invoice_number}`;
+      const amountStr = `R ${Number(invoice.total_amount).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      
+      const link = `${window.location.origin}/invoice/${invoice.id}`;
+
+      // 5. Construct the message and open WhatsApp
+      const msg = `Dear ${name},\n\nPlease find a link to your ${docName} (${docRef}) for the amount of ${amountStr}.\n\n${link}\n\nRegards,\nRAD Academy`;
+
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+
+    } catch (err: any) {
+      alert("Failed to prepare WhatsApp message: " + err.message);
+    } finally {
+      setIsWhatsApping(false);
     }
   };
 
@@ -981,7 +1135,26 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 pt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4">
+                
+                {/* NEW: WhatsApp Button */}
+                <button 
+                  onClick={handleWhatsAppDocument} 
+                  disabled={isWhatsApping}
+                  className="flex flex-col items-center justify-center gap-3 p-6 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-2xl transition-colors group disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isWhatsApping ? (
+                    <Loader2 size={24} className="text-emerald-500 animate-spin" />
+                  ) : (
+                    <MessageSquare size={24} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+                  )}
+                  <div className="text-center">
+                    <span className="block text-sm font-black text-emerald-700">WhatsApp</span>
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-emerald-500/70">Send Document</span>
+                  </div>
+                </button>
+
+                {/* EXISTING: Issue Credit Button */}
                 <button onClick={() => setView('credit')} className="flex flex-col items-center justify-center gap-3 p-6 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-2xl transition-colors group">
                   <FileMinus size={24} className="text-rose-500 group-hover:scale-110 transition-transform" />
                   <div className="text-center">
@@ -989,13 +1162,16 @@ function InvoiceActionModal({ invoice, onClose, onSuccess, router }: { invoice: 
                     <span className="text-[9px] font-bold uppercase tracking-widest text-rose-500/70">Partial or Full</span>
                   </div>
                 </button>
+
+                {/* EXISTING: Duplicate Button */}
                 <button onClick={handleDuplicate} className="flex flex-col items-center justify-center gap-3 p-6 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-2xl transition-colors group">
                   <Copy size={24} className="text-blue-500 group-hover:scale-110 transition-transform" />
                   <div className="text-center">
-                    <span className="block text-sm font-black text-blue-700">Duplicate to New</span>
+                    <span className="block text-sm font-black text-blue-700">Duplicate</span>
                     <span className="text-[9px] font-bold uppercase tracking-widest text-blue-500/70">Use as Template</span>
                   </div>
                 </button>
+
               </div>
             </>
           ) : (

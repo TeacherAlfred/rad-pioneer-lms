@@ -7,7 +7,8 @@ import {
   ArrowLeft, User, Mail, Phone, MapPin, Globe, Calendar, 
   MessageSquare, Clock, CheckCircle2, ChevronRight, Save, 
   Activity, Flame, Snowflake, Loader2, Edit2, X, CheckSquare, Copy, Timer,
-  Target, AlertTriangle, PlusCircle, Trash2
+  Target, AlertTriangle, PlusCircle, Trash2,
+  MessageCircle
 } from 'lucide-react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -20,6 +21,21 @@ const getLocalDatetimeStr = () => {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
   return now.toISOString().slice(0, 16);
+};
+
+// Helper to safely format WhatsApp links
+const getWhatsAppLink = (number: string | null | undefined) => {
+  if (!number) return null;
+  const cleaned = number.replace(/\D/g, ''); // Strip non-digits
+  
+  // Basic check: South African numbers are usually 10 digits, international format starts with 27
+  // If it starts with 0, replace it with 27
+  let formatted = cleaned;
+  if (formatted.startsWith('0')) {
+      formatted = '27' + formatted.substring(1);
+  }
+  
+  return formatted.length >= 9 ? `https://wa.me/${formatted}` : null; // Ensure it's a real number
 };
 
 export default function LeadDeepDive() {
@@ -54,6 +70,26 @@ export default function LeadDeepDive() {
   const [linkedParentId, setLinkedParentId] = useState<string | null>(null);
   const [childrenForm, setChildrenForm] = useState([{ name: '', username: '', pin: '' }]);
   const [isProvisioning, setIsProvisioning] = useState(false);
+
+  // Notes State
+  const [leadNotes, setLeadNotes] = useState('');
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
+
+  // Inside your fetchLeadData function, after setting the lead, add:
+  // setLeadNotes(leadData.notes || '');
+  
+  const handleSaveNotes = async () => {
+    setIsSavingNotes(true);
+    try {
+      const { error } = await supabase.from('growth_leads').update({ notes: leadNotes }).eq('id', leadId);
+      if (error) throw error;
+      setLead({ ...lead, notes: leadNotes });
+    } catch (err: any) {
+      alert("Failed to save notes: " + err.message);
+    } finally {
+      setIsSavingNotes(false);
+    }
+  };
 
   useEffect(() => {
     if (leadId) fetchLeadData();
@@ -143,6 +179,7 @@ export default function LeadDeepDive() {
   };
 
   const attachParentToLead = async (profileId: string) => {
+    // REMOVED updated_at as it is not in the schema
     await supabase.from('growth_leads').update({ converted_profile_id: profileId }).eq('id', lead.id);
     setLead({ ...lead, converted_profile_id: profileId });
     setLinkedParentId(profileId);
@@ -150,32 +187,38 @@ export default function LeadDeepDive() {
   };
 
   const handleSaveChildren = async () => {
-    // Validate
-    if (childrenForm.some(c => !c.name || !c.username || !c.pin)) {
-      return alert("Please fill in all child details.");
+    // 1. Identify rows that have at least one field filled in
+    const activeRows = childrenForm.filter(c => c.name.trim() || c.username.trim() || c.pin.trim());
+
+    // 2. Validate that the active rows are completely filled out
+    if (activeRows.some(c => !c.name.trim() || !c.username.trim() || !c.pin.trim())) {
+      return alert("Please fill in all details for the child you are adding, or clear the row to skip.");
     }
 
     setIsProvisioning(true);
     try {
-      const payloads = childrenForm.map(c => ({
-        role: 'student',
-        display_name: c.name,
-        student_identifier: c.username,
-        temp_entry_pin: c.pin,
-        linked_parent_id: linkedParentId,
-        account_tier: 'lms_trial',
-        status: 'active'
-      }));
+      // 3. Only insert into DB if there are actually children to add
+      if (activeRows.length > 0) {
+        const payloads = activeRows.map(c => ({
+          role: 'student',
+          display_name: c.name.trim(),
+          student_identifier: c.username.trim(),
+          temp_entry_pin: c.pin.trim(),
+          linked_parent_id: linkedParentId,
+          account_tier: 'lms_trial',
+          status: 'active'
+        }));
 
-      const { error } = await supabase.from('profiles').insert(payloads);
-      
-      if (error) {
-        if (error.message.includes('unique')) throw new Error("One of the chosen usernames is already taken! Please pick another one.");
-        throw error;
+        const { error } = await supabase.from('profiles').insert(payloads);
+        
+        if (error) {
+          if (error.message.includes('unique')) throw new Error("One of the chosen usernames is already taken! Please pick another one.");
+          throw error;
+        }
+
+        // Update lead kids count
+        await supabase.from('growth_leads').update({ kids_count: lead.kids_count + payloads.length }).eq('id', lead.id);
       }
-
-      // Update lead kids count
-      await supabase.from('growth_leads').update({ kids_count: lead.kids_count + payloads.length }).eq('id', lead.id);
       
       // Auto-check SOP step 3 if not done
       if (!lead.workflow_state?.lms_provisioned) {
@@ -185,7 +228,13 @@ export default function LeadDeepDive() {
       setIsProvisionModalOpen(false);
       setChildrenForm([{ name: '', username: '', pin: '' }]); // Reset
       fetchLeadData(); // Refresh UI
-      alert("Successfully provisioned child accounts!");
+      
+      // Show appropriate success message
+      if (activeRows.length > 0) {
+        alert("Successfully provisioned parent and child accounts!");
+      } else {
+        alert("Parent account securely linked! You can add children later.");
+      }
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -200,8 +249,10 @@ export default function LeadDeepDive() {
     const isCurrentlyDone = !!currentState[stepKey];
     const newState = { ...currentState, [stepKey]: isCurrentlyDone ? false : new Date().toISOString() };
     setLead({ ...lead, workflow_state: newState });
-    try { await supabase.from('growth_leads').update({ workflow_state: newState }).eq('id', leadId); } 
-    catch (err) { console.error("Failed to update SOP state"); }
+    try { 
+        // REMOVED updated_at
+        await supabase.from('growth_leads').update({ workflow_state: newState }).eq('id', leadId); 
+    } catch (err) { console.error("Failed to update SOP state"); }
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -232,7 +283,11 @@ export default function LeadDeepDive() {
     e.preventDefault();
     setIsSavingLead(true);
     try {
-      const { error } = await supabase.from('growth_leads').update(editLeadForm).eq('id', leadId);
+      // Note: Do not pass updated_at here if it's not in the database table
+      const payloadToUpdate = { ...editLeadForm };
+      delete payloadToUpdate.updated_at; 
+
+      const { error } = await supabase.from('growth_leads').update(payloadToUpdate).eq('id', leadId);
       if (error) throw error;
       setLead({ ...lead, ...editLeadForm });
       setIsEditingLead(false);
@@ -319,7 +374,34 @@ export default function LeadDeepDive() {
               {!isEditingLead ? (
                 <div className="space-y-6">
                   <div className="flex items-center gap-4"><div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100"><Mail size={16}/></div><div className="overflow-hidden"><p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email Address</p><p className="text-sm font-bold text-slate-900 truncate">{lead.email || 'Not Provided'}</p></div></div>
-                  <div className="flex items-center gap-4"><div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100"><Phone size={16}/></div><div><p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact Number</p><p className="text-sm font-bold text-slate-900">{lead.contact_number || 'Not Provided'}</p></div></div>
+                  
+                  {/* UPDATED PHONE CONTACT COMPONENT WITH WHATSAPP LINK */}
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100">
+                      <Phone size={16} />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Contact Number</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-bold text-slate-900">{lead.contact_number || 'Not Provided'}</p>
+                        
+                        {/* Elegant Conditional Render */}
+                        {getWhatsAppLink(lead.contact_number) && (
+                          <a 
+                            href={getWhatsAppLink(lead.contact_number)!} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-emerald-500 hover:text-emerald-600 transition-colors p-1"
+                            title="Send WhatsApp message"
+                          >
+                            <MessageCircle size={16} /> 
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {/* END UPDATED PHONE CONTACT COMPONENT */}
+
                   <div className="flex items-center gap-4"><div className="w-10 h-10 rounded-xl bg-slate-50 text-slate-600 flex items-center justify-center border border-slate-200"><MapPin size={16}/></div><div><p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Location</p><p className="text-sm font-bold text-slate-900">{lead.location || 'Unknown'}</p></div></div>
                   {lead.converted_profile_id && (
                     <div className="pt-4 border-t border-slate-100">
@@ -331,9 +413,71 @@ export default function LeadDeepDive() {
                 </div>
               ) : (
                 <form onSubmit={handleUpdateLead} className="space-y-4">
+                   <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Name</label>
+                    <input type="text" value={editLeadForm.full_name || ''} onChange={(e) => setEditLeadForm({...editLeadForm, full_name: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 outline-none focus:border-fuchsia-500" />
+                   </div>
+                   <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Email</label>
+                    <input type="email" value={editLeadForm.email || ''} onChange={(e) => setEditLeadForm({...editLeadForm, email: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 outline-none focus:border-fuchsia-500" />
+                   </div>
+                   <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-500">Phone</label>
+                    <input type="tel" value={editLeadForm.contact_number || ''} onChange={(e) => setEditLeadForm({...editLeadForm, contact_number: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 outline-none focus:border-fuchsia-500" />
+                   </div>
                   <div className="pt-4"><button type="submit" disabled={isSavingLead} className="w-full py-3 bg-fuchsia-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest flex items-center justify-center gap-2 shadow-md shadow-fuchsia-600/20">{isSavingLead ? 'SAVING...' : 'SAVE CHANGES'}</button></div>
                 </form>
               )}
+            </div>
+
+            {/* --- NEW: CONTEXT & NOTES BLOCK --- */}
+            <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+               <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                 <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Context & Notes</h3>
+                 <button 
+                   onClick={handleSaveNotes} 
+                   disabled={isSavingNotes || leadNotes === (lead.notes || '')}
+                   title="Save Notes"
+                   className={`p-2 rounded-xl transition-all ${leadNotes !== (lead.notes || '') ? 'bg-fuchsia-100 text-fuchsia-600 hover:bg-fuchsia-200 hover:scale-105' : 'bg-slate-50 text-slate-300'}`}
+                 >
+                   {isSavingNotes ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
+                 </button>
+               </div>
+
+               {/* VOUCHER CLAIMS SECTION */}
+               <div className="mb-6 space-y-3">
+                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Active Vouchers</p>
+                 <div className="flex flex-col gap-2">
+                   
+                   {/* IPS Voucher */}
+                   <label className="flex items-center gap-3 cursor-pointer group w-fit p-2.5 pr-4 rounded-xl border transition-colors hover:bg-slate-50 border-slate-100">
+                     <div className="relative flex items-center justify-center shrink-0">
+                       <input 
+                         type="checkbox" 
+                         checked={!!lead.workflow_state?.ips_voucher} 
+                         onChange={() => handleToggleSopStep('ips_voucher')} 
+                         className="peer sr-only" 
+                       />
+                       <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${lead.workflow_state?.ips_voucher ? 'bg-fuchsia-500 border-fuchsia-500' : 'bg-white border-slate-300 group-hover:border-fuchsia-400'}`}>
+                         <CheckCircle2 size={12} className={`text-white transition-opacity ${lead.workflow_state?.ips_voucher ? 'opacity-100' : 'opacity-0'}`} />
+                       </div>
+                     </div>
+                     <span className={`text-xs font-bold transition-colors ${lead.workflow_state?.ips_voucher ? 'text-fuchsia-700' : 'text-slate-600'}`}>
+                       IPS R250 Discount Voucher
+                     </span>
+                   </label>
+                   
+                   {/* Add future vouchers here by copying the block above and changing 'ips_voucher' */}
+
+                 </div>
+               </div>
+
+               <textarea
+                 value={leadNotes}
+                 onChange={(e) => setLeadNotes(e.target.value)}
+                 placeholder="Add context from discussions, kids' interests, specific requests..."
+                 className="w-full bg-slate-50 border border-slate-100 hover:border-slate-200 rounded-xl p-4 text-sm text-slate-700 outline-none focus:border-fuchsia-300 focus:bg-white transition-all min-h-[120px] resize-y custom-scrollbar"
+               />
             </div>
             
             {/* THE SOP WORKFLOW ENGINE */}

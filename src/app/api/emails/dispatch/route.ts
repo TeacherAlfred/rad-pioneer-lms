@@ -89,7 +89,7 @@ export async function POST(req: Request) {
             <p>Hi ${firstName}, welcome to the RAD Academy family!</p>
             <p>Your child's learning environment has been successfully provisioned. To get started, click the secure link below to set your parent password, review our intake agreements, and unlock your family dashboard.</p>
             <a href="${baseUrl}/welcome?t=${token}" style="display: inline-block; padding: 12px 24px; background-color: #2563eb; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 10px;">Setup Parent Profile</a>
-            <p style="margin-top: 30px; font-size: 12px; color: #64748b;">Keep an eye on your inbox, your quotation and onboarding details are on the way.</p>
+            <p style="margin-top: 30px; font-size: 12px; color: #64748b;">Keep an eye on your inbox, additional onboarding details and getting started video guide will be sent within the next 24hrs.</p>
           </div>
         `
       });

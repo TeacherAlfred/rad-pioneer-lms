@@ -29,7 +29,8 @@ export default function ManualIntakeTerminal() {
     "IP: Home Automation Bootcamp",
     "OL: Game Creator Bootcamp",
     "IP: Term Program - Smart Home Systems",
-    "OL: Term Program - Smart Home Systems"
+    "OL: Term Program - Smart Home Systems",
+    "RAD Alumni"
   ];
 
   const handleAddPioneer = () => {
@@ -66,17 +67,19 @@ export default function ManualIntakeTerminal() {
     const injectionTime = new Date().toISOString();
 
     try {
-      // 1. Create the Guardian Profile first (Now with timestamps)
+      // 1. Create the Guardian Profile
       const { data: guardianData, error: guardianError } = await supabase
         .from('profiles')
         .insert({
           display_name: guardian.name,
           role: 'guardian',
-          created_at: injectionTime, // Explicitly filling the field
-          updated_at: injectionTime, // Explicitly filling the field
+          status: 'active', // Explicitly setting allowed status
+          account_tier: 'none', // Required by check constraint
+          created_at: injectionTime,
+          updated_at: injectionTime,
           metadata: {
-            email: guardian.email, 
-            phone: guardian.phone,
+            email: guardian.email || null,
+            phone: guardian.phone || null,
             admin_notes: "Manually entered via Admin Intake Terminal."
           }
         })
@@ -85,19 +88,26 @@ export default function ManualIntakeTerminal() {
 
       if (guardianError) throw guardianError;
 
-      // 2. Create the Pioneer Profiles (Now with timestamps)
-      const pioneersToInsert = pioneers.map(p => ({
-        display_name: p.name,
-        role: 'student',
-        date_of_birth: p.dob || null,
-        linked_parent_id: guardianData.id,
-        created_at: injectionTime, // Explicitly filling the field
-        updated_at: injectionTime, // Explicitly filling the field
-        metadata: {
-          interested_programs: p.programs,
-          onboarding_status: 'pending_onboarding'
-        }
-      }));
+      // 2. Create the Pioneer Profiles
+      const pioneersToInsert = pioneers.map(p => {
+        const isAlumni = p.programs.includes("RAD Alumni");
+
+        return {
+          display_name: p.name,
+          role: 'student',
+          status: 'active', 
+          account_tier: isAlumni ? 'rad_alumni' : 'none',
+          date_of_birth: p.dob || null,
+          linked_parent_id: guardianData.id,
+          created_at: injectionTime,
+          updated_at: injectionTime,
+          metadata: {
+            // We filter "RAD Alumni" out of the interests list so it stays as a clean program list
+            interested_programs: p.programs.filter(prog => prog !== "RAD Alumni"),
+            onboarding_status: isAlumni ? 'completed' : 'pending_onboarding'
+          }
+        };
+      });
 
       const { error: pioneerError } = await supabase
         .from('profiles')
@@ -160,14 +170,14 @@ export default function ManualIntakeTerminal() {
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Email Address</label>
                 <div className="relative">
                   <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
-                  <input required type="email" value={guardian.email} onChange={e => setGuardian({...guardian, email: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl py-4 pl-12 pr-4 outline-none focus:border-purple-500 transition-all text-slate-300" placeholder="jane@example.com" />
+                  <input type="email" value={guardian.email} onChange={e => setGuardian({...guardian, email: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl py-4 pl-12 pr-4 outline-none focus:border-purple-500 transition-all text-slate-300" placeholder="jane@example.com" />
                 </div>
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-2">Phone Number</label>
                 <div className="relative">
                   <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={18} />
-                  <input required type="tel" value={guardian.phone} onChange={e => setGuardian({...guardian, phone: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl py-4 pl-12 pr-4 outline-none focus:border-purple-500 transition-all text-slate-300" placeholder="071 234 5678" />
+                  <input type="tel" value={guardian.phone} onChange={e => setGuardian({...guardian, phone: e.target.value})} className="w-full bg-[#0f172a] border border-white/10 rounded-2xl py-4 pl-12 pr-4 outline-none focus:border-purple-500 transition-all text-slate-300" placeholder="071 234 5678" />
                 </div>
               </div>
             </div>

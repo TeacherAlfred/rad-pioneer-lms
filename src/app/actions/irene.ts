@@ -1,23 +1,20 @@
 "use server";
 
 import { db } from "../../db/index";
-// UPDATE: Now importing directly from the new domain-specific schema file
 import { projIreneResponses, projIreneVoters, projIreneVotes } from "../../db/schema/irene";
-import { revalidatePath } from "next/cache";
+import { eq } from "drizzle-orm"; // <-- We need this for the .select() filter
 
 export async function getIreneLeaderboard() {
   try {
-    // 1. Fetch all verified responses
-    const responses = await db.query.projIreneResponses.findMany({
-      where: (responses, { eq }) => eq(responses.isVerified, true), // Only show verified
-    });
+    // 1. Fetch verified responses using standard SQL select (more resilient than db.query)
+    const responses = await db.select()
+      .from(projIreneResponses)
+      .where(eq(projIreneResponses.isVerified, true));
 
     // 2. Fetch all votes
-    const votes = await db.query.projIreneVotes.findMany({
-      with: { response: true }
-    });
+    const votes = await db.select().from(projIreneVotes);
 
-    // 3. Aggregate vote counts in JS (matches your previous frontend logic)
+    // 3. Aggregate vote counts manually
     const classStats: Record<string, { grade: string, totalVotes: number }> = {};
     const responseStats: Record<string, number> = {};
 
@@ -26,9 +23,13 @@ export async function getIreneLeaderboard() {
     });
 
     votes.forEach(vote => {
-      const className = vote.response?.className;
       const rId = vote.responseId;
-      if (className && classStats[className]) classStats[className].totalVotes += 1;
+      const parentResponse = responses.find(r => r.id === rId);
+      
+      if (parentResponse) {
+        const className = parentResponse.className;
+        if (classStats[className]) classStats[className].totalVotes += 1;
+      }
       responseStats[rId] = (responseStats[rId] || 0) + 1;
     });
 
@@ -47,9 +48,10 @@ export async function getIreneLeaderboard() {
     }));
 
     return { success: true, responses: finalResponses, classStats };
-  } catch (error) {
-    console.error("Leaderboard error:", error);
-    return { success: false, error: "Failed to load leaderboard." };
+  } catch (error: any) {
+    console.error("Leaderboard DB Error:", error);
+    // SURFACING THE REAL ERROR
+    return { success: false, error: error.message || String(error) };
   }
 }
 
@@ -64,9 +66,7 @@ export async function castIreneVote(payload: {
     const expiresAt = new Date(); 
     expiresAt.setHours(expiresAt.getHours() + 24);
 
-    // Run as a transaction so if the vote inserts fail, the voter isn't created either
     await db.transaction(async (tx) => {
-      // 1. Create the Voter
       const [newVoter] = await tx.insert(projIreneVoters).values({
         email: payload.votingTab === 'email' ? payload.contactInput : null,
         whatsappNumber: payload.votingTab === 'whatsapp' ? payload.contactInput : null,
@@ -76,7 +76,6 @@ export async function castIreneVote(payload: {
         expiresAt: expiresAt,
       }).returning();
 
-      // 2. Create the precise number of Votes requested
       const votePayloads = Array.from({ length: votesAwarded }).map(() => ({
         voterId: newVoter.id,
         responseId: payload.responseId,
@@ -86,8 +85,8 @@ export async function castIreneVote(payload: {
     });
 
     return { success: true };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Voting error:", error);
-    return { success: false, error: "Failed to cast vote." };
+    return { success: false, error: error.message || String(error) };
   }
 }

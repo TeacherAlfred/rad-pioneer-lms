@@ -3,8 +3,9 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Heart, X, Search, Sparkles, MessageCircle, Mail, UserX, AlertCircle, Loader2, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
+import { Trophy, Heart, X, Search, Sparkles, MessageCircle, Mail, UserX, AlertCircle, Loader2, ChevronDown, ThumbsUp } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { getIreneLeaderboard } from "@/app/actions/irene";
 
 const FOUNDATION_GRADES = ['Grade R', 'Grade 1', 'Grade 2', 'Grade 3'];
 const SENIOR_GRADES = ['Grade 4', 'Grade 5', 'Grade 6', 'Grade 7'];
@@ -16,6 +17,173 @@ const LETTER_GROUPS = [
   { label: 'P-T', letters: ['P','Q','R','S','T'] },
   { label: 'U-Z', letters: ['U','V','W','X','Y','Z'] }
 ];
+
+// --- EXTRACTED COMPONENT: INDIVIDUAL TOP 3 CARD ---
+function Top3Card({ 
+  item, 
+  index, 
+  category, 
+  handleQuickVote, 
+  isQuickVoted, 
+  isQuickVoteLoading 
+}: { 
+  item: any, 
+  index: number, 
+  category: string,
+  handleQuickVote: (id: string) => void,
+  isQuickVoted: boolean,
+  isQuickVoteLoading: boolean
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Maintain the distinctive podium glows
+  const rankStyles = [
+    'border-amber-300/60 shadow-[0_4px_16px_rgba(251,191,36,0.15)] ring-1 ring-amber-400/20 bg-gradient-to-b from-amber-50/40 to-white',
+    'border-slate-300/60 shadow-[0_4px_16px_rgba(148,163,184,0.15)] ring-1 ring-slate-400/20 bg-gradient-to-b from-slate-50/60 to-white',
+    'border-orange-300/60 shadow-[0_4px_16px_rgba(249,115,22,0.15)] ring-1 ring-orange-400/20 bg-gradient-to-b from-orange-50/40 to-white'
+  ];
+
+  const badgeStyles = [
+    'bg-[#fff9eb] border-amber-200 text-amber-500',
+    'bg-slate-50 border-slate-300 text-slate-600',
+    'bg-orange-50 border-orange-200 text-orange-500'
+  ];
+
+  const nameColor = [
+    'text-amber-600',
+    'text-slate-600',
+    'text-orange-600'
+  ];
+
+  const responseText = category === 'inspiring' 
+    ? (item.q_why_start || item.q_boss_level || 'No answer provided.') 
+    : category === 'funny' 
+      ? (item.q_funny_fail || 'No answer provided.') 
+      : (item.q_weird_habit || 'No answer provided.');
+
+  // Extract just the first name
+  const firstName = item.parent_first_name ? item.parent_first_name.trim().split(/\s+/)[0] : 'Unknown';
+  
+  // ~70 characters is a safe threshold for 2 lines of text-xs on mobile before it truly overflows
+  const needsExpansion = responseText.length > 70;
+
+  return (
+    <div className={`flex flex-col rounded-2xl p-3 md:p-4 transition-all h-full w-full ${rankStyles[index]}`}>
+      {/* Consolidated Top Header */}
+      <div className="flex justify-between items-center mb-2 gap-2">
+        {/* Rank Badge */}
+        <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shadow-sm border ${badgeStyles[index]}`}>
+          #{index + 1}
+        </div>
+        
+        {/* Names (Centered) */}
+        <div className="flex-1 min-w-0 flex flex-col justify-center text-center">
+          <div className={`text-[12px] font-black uppercase tracking-widest truncate leading-tight ${nameColor[index]}`}>
+            {firstName}
+          </div>
+          <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 truncate">
+            Child ({item.cub_initial}) • {item.class_name}
+          </div>
+        </div>
+
+        {/* Action & Votes */}
+        <div className="shrink-0 flex items-stretch gap-1">
+          <button 
+            onClick={() => handleQuickVote(item.id)}
+            disabled={isQuickVoted || isQuickVoteLoading}
+            title={isQuickVoted ? "You've already quick-voted for this response!" : "Cast 1 Quick Vote"}
+            className={`flex items-center justify-center px-2 py-1 rounded-lg border shadow-sm transition-all ${isQuickVoted ? 'bg-emerald-50 border-emerald-200 text-emerald-500 cursor-not-allowed' : 'bg-white border-slate-100 text-slate-400 hover:text-[#0066cc] hover:border-[#0066cc] active:scale-95'}`}
+          >
+            {isQuickVoteLoading ? <Loader2 size={14} className="animate-spin"/> : <ThumbsUp size={14} className={isQuickVoted ? "fill-emerald-500" : ""} />}
+          </button>
+          <div className="bg-white px-2 py-1 rounded-lg border border-slate-100 shadow-sm text-center min-w-[44px]">
+            <span className="block text-sm font-black text-slate-900 leading-none">{item.totalVotes}</span>
+            <span className="text-[7px] uppercase tracking-widest text-[#8ba3cb] font-bold block mt-0.5">Votes</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Response Section */}
+      <div className="flex flex-col mt-auto pt-1">
+        <p className={`text-xs text-slate-700 italic leading-snug font-medium bg-slate-50/80 p-2.5 rounded-xl border border-slate-100 transition-all ${isExpanded ? '' : 'line-clamp-2'}`}>
+          "{responseText}"
+        </p>
+        {needsExpansion && (
+          <button 
+            onClick={() => setIsExpanded(!isExpanded)} 
+            className="mt-2 text-[9px] font-black text-[#0066cc] uppercase tracking-widest hover:text-blue-800 transition-colors self-start"
+          >
+            {isExpanded ? 'Show Less' : 'View More'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- EXTRACTED COMPONENT: CATEGORY SHOWCASE ---
+function Top3Showcase({ 
+  top3Responses, 
+  activeCategory, 
+  setActiveCategory,
+  handleQuickVote,
+  quickVotedIds,
+  quickVoteLoadingId
+}: { 
+  top3Responses: any[], 
+  activeCategory: string, 
+  setActiveCategory: (cat: any) => void,
+  handleQuickVote: (id: string) => void,
+  quickVotedIds: string[],
+  quickVoteLoadingId: string | null
+}) {
+  return (
+    <section className="px-4 max-w-5xl mx-auto mb-8">
+      <div className="bg-white rounded-[32px] pt-5 pb-6 border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] relative overflow-hidden">
+        
+        {/* Category Tabs */}
+        <div className="grid grid-cols-3 gap-1.5 md:gap-2 mb-3 px-4">
+          <button onClick={() => setActiveCategory('inspiring')} className={`flex items-center justify-center text-center px-1 py-2.5 text-[9px] md:text-[10px] leading-tight font-black uppercase tracking-widest rounded-[14px] transition-all min-h-[40px] ${activeCategory === 'inspiring' ? 'bg-[#eef4ff] text-[#0066cc]' : 'text-[#8ba3cb] hover:text-slate-600 hover:bg-slate-50'}`}>Most<br/>Inspiring</button>
+          <button onClick={() => setActiveCategory('funny')} className={`flex items-center justify-center text-center px-1 py-2.5 text-[9px] md:text-[10px] leading-tight font-black uppercase tracking-widest rounded-[14px] transition-all min-h-[40px] ${activeCategory === 'funny' ? 'bg-[#eef4ff] text-[#0066cc]' : 'text-[#8ba3cb] hover:text-slate-600 hover:bg-slate-50'}`}>Epic<br/>Oopsie</button>
+          <button onClick={() => setActiveCategory('weird')} className={`flex items-center justify-center text-center px-1 py-2.5 text-[9px] md:text-[10px] leading-tight font-black uppercase tracking-widest rounded-[14px] transition-all min-h-[40px] ${activeCategory === 'weird' ? 'bg-[#eef4ff] text-[#0066cc]' : 'text-[#8ba3cb] hover:text-slate-600 hover:bg-slate-50'}`}>Mad<br/>Scientist</button>
+        </div>
+        
+        {/* Divider */}
+        <div className="flex items-center px-4 mb-5">
+          <div className="flex-1 border-t border-slate-100"></div>
+          <span className="px-3 text-[10px] font-black uppercase tracking-widest text-[#8ba3cb] flex items-center gap-1.5">
+            <Trophy size={12} className="text-amber-400" />TOP 3
+          </span>
+          <div className="flex-1 border-t border-slate-100"></div>
+        </div>
+        
+        {/* Grid Container */}
+        <div className="px-4">
+          {top3Responses.length === 0 ? (
+            <div className="w-full text-center py-8 border border-dashed border-slate-200 rounded-[24px]">
+              <p className="text-xs text-slate-400 font-bold">No responses found yet.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 items-stretch">
+              {top3Responses.map((item, index) => (
+                <Top3Card 
+                  key={item.id} 
+                  item={item} 
+                  index={index} 
+                  category={activeCategory} 
+                  handleQuickVote={handleQuickVote}
+                  isQuickVoted={quickVotedIds.includes(item.id)}
+                  isQuickVoteLoading={quickVoteLoadingId === item.id}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+      </div>
+    </section>
+  );
+}
 
 function TrackerContent() {
   // --- DATA STATE ---
@@ -32,21 +200,19 @@ function TrackerContent() {
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [selectedInitial, setSelectedInitial] = useState<string>('');
   const [parentSearch, setParentSearch] = useState('');
-  const [carouselIndex, setCarouselIndex] = useState(0);
   
   // --- VOTING UX STATE ---
   const [activeVoteTarget, setActiveVoteTarget] = useState<any>(null);
   const [votingTab, setVotingTab] = useState<'whatsapp' | 'email' | 'anonymous'>('whatsapp');
   const [contactInput, setContactInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [quickVotedIds, setQuickVotedIds] = useState<string[]>([]);
+  const [quickVoteLoadingId, setQuickVoteLoadingId] = useState<string | null>(null);
   
   // --- ANTI-SPAM STATE ---
   const [deviceId, setDeviceId] = useState<string>('');
   const [dailyClaims, setDailyClaims] = useState(0);
   const [lockoutTime, setLockoutTime] = useState<string | null>(null);
-
-  // Reset Carousel when filters change
-  useEffect(() => { setCarouselIndex(0); }, [activeCategory, selectedGrade, selectedPhase]);
 
   // --- 1. INITIALIZE DEVICE & FETCH DATA ---
   useEffect(() => {
@@ -67,36 +233,31 @@ function TrackerContent() {
       setDailyClaims(parseInt(localStorage.getItem('irene_daily_claims') || '0', 10));
     }
 
+    const storedQuickVotes = localStorage.getItem('irene_quick_votes');
+    if (storedQuickVotes) {
+      setQuickVotedIds(JSON.parse(storedQuickVotes));
+    }
+
     fetchData();
 
     const channel = supabase.channel('public:irene_votes')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'irene_votes' }, () => fetchData())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'irene_votes' }, () => fetchData(false))
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const fetchData = async () => {
-    try {
-      const { data: respData } = await supabase.from('irene_responses').select('*');
-      const { data: voteData } = await supabase.from('irene_votes').select(`response_id, irene_responses (class_name, grade)`);
-      
-      const cStats: Record<string, { grade: string, totalVotes: number }> = {};
-      const rStats: Record<string, number> = {};
-
-      respData?.forEach(r => {
-        if (!cStats[r.class_name]) cStats[r.class_name] = { grade: r.grade, totalVotes: 0 };
-      });
-      
-      voteData?.forEach((vote: any) => {
-        const className = vote.irene_responses?.class_name;
-        const rId = vote.response_id;
-        if (className && cStats[className]) cStats[className].totalVotes += 1;
-        rStats[rId] = (rStats[rId] || 0) + 1;
-      });
-
-      setClassStats(cStats);
-      setResponses((respData || []).map(r => ({ ...r, totalVotes: rStats[r.id] || 0 })));
-    } catch (err) { console.error(err); } finally { setLoading(false); }
+  const fetchData = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    const res = await getIreneLeaderboard();
+    
+    if (res.success) {
+      setClassStats(res.classStats || {});
+      setResponses(res.responses || []);
+    } else {
+      console.error("Backend Error:", res.error);
+      alert("Database Error: " + res.error);
+    }
+    setLoading(false);
   };
 
   // --- 2. DERIVED STATE ---
@@ -107,8 +268,7 @@ function TrackerContent() {
     return true; 
   });
   
-  const top5Responses = [...filteredResponses].sort((a, b) => b.totalVotes - a.totalVotes).slice(0, 5);
-  const availableInitials = new Set(filteredResponses.map(r => r.cub_initial.toUpperCase()));
+  const top3Responses = [...filteredResponses].sort((a, b) => b.totalVotes - a.totalVotes).slice(0, 3);
   
   const rosterResponses = filteredResponses
     .filter(r => 
@@ -130,7 +290,7 @@ function TrackerContent() {
   const topSenior = getTop3Classes(SENIOR_GRADES);
   const topSpecificGrade = selectedGrade !== 'All' ? getTop3Classes([selectedGrade]) : [];
   const podiumTitle = selectedGrade !== 'All' ? selectedGrade : selectedPhase === 'Foundation' ? 'Grade R - 3' : selectedPhase === 'Senior' ? 'Grade 4 - 7' : 'School Overall';
-  const activeCarouselItem = top5Responses[carouselIndex] || top5Responses[0];
+  
   const getDropdownLabel = () => {
     if (selectedPhase === 'Foundation') return 'Grade R - 3';
     if (selectedPhase === 'Senior') return 'Grade 4 - 7';
@@ -138,6 +298,8 @@ function TrackerContent() {
   };
 
   // --- 3. VOTING LOGIC ---
+
+  // Standard "Full" Vote Process
   const handleCastVote = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!activeVoteTarget || dailyClaims >= 3) return;
@@ -151,7 +313,7 @@ function TrackerContent() {
       const { data: voter } = await supabase.from('irene_voters').insert({
         email: votingTab === 'email' ? contactInput : null,
         whatsapp_number: votingTab === 'whatsapp' ? contactInput : null,
-        ip_address: deviceId, voter_type: votingTab, votes_awarded: votesAwarded, expires_at: expiresAt.toISOString()
+        device_id: deviceId, voter_type: votingTab, votes_awarded: votesAwarded, expires_at: expiresAt.toISOString()
       }).select().single();
 
       const votePayloads = Array.from({ length: votesAwarded }).map(() => ({ voter_id: voter.id, response_id: activeVoteTarget.id }));
@@ -169,8 +331,41 @@ function TrackerContent() {
       }
 
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 }, colors: ['#0066cc', '#fbbf24'] });
-      setActiveVoteTarget(null); setContactInput(''); fetchData();
+      setActiveVoteTarget(null); setContactInput(''); fetchData(false);
     } catch (err: any) { alert("An error occurred. Please try again."); } finally { setIsProcessing(false); }
+  };
+
+  // Quick 1-Click Vote Process
+  const handleQuickVote = async (responseId: string) => {
+    if (quickVotedIds.includes(responseId)) return;
+    setQuickVoteLoadingId(responseId);
+
+    try {
+      const expiresAt = new Date(); 
+      expiresAt.setHours(expiresAt.getHours() + 24);
+
+      const { data: voter } = await supabase.from('irene_voters').insert({
+        email: null,
+        whatsapp_number: null,
+        device_id: deviceId, 
+        voter_type: 'quick_vote', 
+        votes_awarded: 1, 
+        expires_at: expiresAt.toISOString()
+      }).select().single();
+
+      await supabase.from('irene_votes').insert([{ voter_id: voter.id, response_id: responseId }]);
+
+      const newQuickVotes = [...quickVotedIds, responseId];
+      setQuickVotedIds(newQuickVotes);
+      localStorage.setItem('irene_quick_votes', JSON.stringify(newQuickVotes));
+
+      confetti({ particleCount: 50, spread: 45, origin: { y: 0.7 }, colors: ['#10b981', '#0066cc'] });
+      fetchData(false);
+    } catch (err: any) { 
+      alert("Failed to cast quick vote."); 
+    } finally { 
+      setQuickVoteLoadingId(null); 
+    }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-slate-400">Loading Dashboard...</div>;
@@ -366,7 +561,7 @@ function TrackerContent() {
             </div>
           </div>
           <div className="pt-2 pb-1 border-t border-slate-50 mt-1 mx-1">
-            <p className="text-[9px] text-slate-400 font-bold leading-tight px-1">Select a grade to see the Top 5, explore more responses, or search for a specific parent to cast your vote.</p>
+            <p className="text-[9px] text-slate-400 font-bold leading-tight px-1">Select a grade to see the Top 3, explore more responses, or search for a specific parent to cast your vote.</p>
           </div>
         </div>
         <AnimatePresence>
@@ -386,45 +581,15 @@ function TrackerContent() {
         </AnimatePresence>
       </section>
 
-      {/* --- 3. CATEGORY SHOWCASE --- */}
-      <section className="px-4 max-w-5xl mx-auto mb-8">
-        <div className="bg-white rounded-[32px] pt-5 pb-6 border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] relative overflow-hidden">
-          <div className="grid grid-cols-3 gap-1.5 md:gap-2 mb-3 px-4">
-            <button onClick={() => setActiveCategory('inspiring')} className={`flex items-center justify-center text-center px-1 py-2.5 text-[9px] md:text-[10px] leading-tight font-black uppercase tracking-widest rounded-[14px] transition-all min-h-[40px] ${activeCategory === 'inspiring' ? 'bg-[#eef4ff] text-[#0066cc]' : 'text-[#8ba3cb] hover:text-slate-600 hover:bg-slate-50'}`}>Most<br/>Inspiring</button>
-            <button onClick={() => setActiveCategory('funny')} className={`flex items-center justify-center text-center px-1 py-2.5 text-[9px] md:text-[10px] leading-tight font-black uppercase tracking-widest rounded-[14px] transition-all min-h-[40px] ${activeCategory === 'funny' ? 'bg-[#eef4ff] text-[#0066cc]' : 'text-[#8ba3cb] hover:text-slate-600 hover:bg-slate-50'}`}>Epic<br/>Oopsie</button>
-            <button onClick={() => setActiveCategory('weird')} className={`flex items-center justify-center text-center px-1 py-2.5 text-[9px] md:text-[10px] leading-tight font-black uppercase tracking-widest rounded-[14px] transition-all min-h-[40px] ${activeCategory === 'weird' ? 'bg-[#eef4ff] text-[#0066cc]' : 'text-[#8ba3cb] hover:text-slate-600 hover:bg-slate-50'}`}>Mad<br/>Scientist</button>
-          </div>
-          <div className="flex items-center px-4 mb-4">
-            <div className="flex-1 border-t border-slate-100"></div>
-            <span className="px-3 text-[10px] font-black uppercase tracking-widest text-[#8ba3cb] flex items-center gap-1.5"><Trophy size={12} className="text-amber-400" />TOP 5</span>
-            <div className="flex-1 border-t border-slate-100"></div>
-          </div>
-          <div className="px-5 relative">
-            {top5Responses.length === 0 || !activeCarouselItem ? (
-              <div className="w-full text-center py-8 border border-dashed border-slate-200 rounded-[24px]"><p className="text-xs text-slate-400 font-bold">No responses found yet.</p></div>
-            ) : (
-              <div className="relative max-w-sm mx-auto">
-                <button onClick={() => setCarouselIndex(prev => Math.max(0, prev - 1))} disabled={carouselIndex === 0} className={`flex absolute -left-2 md:-left-4 top-1/2 -translate-y-1/2 w-8 h-8 items-center justify-center rounded-full bg-white border border-slate-200 shadow-md transition-all z-10 ${carouselIndex === 0 ? 'opacity-30 cursor-not-allowed text-slate-300 shadow-none' : 'text-slate-500 hover:text-[#0066cc] hover:scale-105'}`}><ChevronLeft size={18} /></button>
-                <button onClick={() => setCarouselIndex(prev => Math.min(top5Responses.length - 1, prev + 1))} disabled={carouselIndex === top5Responses.length - 1} className={`flex absolute -right-2 md:-right-4 top-1/2 -translate-y-1/2 w-8 h-8 items-center justify-center rounded-full bg-white border border-slate-200 shadow-md transition-all z-10 ${carouselIndex === top5Responses.length - 1 ? 'opacity-30 cursor-not-allowed text-slate-300 shadow-none' : 'text-slate-500 hover:text-[#0066cc] hover:scale-105'}`}><ChevronRight size={18} /></button>
-                <AnimatePresence mode="wait">
-                  <motion.div key={activeCarouselItem.id} initial={{ opacity: 0, x: 15 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -15 }} transition={{ duration: 0.15 }} className={`w-full rounded-[24px] p-5 flex flex-col justify-between transition-all bg-white ${carouselIndex === 0 ? 'border border-amber-300/60 shadow-[0_4px_16px_rgba(251,191,36,0.08)]' : carouselIndex === 1 ? 'border border-slate-300/60 shadow-[0_4px_16px_rgba(148,163,184,0.12)]' : carouselIndex === 2 ? 'border border-orange-300/60 shadow-[0_4px_16px_rgba(249,115,22,0.08)]' : 'border border-slate-100 shadow-sm'}`}>
-                    <div className="flex items-start gap-3 mb-4">
-                      <div className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-black text-sm shadow-sm border ${carouselIndex === 0 ? 'bg-[#fff9eb] border-amber-200 text-amber-500' : carouselIndex === 1 ? 'bg-slate-50 border-slate-300 text-slate-600' : carouselIndex === 2 ? 'bg-orange-50 border-orange-200 text-orange-500' : 'bg-white border-slate-100 text-slate-300'}`}>#{carouselIndex + 1}</div>
-                      <div className="flex-1 min-w-0 flex flex-col justify-center h-10">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-[#8ba3cb] truncate"><span className={carouselIndex === 0 ? "text-amber-500" : carouselIndex === 1 ? "text-slate-600" : carouselIndex === 2 ? "text-orange-500" : "text-[#0066cc]"}>{activeCarouselItem.parent_first_name}</span> <span className="text-slate-300 mx-1">•</span> PARENT OF {activeCarouselItem.cub_initial}</div>
-                        <div className="text-[9px] font-bold text-[#8ba3cb] uppercase tracking-widest mt-0.5 truncate">({activeCarouselItem.class_name})</div>
-                      </div>
-                      <div className="shrink-0 bg-white px-3 py-1.5 rounded-xl border border-slate-100 shadow-[0_2px_8px_rgba(0,0,0,0.04)] text-center min-w-[56px]"><span className="block text-lg font-black text-slate-900 leading-none">{activeCarouselItem.totalVotes}</span><span className="text-[8px] uppercase tracking-widest text-[#8ba3cb] font-bold mt-0.5 block">Votes</span></div>
-                    </div>
-                    <p className="text-[13px] md:text-[14px] text-slate-700 italic leading-snug line-clamp-3 font-medium bg-slate-50/50 p-3 rounded-xl border border-slate-50">"{activeCategory === 'inspiring' ? (activeCarouselItem.q_why_start || activeCarouselItem.q_boss_level || 'No answer provided.') : activeCategory === 'funny' ? (activeCarouselItem.q_funny_fail || 'No answer provided.') : (activeCarouselItem.q_weird_habit || 'No answer provided.')}"</p>
-                  </motion.div>
-                </AnimatePresence>
-                <div className="flex justify-center items-center gap-1.5 mt-5">{top5Responses.map((_, i) => (<button key={i} onClick={() => setCarouselIndex(i)} className={`h-2 rounded-full transition-all duration-300 ${i === carouselIndex ? 'w-6 bg-[#0066cc]' : 'w-2 bg-[#e2e8f0] hover:bg-slate-300'}`} aria-label={`Go to slide ${i + 1}`} />))}</div>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
+      {/* --- 3. CATEGORY SHOWCASE (MODULAR COMPONENT) --- */}
+      <Top3Showcase 
+        top3Responses={top3Responses} 
+        activeCategory={activeCategory} 
+        setActiveCategory={setActiveCategory} 
+        handleQuickVote={handleQuickVote}
+        quickVotedIds={quickVotedIds}
+        quickVoteLoadingId={quickVoteLoadingId}
+      />
 
       {/* --- 4. ROSTER --- */}
       <section className="px-4 max-w-5xl mx-auto">
@@ -438,17 +603,17 @@ function TrackerContent() {
         </div>
         <div className="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           {rosterResponses.map((response) => {
-            const isTop5 = top5Responses.some(top => top.id === response.id);
+            const isTop3 = top3Responses.some(top => top.id === response.id);
             return (
-              <div key={response.id} className={`p-3 md:p-4 flex items-center justify-between gap-3 border-b border-slate-100 last:border-b-0 transition-colors ${isTop5 ? 'bg-amber-50/50' : 'bg-white hover:bg-slate-50'}`}>
+              <div key={response.id} className={`p-3 md:p-4 flex items-center justify-between gap-3 border-b border-slate-100 last:border-b-0 transition-colors ${isTop3 ? 'bg-amber-50/50' : 'bg-white hover:bg-slate-50'}`}>
                 <div className="flex items-center gap-3 md:gap-4 min-w-0">
-                  <div className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center font-black text-lg ${isTop5 ? 'bg-amber-100 text-amber-600 shadow-inner border border-amber-200/50' : 'bg-slate-100 text-slate-500 border border-slate-200/50'}`}>{response.cub_initial}</div>
+                  <div className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center font-black text-lg ${isTop3 ? 'bg-amber-100 text-amber-600 shadow-inner border border-amber-200/50' : 'bg-slate-100 text-slate-500 border border-slate-200/50'}`}>{response.cub_initial}</div>
                   <div className="min-w-0 flex flex-col justify-center">
-                    <p className="font-bold text-sm text-slate-900 truncate flex items-center gap-1.5 leading-tight">{response.parent_first_name}{isTop5 && <Sparkles size={12} className="text-amber-500 fill-amber-500 shrink-0" />}</p>
+                    <p className="font-bold text-sm text-slate-900 truncate flex items-center gap-1.5 leading-tight">{response.parent_first_name}{isTop3 && <Sparkles size={12} className="text-amber-500 fill-amber-500 shrink-0" />}</p>
                     <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5 truncate">Class {response.class_name}</p>
                   </div>
                 </div>
-                <button onClick={() => setActiveVoteTarget(response)} className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${isTop5 ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm shadow-amber-500/20' : 'bg-slate-100 text-slate-600 hover:bg-[#0066cc] hover:text-white border border-slate-200 hover:border-[#0066cc]'}`}><Heart size={14} className={isTop5 ? "fill-white" : "fill-transparent"} /><span className="font-black text-xs">{response.totalVotes}</span></button>
+                <button onClick={() => setActiveVoteTarget(response)} className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${isTop3 ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm shadow-amber-500/20' : 'bg-slate-100 text-slate-600 hover:bg-[#0066cc] hover:text-white border border-slate-200 hover:border-[#0066cc]'}`}><Heart size={14} className={isTop3 ? "fill-white" : "fill-transparent"} /><span className="font-black text-xs">{response.totalVotes}</span></button>
               </div>
             );
           })}

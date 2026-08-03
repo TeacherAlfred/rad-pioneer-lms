@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { getPublishedEvents } from "@/app/actions/events";
+import { getPublishedEvents } from "../actions/events";
 import { CalendarDays, MapPin, Loader2, ArrowRight, Star, Users, Rocket, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { motion } from "framer-motion";

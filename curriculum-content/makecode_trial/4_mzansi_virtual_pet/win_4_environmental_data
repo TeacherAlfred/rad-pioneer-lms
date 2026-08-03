@@ -1,0 +1,154 @@
+
+# Win 4: Environmental Data
+
+## Welcome @unplugged
+Your virtual Springbok is fully alive, Pioneer! But right now, it lives in a vacuum. It doesn't know if it's day or night.
+<br><br>
+Real animals respond to their environment. For our final, most advanced upgrade, we are going to use the micro:bit's physical **Light Sensor** to simulate Day and Night. When it gets dark, your pet will go to sleep, its metabolism will pause, and it will refuse to eat!
+
+## Step 0: System Restore
+Let's bring your pet back online for the final upgrade!
+<br>
+**Click the blue lightbulb icon below**, copy the blocks to rebuild your Springbok's brain, and let's get to work!
+
+```blocks
+let Happiness = 10
+basic.showIcon(IconNames.Giraffe)
+
+basic.forever(function () {
+    if (Happiness > 5) {
+        basic.showIcon(IconNames.Happy)
+    } else {
+        basic.showIcon(IconNames.Sad)
+    }
+})
+
+basic.forever(function () {
+    basic.pause(5000)
+    Happiness += -1
+    if (Happiness < 0) {
+        Happiness = 0
+    }
+})
+
+input.onButtonPressed(Button.A, function () {
+    Happiness += 2
+    if (Happiness > 10) {
+        Happiness = 10
+    }
+})
+```
+
+## CONCEPT: Hardware Overrides & Nested Logic @unplugged
+
+To make this work, we need to completely restructure our code using **Nested Conditionals** (placing `if` blocks inside other `if` blocks).
+
+The physical Light Level will act as our **Master Switch**. If the light level drops below 20 (Nighttime), the pet sleeps. This hardware data will _override_ the normal game logic!
+
+## Step 1: The Master Display Switch (Night Mode)
+
+Let's update the first `forever` loop (your Emotion Engine) so the pet's eyes close in the dark.
+
+  
+
+1. Go to the teal `||logic:Logic||` drawer and grab a fresh `||logic:if / else||` block. Drop it in an empty space on your workspace.
+    
+2. Put an `||input:light level < 20||` rule in the `true` condition.
+    
+3. In the **`IF`** part, the top section (when it is dark), add a `||basic:show icon||` block and choose the **Asleep** face (the one with closed eyes).
+    
+4. **The Complex Part:** Take your _entire_ old `if/else` block (the one checking Happiness) and drag it directly into the `else` section of your new block!
+    
+5. Move this massive, nested block back into your first `forever` loop.
+    
+_Your code now asks: Is it dark? If YES, sleep. If NO, check if we are happy or sad!_
+
+```blocks
+basic.forever(function () {
+    if (input.lightLevel() < 20) {
+        basic.showIcon(IconNames.Asleep)
+    } else {
+        if (Happiness > 5) {
+            basic.showIcon(IconNames.Happy)
+        } else {
+            basic.showIcon(IconNames.Sad)
+        }
+    }
+})
+```
+
+## Step 2: Pausing the Metabolism
+
+A sleeping Springbok uses less energy! We need to stop the hunger timer when it is dark.
+
+  
+
+1. Go to your second `forever` loop (the Hunger Timer).
+    
+2. Grab an `||logic:if||` block and wrap it _around_ everything inside the loop **except** the pause.
+    
+3. Add the condition `||input:light level >= 20||` to this new `if` block. (You can find `>=` by clicking the dropdown on a standard `=` block).
+    
+
+_Now, every 5 seconds, the computer checks if the sun is up. If it is, the pet gets hungry. If it isn't, nothing happens!_
+
+```blocks
+basic.forever(function () {
+    basic.pause(5000)
+    if (input.lightLevel() >= 20) {
+        Happiness += -1
+        if (Happiness < 0) {
+            Happiness = 0
+        }
+    }
+})
+```
+
+## Step 3: The Interaction Override
+
+A sleeping animal won't eat! Let's lock the feeding button.
+
+  
+
+1. Go to your `||input:on button A pressed||` block.
+    
+2. Grab one more `||logic:if||` block and wrap it around everything inside the button block.
+    
+3. Give it the exact same rule: `||input:light level <= 20||`.
+
+
+```blocks
+input.onButtonPressed(Button.A, function () {
+    if (input.lightLevel() >= 20) {
+        Happiness += 2
+        if (Happiness > 10) {
+            Happiness = 10
+        }
+    }
+})
+```
+
+## TASK: The Ultimate Simulation @unplugged
+
+Your Springbok is now a highly complex, hardware-responsive virtual pet! Time to test the ecosystem:
+
+1. **Day Mode:** Leave the light level high (above 20). Watch the pet get hungry (turn sad) after 25 seconds. Feed it with Button A to make it happy again.
+    
+2. **Night Mode:** Drag the light slider on the simulator all the way down to 0. The pet should instantly go to sleep!
+    
+3. **The Edge Cases:** While the pet is sleeping, wait 30 seconds. Because metabolism is paused, it shouldn't get hungry! Also, try pressing Button A. The food logic should be completely ignored!
+    
+4. **Wake Up:** Drag the light slider back up. The pet wakes up right where it left off!
+    
+
+## SUBMISSION: Mission Accomplished! @unplugged
+
+Outstanding programming, Pioneer!
+
+When you are ready *(After clicking the **done** button)*, click the **Share** button at the top of the screen and copy your project to the RAD Platform.
+
+Watch the video below if you need help with the steps.
+
+![Click the Share Button](https://vzyraeuyyoytditmfvcc.supabase.co/storage/v1/object/public/course-assets/guides/makecode_interface/gif_makecode_share.gif)
+
+Copy your link, go back to your RAD Lesson window, and click **Initiate Final Uplink**!

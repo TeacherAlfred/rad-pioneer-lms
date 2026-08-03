@@ -438,13 +438,14 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
                 </div>
 
                 {/* Modal Main Content Area */}
-                <div className="flex-1 bg-[#0f172a] overflow-y-auto custom-scrollbar relative">
+                <div className="flex-1 flex flex-col bg-[#0f172a] relative overflow-hidden">
+                  
                   {cards.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-slate-500 text-xs font-black uppercase tracking-widest">
+                    <div className="flex-1 flex items-center justify-center text-slate-500 text-xs font-black uppercase tracking-widest">
                       Create a Win to configure JSON.
                     </div>
                   ) : (
-                    <div className="p-6 md:p-10 space-y-8 pb-32">
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-6 md:p-10 space-y-8">
                       <div className="flex items-center justify-between">
                         <h4 className="text-xl font-black text-white italic">{cards[activeTab]?.title || `Editing Win ${activeTab + 1}`}</h4>
                         <button onClick={() => handleRemoveWin(activeTab)} className="text-[10px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 bg-red-500/10 px-3 py-1.5 rounded-lg border border-red-500/20 flex items-center gap-1 transition-colors">
@@ -583,13 +584,11 @@ export default function TrialMissionEditor({ courseId }: { courseId: string }) {
                     </div>
                   )}
 
-                  {/* Absolute positioning for Apply button inside the right pane */}
-                  <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-[#0f172a] via-[#0f172a] to-transparent pointer-events-none">
-                    <div className="flex justify-end pointer-events-auto">
-                      <button onClick={() => setShowWinsModal(false)} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest text-xs transition-all shadow-lg shadow-blue-600/20">
-                        Done Editing Config
-                      </button>
-                    </div>
+                  {/* Fixed Footer for Apply Button */}
+                  <div className="p-6 bg-[#020617] border-t border-white/5 flex justify-end shrink-0 z-10">
+                    <button onClick={() => setShowWinsModal(false)} className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl font-black uppercase tracking-widest text-xs transition-all shadow-lg shadow-blue-600/20">
+                      Done Editing Config
+                    </button>
                   </div>
                 </div>
               </div>

@@ -2,9 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Target, Plus, Search, ChevronRight, Activity, Flame, Snowflake, Award, CalendarClock, ArrowLeft } from 'lucide-react';
+import { Target, Plus, Search, ChevronRight, Activity, Flame, Snowflake, Award, CalendarClock, ArrowLeft, BarChart3, Ticket, Filter } from 'lucide-react';
 import Link from 'next/link';
 import InjectLeadModal from '@/components/admin/InjectLeadModal';
+
+// Import Drizzle Server Actions for Neon DB
+import { getRadGrowthLeads, updateRadGrowthLead } from '@/app/actions/rad-admin';
 
 const MY_ADMIN_ID = 'adfefd6c-954c-4e13-9423-5519aa89980a';
 
@@ -32,7 +35,9 @@ export default function AcquisitionEngine() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showScheduledOnly, setShowScheduledOnly] = useState(false);
   
-  // Cleaned up Modal State
+  // New State for Quick Filters
+  const [activeSourceFilter, setActiveSourceFilter] = useState<string | null>(null);
+  
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   useEffect(() => {
@@ -42,12 +47,15 @@ export default function AcquisitionEngine() {
   async function fetchDashboardData() {
     setLoading(true);
     
-    const { data: leadsData } = await supabase
+    // 1. FETCH LEADS DIRECTLY VIA SUPABASE (Bypasses Next.js Server Cache)
+    const { data: rawLeads } = await supabase
       .from('growth_leads')
       .select('*')
-      .eq('admin_id', MY_ADMIN_ID)
-      .order('created_at', { ascending: false });
+      .eq('admin_id', MY_ADMIN_ID);
+      
+    const leadsData = rawLeads || [];
 
+    // 2. FETCH INTERACTIONS & TARGETS FROM SUPABASE
     const { data: plannedData } = await supabase
       .from('growth_interactions')
       .select('lead_id, planned_date')
@@ -56,11 +64,15 @@ export default function AcquisitionEngine() {
       .order('planned_date', { ascending: true }); 
 
     if (leadsData) {
-      const leadsWithDates = leadsData.map(lead => {
+      const leadsWithDates = leadsData.map((lead: any) => {
         const nextAction = plannedData?.find(p => p.lead_id === lead.id);
         return {
           ...lead,
-          next_action_date: nextAction ? nextAction.planned_date : null
+          // Map snake_case to camelCase so your UI renders it perfectly
+          fullName: lead.full_name || lead.fullName,
+          contactNumber: lead.contact_number || lead.contactNumber,
+          leadSource: lead.lead_source || lead.leadSource,
+          nextActionDate: nextAction ? nextAction.planned_date : null
         };
       });
       setLeads(leadsWithDates);
@@ -90,44 +102,53 @@ export default function AcquisitionEngine() {
 
     setLoading(false);
   }
-
   const handleStageChange = async (leadId: string, newStage: string) => {
     setLeads(prevLeads => prevLeads.map(l => l.id === leadId ? { ...l, stage: newStage } : l));
-    try {
-      const { error } = await supabase.from('growth_leads').update({ stage: newStage }).eq('id', leadId);
-      if (error) throw error;
-    } catch (err: any) {
-      alert("Failed to move lead: " + err.message);
+    const res = await updateRadGrowthLead(leadId, { stage: newStage });
+    if (!res.success) {
+      alert("Failed to move lead: " + res.error);
       fetchDashboardData();
     }
   };
 
   const handleWarmthChange = async (leadId: string, newWarmth: string) => {
     setLeads(prevLeads => prevLeads.map(l => l.id === leadId ? { ...l, warmth: newWarmth } : l));
-    try {
-      const { error } = await supabase.from('growth_leads').update({ warmth: newWarmth }).eq('id', leadId);
-      if (error) throw error;
-    } catch (err: any) {
-      alert("Failed to update warmth: " + err.message);
+    const res = await updateRadGrowthLead(leadId, { warmth: newWarmth });
+    if (!res.success) {
+      alert("Failed to update warmth: " + res.error);
       fetchDashboardData();
     }
   };
 
-  let finalLeads = leads.filter(l => 
-    l.full_name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    (l.lead_source && l.lead_source.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  let finalLeads = leads.filter(l => {
+    // 1. Text Search Filtering
+    const queryLower = searchQuery.toLowerCase();
+    const cleanSearchQuery = searchQuery.replace(/\D/g, '');
+    const cleanContactNumber = l.contactNumber ? l.contactNumber.replace(/\D/g, '') : '';
+
+    // CRITICAL FIX: Allow all leads through if search query is empty
+    const matchesSearch = searchQuery.trim() === '' || (
+      (l.fullName && l.fullName.toLowerCase().includes(queryLower)) || 
+      (l.leadSource && l.leadSource.toLowerCase().includes(queryLower)) ||
+      (cleanSearchQuery !== '' && cleanContactNumber.includes(cleanSearchQuery))
+    );
+
+    // 2. Source Quick Filter
+    const matchesSource = activeSourceFilter ? l.leadSource === activeSourceFilter : true;
+
+    return matchesSearch && matchesSource;
+  });
 
   if (showScheduledOnly) {
-    finalLeads = finalLeads.filter(l => l.next_action_date !== null);
+    finalLeads = finalLeads.filter(l => l.nextActionDate !== null);
   }
 
   finalLeads.sort((a, b) => {
-    if (a.next_action_date && b.next_action_date) {
-      return new Date(a.next_action_date).getTime() - new Date(b.next_action_date).getTime();
+    if (a.nextActionDate && b.nextActionDate) {
+      return new Date(a.nextActionDate).getTime() - new Date(b.nextActionDate).getTime();
     }
-    if (a.next_action_date && !b.next_action_date) return -1;
-    if (!a.next_action_date && b.next_action_date) return 1;
+    if (a.nextActionDate && !b.nextActionDate) return -1;
+    if (!a.nextActionDate && b.nextActionDate) return 1;
     return 0; 
   });
 
@@ -138,22 +159,69 @@ export default function AcquisitionEngine() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 p-6 lg:p-12 overflow-x-hidden font-sans selection:bg-fuchsia-500/30">
-      <div className="max-w-[1600px] mx-auto space-y-10">
+    <div className="min-h-screen bg-slate-50 text-slate-900 p-6 lg:p-12 overflow-x-hidden font-sans selection:bg-fuchsia-500/30 relative">
+      
+      {/* LEFT HOVERING QUICK NAV */}
+      <div className="fixed top-36 left-6 z-50 flex flex-col gap-3 opacity-30 hover:opacity-100 transition-opacity duration-300 hidden md:flex">
+        <Link 
+          href="/admin/irene-entry/claims" 
+          title="Irene Voucher Claims Engine" 
+          className="px-4 py-3 bg-white text-slate-500 hover:text-emerald-500 hover:bg-emerald-50 hover:border-emerald-200 border border-slate-200 rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-all"
+        >
+          <Ticket size={20} />
+          <span className="text-[10px] font-black uppercase tracking-widest">Claims</span>
+        </Link>
+
+        {/* Divider */}
+        <div className="w-full h-px bg-slate-200 my-2" />
+        
+        {/* Quick Filters */}
+        <div className="flex flex-col gap-2">
+          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-2 mb-1">Filters</p>
+          
+          <button 
+            onClick={() => setActiveSourceFilter(activeSourceFilter === 'Irene Voucher Claim' ? null : 'Irene Voucher Claim')}
+            title="Filter by Irene Claims"
+            className={`px-4 py-3 rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-all border ${
+              activeSourceFilter === 'Irene Voucher Claim' 
+                ? 'bg-fuchsia-500 text-white border-fuchsia-600 shadow-fuchsia-500/30' 
+                : 'bg-white text-slate-500 hover:text-fuchsia-500 hover:bg-fuchsia-50 hover:border-fuchsia-200 border-slate-200'
+            }`}
+          >
+            <Filter size={16} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Irene Claims</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-[1600px] mx-auto space-y-10 pl-0 md:pl-28">
         
         {/* HEADER & ACCOUNTABILITY HUD */}
         <header className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-8 border-b border-slate-200 pb-8">
           <div className="space-y-4">
-            {/* NEW: Back to Dashboard Button */}
-            <Link 
-              href="/admin/dashboard" 
-              className="group flex items-center gap-2 bg-white border border-slate-200 hover:border-fuchsia-500/50 px-4 py-2 rounded-xl transition-all w-fit shadow-sm"
-            >
-              <ArrowLeft size={16} className="text-slate-400 group-hover:text-fuchsia-500 transition-colors" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-slate-900 transition-colors">
-                Mission Control
-              </span>
-            </Link>
+            
+            {/* Top Navigation Links */}
+            <div className="flex items-center gap-3">
+              <Link 
+                href="/admin/dashboard" 
+                className="group flex items-center gap-2 bg-white border border-slate-200 hover:border-fuchsia-500/50 px-4 py-2 rounded-xl transition-all w-fit shadow-sm"
+              >
+                <ArrowLeft size={16} className="text-slate-400 group-hover:text-fuchsia-500 transition-colors" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-slate-900 transition-colors">
+                  Mission Control
+                </span>
+              </Link>
+
+              <Link 
+                href="/admin/acquisition/analytics" 
+                className="group flex items-center gap-2 bg-white border border-slate-200 hover:border-fuchsia-500/50 px-4 py-2 rounded-xl transition-all w-fit shadow-sm"
+              >
+                <BarChart3 size={16} className="text-slate-400 group-hover:text-fuchsia-500 transition-colors" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 group-hover:text-slate-900 transition-colors">
+                  Pipeline Analytics
+                </span>
+              </Link>
+            </div>
 
             <div>
               <div className="flex items-center gap-2 text-fuchsia-600 mb-2">
@@ -248,7 +316,7 @@ export default function AcquisitionEngine() {
                     </div>
                   ) : (
                     stageLeads.map((lead) => {
-                      const glowActive = isToday(lead.next_action_date);
+                      const glowActive = isToday(lead.nextActionDate);
                       
                       return (
                         <Link 
@@ -261,11 +329,11 @@ export default function AcquisitionEngine() {
                           }`}
                         >
                           <div className="absolute top-0 right-0 p-4 flex items-center justify-end gap-2 w-full pointer-events-none">
-                            {lead.next_action_date && (
+                            {lead.nextActionDate && (
                               <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md z-10 ${
                                 glowActive ? 'bg-fuchsia-500 text-white shadow-md shadow-fuchsia-500/30' : 'bg-slate-100 text-slate-500 border border-slate-200'
                               }`}>
-                                {new Date(lead.next_action_date).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' })}
+                                {new Date(lead.nextActionDate).toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' })}
                               </span>
                             )}
                             <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -275,8 +343,8 @@ export default function AcquisitionEngine() {
                           
                           <div className="flex items-start justify-between mb-4 mt-2">
                             <div className="pr-16">
-                              <p className="font-bold text-slate-900 text-base leading-tight group-hover:text-fuchsia-600 transition-colors">{lead.full_name}</p>
-                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1.5">{lead.lead_source || 'Unknown Source'}</p>
+                              <p className="font-bold text-slate-900 text-base leading-tight group-hover:text-fuchsia-600 transition-colors">{lead.fullName}</p>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1.5">{lead.leadSource || 'Unknown Source'}</p>
                             </div>
                           </div>
                           

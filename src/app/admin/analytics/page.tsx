@@ -24,7 +24,6 @@ export default function AnalyticsDashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [timeRange, setTimeRange] = useState("7d");
   
-  // IP Filtering & Tagging State
   const [ignoredIps, setIgnoredIps] = useState<string[]>([]);
   const [ipTags, setIpTags] = useState<Record<string, string>>({});
   
@@ -32,7 +31,6 @@ export default function AnalyticsDashboard() {
   const [tagModal, setTagModal] = useState<{ip: string, tag: string} | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
-  // Load ignored IPs and Tags from local storage on mount
   useEffect(() => {
     const savedIps = localStorage.getItem('rad_ignored_ips');
     const savedTags = localStorage.getItem('rad_ip_tags');
@@ -40,14 +38,14 @@ export default function AnalyticsDashboard() {
     if (savedTags) setIpTags(JSON.parse(savedTags));
   }, []);
 
-  // Fetch & Realtime Subscription
   useEffect(() => {
     fetchAnalytics();
 
     const channel = supabase
       .channel('analytics-inserts')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'analytics_events' }, (payload) => {
-        setEvents(current => [payload.new, ...current]);
+        // When a new event comes in live, we need to refresh to ensure enrichment happens
+        fetchAnalytics(); 
       })
       .subscribe();
 
@@ -64,14 +62,45 @@ export default function AnalyticsDashboard() {
       if (timeRange === "7d") dateBoundary.setDate(dateBoundary.getDate() - 7);
       if (timeRange === "30d") dateBoundary.setDate(dateBoundary.getDate() - 30);
 
-      const { data, error } = await supabase
+      const { data: eventsData, error: eventsError } = await supabase
         .from('analytics_events')
         .select('*')
         .gte('created_at', dateBoundary.toISOString())
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setEvents(data || []);
+      if (eventsError) throw eventsError;
+
+      // Fetch Prospects to map UUIDs to Names
+      const { data: prospectsData } = await supabase
+        .from('prospects')
+        .select('id, name');
+
+      const nameLookup: Record<string, string> = {};
+      prospectsData?.forEach(p => {
+        nameLookup[p.id] = p.name;
+      });
+
+      // Enrichment: Link UUIDs in URLs to actual Names
+      const enrichedEvents = (eventsData || []).map(event => {
+        let resolvedName = null;
+
+        if (event.url_path?.includes('/invite/')) {
+          const match = event.url_path.match(/\/invite\/([a-f0-9-]{36})/i);
+          const uuid = match ? match[1] : null;
+          if (uuid && nameLookup[uuid]) resolvedName = nameLookup[uuid];
+        }
+
+        if (!resolvedName && event.user_identifier && nameLookup[event.user_identifier]) {
+          resolvedName = nameLookup[event.user_identifier];
+        }
+
+        return {
+          ...event,
+          resolved_name: resolvedName
+        };
+      });
+
+      setEvents(enrichedEvents);
     } catch (error) {
       console.error("Error fetching analytics:", error);
     } finally {
@@ -79,12 +108,9 @@ export default function AnalyticsDashboard() {
     }
   }
 
-  // --- ACTIONS ---
-
   const toggleIgnoreIp = (ip: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!ip || ip === "Unknown IP") return;
-
     setIgnoredIps(prev => {
       const newIps = prev.includes(ip) ? prev.filter(i => i !== ip) : [...prev, ip];
       localStorage.setItem('rad_ignored_ips', JSON.stringify(newIps));
@@ -117,64 +143,50 @@ export default function AnalyticsDashboard() {
     return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(isoString));
   };
 
-  // --- DATA PROCESSING ---
-
-  // 1. Remove Whitelisted IPs
   const visibleEvents = events.filter(e => !ignoredIps.includes(e.metadata?.ip_address));
 
-  // 2. Pre-process IP Identities (Retroactive mapping if an IP ever logs in)
-  const ipIdentityMap = useMemo(() => {
-    const map: Record<string, { type: 'verified' | 'identified', name: string }> = {};
+  // --- IDENTITY STITCHING ---
+  const ipToNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
     visibleEvents.forEach(e => {
       const ip = e.metadata?.ip_address;
-      if (!ip) return;
-      
-      if (e.metadata?.logged_in_user) {
-        map[ip] = { type: 'verified', name: e.metadata.logged_in_user };
-      } else if (e.user_identifier && map[ip]?.type !== 'verified') {
-        map[ip] = { type: 'identified', name: e.user_identifier };
+      if (ip && e.resolved_name) {
+        map[ip] = e.resolved_name; // Link this IP to this name for all historical events
       }
     });
     return map;
   }, [visibleEvents]);
 
-  // 3. Calculate Stats
   const stats = useMemo(() => ({
     totalViews: visibleEvents.filter(e => e.event_type === 'page_view').length,
     uniqueVisitors: new Set(visibleEvents.map(e => e.user_identifier || e.metadata?.ip_address).filter(Boolean)).size,
     linkClicks: visibleEvents.filter(e => e.event_type === 'link_click').length
   }), [visibleEvents]);
 
-  // 4. Apply Search Filter
   const filteredEvents = visibleEvents.filter(event => {
     const searchLower = searchQuery.toLowerCase();
     const matchPath = event.url_path?.toLowerCase().includes(searchLower);
     const matchUser = event.user_identifier?.toLowerCase().includes(searchLower);
-    const matchAuth = event.metadata?.logged_in_user?.toLowerCase().includes(searchLower);
+    const matchRes = event.resolved_name?.toLowerCase().includes(searchLower);
     const matchIp = event.metadata?.ip_address?.includes(searchLower);
     const matchTag = event.metadata?.ip_address && ipTags[event.metadata.ip_address]?.toLowerCase().includes(searchLower);
-    
-    return matchPath || matchUser || matchAuth || matchIp || matchTag;
+    return matchPath || matchUser || matchRes || matchIp || matchTag;
   });
 
-  // 5. Hierarchy Grouping (Retroactive Verification > Identity > Custom Tag > Raw IP)
+  // --- CONSOLIDATED GROUPING ---
   const groupedEvents = filteredEvents.reduce((groups: Record<string, any[]>, event) => {
     const ip = event.metadata?.ip_address;
     
-    let groupId = "Unknown Visitor";
+    let groupId = "Unknown Visitor"; // DEFAULT: All IPs end up here
 
-    if (ip && ipIdentityMap[ip]?.type === 'verified') {
-      groupId = ipIdentityMap[ip].name; // Retroactively groups old IP events under their new confirmed name
+    if (event.resolved_name) {
+      groupId = event.resolved_name; // Priority: DB Name
+    } else if (ip && ipToNameMap[ip]) {
+      groupId = ipToNameMap[ip]; // Stitching: Past events from same IP as an identified user
+    } else if (ip && ipTags[ip]) {
+      groupId = ipTags[ip]; // Admin manual tag
     } else if (event.metadata?.logged_in_user) {
       groupId = event.metadata.logged_in_user;
-    } else if (ip && ipIdentityMap[ip]?.type === 'identified') {
-      groupId = ipIdentityMap[ip].name;
-    } else if (event.user_identifier) {
-      groupId = event.user_identifier;
-    } else if (ip && ipTags[ip]) {
-      groupId = ipTags[ip]; // Custom Admin Tag
-    } else if (ip) {
-      groupId = ip; // Raw IP Fallback
     }
 
     if (!groups[groupId]) groups[groupId] = [];
@@ -186,7 +198,6 @@ export default function AnalyticsDashboard() {
     <div className="min-h-screen bg-[#020617] p-6 lg:p-12 text-left relative overflow-hidden">
       <div className="max-w-7xl mx-auto space-y-8 relative z-10">
         
-        {/* --- HEADER --- */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <Link href="/admin/dashboard" className="inline-flex items-center gap-2 text-slate-400 hover:text-blue-400 transition-colors text-sm font-bold uppercase tracking-widest">
@@ -208,26 +219,12 @@ export default function AnalyticsDashboard() {
             </div>
             
             <div className="flex items-center gap-4 shrink-0">
-              <button 
-                onClick={() => setShowFilterModal(true)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
-                  ignoredIps.length > 0 
-                    ? "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20" 
-                    : "bg-white/5 text-slate-400 border-white/10 hover:text-white hover:bg-white/10"
-                }`}
-              >
+              <button onClick={() => setShowFilterModal(true)} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${ignoredIps.length > 0 ? "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20" : "bg-white/5 text-slate-400 border-white/10 hover:text-white hover:bg-white/10"}`}>
                 <Filter size={14} /> {ignoredIps.length} Ignored
               </button>
-
               <div className="flex bg-[#0f172a] border border-white/10 rounded-2xl p-1">
                 {[{ id: "24h", label: "24H" }, { id: "7d", label: "7D" }, { id: "30d", label: "30D" }, { id: "all", label: "ALL" }].map((range) => (
-                  <button
-                    key={range.id}
-                    onClick={() => setTimeRange(range.id)}
-                    className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                      timeRange === range.id ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-slate-500 hover:text-slate-300"
-                    }`}
-                  >
+                  <button key={range.id} onClick={() => setTimeRange(range.id)} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${timeRange === range.id ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" : "text-slate-500 hover:text-slate-300"}`}>
                     {range.label}
                   </button>
                 ))}
@@ -236,7 +233,6 @@ export default function AnalyticsDashboard() {
           </div>
         </div>
 
-        {/* --- STAT CARDS --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-6 relative overflow-hidden group hover:border-blue-500/30 transition-all">
             <div className="absolute -right-6 -top-6 text-blue-500/10 group-hover:text-blue-500/20 transition-colors"><BarChart3 size={100} /></div>
@@ -255,7 +251,6 @@ export default function AnalyticsDashboard() {
           </div>
         </div>
 
-        {/* --- SEARCH --- */}
         <div className="relative group">
           <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-700 group-focus-within:text-blue-500 transition-colors" size={20} />
           <input 
@@ -267,7 +262,6 @@ export default function AnalyticsDashboard() {
           />
         </div>
 
-        {/* --- GROUPED ACTIVITY FEED --- */}
         <div className="space-y-4">
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-20 space-y-4 bg-[#0f172a] rounded-[32px] border border-white/5">
@@ -287,13 +281,13 @@ export default function AnalyticsDashboard() {
               const ipAddress = mostRecentEvent.metadata?.ip_address;
               const tag = ipAddress ? ipTags[ipAddress] : null;
               
-              // Identity Classification
               let identityColor = "text-slate-400";
               let IdentityIcon = Globe;
               let badgeText = "Raw IP";
-              
-              const isVerified = (ipAddress && ipIdentityMap[ipAddress]?.type === 'verified') || mostRecentEvent.metadata?.logged_in_user;
-              const isIdentified = (ipAddress && ipIdentityMap[ipAddress]?.type === 'identified') || mostRecentEvent.user_identifier;
+
+              const isUnknown = groupId === "Unknown Visitor";
+              const isVerified = mostRecentEvent.metadata?.logged_in_user;
+              const isIdentified = groupId !== "Unknown Visitor" && !isVerified;
 
               if (isVerified) {
                 identityColor = "text-purple-400";
@@ -311,17 +305,11 @@ export default function AnalyticsDashboard() {
 
               return (
                 <div key={groupId} className="bg-[#0f172a] border border-white/5 rounded-[24px] overflow-hidden shadow-lg transition-all">
-                  
-                  {/* GROUP HEADER */}
-                  <div 
-                    onClick={() => toggleGroup(groupId)}
-                    className="flex items-center justify-between p-5 bg-white/[0.02] hover:bg-white/[0.04] cursor-pointer transition-colors border-b border-white/5 group/header"
-                  >
+                  <div onClick={() => toggleGroup(groupId)} className="flex items-center justify-between p-5 bg-white/[0.02] hover:bg-white/[0.04] cursor-pointer transition-colors border-b border-white/5 group/header">
                     <div className="flex items-center gap-4">
                       <button className="text-slate-500 hover:text-white transition-colors">
                         {isCollapsed ? <ChevronRight size={20} /> : <ChevronDown size={20} />}
                       </button>
-                      
                       <div className="flex items-center gap-3">
                         <div className={`p-2 rounded-xl bg-white/5 border border-white/10 ${identityColor}`}>
                           <IdentityIcon size={16} />
@@ -331,43 +319,24 @@ export default function AnalyticsDashboard() {
                             <h3 className={`text-sm font-black uppercase tracking-widest ${identityColor}`}>
                               {groupId}
                             </h3>
-                            <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${
-                              isVerified ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' :
-                              isIdentified ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                              tag && groupId === tag ? 'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20' :
-                              'bg-slate-500/10 text-slate-400 border-slate-500/20'
-                            }`}>
-                              {badgeText}
-                            </span>
+                            {!isUnknown && (
+                              <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${isVerified ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'}`}>
+                                {badgeText}
+                              </span>
+                            )}
                           </div>
-                          
                           <div className="flex items-center gap-3 mt-1 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
                             <span className="flex items-center gap-1"><Activity size={10}/> {userEvents.length} Events</span>
-                            <span className="flex items-center gap-1 relative">
-                              <Wifi size={10}/> {ipAddress || "Unknown IP"}
-                              
-                              {/* TAG IP BUTTON */}
-                              {!isVerified && !isIdentified && ipAddress && (
-                                <button 
-                                  onClick={(e) => { e.stopPropagation(); setTagModal({ ip: ipAddress, tag: tag || "" }); }}
-                                  className="ml-2 text-slate-500 hover:text-fuchsia-400 transition-all flex items-center gap-1 bg-white/5 hover:bg-fuchsia-500/10 px-2 py-0.5 rounded"
-                                  title="Tag this IP"
-                                >
-                                  <Tag size={10} /> {tag ? 'Edit Tag' : 'Tag IP'}
-                                </button>
-                              )}
-
-                              {/* HIDE IP BUTTON */}
-                              {ipAddress && (
-                                <button 
-                                  onClick={(e) => toggleIgnoreIp(ipAddress, e)}
-                                  className="ml-1 text-slate-500 hover:text-rose-400 transition-all flex items-center gap-1 bg-white/5 hover:bg-rose-500/10 px-2 py-0.5 rounded"
-                                  title="Hide this IP from Analytics"
-                                >
-                                  <EyeOff size={10} /> Hide IP
-                                </button>
-                              )}
-                            </span>
+                            {!isUnknown && (
+                              <span className="flex items-center gap-1 relative">
+                                <Wifi size={10}/> {ipAddress || "Multiple IPs"}
+                                {ipAddress && (
+                                  <button onClick={(e) => toggleIgnoreIp(ipAddress, e)} className="ml-1 text-slate-500 hover:text-rose-400 transition-all flex items-center gap-1 bg-white/5 hover:bg-rose-500/10 px-2 py-0.5 rounded">
+                                    <EyeOff size={10} /> Hide IP
+                                  </button>
+                                )}
+                              </span>
+                            )}
                             <span className="flex items-center gap-1">
                               {uaInfo.isMobile ? <Smartphone size={10}/> : <Monitor size={10}/>}
                               {uaInfo.device} • {uaInfo.browser}
@@ -376,47 +345,31 @@ export default function AnalyticsDashboard() {
                         </div>
                       </div>
                     </div>
-                    
                     <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
                       Last Active: {formatDate(mostRecentEvent.created_at)}
                     </div>
                   </div>
 
-                  {/* GROUP CHILDREN (Events) */}
                   {!isCollapsed && (
                     <div className="divide-y divide-white/5 bg-black/20">
                       {userEvents.map((event) => (
                         <div key={event.id} className="grid grid-cols-12 gap-4 p-4 pl-12 hover:bg-white/[0.02] transition-colors items-center">
-                          
                           <div className="col-span-2 flex items-center gap-2">
                             <Clock size={12} className="text-slate-600 shrink-0" />
-                            <span className="text-xs font-bold text-slate-400 whitespace-nowrap">
-                              {formatTime(event.created_at)}
-                            </span>
+                            <span className="text-xs font-bold text-slate-400 whitespace-nowrap">{formatTime(event.created_at)}</span>
                           </div>
-
                           <div className="col-span-3">
-                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                              event.event_type === 'page_view' 
-                                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                            }`}>
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${event.event_type === 'page_view' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`}>
                               {event.event_type === 'page_view' ? <Activity size={10}/> : <MousePointerClick size={10}/>}
                               {event.event_type.replace('_', ' ')}
                             </span>
                           </div>
-
                           <div className="col-span-7 flex items-center gap-2">
-                            <span className="text-xs font-mono text-slate-300 truncate" title={event.url_path}>
-                              {event.url_path}
-                            </span>
-                            {event.metadata?.search_params && (
-                              <span className="text-[9px] text-slate-600 font-mono truncate max-w-[200px]">
-                                ?{event.metadata.search_params}
-                              </span>
+                            <span className="text-xs font-mono text-slate-300 truncate" title={event.url_path}>{event.url_path}</span>
+                            {isUnknown && event.metadata?.ip_address && (
+                               <span className="text-[9px] text-blue-500 font-mono border border-blue-500/20 px-1.5 rounded">{event.metadata.ip_address}</span>
                             )}
                           </div>
-
                         </div>
                       ))}
                     </div>
@@ -427,33 +380,18 @@ export default function AnalyticsDashboard() {
           )}
         </div>
 
-        {/* --- TAG IP MODAL --- */}
+        {/* --- MODALS --- */}
         <AnimatePresence>
           {tagModal && (
             <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
               <motion.div initial={{scale:0.95}} animate={{scale:1}} className="bg-[#0f172a] border border-white/10 rounded-[32px] w-full max-w-sm overflow-hidden shadow-2xl flex flex-col p-6 space-y-4">
                 <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-black uppercase italic tracking-tighter text-white flex items-center gap-2">
-                    <Tag className="text-fuchsia-400" size={18}/> Tag IP Address
-                  </h3>
+                  <h3 className="text-lg font-black uppercase italic tracking-tighter text-white flex items-center gap-2"><Tag className="text-fuchsia-400" size={18}/> Tag IP Address</h3>
                   <button onClick={() => setTagModal(null)} className="text-slate-500 hover:text-white"><X size={18}/></button>
                 </div>
-                <p className="text-xs text-slate-400 font-bold leading-relaxed">
-                  Assign a temporary identifier for <span className="text-white font-mono">{tagModal.ip}</span>. This will group their events and be superseded automatically once they log in or verify their identity.
-                </p>
-                <input 
-                  type="text" 
-                  autoFocus
-                  placeholder="e.g. Quote 1105 Viewer" 
-                  value={tagModal.tag} 
-                  onChange={e => setTagModal({...tagModal, tag: e.target.value})}
-                  onKeyDown={e => e.key === 'Enter' && saveIpTag()}
-                  className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-fuchsia-500 transition-colors" 
-                />
+                <input type="text" autoFocus placeholder="e.g. Quote 1105 Viewer" value={tagModal.tag} onChange={e => setTagModal({...tagModal, tag: e.target.value})} onKeyDown={e => e.key === 'Enter' && saveIpTag()} className="w-full bg-[#020617] border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-fuchsia-500 transition-colors" />
                 <div className="flex gap-2 pt-2">
-                  {ipTags[tagModal.ip] && (
-                    <button onClick={() => { setTagModal({...tagModal, tag: ""}); setTimeout(saveIpTag, 0); }} className="px-4 py-3 bg-rose-500/10 text-rose-500 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-rose-500/20 transition-colors">Clear</button>
-                  )}
+                  {ipTags[tagModal.ip] && <button onClick={() => { setTagModal({...tagModal, tag: ""}); setTimeout(saveIpTag, 0); }} className="px-4 py-3 bg-rose-500/10 text-rose-500 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-rose-500/20 transition-colors">Clear</button>}
                   <button onClick={saveIpTag} className="flex-1 px-4 py-3 bg-fuchsia-600 text-white rounded-xl font-black uppercase tracking-widest text-[10px] shadow-lg hover:bg-fuchsia-500 transition-colors">Save Tag</button>
                 </div>
               </motion.div>
@@ -461,41 +399,23 @@ export default function AnalyticsDashboard() {
           )}
         </AnimatePresence>
 
-        {/* --- MANAGE IGNORED IPS MODAL --- */}
         <AnimatePresence>
           {showFilterModal && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[90] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
               <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-[#0f172a] border border-white/10 rounded-[32px] w-full max-w-lg overflow-hidden shadow-2xl flex flex-col">
                 <div className="flex items-center justify-between p-6 border-b border-white/10 bg-white/[0.02]">
-                  <h3 className="text-xl font-black uppercase italic text-white tracking-tighter flex items-center gap-3">
-                    <Filter className="text-amber-400" /> Whitelisted IPs
-                  </h3>
+                  <h3 className="text-xl font-black uppercase italic text-white tracking-tighter flex items-center gap-3"><Filter className="text-amber-400" /> Whitelisted IPs</h3>
                   <button onClick={() => setShowFilterModal(false)} className="text-slate-400 hover:text-white"><X size={24} /></button>
                 </div>
                 <div className="p-6 space-y-4">
-                  <p className="text-xs text-slate-400 font-bold leading-relaxed">
-                    Events from these IP addresses are saved in the database but hidden from your analytics dashboard calculations.
-                  </p>
-                  
-                  {ignoredIps.length === 0 ? (
-                    <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest italic">
-                      No IPs are currently ignored.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {ignoredIps.map(ip => (
-                        <div key={ip} className="flex items-center justify-between bg-black/50 border border-white/5 rounded-xl p-3">
-                          <span className="text-sm font-mono text-slate-300">{ip}</span>
-                          <button 
-                            onClick={() => toggleIgnoreIp(ip)}
-                            className="text-[10px] font-black text-rose-400 uppercase tracking-widest hover:text-rose-300 bg-rose-500/10 px-3 py-1.5 rounded-lg border border-rose-500/20"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {ignoredIps.length === 0 ? <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest italic">No IPs are currently ignored.</div> : 
+                    ignoredIps.map(ip => (
+                      <div key={ip} className="flex items-center justify-between bg-black/50 border border-white/5 rounded-xl p-3">
+                        <span className="text-sm font-mono text-slate-300">{ip}</span>
+                        <button onClick={() => toggleIgnoreIp(ip)} className="text-[10px] font-black text-rose-400 uppercase tracking-widest hover:text-rose-300 bg-rose-500/10 px-3 py-1.5 rounded-lg border border-rose-500/20">Remove</button>
+                      </div>
+                    ))
+                  }
                 </div>
               </motion.div>
             </motion.div>
