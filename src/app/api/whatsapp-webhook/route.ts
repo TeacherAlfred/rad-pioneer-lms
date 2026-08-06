@@ -8,6 +8,10 @@ export async function GET(request: Request) {
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
+  // ADD THESE TWO LINES:
+  console.log("Meta sent token:", token);
+  console.log("Vercel env token:", process.env.WHATSAPP_VERIFY_TOKEN);
+
   // Replaced hardcoded string with environment variable
   if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
     return new NextResponse(challenge, { status: 200 });
