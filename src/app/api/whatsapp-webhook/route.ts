@@ -1,18 +1,15 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 // Meta verifies the webhook via a GET request
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const mode = searchParams.get('hub.mode');
-  const token = searchParams.get('hub.verify_token');
-  const challenge = searchParams.get('hub.challenge');
+export async function GET(request: NextRequest) {
+  const mode = request.nextUrl.searchParams.get('hub.mode');
+  const token = request.nextUrl.searchParams.get('hub.verify_token');
+  const challenge = request.nextUrl.searchParams.get('hub.challenge');
 
-  // ADD THESE TWO LINES:
   console.log("Meta sent token:", token);
   console.log("Vercel env token:", process.env.WHATSAPP_VERIFY_TOKEN);
 
-  // Replaced hardcoded string with environment variable
   if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
     return new NextResponse(challenge, { status: 200 });
   }
