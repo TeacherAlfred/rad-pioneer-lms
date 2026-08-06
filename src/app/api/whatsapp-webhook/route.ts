@@ -47,6 +47,16 @@ export async function POST(request: Request) {
               let messageText = '';
               if (message.type === 'text') {
                 messageText = message.text?.body || '';
+              } else if (message.type === 'interactive') {
+                const buttonReply = message.interactive?.button_reply;
+                const listReply = message.interactive?.list_reply;
+                if (buttonReply) {
+                  messageText = `[Button Reply: ${buttonReply.title} (${buttonReply.id})]`;
+                } else if (listReply) {
+                  messageText = `[List Reply: ${listReply.title} (${listReply.id})]`;
+                } else {
+                  messageText = '[Interactive Message]';
+                }
               } else if (message.type === 'contacts') {
                 messageText = '[Contact Card Shared]';
               } else {
@@ -59,10 +69,10 @@ export async function POST(request: Request) {
                 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
               );
 
-              // Log the lead to Supabase
+              // Log the lead entry to Supabase
               await supabase.from('leads').insert([{ phone: senderPhone, message: messageText }]);
 
-              // Trigger Auto-Responder if they ask for the guide
+              // 5. Trigger Auto-Responder with R2 PDF + Interactive Buttons
               if (message.type === 'text' && messageText.toLowerCase().includes('guide')) {
                 await fetch(`https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`, {
                   method: 'POST',
@@ -72,12 +82,96 @@ export async function POST(request: Request) {
                   },
                   body: JSON.stringify({
                     messaging_product: 'whatsapp',
+                    recipient_type: 'individual',
                     to: senderPhone,
-                    type: 'text', 
-                    text: { body: "Here is your Parent's Guide! 🚀 By the way, we are running our Minecraft Workshop in Menlyn on Aug 15-16. Want the details?" }
+                    type: 'interactive',
+                    interactive: {
+                      type: 'button',
+                      header: {
+                        type: 'document',
+                        document: {
+                          link: 'https://pub-5baa3fb9dc2549008c18dac88b524ed9.r2.dev/marketing_material/pdfs/RAD_Hacking_Screen_Time.pdf',
+                          filename: 'RAD_Hacking_Screen_Time.pdf'
+                        }
+                      },
+                      body: {
+                        text: "Here is your *Hacking Screen Time* guide! 🚀\n\nTake a read and let us know if you'd like to explore how our curriculum helps turn screen time into skill-building, or if you'd prefer to chat with one of our instructors."
+                      },
+                      footer: {
+                        text: "RAD Academy"
+                      },
+                      action: {
+                        buttons: [
+                          {
+                            type: 'reply',
+                            reply: {
+                              id: 'btn_workshops',
+                              title: 'View Workshops'
+                            }
+                          },
+                          {
+                            type: 'reply',
+                            reply: {
+                              id: 'btn_human',
+                              title: 'Talk to a Human'
+                            }
+                          }
+                        ]
+                      }
+                    }
                   })
                 });
               }
+
+              // 6. Handle Interactive Button Tap Events
+              if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
+                const buttonId = message.interactive.button_reply?.id;
+
+                if (buttonId === 'btn_human') {
+                  // Mark lead for human handoff in Supabase
+                  await supabase
+                    .from('leads')
+                    .update({ status: 'needs_human' })
+                    .eq('phone', senderPhone);
+
+                  // Send confirmation message to the user
+                  await fetch(`https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`, {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      messaging_product: 'whatsapp',
+                      recipient_type: 'individual',
+                      to: senderPhone,
+                      type: 'text',
+                      text: {
+                        body: "Got it! 👤 One of our staff members will be in touch with you shortly."
+                      }
+                    })
+                  });
+                } else if (buttonId === 'btn_workshops') {
+                  // Send workshop overview to the user
+                  await fetch(`https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`, {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      messaging_product: 'whatsapp',
+                      recipient_type: 'individual',
+                      to: senderPhone,
+                      type: 'text',
+                      text: {
+                        body: "🎯 *Upcoming Minecraft Education Workshop*\n\n📍 *Location:* Menlyn\n📅 *Dates:* Aug 15–16\n\nWould you like details on how to register your child?"
+                      }
+                    })
+                  });
+                }
+              }
+
             }
           }
         }
