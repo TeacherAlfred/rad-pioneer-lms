@@ -1,13 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize Supabase
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
-
-const VERIFY_TOKEN = 'rad_academy_secure_token_123'; // Make this up, just needs to match Meta
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-
 // Meta verifies the webhook via a GET request
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -15,7 +8,8 @@ export async function GET(request: Request) {
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+  // Replaced hardcoded string with environment variable
+  if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
     return new NextResponse(challenge, { status: 200 });
   }
   return new NextResponse('Forbidden', { status: 403 });
@@ -34,21 +28,27 @@ export async function POST(request: Request) {
       const senderPhone = message.from;
       const messageText = message.text?.body;
 
+      // Initialize Supabase INSIDE the handler to prevent Vercel build crashes
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      );
+
       // 1. Log the lead to Supabase
       await supabase.from('leads').insert([{ phone: senderPhone, message: messageText }]);
 
       // 2. Trigger Auto-Responder if they ask for the guide
       if (messageText && messageText.toLowerCase().includes('guide')) {
-        await fetch(`https://graph.facebook.com/v17.0/${PHONE_NUMBER_ID}/messages`, {
+        await fetch(`https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+            'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             messaging_product: 'whatsapp',
             to: senderPhone,
-            type: 'text', // Later, change this to 'document' and pass your PDF media_id
+            type: 'text', 
             text: { body: "Here is your Parent's Guide! 🚀 By the way, we are running our Minecraft Workshop in Menlyn on Aug 15-16. Want the details?" }
           })
         });
