@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
 
 // Meta sends incoming messages via a POST request
 export async function POST(request: Request) {
+  console.log("INCOMING META PAYLOAD:", await request.clone().text());
   try {
     const body = await request.json();
 
