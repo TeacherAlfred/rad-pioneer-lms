@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Helper function to send WhatsApp messages and keep our code clean
+// Helper function to send WhatsApp messages and log errors
 async function sendWhatsAppMessage(to: string, messagePayload: any) {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
   
-  await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+  const response = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -19,6 +19,15 @@ async function sendWhatsAppMessage(to: string, messagePayload: any) {
       ...messagePayload
     })
   });
+
+  const data = await response.json();
+  
+  // If Meta rejects the message, print the exact error to Vercel logs
+  if (!response.ok) {
+    console.error(`❌ Meta API Error sending to ${to}:`, JSON.stringify(data, null, 2));
+  } else {
+    console.log(`✅ Message successfully sent to ${to}`);
+  }
 }
 
 // Meta verifies the webhook via a GET request
@@ -143,7 +152,7 @@ export async function POST(request: Request) {
                       },
                       action: {
                         buttons: [
-                          { type: 'reply', reply: { id: 'btn_guide', title: 'Free Screen Time Guide' } },
+                          { type: 'reply', reply: { id: 'btn_guide', title: 'Get Free Guide' } },
                           { type: 'reply', reply: { id: 'btn_workshops', title: 'View Workshops' } },
                           { type: 'reply', reply: { id: 'btn_human', title: 'Talk to a Human' } }
                         ]
