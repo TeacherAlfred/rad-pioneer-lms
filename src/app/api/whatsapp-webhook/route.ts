@@ -100,40 +100,59 @@ export async function POST(request: Request) {
                 body: messageText
               }]);
 
-              // 3. Trigger Auto-Responder with R2 PDF + Interactive Buttons
-              if (message.type === 'text' && messageText.toLowerCase().includes('guide')) {
-                const pdfPayload = {
-                  type: 'interactive',
-                  interactive: {
-                    type: 'button',
-                    header: {
-                      type: 'document',
-                      document: {
-                        link: 'https://pub-5baa3fb9dc2549008c18dac88b524ed9.r2.dev/marketing_material/pdfs/RAD_Hacking_Screen_Time.pdf',
-                        filename: 'RAD_Hacking_Screen_Time.pdf'
+              // 3. Handle Incoming Text Messages (Keywords vs Catch-All)
+              if (message.type === 'text') {
+                const textLower = messageText.toLowerCase();
+
+                if (textLower.includes('guide')) {
+                  // Send the existing R2 PDF Payload
+                  const pdfPayload = {
+                    type: 'interactive',
+                    interactive: {
+                      type: 'button',
+                      header: {
+                        type: 'document',
+                        document: {
+                          link: 'https://pub-5baa3fb9dc2549008c18dac88b524ed9.r2.dev/marketing_material/pdfs/RAD_Hacking_Screen_Time.pdf',
+                          filename: 'RAD_Hacking_Screen_Time.pdf'
+                        }
+                      },
+                      body: {
+                        text: "Here is your *Hacking Screen Time* guide! 🚀\n\nTake a read and let us know if you'd like to explore how our curriculum helps turn screen time into skill-building, or if you'd prefer to chat with one of our instructors."
+                      },
+                      footer: { text: "RAD Academy" },
+                      action: {
+                        buttons: [
+                          { type: 'reply', reply: { id: 'btn_workshops', title: 'View Workshops' } },
+                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to a Human' } }
+                        ]
                       }
-                    },
-                    body: {
-                      text: "Here is your *Hacking Screen Time* guide! 🚀\n\nTake a read and let us know if you'd like to explore how our curriculum helps turn screen time into skill-building, or if you'd prefer to chat with one of our instructors."
-                    },
-                    footer: { text: "RAD Academy" },
-                    action: {
-                      buttons: [
-                        { type: 'reply', reply: { id: 'btn_workshops', title: 'View Workshops' } },
-                        { type: 'reply', reply: { id: 'btn_human', title: 'Talk to a Human' } }
-                      ]
                     }
-                  }
-                };
-
-                await sendWhatsAppMessage(senderPhone, pdfPayload);
-
-                // Log outbound automated PDF response
-                await supabase.from('messages').insert([{
-                  lead_id: lead.id,
-                  direction: 'outbound',
-                  body: "[Automated PDF & Menu Sent]"
-                }]);
+                  };
+                  await sendWhatsAppMessage(senderPhone, pdfPayload);
+                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: "[Automated PDF & Menu Sent]" }]);
+                
+                } else {
+                  // CATCH-ALL: Send Welcome Menu for "Hi", "Hello", or returning parents
+                  const welcomePayload = {
+                    type: 'interactive',
+                    interactive: {
+                      type: 'button',
+                      body: {
+                        text: "👋 Hi there! Welcome to RAD Academy.\n\nWhether you are a returning parent or new to our community, we are here to help turn screen time into skill-building.\n\nWhat would you like to explore today?"
+                      },
+                      action: {
+                        buttons: [
+                          { type: 'reply', reply: { id: 'btn_guide', title: 'Free Screen Time Guide' } },
+                          { type: 'reply', reply: { id: 'btn_workshops', title: 'View Workshops' } },
+                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to a Human' } }
+                        ]
+                      }
+                    }
+                  };
+                  await sendWhatsAppMessage(senderPhone, welcomePayload);
+                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: "[Welcome Menu Sent]" }]);
+                }
               }
 
               // 4. Handle Interactive Button Tap Events
@@ -221,6 +240,31 @@ export async function POST(request: Request) {
                   await supabase.from('messages').insert([{
                     lead_id: lead.id, direction: 'outbound', body: workshopText
                   }]);
+                } else if (buttonId === 'btn_guide') {
+                  // Send the PDF if they clicked the guide button from the welcome menu
+                  const pdfPayload = {
+                    type: 'interactive',
+                    interactive: {
+                      type: 'button',
+                      header: {
+                        type: 'document',
+                        document: {
+                          link: 'https://pub-5baa3fb9dc2549008c18dac88b524ed9.r2.dev/marketing_material/pdfs/RAD_Hacking_Screen_Time.pdf',
+                          filename: 'RAD_Hacking_Screen_Time.pdf'
+                        }
+                      },
+                      body: { text: "Here is your *Hacking Screen Time* guide! 🚀\n\nLet us know if you'd like to chat with an instructor." },
+                      footer: { text: "RAD Academy" },
+                      action: {
+                        buttons: [
+                          { type: 'reply', reply: { id: 'btn_workshops', title: 'View Workshops' } },
+                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to a Human' } }
+                        ]
+                      }
+                    }
+                  };
+                  await sendWhatsAppMessage(senderPhone, pdfPayload);
+                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: "[Automated PDF Sent via Button]" }]);
                 }
               }
 
