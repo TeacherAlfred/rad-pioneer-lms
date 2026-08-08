@@ -213,7 +213,7 @@ export async function POST(request: Request) {
                       template: {
                         name: 'admin_lead_alert',
                         language: {
-                          code: 'en' 
+                          code: 'en_US' 
                         },
                         components: [
                           {
