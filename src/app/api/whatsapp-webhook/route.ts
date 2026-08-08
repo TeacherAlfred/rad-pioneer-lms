@@ -203,43 +203,18 @@ export async function POST(request: Request) {
                   }]);
 
                   // C. ADMIN ALERT: Send WhatsApp Template to Staff
-                  const adminPhone = process.env.ADMIN_PHONE_NUMBER;
-                  if (adminPhone) {
-                    const prefilledMessage = encodeURIComponent("Hi! I'm reaching out from RAD Academy. You requested to speak with an instructor—how can I help you today?");
-                    const dynamicUrlParam = `${senderPhone}?text=${prefilledMessage}`;
+                  const prefilledMessage = encodeURIComponent("Hi! I'm reaching out from RAD Academy. You requested to speak with an instructor—how can I help you today?");
+                  const dynamicUrlParam = `https://wa.me/${senderPhone}?text=${prefilledMessage}`;
 
-                    await sendWhatsAppMessage(adminPhone, {
-                      type: 'template',
-                      template: {
-                        name: 'admin_lead_alert',
-                        language: {
-                          code: 'en' 
-                        },
-                        components: [
-                          {
-                            type: 'body',
-                            parameters: [
-                              {
-                                type: 'text',
-                                text: dynamicUrlParam 
-                              }
-                            ]
-                          },
-                          {
-                            type: 'button',
-                            sub_type: 'quick_reply',
-                            index: 0,
-                            parameters: [
-                              {
-                                type: 'payload',
-                                payload: `contacted_${lead.id}` // Injects the Supabase ID silently into the button
-                              }
-                            ]
-                          }
-                        ]
-                      }
-                    });
-                  }
+                  const adminAlertText = `🚨 *New Human Request*\n\nA parent has requested to speak with staff.\n\nTap the link below to open a chat with them:\n${dynamicUrlParam}`;
+                  const adminPhone = process.env.ADMIN_PHONE_NUMBER!;
+
+                  await sendWhatsAppMessage(adminPhone, {
+                    type: 'text',
+                    text: {
+                      body: adminAlertText
+                    }
+                  });
                   
                 } else if (buttonId === 'btn_workshops') {
                   // Send workshop overview
