@@ -140,7 +140,26 @@ export async function POST(request: Request) {
               if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
                 const buttonId = message.interactive.button_reply?.id;
 
-                if (buttonId === 'btn_human') {
+                // NEW: Catch the Admin clicking "Mark as Contacted"
+                if (buttonId.startsWith('contacted_')) {
+                  const targetLeadId = buttonId.replace('contacted_', '');
+
+                  // Update Supabase with the timestamp
+                  await supabase
+                    .from('leads')
+                    .update({ 
+                      status: 'contacted', 
+                      contacted_at: new Date().toISOString() 
+                    })
+                    .eq('id', targetLeadId);
+
+                  // Send a confirmation receipt back to the Admin phone
+                  await sendWhatsAppMessage(senderPhone, { 
+                    type: 'text', 
+                    text: { body: "✅ Lead successfully marked as contacted and timestamped in the database." } 
+                  });
+
+                } else if (buttonId === 'btn_human') {
                   // A. Update Lead Status
                   await supabase
                     .from('leads')
@@ -155,11 +174,43 @@ export async function POST(request: Request) {
                     lead_id: lead.id, direction: 'outbound', body: confirmationText
                   }]);
 
-                  // C. ADMIN ALERT: Send WhatsApp to Staff
+                  // C. ADMIN ALERT: Send WhatsApp Template to Staff
                   const adminPhone = process.env.ADMIN_PHONE_NUMBER;
                   if (adminPhone) {
-                    const alertText = `🚨 *New Human Request*\n\nA parent has requested to speak with staff.\n\n*Phone:* +${senderPhone}\n*Lead ID:* ${lead.id}\n\nPlease reach out to them on WhatsApp!`;
-                    await sendWhatsAppMessage(adminPhone, { type: 'text', text: { body: alertText } });
+                    const prefilledMessage = encodeURIComponent("Hi! I'm reaching out from RAD Academy. You requested to speak with an instructor—how can I help you today?");
+                    const dynamicUrlParam = `${senderPhone}?text=${prefilledMessage}`;
+
+                    await sendWhatsAppMessage(adminPhone, {
+                      type: 'template',
+                      template: {
+                        name: 'admin_lead_alert',
+                        language: {
+                          code: 'en' 
+                        },
+                        components: [
+                          {
+                            type: 'body',
+                            parameters: [
+                              {
+                                type: 'text',
+                                text: dynamicUrlParam 
+                              }
+                            ]
+                          },
+                          {
+                            type: 'button',
+                            sub_type: 'quick_reply',
+                            index: 0,
+                            parameters: [
+                              {
+                                type: 'payload',
+                                payload: `contacted_${lead.id}` // Injects the Supabase ID silently into the button
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    });
                   }
                   
                 } else if (buttonId === 'btn_workshops') {
