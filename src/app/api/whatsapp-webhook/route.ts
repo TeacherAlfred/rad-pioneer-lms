@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Helper function to send WhatsApp messages and log errors
+// 1. Core Helper: Send WhatsApp Message
 async function sendWhatsAppMessage(to: string, messagePayload: any) {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
@@ -21,13 +21,24 @@ async function sendWhatsAppMessage(to: string, messagePayload: any) {
   });
 
   const data = await response.json();
-  
-  // If Meta rejects the message, print the exact error to Vercel logs
   if (!response.ok) {
     console.error(`❌ Meta API Error sending to ${to}:`, JSON.stringify(data, null, 2));
   } else {
     console.log(`✅ Message successfully sent to ${to}`);
   }
+}
+
+// 2. Core Helper: Admin Pipeline Tracker
+async function notifyAdmin(senderPhone: string, stageText: string) {
+  const adminPhone = process.env.ADMIN_PHONE_NUMBER;
+  if (!adminPhone) return;
+
+  const adminAlertText = `🚦 *Pipeline Update*\n\nLead: +${senderPhone}\nStage: ${stageText}\n\nReach out instantly: https://wa.me/${senderPhone}`;
+  
+  await sendWhatsAppMessage(adminPhone, {
+    type: 'text',
+    text: { body: adminAlertText }
+  });
 }
 
 // Meta verifies the webhook via a GET request
@@ -60,31 +71,24 @@ export async function POST(request: Request) {
               const senderPhone = message.from || message.from_user_id;
               if (!senderPhone) continue;
 
-              // Extract text based on payload type
               let messageText = '';
               if (message.type === 'text') {
                 messageText = message.text?.body || '';
               } else if (message.type === 'interactive') {
                 const buttonReply = message.interactive?.button_reply;
-                const listReply = message.interactive?.list_reply;
                 if (buttonReply) {
                   messageText = `[Button Reply: ${buttonReply.title} (${buttonReply.id})]`;
-                } else if (listReply) {
-                  messageText = `[List Reply: ${listReply.title} (${listReply.id})]`;
                 } else {
                   messageText = '[Interactive Message]';
                 }
-              } else {
-                messageText = `[${message.type} message]`;
               }
 
-              // Initialize Supabase
               const supabase = createClient(
                 process.env.NEXT_PUBLIC_SUPABASE_URL!,
                 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
               );
 
-              // 1. TWO-TABLE ARCHITECTURE: Get or Create Lead
+              // Get or Create Lead
               let { data: lead } = await supabase
                 .from('leads')
                 .select('*')
@@ -98,23 +102,24 @@ export async function POST(request: Request) {
                   .select()
                   .single();
                 lead = newLead;
+                
+                // Alert Admin of brand new lead
+                await notifyAdmin(senderPhone, "🆕 Brand New Lead entered the funnel.");
               }
 
-              if (!lead) continue; // Failsafe execution
+              if (!lead) continue;
 
-              // 2. Log the Inbound Message
               await supabase.from('messages').insert([{
                 lead_id: lead.id,
                 direction: 'inbound',
                 body: messageText
               }]);
 
-              // 3. Handle Incoming Text Messages (Keywords vs Catch-All)
+              // --- STAGE 1: INBOUND TRIGGER & VALUE DELIVERY ---
               if (message.type === 'text') {
                 const textLower = messageText.toLowerCase();
 
                 if (textLower.includes('guide')) {
-                  // Send the existing R2 PDF Payload
                   const pdfPayload = {
                     type: 'interactive',
                     interactive: {
@@ -127,128 +132,137 @@ export async function POST(request: Request) {
                         }
                       },
                       body: {
-                        text: "Here is your *Hacking Screen Time* guide! 🚀\n\nTake a read and let us know if you'd like to explore how our curriculum helps turn screen time into skill-building, or if you'd prefer to chat with one of our instructors."
+                        text: "Here is your *Hacking Screen Time* guide! 🚀\n\nWhile you read it, here are the 3 golden rules:\n\n1️⃣ *Demand an ROI:* Stop timing them. Ask them to explain how their game works.\n2️⃣ *Redstone = Engineering:* They are secretly learning Boolean logic and binary code.\n3️⃣ *Player to Developer:* Using syntax to change their game world turns consumers into creators.\n\nWhat is your next step?"
                       },
                       footer: { text: "RAD Academy" },
                       action: {
                         buttons: [
-                          { type: 'reply', reply: { id: 'btn_workshops', title: 'View Workshops' } },
-                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to a Human' } }
+                          { type: 'reply', reply: { id: 'btn_do_it', title: 'Let RAD Do It' } },
+                          { type: 'reply', reply: { id: 'btn_webinar', title: 'Watch Webinar' } },
+                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
                         ]
                       }
                     }
                   };
                   await sendWhatsAppMessage(senderPhone, pdfPayload);
-                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: "[Automated PDF & Menu Sent]" }]);
-                
+                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: "[Delivered Guide & 3 Rules]" }]);
+                  await notifyAdmin(senderPhone, "📥 Downloaded the Hacking Screen Time Guide.");
                 } else {
-                  // CATCH-ALL: Send Welcome Menu for "Hi", "Hello", or returning parents
+                  // Catch-All Welcome
                   const welcomePayload = {
                     type: 'interactive',
                     interactive: {
                       type: 'button',
                       body: {
-                        text: "👋 Hi there! Welcome to RAD Academy.\n\nWhether you are a returning parent or new to our community, we are here to help turn screen time into skill-building.\n\nWhat would you like to explore today?"
+                        text: "👋 Hi! Welcome to RAD Academy.\n\nWhether you're a returning parent or new to our community, we help turn screen time into skill-building. What would you like to explore?"
                       },
                       action: {
                         buttons: [
                           { type: 'reply', reply: { id: 'btn_guide', title: 'Get Free Guide' } },
-                          { type: 'reply', reply: { id: 'btn_workshops', title: 'View Workshops' } },
-                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to a Human' } }
+                          { type: 'reply', reply: { id: 'btn_do_it', title: 'View Workshops' } },
+                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
                         ]
                       }
                     }
                   };
                   await sendWhatsAppMessage(senderPhone, welcomePayload);
-                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: "[Welcome Menu Sent]" }]);
                 }
               }
 
-              // 4. Handle Interactive Button Tap Events
+              // --- STAGE 2 & 3: INTERACTIVE FUNNEL ROUTING ---
               if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
                 const buttonId = message.interactive.button_reply?.id;
 
-                // NEW: Catch the Admin clicking "Mark as Contacted"
                 if (buttonId.startsWith('contacted_')) {
                   const targetLeadId = buttonId.replace('contacted_', '');
-
-                  // Update Supabase with the timestamp
-                  await supabase
-                    .from('leads')
-                    .update({ 
-                      status: 'contacted', 
-                      contacted_at: new Date().toISOString() 
-                    })
-                    .eq('id', targetLeadId);
-
-                  // Send a confirmation receipt back to the Admin phone
-                  await sendWhatsAppMessage(senderPhone, { 
-                    type: 'text', 
-                    text: { body: "✅ Lead successfully marked as contacted and timestamped in the database." } 
-                  });
-
+                  await supabase.from('leads').update({ status: 'contacted', contacted_at: new Date().toISOString() }).eq('id', targetLeadId);
+                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "✅ Lead marked as contacted in database." } });
+                
                 } else if (buttonId === 'btn_human') {
-                  // A. Update Lead Status
-                  await supabase
-                    .from('leads')
-                    .update({ status: 'needs_human' })
-                    .eq('id', lead.id);
+                  await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
+                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
+                  await notifyAdmin(senderPhone, "🚨 DIRECT REQUEST: Wants to speak to an Educator.");
 
-                  // B. Send Confirmation to User
-                  const confirmationText = "Got it! 👤 One of our staff members will be in touch with you shortly.";
-                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: confirmationText } });
-
-                  await supabase.from('messages').insert([{
-                    lead_id: lead.id, direction: 'outbound', body: confirmationText
-                  }]);
-
-                  // C. ADMIN ALERT: Send WhatsApp Template to Staff
-                  const prefilledMessage = encodeURIComponent("Hi! I'm reaching out from RAD Academy. You requested to speak with an instructor—how can I help you today?");
-                  const dynamicUrlParam = `https://wa.me/${senderPhone}?text=${prefilledMessage}`;
-
-                  const adminAlertText = `🚨 *New Human Request*\n\nA parent has requested to speak with staff.\n\nTap the link below to open a chat with them:\n${dynamicUrlParam}`;
-                  const adminPhone = process.env.ADMIN_PHONE_NUMBER!;
-
-                  await sendWhatsAppMessage(adminPhone, {
-                    type: 'text',
-                    text: {
-                      body: adminAlertText
-                    }
-                  });
-                  
-                } else if (buttonId === 'btn_workshops') {
-                  // Send workshop overview
-                  const workshopText = "🎯 *Upcoming Minecraft Education Workshop*\n\n📍 *Location:* Menlyn\n📅 *Dates:* Aug 15–16\n\nWould you like details on how to register your child?";
-                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: workshopText } });
-
-                  await supabase.from('messages').insert([{
-                    lead_id: lead.id, direction: 'outbound', body: workshopText
-                  }]);
-                } else if (buttonId === 'btn_guide') {
-                  // Send the PDF if they clicked the guide button from the welcome menu
-                  const pdfPayload = {
+                } else if (buttonId === 'btn_do_it') {
+                  // WARM LEAD: Booking Process
+                  const bookingText = "Awesome! Getting your child enrolled takes just 3 quick steps:\n\n1️⃣ Pick your city.\n2️⃣ Choose your date.\n3️⃣ Secure the spot.\n\nLet's start—where are you located?";
+                  await sendWhatsAppMessage(senderPhone, {
                     type: 'interactive',
                     interactive: {
                       type: 'button',
-                      header: {
-                        type: 'document',
-                        document: {
-                          link: 'https://pub-5baa3fb9dc2549008c18dac88b524ed9.r2.dev/marketing_material/pdfs/RAD_Hacking_Screen_Time.pdf',
-                          filename: 'RAD_Hacking_Screen_Time.pdf'
-                        }
-                      },
-                      body: { text: "Here is your *Hacking Screen Time* guide! 🚀\n\nLet us know if you'd like to chat with an instructor." },
-                      footer: { text: "RAD Academy" },
+                      body: { text: bookingText },
                       action: {
                         buttons: [
-                          { type: 'reply', reply: { id: 'btn_workshops', title: 'View Workshops' } },
-                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to a Human' } }
+                          { type: 'reply', reply: { id: 'btn_pta', title: 'Pretoria' } },
+                          { type: 'reply', reply: { id: 'btn_plk', title: 'Polokwane' } },
+                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
                         ]
                       }
                     }
-                  };
-                  await sendWhatsAppMessage(senderPhone, pdfPayload);
-                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: "[Automated PDF Sent via Button]" }]);
+                  });
+                  await supabase.from('leads').update({ status: 'booking_started' }).eq('id', lead.id);
+                  await notifyAdmin(senderPhone, "🔥 WARM LEAD: Clicked 'Let RAD Do It'. Selecting their city now.");
+
+                } else if (buttonId === 'btn_webinar') {
+                  // COLD LEAD: Nurture Process
+                  const webinarText = "Great choice! The free webinar is 20 minutes long and will show you exactly how to implement the guide.\n\nJust 2 steps:\n1️⃣ Get the link.\n2️⃣ Watch anytime.\n\nReady for the link?";
+                  await sendWhatsAppMessage(senderPhone, {
+                    type: 'interactive',
+                    interactive: {
+                      type: 'button',
+                      body: { text: webinarText },
+                      action: {
+                        buttons: [
+                          { type: 'reply', reply: { id: 'btn_webinar_link', title: 'Get Webinar Link' } },
+                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
+                        ]
+                      }
+                    }
+                  });
+                  await supabase.from('leads').update({ status: 'nurture_webinar' }).eq('id', lead.id);
+                  await notifyAdmin(senderPhone, "❄️ COLD LEAD: Opted for the Free Webinar.");
+
+                } else if (buttonId === 'btn_pta') {
+                  // PRETORIA WORKSHOPS
+                  const ptaText = "Great! Here are our upcoming Pretoria workshops:\n\n📅 9-12 Aug: Minecraft Education\n📅 13-31 Aug: Robotics for Sports\n📅 1-23 Sept: Advanced Robotics\n\nReply to this message with the date you'd like, or tap below to chat with us!";
+                  await sendWhatsAppMessage(senderPhone, {
+                    type: 'interactive',
+                    interactive: {
+                      type: 'button',
+                      body: { text: ptaText },
+                      action: {
+                        buttons: [
+                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
+                        ]
+                      }
+                    }
+                  });
+                  await notifyAdmin(senderPhone, "📍 Selected Pretoria.");
+
+                } else if (buttonId === 'btn_plk') {
+                  // POLOKWANE WORKSHOPS
+                  const plkText = "Awesome! We have two immersive workshops in Polokwane this October. You can choose one, or book both for a complete tech weekend!\n\n📍 Location: Polokwane\n📅 Oct 3: Minecraft Education\n📅 Oct 4: Robotics";
+                  await sendWhatsAppMessage(senderPhone, {
+                    type: 'interactive',
+                    interactive: {
+                      type: 'button',
+                      body: { text: plkText },
+                      action: {
+                        buttons: [
+                          { type: 'reply', reply: { id: 'btn_plk_mc', title: 'Oct 3: Minecraft' } },
+                          { type: 'reply', reply: { id: 'btn_plk_rob', title: 'Oct 4: Robotics' } },
+                          { type: 'reply', reply: { id: 'btn_plk_both', title: 'Book Both Days' } }
+                        ]
+                      }
+                    }
+                  });
+                  await notifyAdmin(senderPhone, "📍 Selected Polokwane.");
+                  
+                } else if (buttonId === 'btn_webinar_link') {
+                  // WEBINAR LINK DELIVERY
+                  const linkText = "Here is your link to the webinar: [INSERT_YOUTUBE_OR_ZOOM_LINK]\n\nEnjoy the session! If you have any questions afterward, just reply here.";
+                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: linkText } });
+                  await notifyAdmin(senderPhone, "📺 Accessed the Webinar Link.");
                 }
               }
 
