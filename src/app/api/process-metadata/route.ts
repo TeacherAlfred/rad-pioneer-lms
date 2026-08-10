@@ -19,7 +19,7 @@ export async function POST(request: Request) {
       const result = await fetchAndStoreBookMetadata(book.id, book.title);
       
       if (result) {
-        console.log(`✅ Found: ${result.title} by ${result.author}`);
+        console.log(`✅ Found: ${result.titles[0]} by ${result.authors[0]}`);
       } else {
         console.log(`❌ No match found for: ${book.title}`);
       }
