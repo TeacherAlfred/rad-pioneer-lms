@@ -27,9 +27,6 @@ export default function IreneComradesLayout({
               <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Comrades Tracker</p>
             </div>
           </div>
-          <div className="text-[10px] font-bold text-[#0066cc] bg-[#0066cc]/10 px-3 py-1.5 rounded-full">
-            Youth Day Finish Line
-          </div>
         </div>
       </nav>
 

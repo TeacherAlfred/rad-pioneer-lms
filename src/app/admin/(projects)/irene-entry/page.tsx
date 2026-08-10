@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Save, Download, Trash2, Hash, Activity, Target, Loader2, CheckCircle2, X, Edit2, Plus, Eye, ChevronLeft, ChevronRight, Check, ListChecks, Inbox, UserPlus, MapPin, Flag, AlertTriangle, Layers, FilterX } from 'lucide-react';
+import { Save, Download, Trash2, Hash, Activity, Target, Loader2, CheckCircle2, X, Edit2, Plus, Eye, ChevronLeft, ChevronRight, Check, ListChecks, Inbox, UserPlus, MapPin, Flag, AlertTriangle, Layers, FilterX, Search, GitMerge, PlusCircle, Settings2, EyeOff, Tags, ArrowRight } from 'lucide-react';
 
 interface Cub {
   cub_initial: string;
@@ -13,10 +13,39 @@ interface Cub {
 export default function IreneResponseManager() {
   const [records, setRecords] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [mode, setMode] = useState<'view' | 'edit' | 'create'>('view');
+  const [mode, setMode] = useState<'view' | 'edit' | 'create' | 'reconcile' | 'phase' | 'aliases'>('view');
   const [viewFilter, setViewFilter] = useState<'pending' | 'verified' | 'flagged' | 'name_review'>('pending');
   const [classFilter, setClassFilter] = useState<string | null>(null);
-  
+
+  // --- Data Reconciliation (Phase 0) state ---
+  const [reconcileTab, setReconcileTab] = useState<'search' | 'queue' | 'coverage'>('search');
+  const [reconcileSearchName, setReconcileSearchName] = useState('');
+  const [reconcileSearchGrade, setReconcileSearchGrade] = useState('');
+  const [reconcileSearchInitial, setReconcileSearchInitial] = useState('');
+  const [mergeCandidates, setMergeCandidates] = useState<any[]>([]);
+  const [resolvingCandidateId, setResolvingCandidateId] = useState<string | null>(null);
+
+  // Set when a Coverage-tab grade card is clicked — scopes the View/Edit queue
+  // to just that grade's needs_name_review records, and makes Save auto-advance.
+  const [reviewQueueGrade, setReviewQueueGrade] = useState<string | null>(null);
+
+  // --- Phase Control state ---
+  const [phaseSettingsLoaded, setPhaseSettingsLoaded] = useState(false);
+  const [phaseForm, setPhaseForm] = useState({ phase: 'setup', educator_vote_weight: 10, phase_ends_hint: '', staff_access_code: '' });
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [showStaffCode, setShowStaffCode] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  // --- Class Aliases state ---
+  const [aliases, setAliases] = useState<any[]>([]);
+  const [aliasesLoaded, setAliasesLoaded] = useState(false);
+  const [newAlias, setNewAlias] = useState({ raw_grade: '', raw_class_name: '', canonical_grade: '', canonical_class_name: '' });
+  const [isAddingAlias, setIsAddingAlias] = useState(false);
+  const [editingAliasKey, setEditingAliasKey] = useState<string | null>(null);
+  const [editingAliasValues, setEditingAliasValues] = useState({ canonical_grade: '', canonical_class_name: '' });
+  const [aliasActionKey, setAliasActionKey] = useState<string | null>(null);
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -43,7 +72,125 @@ export default function IreneResponseManager() {
 
   useEffect(() => {
     fetchData();
+    fetchMergeCandidates();
+    fetchPhaseSettings();
+    fetchAliases();
   }, []);
+
+  const fetchAliases = async () => {
+    try {
+      const res = await fetch('/admin/api/irene-class-aliases');
+      const data = await res.json();
+      if (res.ok) setAliases(data.aliases || []);
+    } catch (err) { console.error(err); } finally { setAliasesLoaded(true); }
+  };
+
+  const handleAddAlias = async () => {
+    const { raw_grade, raw_class_name, canonical_grade, canonical_class_name } = newAlias;
+    if (!raw_grade.trim() || !raw_class_name.trim() || !canonical_grade.trim() || !canonical_class_name.trim()) {
+      alert('All four fields are required.');
+      return;
+    }
+    setIsAddingAlias(true);
+    try {
+      const res = await fetch('/admin/api/irene-class-aliases', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newAlias),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add alias');
+      setNewAlias({ raw_grade: '', raw_class_name: '', canonical_grade: '', canonical_class_name: '' });
+      await fetchAliases();
+    } catch (err: any) {
+      alert(err.message);
+    } finally { setIsAddingAlias(false); }
+  };
+
+  const handleStartEditAlias = (alias: any) => {
+    setEditingAliasKey(`${alias.raw_grade}::${alias.raw_class_name}`);
+    setEditingAliasValues({ canonical_grade: alias.canonical_grade, canonical_class_name: alias.canonical_class_name });
+  };
+
+  const handleSaveEditAlias = async (alias: any) => {
+    const key = `${alias.raw_grade}::${alias.raw_class_name}`;
+    setAliasActionKey(key);
+    try {
+      const res = await fetch('/admin/api/irene-class-aliases', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw_grade: alias.raw_grade, raw_class_name: alias.raw_class_name, ...editingAliasValues }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update alias');
+      setEditingAliasKey(null);
+      await fetchAliases();
+    } catch (err: any) {
+      alert(err.message);
+    } finally { setAliasActionKey(null); }
+  };
+
+  const handleDeleteAlias = async (alias: any) => {
+    if (!window.confirm(`Delete the alias mapping "${alias.raw_grade} / ${alias.raw_class_name}"?`)) return;
+    const key = `${alias.raw_grade}::${alias.raw_class_name}`;
+    setAliasActionKey(key);
+    try {
+      const res = await fetch('/admin/api/irene-class-aliases', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw_grade: alias.raw_grade, raw_class_name: alias.raw_class_name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete alias');
+      await fetchAliases();
+    } catch (err: any) {
+      alert(err.message);
+    } finally { setAliasActionKey(null); }
+  };
+
+  const fetchPhaseSettings = async () => {
+    try {
+      const res = await fetch('/admin/api/irene-settings');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load settings');
+      setPhaseForm({
+        phase: data.phase,
+        educator_vote_weight: data.educator_vote_weight,
+        phase_ends_hint: data.phase_ends_hint || '',
+        staff_access_code: data.staff_access_code || '',
+      });
+      setSettingsError(null);
+    } catch (err: any) {
+      setSettingsError(err.message);
+    } finally {
+      setPhaseSettingsLoaded(true);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      const res = await fetch('/admin/api/irene-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(phaseForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save settings');
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 1500);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
+  const fetchMergeCandidates = async () => {
+    // irene_merge_candidates has zero anon RLS policies (admin-only by design) —
+    // must go through the service-role route, not the plain anon client.
+    try {
+      const res = await fetch('/admin/api/irene-merge-candidates');
+      const data = await res.json();
+      if (res.ok) setMergeCandidates(data.candidates || []);
+    } catch (err) { console.error(err); }
+  };
 
   const fetchData = async () => {
     const { data, error } = await supabase
@@ -86,7 +233,12 @@ export default function IreneResponseManager() {
 
     if (!matchesStatus) return false;
 
-    // 2. Class Filter (Optional)
+    // 2. Grade Queue Filter (set by clicking a Coverage card) takes priority over the class filter
+    if (reviewQueueGrade) {
+      return r.cubs?.some((c: any) => c.grade === reviewQueueGrade);
+    }
+
+    // 3. Class Filter (Optional)
     if (classFilter) {
         return r.cubs?.some((c: any) => c.class_name === classFilter);
     }
@@ -100,6 +252,29 @@ export default function IreneResponseManager() {
       .filter(r => viewFilter === 'verified' ? r.is_verified : viewFilter === 'flagged' ? r.is_flagged : viewFilter === 'name_review' ? r.needs_name_review : !r.is_verified)
       .flatMap(r => r.cubs?.map((c: any) => c.class_name).filter(Boolean))
   )).sort();
+
+  // --- Reconciliation: search-first lookup across ALL records (not just the current viewFilter) ---
+  // Three independent filters, combined with AND — leave any blank to widen the search.
+  const reconcileHasFilter = !!(reconcileSearchName.trim() || reconcileSearchGrade || reconcileSearchInitial.trim());
+  const reconcileResults = reconcileHasFilter
+    ? records.filter(r => {
+        if (reconcileSearchName.trim() && !(r.parent_first_name || '').toLowerCase().includes(reconcileSearchName.trim().toLowerCase())) return false;
+        if (reconcileSearchGrade && !(r.cubs || []).some((c: any) => c.grade === reconcileSearchGrade)) return false;
+        if (reconcileSearchInitial.trim() && !(r.cubs || []).some((c: any) => (c.cub_initial || '').toLowerCase().startsWith(reconcileSearchInitial.trim().toLowerCase()))) return false;
+        return true;
+      }).slice(0, 30)
+    : [];
+
+  // --- Reconciliation: coverage by grade, using needs_name_review as the "unresolved" signal ---
+  const coverageByGrade = records.reduce((acc: Record<string, { total: number; pending: number }>, r) => {
+    (r.cubs || []).forEach((c: any) => {
+      const grade = c.grade || '(unknown)';
+      if (!acc[grade]) acc[grade] = { total: 0, pending: 0 };
+      acc[grade].total += 1;
+      if (r.needs_name_review) acc[grade].pending += 1;
+    });
+    return acc;
+  }, {});
 
   const safeIndex = Math.min(currentIndex, Math.max(0, displayedRecords.length - 1));
   const activeRecord = displayedRecords[safeIndex];
@@ -130,10 +305,25 @@ export default function IreneResponseManager() {
     setMode('edit');
   };
 
-  const handleSwitchToCreate = () => { setFormData(initialFormState); setMode('create'); };
+  const handleSwitchToCreate = () => { setFormData(initialFormState); setReviewQueueGrade(null); setMode('create'); };
   const handleSwitchToView = () => setMode('view');
   const goNext = () => setCurrentIndex(prev => Math.min(displayedRecords.length - 1, prev + 1));
   const goPrev = () => setCurrentIndex(prev => Math.max(0, prev - 1));
+
+  // Entry point from a Coverage-tab grade card: scope the queue to that grade's
+  // pending records and land on the first one.
+  const handleOpenGradeQueue = (grade: string) => {
+    setClassFilter(null);
+    setReviewQueueGrade(grade);
+    setViewFilter('name_review');
+    setCurrentIndex(0);
+    setMode('view');
+  };
+
+  const handleExitGradeQueue = () => {
+    setReviewQueueGrade(null);
+    setCurrentIndex(0);
+  };
 
   const handleToggleVerify = async () => {
     if (!activeRecord) return;
@@ -166,6 +356,63 @@ export default function IreneResponseManager() {
       if (error) throw error;
       setRecords(prev => prev.map(r => r.id === activeRecord.id ? { ...r, needs_name_review: newValue } : r));
     } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
+  };
+
+  // Resolves a Data Reconciliation candidate:
+  //  - 'rejected': name coincidence / bad match, discard.
+  //  - 'merged': confirms the flagged Neon data is already represented by the
+  //    existing Supabase record — no insert needed.
+  //  - 'add_new': the flagged data is a genuinely distinct family/child not yet
+  //    in the system — inserts it as a new response. For neon_internal candidates
+  //    this inserts the "extra" duplicate as its own standalone record rather than
+  //    appending it as a sibling into the "kept" response (simpler and safe; merge
+  //    the two manually via Edit afterward if they really are one family).
+  const handleResolveCandidate = async (candidate: any, action: 'merged' | 'rejected' | 'add_new') => {
+    setResolvingCandidateId(candidate.id);
+    try {
+      if (action === 'add_new') {
+        const rawPayload = candidate.response_b_source === 'neon_internal'
+          ? candidate.response_b_payload.extra
+          : candidate.response_b_payload;
+        const rows = Array.isArray(rawPayload) ? rawPayload : [rawPayload];
+        const first = rows[0];
+        const insertPayload = {
+          parent_first_name: first.parent_first_name,
+          q_why_start: first.q_why_start || null,
+          q_boss_level: first.q_boss_level || null,
+          q_funny_fail: first.q_funny_fail || null,
+          q_weird_habit: first.q_weird_habit || null,
+          q_shoes: first.q_shoes ?? null,
+          media_url: null,
+          is_verified: false,
+          is_flagged: false,
+          needs_name_review: true,
+          goal_tags: [], activity_tags: [], club_tags: [],
+          cubs: rows.map((r: any) => ({
+            grade: r.canonical_grade || r.grade,
+            class_name: r.canonical_class_name || r.class_name,
+            cub_initial: r.cub_initial,
+          })),
+        };
+        const { data, error } = await supabase.from('irene_responses').insert([insertPayload]).select();
+        if (error) throw error;
+        if (data?.[0]) setRecords(prev => [data[0], ...prev]);
+      }
+
+      // Same RLS reason as fetchMergeCandidates — status updates need the service-role route.
+      const res = await fetch('/admin/api/irene-merge-candidates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: candidate.id, status: action === 'add_new' ? 'merged' : action }),
+      });
+      const resData = await res.json();
+      if (!res.ok) throw new Error(resData.error || 'Failed to update candidate status');
+      setMergeCandidates(prev => prev.filter(c => c.id !== candidate.id));
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setResolvingCandidateId(null);
+    }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -213,9 +460,13 @@ export default function IreneResponseManager() {
       const payload = { ...formData, q_shoes: formData.q_shoes ? parseInt(formData.q_shoes, 10) : null };
       if (mode === 'edit') {
         const activeId = activeRecord.id;
-        const { error } = await supabase.from('irene_responses').update(payload).eq('id', activeId);
+        // Saving inside a grade review queue IS the review — clear the flag so this
+        // record drops out of the filtered list and the next one takes its place.
+        const isReviewing = !!reviewQueueGrade;
+        const finalNeedsReview = isReviewing ? false : activeRecord.needs_name_review;
+        const { error } = await supabase.from('irene_responses').update({ ...payload, ...(isReviewing ? { needs_name_review: false } : {}) }).eq('id', activeId);
         if (error) throw error;
-        setRecords(prev => prev.map(r => r.id === activeId ? { ...payload, id: activeId, is_verified: activeRecord.is_verified, is_flagged: activeRecord.is_flagged, needs_name_review: activeRecord.needs_name_review } : r));
+        setRecords(prev => prev.map(r => r.id === activeId ? { ...payload, id: activeId, is_verified: activeRecord.is_verified, is_flagged: activeRecord.is_flagged, needs_name_review: finalNeedsReview } : r));
         setMode('view');
       } else {
         const { data, error } = await supabase.from('irene_responses').insert([{ ...payload, is_verified: false, is_flagged: false, needs_name_review: false }]).select();
@@ -262,6 +513,12 @@ export default function IreneResponseManager() {
       <div className="fixed top-24 left-6 z-50 flex flex-col gap-3 opacity-30 hover:opacity-100 transition-opacity duration-300">
         <button onClick={handleSwitchToView} title="View Mode" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${mode === 'view' ? 'bg-[#0066cc] text-white shadow-[#0066cc]/30' : 'bg-white text-slate-500 hover:text-[#0066cc]'}`}><Eye size={20} /></button>
         <button onClick={handleSwitchToEdit} title="Edit Record" disabled={displayedRecords.length === 0} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${mode === 'edit' ? 'bg-amber-500 text-white shadow-amber-500/30' : 'bg-white text-slate-500 hover:text-amber-500'}`}><Edit2 size={20} /></button>
+        <button onClick={() => { setReviewQueueGrade(null); setMode('reconcile'); }} title="Data Reconciliation" className={`relative w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${mode === 'reconcile' ? 'bg-indigo-600 text-white shadow-indigo-600/30' : 'bg-white text-slate-500 hover:text-indigo-600'}`}>
+          <GitMerge size={20} />
+          {mergeCandidates.length > 0 && <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center border-2 border-slate-50">{mergeCandidates.length}</span>}
+        </button>
+        <button onClick={() => { setReviewQueueGrade(null); setMode('phase'); }} title="Phase Control" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${mode === 'phase' ? 'bg-violet-600 text-white shadow-violet-600/30' : 'bg-white text-slate-500 hover:text-violet-600'}`}><Settings2 size={20} /></button>
+        <button onClick={() => { setReviewQueueGrade(null); setMode('aliases'); }} title="Class Aliases" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${mode === 'aliases' ? 'bg-teal-600 text-white shadow-teal-600/30' : 'bg-white text-slate-500 hover:text-teal-600'}`}><Tags size={20} /></button>
         {mode === 'view' && displayedRecords.length > 0 && (
           <>
             <button onClick={handleToggleFlag} disabled={isSubmitting} title={activeRecord?.is_flagged ? "Unflag" : "Flag Profiling"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.is_flagged ? 'bg-rose-500 text-white shadow-rose-500/30' : 'bg-white text-slate-500 hover:text-rose-500'}`}><Flag size={20} fill={activeRecord?.is_flagged ? "currentColor" : "none"} /></button>
@@ -270,10 +527,10 @@ export default function IreneResponseManager() {
           </>
         )}
         <div className="w-12 h-px bg-slate-200 my-2" />
-        <button onClick={() => setViewFilter('pending')} title="Pending" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'pending' ? 'bg-slate-800 text-white shadow-slate-800/30' : 'bg-white text-slate-400 hover:text-slate-800'}`}><Inbox size={20} /></button>
-        <button onClick={() => setViewFilter('verified')} title="Verified" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'verified' ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 'bg-white text-slate-400 hover:text-emerald-500'}`}><ListChecks size={20} /></button>
-        <button onClick={() => setViewFilter('flagged')} title="Flagged" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'flagged' ? 'bg-rose-500 text-white shadow-rose-500/30' : 'bg-white text-slate-400 hover:text-rose-500'}`}><Flag size={20} /></button>
-        <button onClick={() => setViewFilter('name_review')} title="Name Review" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'name_review' ? 'bg-amber-500 text-white shadow-amber-500/30' : 'bg-white text-slate-400 hover:text-amber-500'}`}><AlertTriangle size={20} /></button>
+        <button onClick={() => { setReviewQueueGrade(null); setViewFilter('pending'); }} title="Pending" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'pending' ? 'bg-slate-800 text-white shadow-slate-800/30' : 'bg-white text-slate-400 hover:text-slate-800'}`}><Inbox size={20} /></button>
+        <button onClick={() => { setReviewQueueGrade(null); setViewFilter('verified'); }} title="Verified" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'verified' ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 'bg-white text-slate-400 hover:text-emerald-500'}`}><ListChecks size={20} /></button>
+        <button onClick={() => { setReviewQueueGrade(null); setViewFilter('flagged'); }} title="Flagged" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'flagged' ? 'bg-rose-500 text-white shadow-rose-500/30' : 'bg-white text-slate-400 hover:text-rose-500'}`}><Flag size={20} /></button>
+        <button onClick={() => { setReviewQueueGrade(null); setViewFilter('name_review'); }} title="Name Review" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'name_review' ? 'bg-amber-500 text-white shadow-amber-500/30' : 'bg-white text-slate-400 hover:text-amber-500'}`}><AlertTriangle size={20} /></button>
         <div className="w-12 h-px bg-slate-200 my-2" />
         <button onClick={handleSwitchToCreate} title="Create" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${mode === 'create' ? 'bg-[#0066cc] text-white shadow-[#0066cc]/30' : 'bg-white text-slate-500 hover:text-[#0066cc]'}`}><Plus size={24} /></button>
       </div>
@@ -338,15 +595,370 @@ export default function IreneResponseManager() {
           </div>
         </div>
 
+        {/* --- PHASE CONTROL MODE --- */}
+        {mode === 'phase' && (
+          <div className="bg-white rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-200 overflow-hidden relative ml-16 md:ml-0">
+            <div className="p-8">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
+                <h3 className="text-lg font-black uppercase tracking-tighter text-slate-800">Phase Control</h3>
+                {settingsSaved && <span className="text-emerald-500 flex items-center gap-1 text-xs font-bold uppercase tracking-widest"><CheckCircle2 size={14} /> Saved</span>}
+              </div>
+
+              {!phaseSettingsLoaded ? (
+                <div className="py-16 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" size={18} /> Loading...</div>
+              ) : settingsError ? (
+                <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6 text-sm text-rose-700">
+                  <p className="font-black uppercase tracking-widest text-xs mb-2">Couldn't load settings</p>
+                  <p className="mb-2">{settingsError}</p>
+                  <p className="text-xs text-rose-600/80">If this is a "table not found" error, the <code className="bg-rose-100 px-1 rounded">irene_settings</code> / <code className="bg-rose-100 px-1 rounded">irene_staff_codes</code> tables haven't been created in Supabase yet — run the Phase Control SQL from the plan first.</p>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  {/* Phase segmented control */}
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Current Voting Phase</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {([
+                        { value: 'setup', label: 'Setup', desc: 'Coming soon hero, no voting' },
+                        { value: 'educators', label: 'Educators', desc: 'Staff-code gated voting' },
+                        { value: 'parents', label: 'Parents', desc: 'Full public voting' },
+                        { value: 'closed', label: 'Closed', desc: 'Final results' },
+                      ] as const).map(opt => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setPhaseForm(prev => ({ ...prev, phase: opt.value }))}
+                          className={`text-left p-4 rounded-2xl border transition-all ${phaseForm.phase === opt.value ? 'bg-violet-600 border-violet-600 text-white shadow-lg shadow-violet-600/20' : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-violet-300'}`}
+                        >
+                          <p className="font-black text-sm uppercase tracking-tight">{opt.label}</p>
+                          <p className={`text-[10px] mt-1 ${phaseForm.phase === opt.value ? 'text-violet-100' : 'text-slate-400'}`}>{opt.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Educator Vote Weight</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={phaseForm.educator_vote_weight}
+                        onChange={(e) => setPhaseForm(prev => ({ ...prev, educator_vote_weight: parseInt(e.target.value, 10) || 1 }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-violet-500"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1.5">How many votes each tap is worth during the Educators phase.</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Staff Access Code</label>
+                      <div className="relative">
+                        <input
+                          type={showStaffCode ? 'text' : 'password'}
+                          value={phaseForm.staff_access_code}
+                          onChange={(e) => setPhaseForm(prev => ({ ...prev, staff_access_code: e.target.value }))}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-11 text-sm font-bold outline-none focus:border-violet-500"
+                        />
+                        <button type="button" onClick={() => setShowStaffCode(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                          {showStaffCode ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1.5">Shared code teachers enter to unlock voting. Never shown to parents.</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Closing Hint <span className="text-slate-300 normal-case">(optional, cosmetic only)</span></label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Closes around Friday 5pm"
+                      value={phaseForm.phase_ends_hint}
+                      onChange={(e) => setPhaseForm(prev => ({ ...prev, phase_ends_hint: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-violet-500"
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1.5">Shown as a small banner on the public page. No automation is tied to it — the phase only changes when you save it above.</p>
+                  </div>
+
+                  <div className="pt-6 border-t border-slate-100 flex justify-end">
+                    <button
+                      onClick={handleSaveSettings}
+                      disabled={isSavingSettings}
+                      className="px-12 py-4 bg-violet-600 text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-50 hover:bg-violet-700"
+                    >
+                      {isSavingSettings ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save Settings
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* --- CLASS ALIASES MODE --- */}
+        {mode === 'aliases' && (
+          <div className="bg-white rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-200 overflow-hidden relative ml-16 md:ml-0">
+            <div className="p-8">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
+                <div>
+                  <h3 className="text-lg font-black uppercase tracking-tighter text-slate-800">Class Aliases</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Maps messy/OCR'd class names to the real classroom — used by the Coverage Report and future imports</p>
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-teal-600 bg-teal-50 px-3 py-1.5 rounded-full border border-teal-100 shrink-0">{aliases.length} mapped</span>
+              </div>
+
+              {/* Add new alias */}
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 mb-6">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Add New Alias</p>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Raw Grade</label>
+                    <input value={newAlias.raw_grade} onChange={e => setNewAlias(p => ({ ...p, raw_grade: e.target.value }))} placeholder="e.g. Grade 10" className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-teal-500" />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Raw Class</label>
+                    <input value={newAlias.raw_class_name} onChange={e => setNewAlias(p => ({ ...p, raw_class_name: e.target.value }))} placeholder="e.g. 10" className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-teal-500" />
+                  </div>
+                  <div className="hidden md:flex items-center justify-center text-slate-300"><ArrowRight size={16} /></div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Canonical Grade</label>
+                    <input value={newAlias.canonical_grade} onChange={e => setNewAlias(p => ({ ...p, canonical_grade: e.target.value }))} placeholder="e.g. Grade 1" className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-teal-500" />
+                  </div>
+                  <div className="flex gap-2">
+                    <input value={newAlias.canonical_class_name} onChange={e => setNewAlias(p => ({ ...p, canonical_class_name: e.target.value }))} placeholder="e.g. 1O" className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-teal-500" />
+                    <button onClick={handleAddAlias} disabled={isAddingAlias} className="shrink-0 px-3 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 flex items-center justify-center">
+                      {isAddingAlias ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Existing aliases */}
+              {!aliasesLoaded ? (
+                <div className="py-16 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" size={18} /> Loading...</div>
+              ) : aliases.length === 0 ? (
+                <p className="text-center text-slate-400 text-xs font-bold py-12">No aliases yet — add one above.</p>
+              ) : (
+                <div className="space-y-2">
+                  {aliases.map((alias) => {
+                    const key = `${alias.raw_grade}::${alias.raw_class_name}`;
+                    const isEditing = editingAliasKey === key;
+                    const isActing = aliasActionKey === key;
+                    return (
+                      <div key={key} className="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="min-w-0 shrink-0 w-[38%]">
+                            <p className="text-xs font-bold text-slate-500 truncate">{alias.raw_grade}</p>
+                            <p className="text-sm font-black text-slate-800 truncate">{alias.raw_class_name}</p>
+                          </div>
+                          <ArrowRight size={14} className="text-slate-300 shrink-0" />
+                          {isEditing ? (
+                            <div className="flex gap-2 flex-1 min-w-0">
+                              <input value={editingAliasValues.canonical_grade} onChange={e => setEditingAliasValues(p => ({ ...p, canonical_grade: e.target.value }))} className="w-full bg-white border border-teal-300 rounded-lg px-2 py-1.5 text-xs outline-none" />
+                              <input value={editingAliasValues.canonical_class_name} onChange={e => setEditingAliasValues(p => ({ ...p, canonical_class_name: e.target.value }))} className="w-full bg-white border border-teal-300 rounded-lg px-2 py-1.5 text-xs outline-none" />
+                            </div>
+                          ) : (
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-teal-600 truncate">{alias.canonical_grade}</p>
+                              <p className="text-sm font-black text-slate-900 truncate">{alias.canonical_class_name}</p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isEditing ? (
+                            <>
+                              <button onClick={() => handleSaveEditAlias(alias)} disabled={isActing} className="p-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50">{isActing ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}</button>
+                              <button onClick={() => setEditingAliasKey(null)} className="p-2 bg-white border border-slate-200 text-slate-400 rounded-lg hover:bg-slate-100"><X size={13} /></button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => handleStartEditAlias(alias)} className="p-2 bg-white border border-slate-200 text-slate-500 rounded-lg hover:border-teal-300 hover:text-teal-600"><Edit2 size={13} /></button>
+                              <button onClick={() => handleDeleteAlias(alias)} disabled={isActing} className="p-2 bg-white border border-slate-200 text-slate-400 rounded-lg hover:border-rose-300 hover:text-rose-500 disabled:opacity-50">{isActing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* --- DATA RECONCILIATION MODE --- */}
+        {mode === 'reconcile' && (
+          <div className="bg-white rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-200 overflow-hidden relative ml-16 md:ml-0">
+            <div className="p-8 pb-0">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-2">
+                <h3 className="text-lg font-black uppercase tracking-tighter text-slate-800">Data Reconciliation</h3>
+                <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+                  <button onClick={() => setReconcileTab('search')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${reconcileTab === 'search' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>Search</button>
+                  <button onClick={() => setReconcileTab('queue')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${reconcileTab === 'queue' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>
+                    Queue {mergeCandidates.length > 0 && <span className="px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-600 text-[9px]">{mergeCandidates.length}</span>}
+                  </button>
+                  <button onClick={() => setReconcileTab('coverage')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${reconcileTab === 'coverage' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>Coverage</button>
+                </div>
+              </div>
+            </div>
+
+            {reconcileTab === 'search' && (
+              <div className="p-8 pt-4 pb-8">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-6">
+                  <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="Parent name..."
+                      value={reconcileSearchName}
+                      onChange={(e) => setReconcileSearchName(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-11 pr-4 py-3.5 text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-colors"
+                    />
+                  </div>
+                  <select
+                    value={reconcileSearchGrade}
+                    onChange={(e) => setReconcileSearchGrade(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-colors"
+                  >
+                    <option value="">Child's Grade — Any</option>
+                    {['Grade R', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7'].map(g => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Child's initial..."
+                    value={reconcileSearchInitial}
+                    onChange={(e) => setReconcileSearchInitial(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3.5 text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-colors"
+                  />
+                </div>
+                {!reconcileHasFilter ? (
+                  <p className="text-center text-slate-400 text-xs font-bold py-12">Fill in any combination of the filters above to check whether a physical form is already in the system.</p>
+                ) : reconcileResults.length === 0 ? (
+                  <p className="text-center text-slate-400 text-xs font-bold py-12">No matches — this looks genuinely new.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {reconcileResults.map((r) => (
+                      <div key={r.id} className="flex items-center justify-between gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="min-w-0">
+                          <p className="font-black text-sm text-slate-900 truncate">{r.parent_first_name}</p>
+                          <p className="text-[11px] text-slate-500 font-bold truncate">{(r.cubs || []).map((c: any) => `${c.cub_initial} · ${c.grade} (${c.class_name})`).join('   •   ')}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {r.is_verified && <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-200">Verified</span>}
+                          {r.needs_name_review && <span className="text-[9px] font-black uppercase text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200">Needs Review</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reconcileTab === 'queue' && (
+              <div className="p-8 pt-4 pb-8 space-y-4">
+                {mergeCandidates.length === 0 ? (
+                  <p className="text-center text-slate-400 text-xs font-bold py-12">Queue is clear — no pending candidates.</p>
+                ) : mergeCandidates.map((candidate) => {
+                  const isInternal = candidate.response_b_source === 'neon_internal';
+                  const supaMatch = candidate.response_a_id ? records.find((r) => r.id === candidate.response_a_id) : null;
+                  const leftLabel = isInternal ? 'Kept (already in Supabase)' : 'Existing Supabase Record';
+                  const leftData = isInternal ? candidate.response_b_payload.kept : supaMatch;
+                  const rightLabel = isInternal ? 'Extra (possible duplicate)' : 'Neon Data';
+                  const rightRows: any[] = isInternal ? [candidate.response_b_payload.extra] : candidate.response_b_payload;
+                  const isResolving = resolvingCandidateId === candidate.id;
+                  return (
+                    <div key={candidate.id} className="border border-slate-200 rounded-2xl p-5 bg-slate-50/50">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full border ${candidate.confidence === 'high' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : candidate.confidence === 'medium' ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>{candidate.confidence} confidence</span>
+                        <span className="text-[9px] font-bold uppercase text-slate-400">{isInternal ? 'Internal Neon duplicate' : 'Cross-database name match'}</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div className="bg-white p-3 rounded-xl border border-slate-200">
+                          <p className="text-[9px] font-black uppercase text-slate-400 mb-1">{leftLabel}</p>
+                          {leftData ? (
+                            <>
+                              <p className="font-bold text-sm text-slate-900">{leftData.parent_first_name}</p>
+                              <p className="text-[11px] text-slate-500">{(isInternal ? [leftData] : leftData.cubs || []).map((c: any) => `${c.cub_initial} · ${c.grade || c.canonical_grade} (${c.class_name || c.canonical_class_name})`).join(', ')}</p>
+                            </>
+                          ) : <p className="text-xs text-slate-400 italic">Not found (may have been edited/removed since)</p>}
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-slate-200">
+                          <p className="text-[9px] font-black uppercase text-slate-400 mb-1">{rightLabel}</p>
+                          {rightRows.map((r: any, i: number) => (
+                            <div key={i} className={i > 0 ? 'mt-2 pt-2 border-t border-slate-100' : ''}>
+                              <p className="font-bold text-sm text-slate-900">{r.parent_first_name}</p>
+                              <p className="text-[11px] text-slate-500">{r.cub_initial} · {r.canonical_grade || r.grade} ({r.canonical_class_name || r.class_name})</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <button title="Different kids/families — not a real match. Nothing gets added, the candidate is just dismissed." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'rejected')} className="px-4 py-2 bg-white text-slate-500 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 disabled:opacity-50 flex items-center gap-1.5"><X size={12} /> Reject</button>
+                        <button title="Not a duplicate — this is real, distinct data. Inserts it as a new response for your normal QA queue." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'add_new')} className="px-4 py-2 bg-white text-indigo-600 border border-indigo-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 disabled:opacity-50 flex items-center gap-1.5"><PlusCircle size={12} /> Add as New</button>
+                        <button title="Actual duplicate of the same child — already in Supabase. Nothing gets added, just clears the candidate." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'merged')} className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-1.5">{isResolving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Confirm Duplicate</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {reconcileTab === 'coverage' && (
+              <div className="p-8 pt-4 pb-8">
+                <p className="text-[10px] font-bold text-slate-400 mb-4">Click a grade with pending records to jump straight into a review queue scoped to just that grade.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {Object.entries(coverageByGrade).sort(([a], [b]) => a.localeCompare(b)).map(([grade, stats]) => {
+                    const clickable = stats.pending > 0;
+                    return (
+                      <button
+                        key={grade}
+                        onClick={() => clickable && handleOpenGradeQueue(grade)}
+                        disabled={!clickable}
+                        className={`text-left p-4 rounded-xl border transition-all ${clickable ? 'bg-amber-50 border-amber-200 hover:border-amber-400 hover:shadow-md cursor-pointer' : 'bg-slate-50 border-slate-100 cursor-default'}`}
+                      >
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{grade}</p>
+                        <p className="text-2xl font-black text-slate-900">{stats.total}</p>
+                        {stats.pending > 0 ? (
+                          <p className="text-[10px] font-bold text-amber-600 mt-1 flex items-center gap-1">{stats.pending} need review <ArrowRight size={10} /></p>
+                        ) : (
+                          <p className="text-[10px] font-bold text-emerald-500 mt-1 flex items-center gap-1"><Check size={10} /> All reviewed</p>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* --- VIEW MODE --- */}
         {mode === 'view' && (
+          <>
+            {reviewQueueGrade && (
+              <div className="mb-4 ml-16 md:ml-0 flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3">
+                <div className="flex items-center gap-2 text-amber-700">
+                  <AlertTriangle size={16} />
+                  <span className="text-xs font-black uppercase tracking-widest">Reviewing {reviewQueueGrade} — {displayedRecords.length} remaining</span>
+                </div>
+                <button onClick={handleExitGradeQueue} className="text-[10px] font-black text-amber-700 uppercase tracking-widest hover:underline flex items-center gap-1"><X size={12} /> Exit Queue</button>
+              </div>
+            )}
           <div className="bg-white rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-200 overflow-hidden relative ml-16 md:ml-0">
             {displayedRecords.length === 0 ? (
               <div className="p-16 text-center text-slate-400 font-bold uppercase tracking-widest text-sm">
-                {classFilter ? `No ${viewFilter} records found for class ${classFilter}.` : 
-                 viewFilter === 'pending' ? "Inbox Zero! No pending records." : 
-                 viewFilter === 'verified' ? "No verified records yet." : 
-                 viewFilter === 'name_review' ? "No names pending review." : 
+                {reviewQueueGrade ? (
+                  <>
+                    <CheckCircle2 className="mx-auto text-emerald-400 mb-4" size={32} />
+                    {reviewQueueGrade} fully reviewed! 🎉
+                    <button onClick={handleExitGradeQueue} className="block mx-auto mt-4 text-xs font-black text-[#0066cc] uppercase tracking-widest hover:underline">Back to Coverage</button>
+                  </>
+                ) : classFilter ? `No ${viewFilter} records found for class ${classFilter}.` :
+                 viewFilter === 'pending' ? "Inbox Zero! No pending records." :
+                 viewFilter === 'verified' ? "No verified records yet." :
+                 viewFilter === 'name_review' ? "No names pending review." :
                  "No flagged profiles."}
               </div>
             ) : (
@@ -354,7 +966,7 @@ export default function IreneResponseManager() {
                 <div className="p-8 pb-0">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
                     <h3 className="text-lg font-black uppercase tracking-tighter text-slate-800">
-                      {viewFilter === 'pending' ? 'QA Viewer' : viewFilter === 'verified' ? 'Verified Archive' : viewFilter === 'name_review' ? 'Name Review' : 'Profile Inspector'}
+                      {reviewQueueGrade ? `Reviewing: ${reviewQueueGrade}` : viewFilter === 'pending' ? 'QA Viewer' : viewFilter === 'verified' ? 'Verified Archive' : viewFilter === 'name_review' ? 'Name Review' : 'Profile Inspector'}
                     </h3>
                     <div className="flex items-center gap-4">
                       <span className="text-xs font-bold text-slate-400">Record {safeIndex + 1} of {displayedRecords.length}</span>
@@ -400,6 +1012,7 @@ export default function IreneResponseManager() {
               </>
             )}
           </div>
+          </>
         )}
 
         {/* --- EDIT / CREATE MODE FORM --- */}
