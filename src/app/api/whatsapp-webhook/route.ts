@@ -96,6 +96,29 @@ export async function POST(request: Request) {
               const senderPhone = message.from || message.from_user_id;
               if (!senderPhone) continue;
 
+              const supabase = createClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+              );
+
+              // Messages from the admin's own number are ops actions (e.g. marking
+              // a lead contacted), not customer messages - handle and stop here so
+              // they never create/update a lead record for the admin's own number.
+              const adminPhone = process.env.ADMIN_PHONE_NUMBER;
+              const isFromAdmin = !!adminPhone && senderPhone.replace(/\D/g, '') === adminPhone.replace(/\D/g, '');
+
+              if (isFromAdmin) {
+                if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
+                  const buttonId = message.interactive.button_reply?.id;
+                  if (buttonId?.startsWith('contacted_')) {
+                    const targetLeadId = buttonId.replace('contacted_', '');
+                    await supabase.from('leads').update({ status: 'contacted', contacted_at: new Date().toISOString() }).eq('id', targetLeadId);
+                    await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "✅ Lead marked as contacted in database." } });
+                  }
+                }
+                continue;
+              }
+
               let messageText = '';
               if (message.type === 'text') {
                 messageText = message.text?.body || '';
@@ -107,11 +130,6 @@ export async function POST(request: Request) {
                   messageText = '[Interactive Message]';
                 }
               }
-
-              const supabase = createClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-              );
 
               // Get or Create Lead
               let { data: lead } = await supabase
@@ -198,12 +216,7 @@ export async function POST(request: Request) {
               if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
                 const buttonId = message.interactive.button_reply?.id;
 
-                if (buttonId.startsWith('contacted_')) {
-                  const targetLeadId = buttonId.replace('contacted_', '');
-                  await supabase.from('leads').update({ status: 'contacted', contacted_at: new Date().toISOString() }).eq('id', targetLeadId);
-                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "✅ Lead marked as contacted in database." } });
-                
-                } else if (buttonId === 'btn_human') {
+                if (buttonId === 'btn_human') {
                   await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
                   await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
                   await notifyAdmin(senderPhone, "🚨 DIRECT REQUEST: Wants to speak to an Educator.");
