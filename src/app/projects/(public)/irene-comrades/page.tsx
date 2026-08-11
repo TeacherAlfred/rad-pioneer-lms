@@ -28,6 +28,13 @@ const DAILY_TAP_CAP = 30;
 // this is the nudge toward providing email/WhatsApp, not just an anti-spam cap.
 const ANONYMOUS_DAILY_TAP_CAP = 3;
 
+// Same public WABA number used in the site footer (page.tsx, /start) - a
+// user-initiated message here opens Meta's 24h customer service window, so
+// this doubles as the fastest way to actually reach a human.
+const RAD_WHATSAPP_NUMBER = '27769065959';
+const contactRadLink = (context: string) =>
+  `https://wa.me/${RAD_WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi RAD Academy! I need help with the Irene Primary voting page — ${context}`)}`;
+
 const COUNTRY_CODES = [
   { code: '+27', label: '🇿🇦 +27' },
   { code: '+263', label: '🇿🇼 +263' },
@@ -395,8 +402,8 @@ function TrackerContent() {
     const effectiveCap = (!isEducatorTap && currentTier === 'anonymous') ? ANONYMOUS_DAILY_TAP_CAP : DAILY_TAP_CAP;
     if (dailyTapCount >= effectiveCap) {
       const message = (!isEducatorTap && currentTier === 'anonymous')
-        ? `You've used all ${ANONYMOUS_DAILY_TAP_CAP} of your free votes for today. Add your email or WhatsApp number to unlock more voting power — or come back tomorrow!`
-        : "You've reached today's voting limit for this device — thank you for your enthusiasm! Come back tomorrow.";
+        ? `You've used all ${ANONYMOUS_DAILY_TAP_CAP} of your free votes for today. Add your email or WhatsApp number to unlock more voting power. This limit is per device/browser, not per person — come back tomorrow, or tap "Need Help?" below if something looks wrong.`
+        : "You've reached today's voting limit for this device — thank you for your enthusiasm! This is per device/browser. Come back tomorrow, or tap \"Need Help?\" below if something looks wrong.";
       alert(message);
       return;
     }
@@ -937,6 +944,18 @@ function TrackerContent() {
           )}
         </div>
       )}
+
+      {/* --- PERSISTENT CONTACT (opposite corner from the tier pills above,
+           visible in every phase/state, not just parents) --- */}
+      <a
+        href={contactRadLink(`I'm on the ${phase} phase and need a hand.`)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed bottom-4 right-4 z-40 bg-emerald-500 text-white w-12 h-12 rounded-full shadow-xl flex items-center justify-center hover:bg-emerald-600 transition-colors"
+        title="Need help? Chat with RAD Academy on WhatsApp"
+      >
+        <MessageCircle size={20} />
+      </a>
     </div>
   );
 }
