@@ -28,10 +28,14 @@ const DAILY_TAP_CAP = 30;
 // this is the nudge toward providing email/WhatsApp, not just an anti-spam cap.
 const ANONYMOUS_DAILY_TAP_CAP = 3;
 
-// Same public WABA number used in the site footer (page.tsx, /start) - a
-// user-initiated message here opens Meta's 24h customer service window, so
-// this doubles as the fastest way to actually reach a human.
-const RAD_WHATSAPP_NUMBER = '27769065959';
+// The actual Cloud API / WABA number behind PHONE_NUMBER_ID - this is what
+// the webhook (src/app/api/whatsapp-webhook/route.ts) listens on. Deliberately
+// NOT the site footer's number (27769065959, a separate Business app inbox
+// disconnected from the webhook) - a message there would never reach the
+// Irene support detection at all. A user-initiated message here also opens
+// Meta's 24h customer service window, so this doubles as the fastest way to
+// actually reach a human.
+const RAD_WHATSAPP_NUMBER = '27737761173';
 const contactRadLink = (context: string) =>
   `https://wa.me/${RAD_WHATSAPP_NUMBER}?text=${encodeURIComponent(`Hi RAD Academy! I need help with the Irene Primary voting page — ${context}`)}`;
 
