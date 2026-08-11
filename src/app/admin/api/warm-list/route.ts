@@ -27,7 +27,7 @@ export async function PATCH(req: Request) {
     const { id, ...fields } = body;
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
 
-    const allowed = ['name', 'phone', 'email', 'contact_method', 'location', 'is_plk', 'status_category', 'review_status', 'review_note'];
+    const allowed = ['name', 'phone', 'email', 'contact_method', 'location', 'source', 'tags', 'status_category', 'review_status', 'review_note'];
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     for (const key of allowed) {
       if (key in fields) update[key] = fields[key];
@@ -52,7 +52,7 @@ export async function PATCH(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, phone, email, location, is_plk } = body;
+    const { name, phone, email, location, source, tags } = body;
 
     if (!phone && !email) {
       return NextResponse.json({ error: 'At least a phone or email is required' }, { status: 400 });
@@ -66,7 +66,8 @@ export async function POST(req: Request) {
         email: email || null,
         contact_method: phone ? 'whatsapp' : 'email',
         location: location || null,
-        is_plk: !!is_plk,
+        source: source || 'warm_list',
+        tags: Array.isArray(tags) ? tags : [],
         status_category: 'lead',
         sources: 'manual',
         review_status: 'pending',

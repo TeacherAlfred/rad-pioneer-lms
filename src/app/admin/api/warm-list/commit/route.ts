@@ -36,15 +36,20 @@ export async function POST() {
       // overwrite an existing lead's funnel status, same rule as the webhook.
       let existing = null;
       if (row.phone) {
-        const { data } = await supabaseAdmin.from('leads').select('id').eq('phone', row.phone).maybeSingle();
+        const { data } = await supabaseAdmin.from('leads').select('id, tags').eq('phone', row.phone).maybeSingle();
         existing = data;
       }
       if (!existing && row.email) {
-        const { data } = await supabaseAdmin.from('leads').select('id').eq('email', row.email).maybeSingle();
+        const { data } = await supabaseAdmin.from('leads').select('id, tags').eq('email', row.email).maybeSingle();
         existing = data;
       }
 
       if (existing) {
+        // Status/funnel progress stays untouched - just merge in whatever new
+        // tags this review pass surfaced (e.g. an already-known lead turning
+        // out to also be an Irene Primary parent).
+        const mergedTags = Array.from(new Set([...(existing.tags || []), ...(row.tags || [])]));
+        await supabaseAdmin.from('leads').update({ tags: mergedTags }).eq('id', existing.id);
         alreadyExisted++;
       } else {
         const { error: insertErr } = await supabaseAdmin.from('leads').insert([{
@@ -52,7 +57,8 @@ export async function POST() {
           email: row.email || null,
           name: row.name || null,
           status: 'new_lead',
-          source: row.is_plk ? 'meta_plk' : 'warm_list',
+          source: row.source || 'warm_list',
+          tags: row.tags || [],
         }]);
         if (insertErr) {
           skipped++;

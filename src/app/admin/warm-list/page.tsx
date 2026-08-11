@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Loader2, CheckCircle2, XCircle, RotateCcw, Plus, Search,
-  MapPin, Mail, Phone, AlertTriangle, Send,
+  MapPin, Mail, Phone, AlertTriangle, Send, Tag, X,
 } from "lucide-react";
 
 type Row = {
@@ -16,7 +16,8 @@ type Row = {
   status_labels: string | null;
   sources: string | null;
   location: string | null;
-  is_plk: boolean;
+  source: string;
+  tags: string[];
   kids_count: number | null;
   children_notes: string | null;
   first_seen: string | null;
@@ -27,6 +28,10 @@ type Row = {
   committed_at: string | null;
 };
 
+const LOCATIONS = ['', 'Pretoria', 'Johannesburg', 'Polokwane', 'Other'];
+const SOURCES = ['warm_list', 'meta_plk', 'irene_ips', 'organic'];
+const TAG_PRESETS = ['Irene Primary', 'Polokwane Bootcamp', 'Existing Client', 'Past Client', 'Recent Trial', 'Referral', 'Term 3'];
+
 const TABS = ['pending', 'approved', 'excluded', 'committed', 'all'] as const;
 type Tab = typeof TABS[number];
 
@@ -35,10 +40,10 @@ export default function WarmListPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('pending');
   const [search, setSearch] = useState('');
-  const [plkOnly, setPlkOnly] = useState(false);
+  const [tagFilter, setTagFilter] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [newLead, setNewLead] = useState({ name: '', phone: '', email: '', location: '', is_plk: false });
+  const [newLead, setNewLead] = useState({ name: '', phone: '', email: '', location: '', source: 'warm_list', tags: [] as string[] });
   const [isAdding, setIsAdding] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
   const [commitResult, setCommitResult] = useState<any>(null);
@@ -68,7 +73,10 @@ export default function WarmListPage() {
     let list = rows;
     if (tab === 'committed') list = list.filter(r => !!r.committed_at);
     else if (tab !== 'all') list = list.filter(r => r.review_status === tab && !r.committed_at);
-    if (plkOnly) list = list.filter(r => r.is_plk);
+    if (tagFilter.trim()) {
+      const q = tagFilter.trim().toLowerCase();
+      list = list.filter(r => (r.tags || []).some(t => t.toLowerCase().includes(q)));
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter(r =>
@@ -78,7 +86,17 @@ export default function WarmListPage() {
       );
     }
     return list;
-  }, [rows, tab, plkOnly, search]);
+  }, [rows, tab, tagFilter, search]);
+
+  function addTag(row: Row, tag: string) {
+    const t = tag.trim();
+    if (!t || (row.tags || []).includes(t)) return;
+    patchRow(row.id, { tags: [...(row.tags || []), t] });
+  }
+
+  function removeTag(row: Row, tag: string) {
+    patchRow(row.id, { tags: (row.tags || []).filter(t => t !== tag) });
+  }
 
   async function patchRow(id: string, fields: Partial<Row>) {
     setSavingId(id);
@@ -112,7 +130,7 @@ export default function WarmListPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setRows(prev => [data.row, ...prev]);
-      setNewLead({ name: '', phone: '', email: '', location: '', is_plk: false });
+      setNewLead({ name: '', phone: '', email: '', location: '', source: 'warm_list', tags: [] });
       setShowAdd(false);
       setTab('pending');
     } catch (err: any) {
@@ -192,9 +210,10 @@ export default function WarmListPage() {
               {t} ({counts[t === 'all' ? 'all' : t]})
             </button>
           ))}
-          <label className="flex items-center gap-2 ml-2 text-xs font-bold text-slate-500">
-            <input type="checkbox" checked={plkOnly} onChange={e => setPlkOnly(e.target.checked)} className="accent-slate-900" /> PLK only
-          </label>
+          <div className="relative">
+            <Tag size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input type="text" placeholder="Filter by tag" value={tagFilter} onChange={e => setTagFilter(e.target.value)} className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:border-slate-400 w-40" />
+          </div>
           <div className="relative ml-auto">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input type="text" placeholder="Search name, phone, email" value={search} onChange={e => setSearch(e.target.value)} className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:border-slate-400 w-64" />
@@ -214,8 +233,9 @@ export default function WarmListPage() {
                   <th className="p-3">Contact</th>
                   <th className="p-3">Category</th>
                   <th className="p-3">Location</th>
+                  <th className="p-3">Tags</th>
+                  <th className="p-3">Source</th>
                   <th className="p-3">Notes</th>
-                  <th className="p-3">Sources</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -245,20 +265,38 @@ export default function WarmListPage() {
                         {['existing', 'recent', 'past', 'lead', 'unclear'].map(c => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </td>
-                    <td className="p-3 min-w-[110px]">
+                    <td className="p-3 min-w-[120px]">
                       <div className="flex items-center gap-1.5">
                         <MapPin size={11} className="text-slate-400 shrink-0" />
-                        <input defaultValue={row.location || ''} onBlur={e => e.target.value !== (row.location || '') && patchRow(row.id, { location: e.target.value || null })} className="w-full bg-transparent outline-none text-xs text-slate-600" />
+                        <select value={row.location || ''} onChange={e => patchRow(row.id, { location: e.target.value || null })} className="w-full bg-transparent outline-none text-xs text-slate-600">
+                          {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc || '—'}</option>)}
+                        </select>
                       </div>
-                      <label className="flex items-center gap-1.5 mt-1 text-[10px] font-bold text-slate-400">
-                        <input type="checkbox" checked={row.is_plk} onChange={e => patchRow(row.id, { is_plk: e.target.checked })} className="accent-amber-500" /> PLK
-                      </label>
                     </td>
-                    <td className="p-3 max-w-[240px] text-xs text-slate-500">
+                    <td className="p-3 min-w-[170px]">
+                      <div className="flex flex-wrap gap-1 mb-1.5">
+                        {(row.tags || []).map(t => (
+                          <span key={t} className="flex items-center gap-1 bg-indigo-50 text-indigo-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            {t}
+                            <button onClick={() => removeTag(row, t)} className="hover:text-indigo-900"><X size={10} /></button>
+                          </span>
+                        ))}
+                      </div>
+                      <select value="" onChange={e => e.target.value && addTag(row, e.target.value)} className="text-[10px] text-slate-400 bg-transparent outline-none">
+                        <option value="">+ add tag</option>
+                        {TAG_PRESETS.filter(t => !(row.tags || []).includes(t)).map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </td>
+                    <td className="p-3 min-w-[110px]">
+                      <select value={row.source} onChange={e => patchRow(row.id, { source: e.target.value })} className="text-[10px] font-bold text-slate-500 bg-transparent outline-none">
+                        {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                    <td className="p-3 max-w-[220px] text-xs text-slate-500">
                       {row.children_notes || '—'}
                       {row.review_note && <div className="mt-1 flex items-center gap-1 text-rose-500"><AlertTriangle size={11} /> {row.review_note}</div>}
+                      <div className="mt-1 text-[10px] text-slate-300">{row.sources}{row.added_manually ? ' (manual)' : ''}</div>
                     </td>
-                    <td className="p-3 text-[10px] text-slate-400 max-w-[140px] break-words">{row.sources}{row.added_manually ? ' (manual)' : ''}</td>
                     <td className="p-3">
                       <div className="flex items-center justify-end gap-1.5">
                         {row.committed_at ? (
@@ -294,10 +332,12 @@ export default function WarmListPage() {
             <input placeholder="Name" value={newLead.name} onChange={e => setNewLead(p => ({ ...p, name: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
             <input placeholder="Phone" value={newLead.phone} onChange={e => setNewLead(p => ({ ...p, phone: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
             <input placeholder="Email" value={newLead.email} onChange={e => setNewLead(p => ({ ...p, email: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-            <input placeholder="Location" value={newLead.location} onChange={e => setNewLead(p => ({ ...p, location: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-            <label className="flex items-center gap-2 text-xs font-bold text-slate-500">
-              <input type="checkbox" checked={newLead.is_plk} onChange={e => setNewLead(p => ({ ...p, is_plk: e.target.checked }))} /> Polokwane (PLK)
-            </label>
+            <select value={newLead.location} onChange={e => setNewLead(p => ({ ...p, location: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400">
+              {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc || 'Location — unknown'}</option>)}
+            </select>
+            <select value={newLead.source} onChange={e => setNewLead(p => ({ ...p, source: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400">
+              {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
             <div className="flex gap-2 pt-2">
               <button type="button" onClick={() => setShowAdd(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
               <button type="submit" disabled={isAdding} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">{isAdding ? '...' : 'Add'}</button>
