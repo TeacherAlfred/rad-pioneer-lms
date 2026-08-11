@@ -176,6 +176,21 @@ export async function POST(request: Request) {
                 body: messageText
               }]);
 
+              // --- IRENE VOTING SUPPORT DETECTION ---
+              // The Irene voting page's "Need Help" button prefills a message
+              // tagged with these words. Route straight to a human, same as a
+              // "Talk to Educator" tap - the generic guide/welcome flow below
+              // would be a jarring mismatch for someone stuck trying to vote.
+              if (message.type === 'text') {
+                const textLower = messageText.toLowerCase();
+                if (textLower.includes('irene') && textLower.includes('voting')) {
+                  await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
+                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } });
+                  await notifyAdmin(senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.");
+                  continue;
+                }
+              }
+
               // --- STAGE 1: INBOUND TRIGGER & VALUE DELIVERY ---
               if (message.type === 'text') {
                 const textLower = messageText.toLowerCase();
