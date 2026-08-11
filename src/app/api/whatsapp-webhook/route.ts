@@ -131,23 +131,26 @@ export async function POST(request: Request) {
                 }
               }
 
-              // Get or Create Lead
+              // Get or Create Lead. Insert-first relies on the UNIQUE constraint on
+              // leads.phone to atomically reject a duplicate, so two concurrent
+              // webhook deliveries for the same brand-new number can't both succeed
+              // in creating a lead - the loser falls back to selecting the winner's row.
               let { data: lead } = await supabase
                 .from('leads')
-                .select('*')
-                .eq('phone', senderPhone)
+                .insert([{ phone: senderPhone, status: 'new_lead' }])
+                .select()
                 .single();
 
-              if (!lead) {
-                const { data: newLead } = await supabase
-                  .from('leads')
-                  .insert([{ phone: senderPhone, status: 'new_lead' }])
-                  .select()
-                  .single();
-                lead = newLead;
-                
+              if (lead) {
                 // Alert Admin of brand new lead
                 await notifyAdmin(senderPhone, "🆕 Brand New Lead entered the funnel.");
+              } else {
+                const { data: existingLead } = await supabase
+                  .from('leads')
+                  .select('*')
+                  .eq('phone', senderPhone)
+                  .single();
+                lead = existingLead;
               }
 
               if (!lead) continue;
