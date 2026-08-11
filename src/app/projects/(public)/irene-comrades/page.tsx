@@ -118,6 +118,18 @@ function TrackerContent() {
   const [contactInput, setContactInput] = useState('');
   const [isUnlocking, setIsUnlocking] = useState(false);
 
+  // --- CONSENT STATE ---
+  // The response whose card was just tapped when the modal opened - a best-effort
+  // guess at the voter's own child's class, never a guarantee (they might be
+  // voting for someone else's child, or opened the modal without just voting).
+  // It's only ever used to pre-fill the confirm fields below, which the parent
+  // can correct before consenting.
+  const [lastVotedResponse, setLastVotedResponse] = useState<any>(null);
+  const [consentMarketing, setConsentMarketing] = useState(false);
+  const [confirmParentName, setConfirmParentName] = useState('');
+  const [confirmGrade, setConfirmGrade] = useState('');
+  const [confirmClassName, setConfirmClassName] = useState('');
+
   // --- REFERRAL STATE ---
   const refResponseId = searchParams.get('ref');
   const [refAcknowledged, setRefAcknowledged] = useState(false);
@@ -353,6 +365,7 @@ function TrackerContent() {
       if (!isEducatorTap && !hasSeenUpsell && (voter.voter_type || 'anonymous') === 'anonymous') {
         setHasSeenUpsell(true);
         localStorage.setItem('irene_seen_upsell', 'true');
+        setLastVotedResponse(response);
         setTimeout(() => setShowTierModal(true), 600);
       }
 
@@ -368,13 +381,51 @@ function TrackerContent() {
     if (!contactInput) { alert('Please enter your details.'); return; }
     setIsUnlocking(true);
     try {
-      await getOrCreateVoter(tierTab, contactInput);
+      const voter = await getOrCreateVoter(tierTab, contactInput);
+
+      // Marketing consent is WhatsApp-only (per the brief, it's tied to guide
+      // delivery over WhatsApp) and unconditional on the vote weight itself -
+      // the 15x and results notification are awarded either way above.
+      if (tierTab === 'whatsapp') {
+        const res = await fetch('/api/irene/consent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            voter_id: voter.id,
+            whatsapp_number: contactInput,
+            consent_marketing: consentMarketing,
+            parent_first_name: consentMarketing ? confirmParentName : null,
+            grade: consentMarketing ? confirmGrade : null,
+            class_name: consentMarketing ? confirmClassName : null,
+          }),
+        });
+        if (!res.ok) console.error('Consent capture failed:', await res.text());
+      }
+
       confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: ['#0066cc', '#fbbf24', '#10b981'] });
       setShowTierModal(false);
       setContactInput('');
+      setConsentMarketing(false);
+      setConfirmParentName('');
+      setConfirmGrade('');
+      setConfirmClassName('');
     } catch (err: any) {
       alert('Something went wrong. Please try again.');
     } finally { setIsUnlocking(false); }
+  };
+
+  const handleToggleConsent = (checked: boolean) => {
+    setConsentMarketing(checked);
+    // Pre-fill from the response that was just voted on, the first time the
+    // box is ticked - a best-effort guess the parent can correct below.
+    if (checked && !confirmParentName && !confirmGrade && !confirmClassName && lastVotedResponse) {
+      setConfirmParentName((lastVotedResponse.parent_first_name || '').trim().split(/\s+/)[0] || '');
+      const firstCub = (lastVotedResponse.cubs || [])[0];
+      if (firstCub) {
+        setConfirmGrade(firstCub.grade || '');
+        setConfirmClassName(firstCub.class_name || '');
+      }
+    }
   };
 
   const handleVerifyStaffCode = async () => {
@@ -440,8 +491,28 @@ function TrackerContent() {
                 <form onSubmit={handleUnlockTier} className="space-y-4">
                   {tierTab === 'whatsapp' ? (
                     <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}>
-                      <p className="text-xs text-slate-600 mb-3 text-center">Unlock <b className="text-emerald-600">15x votes</b> + lucky draw entry for 50% off RAD Bootcamp/Term 3.</p>
+                      <p className="text-xs text-slate-600 mb-3 text-center">Unlock <b className="text-emerald-600">15x votes</b> + a WhatsApp notification the moment results are announced.</p>
                       <input type="tel" required placeholder="082 123 4567" value={contactInput} onChange={e => setContactInput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-4 text-sm font-bold text-center outline-none focus:border-emerald-500" />
+
+                      <label className="flex items-start gap-2.5 mt-4 px-1 cursor-pointer">
+                        <input type="checkbox" checked={consentMarketing} onChange={e => handleToggleConsent(e.target.checked)} className="w-4 h-4 mt-0.5 accent-emerald-500 rounded shrink-0" />
+                        <span className="text-[11px] text-slate-500 leading-snug">
+                          I'd also like RAD Academy to send me their free <b className="text-slate-700">Parent's Guide to Hacking Screen Time</b>, plus information about their coding and robotics programmes.
+                          <span className="block text-slate-400 mt-0.5">Optional — you'll still get 15x votes and your results notification either way.</span>
+                        </span>
+                      </label>
+
+                      {consentMarketing && (
+                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 space-y-2 bg-slate-50 rounded-xl p-3">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quick check, so we send the guide to the right place</p>
+                          <input type="text" placeholder="Your first name" value={confirmParentName} onChange={e => setConfirmParentName(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500" />
+                          <div className="flex gap-2">
+                            <input type="text" placeholder="Grade" value={confirmGrade} onChange={e => setConfirmGrade(e.target.value)} className="w-1/2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500" />
+                            <input type="text" placeholder="Class" value={confirmClassName} onChange={e => setConfirmClassName(e.target.value)} className="w-1/2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500" />
+                          </div>
+                          {lastVotedResponse && <p className="text-[10px] text-slate-400">We've filled this in based on the response you just voted for — change it if that's not your child.</p>}
+                        </motion.div>
+                      )}
                     </motion.div>
                   ) : (
                     <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
