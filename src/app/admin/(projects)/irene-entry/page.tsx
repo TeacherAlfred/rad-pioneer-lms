@@ -37,6 +37,13 @@ export default function IreneResponseManager() {
   const [showStaffCode, setShowStaffCode] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
+  // Tracks the actually-saved phase, separate from phaseForm.phase (which is
+  // an unsaved draft while editing the segmented control above) - the reset
+  // lock below must gate on what's really live, not on an in-progress edit.
+  const [livePhase, setLivePhase] = useState<string | null>(null);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [isResettingVotes, setIsResettingVotes] = useState(false);
+
   // --- Class Aliases state ---
   const [aliases, setAliases] = useState<any[]>([]);
   const [aliasesLoaded, setAliasesLoaded] = useState(false);
@@ -155,6 +162,7 @@ export default function IreneResponseManager() {
         phase_ends_hint: data.phase_ends_hint || '',
         staff_access_code: data.staff_access_code || '',
       });
+      setLivePhase(data.phase);
       setSettingsError(null);
     } catch (err: any) {
       setSettingsError(err.message);
@@ -174,11 +182,28 @@ export default function IreneResponseManager() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save settings');
       setSettingsSaved(true);
+      setLivePhase(phaseForm.phase);
       setTimeout(() => setSettingsSaved(false), 1500);
     } catch (err: any) {
       alert(err.message);
     } finally {
       setIsSavingSettings(false);
+    }
+  };
+
+  const handleResetVotes = async () => {
+    if (resetConfirmText !== 'RESET') return;
+    setIsResettingVotes(true);
+    try {
+      const res = await fetch('/admin/api/irene-reset-votes', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to reset votes');
+      setResetConfirmText('');
+      alert('All votes and voters have been reset to zero.');
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsResettingVotes(false);
     }
   };
 
@@ -691,6 +716,39 @@ export default function IreneResponseManager() {
                     >
                       {isSavingSettings ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save Settings
                     </button>
+                  </div>
+
+                  {/* --- DANGER ZONE: RESET VOTES/VOTERS --- */}
+                  <div className="pt-6 border-t border-slate-100">
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6">
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle size={16} className="text-rose-500" />
+                        <h4 className="text-xs font-black uppercase tracking-widest text-rose-700">Danger Zone — Reset Votes &amp; Voters</h4>
+                      </div>
+                      {livePhase !== 'setup' ? (
+                        <p className="text-xs text-rose-600/80">Locked — voting is live (current phase: <b className="uppercase">{livePhase}</b>). Reset is only available while the phase is Setup, so a real campaign's votes can't be wiped by accident.</p>
+                      ) : (
+                        <>
+                          <p className="text-xs text-rose-600/80 mb-4">Permanently deletes every row in <code className="bg-rose-100 px-1 rounded">irene_votes</code> and <code className="bg-rose-100 px-1 rounded">irene_voters</code> — every vote, every tier, every consent record. This cannot be undone. Type <b>RESET</b> to confirm.</p>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={resetConfirmText}
+                              onChange={(e) => setResetConfirmText(e.target.value)}
+                              placeholder="Type RESET to confirm"
+                              className="flex-1 bg-white border border-rose-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-rose-500"
+                            />
+                            <button
+                              onClick={handleResetVotes}
+                              disabled={resetConfirmText !== 'RESET' || isResettingVotes}
+                              className="px-6 py-3 bg-rose-600 text-white rounded-xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:bg-rose-700"
+                            >
+                              {isResettingVotes ? <Loader2 size={16} className="animate-spin" /> : <AlertTriangle size={16} />} Reset to Zero
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

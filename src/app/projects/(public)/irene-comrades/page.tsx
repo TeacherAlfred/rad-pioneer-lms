@@ -24,6 +24,25 @@ type CategoryKey = typeof CATEGORIES[number]['key'];
 const TIER_WEIGHTS: Record<string, number> = { anonymous: 1, email: 5, whatsapp: 15 };
 const TIER_RANK: Record<string, number> = { anonymous: 0, email: 1, whatsapp: 2 };
 const DAILY_TAP_CAP = 30;
+// Anonymous voters get a much smaller daily allowance than tiered voters -
+// this is the nudge toward providing email/WhatsApp, not just an anti-spam cap.
+const ANONYMOUS_DAILY_TAP_CAP = 3;
+
+const COUNTRY_CODES = [
+  { code: '+27', label: '🇿🇦 +27' },
+  { code: '+263', label: '🇿🇼 +263' },
+  { code: '+264', label: '🇳🇦 +264' },
+  { code: '+266', label: '🇱🇸 +266' },
+  { code: '+268', label: '🇸🇿 +268' },
+  { code: '+44', label: '🇬🇧 +44' },
+  { code: '+1', label: '🇺🇸 +1' },
+];
+
+// Combines the picked country code with the locally-typed number into the
+// same clean, digits-only, country-code-prefixed format the WhatsApp webhook
+// works with (e.g. "27821234567") - strips a leading 0 (SA local format).
+const formatWhatsAppNumber = (dialCode: string, local: string) =>
+  `${dialCode.replace(/\D/g, '')}${local.replace(/^0+/, '').replace(/\D/g, '')}`;
 
 // This year's race is an Up Run: Durban → Pietermaritzburg.
 // Landmarks + fun facts are approximate/well-known ones — exact km markers
@@ -116,6 +135,7 @@ function TrackerContent() {
   const [showTierModal, setShowTierModal] = useState(false);
   const [tierTab, setTierTab] = useState<'whatsapp' | 'email'>('whatsapp');
   const [contactInput, setContactInput] = useState('');
+  const [countryCode, setCountryCode] = useState('+27');
   const [isUnlocking, setIsUnlocking] = useState(false);
 
   // --- CONSENT STATE ---
@@ -167,6 +187,7 @@ function TrackerContent() {
 
     fetchData();
     fetchSettings();
+    fetchMyVoter(storedDeviceId);
 
     const votesChannel = supabase.channel('public:irene_votes')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'irene_votes' }, () => fetchData())
@@ -191,6 +212,27 @@ function TrackerContent() {
       setPhaseEndsHint(data.phase_ends_hint);
     }
   };
+
+  // Read-only voter lookup on load (never creates) - needed both to know the
+  // voter's real tier before their first tap of a session, and to reconcile
+  // tappedKeys against actual DB rows below, so a manually deleted vote/voter
+  // (e.g. an admin reset) doesn't leave a permanently stale checkmark behind.
+  const fetchMyVoter = async (forDeviceId: string) => {
+    const { data } = await supabase.from('irene_voters').select('*').eq('device_id', forDeviceId).maybeSingle();
+    if (data) setMyVoter(data);
+  };
+
+  // Source of truth for "have I voted for this" is the DB, not the local
+  // cache - this re-derives tappedKeys every time votes or myVoter change,
+  // so it self-heals after an admin reset instead of trusting localStorage
+  // forever. If myVoter hasn't loaded yet, the localStorage-seeded value from
+  // the init effect stands in to avoid a flash of un-ticked cards.
+  useEffect(() => {
+    if (!myVoter) return;
+    const mine = new Set(votes.filter(v => v.voter_id === myVoter.id).map(v => `${v.response_id}::${v.category}`));
+    setTappedKeys(mine);
+    localStorage.setItem('irene_tapped_keys', JSON.stringify([...mine]));
+  }, [votes, myVoter]);
 
   const fetchData = async () => {
     try {
@@ -345,7 +387,19 @@ function TrackerContent() {
   const handleTap = async (response: any, category: CategoryKey, isEducatorTap = false) => {
     const key = `${response.id}::${category}`;
     if (tappedKeys.has(key)) return;
-    if (dailyTapCount >= DAILY_TAP_CAP) { alert("You've reached today's voting limit for this device — thank you for your enthusiasm! Come back tomorrow."); return; }
+
+    // Educator taps run on the general cap regardless of tier - the tight
+    // anonymous allowance is a nudge toward giving email/WhatsApp, not
+    // something that should throttle teacher voting.
+    const currentTier = myVoter?.voter_type || 'anonymous';
+    const effectiveCap = (!isEducatorTap && currentTier === 'anonymous') ? ANONYMOUS_DAILY_TAP_CAP : DAILY_TAP_CAP;
+    if (dailyTapCount >= effectiveCap) {
+      const message = (!isEducatorTap && currentTier === 'anonymous')
+        ? `You've used all ${ANONYMOUS_DAILY_TAP_CAP} of your free votes for today. Add your email or WhatsApp number to unlock more voting power — or come back tomorrow!`
+        : "You've reached today's voting limit for this device — thank you for your enthusiasm! Come back tomorrow.";
+      alert(message);
+      return;
+    }
 
     try {
       const voter = await getOrCreateVoter();
@@ -381,26 +435,25 @@ function TrackerContent() {
     if (!contactInput) { alert('Please enter your details.'); return; }
     setIsUnlocking(true);
     try {
-      const voter = await getOrCreateVoter(tierTab, contactInput);
+      const contactValue = tierTab === 'whatsapp' ? formatWhatsAppNumber(countryCode, contactInput) : contactInput;
+      const voter = await getOrCreateVoter(tierTab, contactValue);
 
-      // Marketing consent is WhatsApp-only (per the brief, it's tied to guide
-      // delivery over WhatsApp) and unconditional on the vote weight itself -
-      // the 15x and results notification are awarded either way above.
-      if (tierTab === 'whatsapp') {
-        const res = await fetch('/api/irene/consent', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            voter_id: voter.id,
-            whatsapp_number: contactInput,
-            consent_marketing: consentMarketing,
-            parent_first_name: consentMarketing ? confirmParentName : null,
-            grade: consentMarketing ? confirmGrade : null,
-            class_name: consentMarketing ? confirmClassName : null,
-          }),
-        });
-        if (!res.ok) console.error('Consent capture failed:', await res.text());
-      }
+      // Email is PII too, so the same optional marketing checkbox and consent
+      // record apply on both tabs - only the lead handoff (needs a phone
+      // number to reach someone on WhatsApp) is WhatsApp-specific.
+      const res = await fetch('/api/irene/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          voter_id: voter.id,
+          whatsapp_number: tierTab === 'whatsapp' ? contactValue : null,
+          consent_marketing: consentMarketing,
+          parent_first_name: consentMarketing ? confirmParentName : null,
+          grade: consentMarketing ? confirmGrade : null,
+          class_name: consentMarketing ? confirmClassName : null,
+        }),
+      });
+      if (!res.ok) console.error('Consent capture failed:', await res.text());
 
       confetti({ particleCount: 200, spread: 90, origin: { y: 0.6 }, colors: ['#0066cc', '#fbbf24', '#10b981'] });
       setShowTierModal(false);
@@ -426,6 +479,42 @@ function TrackerContent() {
         setConfirmClassName(firstCub.class_name || '');
       }
     }
+  };
+
+  // Shared consent checkbox + confirm-your-details block, used on both the
+  // WhatsApp and email tabs - email is PII too, so the same opt-in applies.
+  // Full class strings per tier (not interpolated fragments) so Tailwind's
+  // static scanner actually picks them up at build time.
+  const CONSENT_TAB_STYLES = {
+    whatsapp: { checkbox: 'w-4 h-4 mt-0.5 accent-emerald-500 rounded shrink-0', input: 'w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500', inputHalf: 'w-1/2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500' },
+    email: { checkbox: 'w-4 h-4 mt-0.5 accent-[#0066cc] rounded shrink-0', input: 'w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-[#0066cc]', inputHalf: 'w-1/2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-[#0066cc]' },
+  };
+
+  const renderConsentBlock = (tab: 'whatsapp' | 'email') => {
+    const s = CONSENT_TAB_STYLES[tab];
+    return (
+      <>
+        <label className="flex items-start gap-2.5 mt-4 px-1 cursor-pointer">
+          <input type="checkbox" checked={consentMarketing} onChange={e => handleToggleConsent(e.target.checked)} className={s.checkbox} />
+          <span className="text-[11px] text-slate-500 leading-snug">
+            I'd also like RAD Academy to send me their free <b className="text-slate-700">Parent's Guide to Hacking Screen Time</b>, plus information about their coding and robotics programmes.
+            <span className="block text-slate-400 mt-0.5">Optional — you'll still get your votes and results notification either way.</span>
+          </span>
+        </label>
+
+        {consentMarketing && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 space-y-2 bg-slate-50 rounded-xl p-3">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quick check, so we send the guide to the right place</p>
+            <input type="text" placeholder="Your first name" value={confirmParentName} onChange={e => setConfirmParentName(e.target.value)} className={s.input} />
+            <div className="flex gap-2">
+              <input type="text" placeholder="Grade" value={confirmGrade} onChange={e => setConfirmGrade(e.target.value)} className={s.inputHalf} />
+              <input type="text" placeholder="Class" value={confirmClassName} onChange={e => setConfirmClassName(e.target.value)} className={s.inputHalf} />
+            </div>
+            {lastVotedResponse && <p className="text-[10px] text-slate-400">We've filled this in based on the response you just voted for — change it if that's not your child.</p>}
+          </motion.div>
+        )}
+      </>
+    );
   };
 
   const handleVerifyStaffCode = async () => {
@@ -492,32 +581,20 @@ function TrackerContent() {
                   {tierTab === 'whatsapp' ? (
                     <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}>
                       <p className="text-xs text-slate-600 mb-3 text-center">Unlock <b className="text-emerald-600">15x votes</b> + a WhatsApp notification the moment results are announced.</p>
-                      <input type="tel" required placeholder="082 123 4567" value={contactInput} onChange={e => setContactInput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-4 text-sm font-bold text-center outline-none focus:border-emerald-500" />
+                      <div className="flex gap-2">
+                        <select value={countryCode} onChange={e => setCountryCode(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-2 text-sm font-bold outline-none focus:border-emerald-500">
+                          {COUNTRY_CODES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
+                        </select>
+                        <input type="tel" required placeholder="__ ___ ____" value={contactInput} onChange={e => setContactInput(e.target.value)} className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-xl px-4 py-4 text-sm font-bold text-center outline-none focus:border-emerald-500" />
+                      </div>
 
-                      <label className="flex items-start gap-2.5 mt-4 px-1 cursor-pointer">
-                        <input type="checkbox" checked={consentMarketing} onChange={e => handleToggleConsent(e.target.checked)} className="w-4 h-4 mt-0.5 accent-emerald-500 rounded shrink-0" />
-                        <span className="text-[11px] text-slate-500 leading-snug">
-                          I'd also like RAD Academy to send me their free <b className="text-slate-700">Parent's Guide to Hacking Screen Time</b>, plus information about their coding and robotics programmes.
-                          <span className="block text-slate-400 mt-0.5">Optional — you'll still get 15x votes and your results notification either way.</span>
-                        </span>
-                      </label>
-
-                      {consentMarketing && (
-                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 space-y-2 bg-slate-50 rounded-xl p-3">
-                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quick check, so we send the guide to the right place</p>
-                          <input type="text" placeholder="Your first name" value={confirmParentName} onChange={e => setConfirmParentName(e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500" />
-                          <div className="flex gap-2">
-                            <input type="text" placeholder="Grade" value={confirmGrade} onChange={e => setConfirmGrade(e.target.value)} className="w-1/2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500" />
-                            <input type="text" placeholder="Class" value={confirmClassName} onChange={e => setConfirmClassName(e.target.value)} className="w-1/2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500" />
-                          </div>
-                          {lastVotedResponse && <p className="text-[10px] text-slate-400">We've filled this in based on the response you just voted for — change it if that's not your child.</p>}
-                        </motion.div>
-                      )}
+                      {renderConsentBlock('whatsapp')}
                     </motion.div>
                   ) : (
                     <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
                       <p className="text-xs text-slate-600 mb-3 text-center">Unlock <b className="text-[#0066cc]">5x votes</b> + a guaranteed voucher for RAD Academy.</p>
                       <input type="email" required placeholder="name@example.com" value={contactInput} onChange={e => setContactInput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-4 text-sm font-bold text-center outline-none focus:border-[#0066cc]" />
+                      {renderConsentBlock('email')}
                     </motion.div>
                   )}
                   <button type="submit" disabled={isUnlocking} className={`w-full py-4 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg transition-all flex items-center justify-center gap-2 ${tierTab === 'whatsapp' ? 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20' : 'bg-[#0066cc] hover:bg-blue-700 shadow-[#0066cc]/20'}`}>
@@ -848,10 +925,17 @@ function TrackerContent() {
           <Zap size={12} className="text-amber-400" /> {TIER_WEIGHTS[myVoter.voter_type]}x Power Voter
         </div>
       )}
-      {phase === 'parents' && (!myVoter || myVoter.voter_type === 'anonymous') && !showTierModal && hasSeenUpsell && (
-        <button onClick={() => setShowTierModal(true)} className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-white border border-[#0066cc] text-[#0066cc] px-4 py-2 rounded-full shadow-xl flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest hover:bg-[#0066cc] hover:text-white transition-colors">
-          <Zap size={12} /> Go 15x
-        </button>
+      {phase === 'parents' && (!myVoter || myVoter.voter_type === 'anonymous') && !showTierModal && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1.5">
+          <div className="bg-slate-900/90 text-white px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">
+            {Math.max(0, ANONYMOUS_DAILY_TAP_CAP - dailyTapCount)} free {ANONYMOUS_DAILY_TAP_CAP - dailyTapCount === 1 ? 'vote' : 'votes'} left today
+          </div>
+          {hasSeenUpsell && (
+            <button onClick={() => setShowTierModal(true)} className="bg-white border border-[#0066cc] text-[#0066cc] px-4 py-2 rounded-full shadow-xl flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest hover:bg-[#0066cc] hover:text-white transition-colors">
+              <Zap size={12} /> Go 15x
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
