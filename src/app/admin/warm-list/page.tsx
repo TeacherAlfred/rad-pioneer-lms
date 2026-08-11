@@ -47,6 +47,9 @@ export default function WarmListPage() {
   const [isAdding, setIsAdding] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
   const [commitResult, setCommitResult] = useState<any>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkTagInput, setBulkTagInput] = useState('');
+  const [isBulking, setIsBulking] = useState(false);
 
   useEffect(() => { fetchRows(); }, []);
 
@@ -158,6 +161,44 @@ export default function WarmListPage() {
     }
   }
 
+  function toggleSelected(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds(prev => {
+      const allSelected = filtered.length > 0 && filtered.every(r => prev.has(r.id));
+      if (allSelected) return new Set();
+      return new Set(filtered.map(r => r.id));
+    });
+  }
+
+  async function bulkPatch(fields: Partial<Row> | ((row: Row) => Partial<Row>)) {
+    if (selectedIds.size === 0) return;
+    setIsBulking(true);
+    try {
+      await Promise.all([...selectedIds].map(id => {
+        const row = rows.find(r => r.id === id);
+        if (!row) return Promise.resolve();
+        const patch = typeof fields === 'function' ? fields(row) : fields;
+        return patchRow(id, patch);
+      }));
+    } finally {
+      setIsBulking(false);
+    }
+  }
+
+  function bulkAddTag() {
+    const t = bulkTagInput.trim();
+    if (!t) return;
+    bulkPatch(row => ({ tags: (row.tags || []).includes(t) ? row.tags : [...(row.tags || []), t] }));
+    setBulkTagInput('');
+  }
+
   const catColor: Record<string, string> = {
     existing: 'bg-emerald-100 text-emerald-700',
     recent: 'bg-sky-100 text-sky-700',
@@ -220,6 +261,21 @@ export default function WarmListPage() {
           </div>
         </div>
 
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-2 mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex-wrap">
+            <span className="text-xs font-black text-indigo-700 mr-2">{selectedIds.size} selected</span>
+            <button disabled={isBulking} onClick={() => bulkPatch({ review_status: 'approved' })} className="px-3 py-1.5 bg-white border border-emerald-200 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-50 disabled:opacity-50">Approve</button>
+            <button disabled={isBulking} onClick={() => bulkPatch({ review_status: 'excluded' })} className="px-3 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-rose-50 disabled:opacity-50">Exclude</button>
+            <button disabled={isBulking} onClick={() => bulkPatch({ review_status: 'pending' })} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-500 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 disabled:opacity-50">Reset</button>
+            <div className="flex items-center gap-1">
+              <input type="text" placeholder="tag to apply" value={bulkTagInput} onChange={e => setBulkTagInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), bulkAddTag())} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-slate-400 w-32" />
+              <button disabled={isBulking || !bulkTagInput.trim()} onClick={bulkAddTag} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest disabled:opacity-50">+ Tag</button>
+            </div>
+            {isBulking && <Loader2 size={14} className="animate-spin text-indigo-400" />}
+            <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Clear</button>
+          </div>
+        )}
+
         {loading ? (
           <div className="py-24 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading...</div>
         ) : filtered.length === 0 ? (
@@ -229,6 +285,9 @@ export default function WarmListPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  <th className="p-3 w-8">
+                    <input type="checkbox" checked={filtered.length > 0 && filtered.every(r => selectedIds.has(r.id))} onChange={toggleSelectAllVisible} className="accent-slate-900" />
+                  </th>
                   <th className="p-3">Name</th>
                   <th className="p-3">Contact</th>
                   <th className="p-3">Category</th>
@@ -242,6 +301,9 @@ export default function WarmListPage() {
               <tbody>
                 {filtered.map(row => (
                   <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/50 align-top">
+                    <td className="p-3">
+                      <input type="checkbox" checked={selectedIds.has(row.id)} onChange={() => toggleSelected(row.id)} className="accent-slate-900" />
+                    </td>
                     <td className="p-3 min-w-[160px]">
                       <input
                         defaultValue={row.name || ''}
@@ -282,8 +344,21 @@ export default function WarmListPage() {
                           </span>
                         ))}
                       </div>
+                      <input
+                        type="text"
+                        placeholder="type a tag, press Enter"
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const input = e.target as HTMLInputElement;
+                            addTag(row, input.value);
+                            input.value = '';
+                          }
+                        }}
+                        className="w-full text-[10px] text-slate-400 bg-transparent outline-none border-b border-dashed border-slate-200 focus:border-slate-400 mb-1"
+                      />
                       <select value="" onChange={e => e.target.value && addTag(row, e.target.value)} className="text-[10px] text-slate-400 bg-transparent outline-none">
-                        <option value="">+ add tag</option>
+                        <option value="">+ preset</option>
                         {TAG_PRESETS.filter(t => !(row.tags || []).includes(t)).map(t => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </td>
