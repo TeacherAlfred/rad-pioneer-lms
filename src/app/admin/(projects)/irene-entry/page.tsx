@@ -327,8 +327,12 @@ export default function IreneResponseManager() {
 
   const handleToggleVerify = async () => {
     if (!activeRecord) return;
-    setIsSubmitting(true);
     const newValue = !activeRecord.is_verified;
+    if (newValue && activeRecord.needs_name_review) {
+      alert('This response is still flagged for name review. Clear the flag in the Name Review queue before verifying it — free-text answers here are shown publicly.');
+      return;
+    }
+    setIsSubmitting(true);
     try {
       const { error } = await supabase.from('irene_responses').update({ is_verified: newValue }).eq('id', activeRecord.id);
       if (error) throw error;
