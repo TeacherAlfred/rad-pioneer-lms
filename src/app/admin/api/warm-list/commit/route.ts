@@ -6,17 +6,26 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Pushes every approved, not-yet-committed staging row into the real leads
-// table. This is the one action in this tool that touches live data - only
-// rows an admin explicitly approved get here, nothing from the raw import
-// reaches leads on its own.
-export async function POST() {
+// Pushes approved, not-yet-committed staging rows into the real leads table.
+// This is the one action in this tool that touches live data - only rows an
+// admin explicitly approved get here, nothing from the raw import reaches
+// leads on its own. With no body (or no ids), commits every approved row;
+// with { ids }, scopes to just those - review_status='approved' is still
+// enforced server-side either way, so passing a pending/excluded id is a
+// no-op rather than a way to bypass the approval gate.
+export async function POST(req: Request) {
   try {
-    const { data: rows, error: fetchErr } = await supabaseAdmin
+    const body = await req.json().catch(() => ({}));
+    const ids: string[] | undefined = Array.isArray(body?.ids) ? body.ids : undefined;
+
+    let query = supabaseAdmin
       .from('warm_list_staging')
       .select('*')
       .eq('review_status', 'approved')
       .is('committed_at', null);
+    if (ids && ids.length > 0) query = query.in('id', ids);
+
+    const { data: rows, error: fetchErr } = await query;
 
     if (fetchErr) throw fetchErr;
 

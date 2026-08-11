@@ -143,16 +143,22 @@ export default function WarmListPage() {
     }
   }
 
-  async function handleCommit() {
-    if (counts.approved === 0) return;
-    if (!confirm(`Push ${counts.approved} approved contact(s) into the real leads table?`)) return;
+  async function handleCommit(ids?: string[]) {
+    const count = ids ? ids.length : counts.approved;
+    if (count === 0) return;
+    if (!confirm(`Push ${count} approved contact(s) into the real leads table?`)) return;
     setIsCommitting(true);
     setCommitResult(null);
     try {
-      const res = await fetch('/admin/api/warm-list/commit', { method: 'POST' });
+      const res = await fetch('/admin/api/warm-list/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ids ? { ids } : {}),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setCommitResult(data);
+      if (ids) setSelectedIds(new Set());
       fetchRows();
     } catch (err: any) {
       alert(err.message);
@@ -220,7 +226,7 @@ export default function WarmListPage() {
               <Plus size={14} /> Add Lead
             </button>
             <button
-              onClick={handleCommit}
+              onClick={() => handleCommit()}
               disabled={counts.approved === 0 || isCommitting}
               className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-emerald-700 transition-colors"
             >
@@ -267,6 +273,13 @@ export default function WarmListPage() {
             <button disabled={isBulking} onClick={() => bulkPatch({ review_status: 'approved' })} className="px-3 py-1.5 bg-white border border-emerald-200 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-50 disabled:opacity-50">Approve</button>
             <button disabled={isBulking} onClick={() => bulkPatch({ review_status: 'excluded' })} className="px-3 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-rose-50 disabled:opacity-50">Exclude</button>
             <button disabled={isBulking} onClick={() => bulkPatch({ review_status: 'pending' })} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-500 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 disabled:opacity-50">Reset</button>
+            <button
+              disabled={isCommitting || [...selectedIds].filter(id => rows.find(r => r.id === id)?.review_status === 'approved' && !rows.find(r => r.id === id)?.committed_at).length === 0}
+              onClick={() => handleCommit([...selectedIds].filter(id => rows.find(r => r.id === id)?.review_status === 'approved' && !rows.find(r => r.id === id)?.committed_at))}
+              className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1"
+            >
+              <Send size={11} /> Commit Selected
+            </button>
             <div className="flex items-center gap-1">
               <input type="text" placeholder="tag to apply" value={bulkTagInput} onChange={e => setBulkTagInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), bulkAddTag())} className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-slate-400 w-32" />
               <button disabled={isBulking || !bulkTagInput.trim()} onClick={bulkAddTag} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest disabled:opacity-50">+ Tag</button>
