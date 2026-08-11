@@ -101,6 +101,21 @@ export async function POST(request: Request) {
                 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
               );
 
+              // Meta delivers webhooks at-least-once, so retries can redeliver the
+              // exact same message. Claim this message id before doing anything
+              // else; if the claim fails on a primary key collision, we've already
+              // processed it - skip to avoid double sends/double DB writes.
+              if (message.id) {
+                const { error: dedupeError } = await supabase
+                  .from('webhook_events_seen')
+                  .insert({ wa_message_id: message.id });
+
+                if (dedupeError) {
+                  if (dedupeError.code === '23505') continue;
+                  console.error('❌ Dedup check failed, processing anyway:', dedupeError.message);
+                }
+              }
+
               // Messages from the admin's own number are ops actions (e.g. marking
               // a lead contacted), not customer messages - handle and stop here so
               // they never create/update a lead record for the admin's own number.
