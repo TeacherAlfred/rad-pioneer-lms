@@ -1,5 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+// Verifies the request actually came from Meta by checking the HMAC-SHA256
+// signature Meta signs the raw body with, using the app secret.
+function isValidMetaSignature(rawBody: string, signatureHeader: string | null): boolean {
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
+  if (!appSecret || !signatureHeader) return false;
+
+  const [scheme, receivedHex] = signatureHeader.split('=');
+  if (scheme !== 'sha256' || !receivedHex) return false;
+
+  const expectedHex = createHmac('sha256', appSecret).update(rawBody, 'utf8').digest('hex');
+
+  const expected = Buffer.from(expectedHex, 'hex');
+  const received = Buffer.from(receivedHex, 'hex');
+  if (expected.length !== received.length) return false;
+
+  return timingSafeEqual(expected, received);
+}
 
 // 1. Core Helper: Send WhatsApp Message
 async function sendWhatsAppMessage(to: string, messagePayload: any) {
@@ -57,6 +76,12 @@ export async function GET(request: NextRequest) {
 export async function POST(request: Request) {
   try {
     const rawBody = await request.text();
+
+    if (!isValidMetaSignature(rawBody, request.headers.get('x-hub-signature-256'))) {
+      console.error('❌ Rejected webhook: invalid or missing signature');
+      return new NextResponse('Forbidden', { status: 403 });
+    }
+
     const body = JSON.parse(rawBody);
 
     if (body.object === 'whatsapp_business_account') {
