@@ -58,11 +58,51 @@ async function notifyAdmin(senderPhone: string, stageText: string) {
   if (!adminPhone) return;
 
   const adminAlertText = `🚦 *Pipeline Update*\n\nLead: +${senderPhone}\nStage: ${stageText}\n\nReach out instantly: https://wa.me/${senderPhone}`;
-  
+
   await sendWhatsAppMessage(adminPhone, {
     type: 'text',
     text: { body: adminAlertText }
   });
+}
+
+// 3. Core Helper: bot_media lookup + delivery, shared by the STAGE 1 keyword
+// match (typed "guide") and the STAGE 2 "Get Free Guide" button tap - both
+// need the exact same tag_filter-aware matching and delivered/failed logging.
+async function matchBotMedia(supabase: any, searchText: string, lead: any) {
+  const { data: mediaCandidates } = await supabase.from('bot_media').select('*').eq('active', true);
+  const lower = searchText.toLowerCase();
+  const keywordMatches = (mediaCandidates || []).filter((m: any) =>
+    (m.trigger_keywords || []).some((k: string) => lower.includes(k.toLowerCase()))
+  );
+  return keywordMatches.find((m: any) => m.tag_filter && (lead.tags || []).includes(m.tag_filter))
+    || keywordMatches.find((m: any) => !m.tag_filter);
+}
+
+async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, matchedMedia: any) {
+  const mediaPayload = {
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      header: {
+        type: 'document',
+        document: { link: matchedMedia.file_url, filename: matchedMedia.filename }
+      },
+      body: { text: matchedMedia.caption },
+      footer: { text: "RAD Academy" },
+      action: {
+        buttons: (matchedMedia.buttons || []).map((b: any) => ({ type: 'reply', reply: { id: b.id, title: b.title } }))
+      }
+    }
+  };
+  const sendResult = await sendWhatsAppMessage(senderPhone, mediaPayload);
+  if (sendResult.ok) {
+    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]` }]);
+    await notifyAdmin(senderPhone, `📥 Downloaded the ${matchedMedia.title}.`);
+  } else {
+    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
+    await notifyAdmin(senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`);
+  }
+  return sendResult;
 }
 
 // Meta verifies the webhook via a GET request
@@ -205,40 +245,10 @@ export async function POST(request: Request) {
                 // tag-specific entry (tag_filter) wins over a generic one for the
                 // same keyword when the lead actually has that tag; otherwise the
                 // generic (no tag_filter) entry is the fallback.
-                const { data: mediaCandidates } = await supabase.from('bot_media').select('*').eq('active', true);
-                const keywordMatches = (mediaCandidates || []).filter((m: any) =>
-                  (m.trigger_keywords || []).some((k: string) => textLower.includes(k.toLowerCase()))
-                );
-                const matchedMedia = keywordMatches.find((m: any) => m.tag_filter && (lead.tags || []).includes(m.tag_filter))
-                  || keywordMatches.find((m: any) => !m.tag_filter);
+                const matchedMedia = await matchBotMedia(supabase, textLower, lead);
 
                 if (matchedMedia) {
-                  const mediaPayload = {
-                    type: 'interactive',
-                    interactive: {
-                      type: 'button',
-                      header: {
-                        type: 'document',
-                        document: { link: matchedMedia.file_url, filename: matchedMedia.filename }
-                      },
-                      body: { text: matchedMedia.caption },
-                      footer: { text: "RAD Academy" },
-                      action: {
-                        buttons: (matchedMedia.buttons || []).map((b: any) => ({ type: 'reply', reply: { id: b.id, title: b.title } }))
-                      }
-                    }
-                  };
-                  const sendResult = await sendWhatsAppMessage(senderPhone, mediaPayload);
-                  if (sendResult.ok) {
-                    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]` }]);
-                    await notifyAdmin(senderPhone, `📥 Downloaded the ${matchedMedia.title}.`);
-                  } else {
-                    // Meta rejected the send (bad file link, malformed buttons, etc.) -
-                    // record the real reason instead of a false "delivered" log, since
-                    // that's exactly what made a broken media item hard to diagnose.
-                    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
-                    await notifyAdmin(senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`);
-                  }
+                  await deliverBotMedia(supabase, senderPhone, lead, matchedMedia);
                 } else {
                   // Catch-All Welcome
                   const welcomePayload = {
@@ -251,7 +261,7 @@ export async function POST(request: Request) {
                       action: {
                         buttons: [
                           { type: 'reply', reply: { id: 'btn_guide', title: 'Get Free Guide' } },
-                          { type: 'reply', reply: { id: 'btn_do_it', title: 'View Workshops' } },
+                          { type: 'reply', reply: { id: 'btn_events', title: 'Upcoming Events' } },
                           { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
                         ]
                       }
@@ -261,14 +271,26 @@ export async function POST(request: Request) {
                 }
               }
 
-              // --- STAGE 2: ANY BUTTON TAP -> HAND OFF TO A HUMAN ---
-              // Every button (whichever flow it came from - welcome, guide,
-              // bot_media) now routes the same way: acknowledge, flag the
-              // lead as needing a human, and tell the admin exactly which
-              // button was tapped so they know what the lead is asking for
-              // without having to guess from the conversation alone.
+              // --- STAGE 2: BUTTON TAP ---
+              // "Get Free Guide" delivers the guide immediately, same as typing
+              // "guide" would - it shouldn't make the lead wait on a human just
+              // to get the thing they explicitly asked for. Every other button
+              // (whichever flow it came from - welcome, bot_media) routes the
+              // same way: acknowledge, flag the lead as needing a human, and
+              // tell the admin exactly which button was tapped.
               if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
-                const buttonTitle = message.interactive.button_reply?.title || message.interactive.button_reply?.id || 'a button';
+                const buttonId = message.interactive.button_reply?.id;
+                const buttonTitle = message.interactive.button_reply?.title || buttonId || 'a button';
+
+                if (buttonId === 'btn_guide') {
+                  const matchedMedia = await matchBotMedia(supabase, 'guide', lead);
+                  if (matchedMedia) {
+                    await deliverBotMedia(supabase, senderPhone, lead, matchedMedia);
+                    continue;
+                  }
+                  // No guide configured in bot_media - fall through to the
+                  // human handoff below rather than going silent on the lead.
+                }
 
                 await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
                 const ackResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
