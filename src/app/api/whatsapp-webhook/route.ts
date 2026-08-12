@@ -53,16 +53,25 @@ async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ o
 }
 
 // 2. Core Helper: Admin Pipeline Tracker
-async function notifyAdmin(senderPhone: string, stageText: string) {
+// Meta only allows free-form (non-template) sends to a number within 24hrs of
+// that number last messaging the WABA - the "customer service window". If the
+// admin hasn't texted the bot recently, this send gets rejected by Meta. Queue
+// it instead of losing it silently; it surfaces as a catch-up summary the
+// moment the admin next messages the bot (see isFromAdmin below).
+async function notifyAdmin(supabase: any, senderPhone: string, stageText: string) {
   const adminPhone = process.env.ADMIN_PHONE_NUMBER;
   if (!adminPhone) return;
 
   const adminAlertText = `🚦 *Pipeline Update*\n\nLead: +${senderPhone}\nStage: ${stageText}\n\nReach out instantly: https://wa.me/${senderPhone}`;
 
-  await sendWhatsAppMessage(adminPhone, {
+  const result = await sendWhatsAppMessage(adminPhone, {
     type: 'text',
     text: { body: adminAlertText }
   });
+
+  if (!result.ok) {
+    await supabase.from('pending_admin_alerts').insert([{ lead_phone: senderPhone, stage_text: stageText }]);
+  }
 }
 
 // 3. Core Helper: bot_media lookup + delivery, shared by the STAGE 1 keyword
@@ -97,10 +106,10 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
   const sendResult = await sendWhatsAppMessage(senderPhone, mediaPayload);
   if (sendResult.ok) {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]` }]);
-    await notifyAdmin(senderPhone, `📥 Downloaded the ${matchedMedia.title}.`);
+    await notifyAdmin(supabase, senderPhone, `📥 Downloaded the ${matchedMedia.title}.`);
   } else {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
-    await notifyAdmin(senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`);
+    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`);
   }
   return sendResult;
 }
@@ -168,6 +177,26 @@ export async function POST(request: Request) {
               const isFromAdmin = !!adminPhone && senderPhone.replace(/\D/g, '') === adminPhone.replace(/\D/g, '');
 
               if (isFromAdmin) {
+                // Any message from the admin reopens the 24hr window, so this
+                // is the first reliable moment a queued alert (see notifyAdmin)
+                // can actually be delivered - flush the backlog before doing
+                // anything else so the admin sees who to contact, about what.
+                const { data: pending } = await supabase
+                  .from('pending_admin_alerts')
+                  .select('*')
+                  .order('created_at', { ascending: true });
+
+                if (pending && pending.length > 0) {
+                  const shown = pending.slice(0, 25);
+                  const lines = shown.map((a: any) => `• +${a.lead_phone} — ${a.stage_text} (${new Date(a.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' })})`);
+                  const overflow = pending.length - shown.length;
+                  const summaryText = `📋 *Missed while you were away* (${pending.length})\n\n${lines.join('\n')}${overflow > 0 ? `\n\n…and ${overflow} more.` : ''}`;
+                  const summaryResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: summaryText } });
+                  if (summaryResult.ok) {
+                    await supabase.from('pending_admin_alerts').delete().in('id', pending.map((a: any) => a.id));
+                  }
+                }
+
                 if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
                   const buttonId = message.interactive.button_reply?.id;
                   if (buttonId?.startsWith('contacted_')) {
@@ -203,7 +232,7 @@ export async function POST(request: Request) {
 
               if (lead) {
                 // Alert Admin of brand new lead
-                await notifyAdmin(senderPhone, "🆕 Brand New Lead entered the funnel.");
+                await notifyAdmin(supabase, senderPhone, "🆕 Brand New Lead entered the funnel.");
               } else {
                 const { data: existingLead } = await supabase
                   .from('leads')
@@ -231,7 +260,7 @@ export async function POST(request: Request) {
                 if (textLower.includes('irene') && textLower.includes('voting')) {
                   await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
                   await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } });
-                  await notifyAdmin(senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.");
+                  await notifyAdmin(supabase, senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.");
                   continue;
                 }
               }
@@ -299,7 +328,7 @@ export async function POST(request: Request) {
                   direction: 'outbound',
                   body: ackResult.ok ? '[Delivered human-handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${ackResult.error}]`,
                 }]);
-                await notifyAdmin(senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`);
+                await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`);
               }
 
             }
