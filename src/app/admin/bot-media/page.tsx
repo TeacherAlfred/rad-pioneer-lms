@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import {
-  Loader2, Plus, Trash2, CheckCircle2, XCircle, FileText, ExternalLink, AlertTriangle,
+  Loader2, Plus, Trash2, CheckCircle2, XCircle, FileText, ExternalLink,
+  AlertTriangle, Pencil, Copy, Archive, ArchiveRestore,
 } from "lucide-react";
 
 type Button = { id: string; title: string };
@@ -19,6 +20,7 @@ type MediaRow = {
   caption: string;
   buttons: Button[];
   active: boolean;
+  archived: boolean;
   created_at: string;
 };
 
@@ -36,6 +38,8 @@ export default function BotMediaPage() {
   const [rows, setRows] = useState<MediaRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [file, setFile] = useState<File | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -54,23 +58,81 @@ export default function BotMediaPage() {
     }
   }
 
-  async function toggleActive(row: MediaRow) {
-    setSavingId(row.id);
-    setRows(prev => prev.map(r => r.id === row.id ? { ...r, active: !r.active } : r));
+  async function patchRow(id: string, fields: Record<string, any>) {
+    setSavingId(id);
+    setRows(prev => prev.map(r => r.id === id ? { ...r, ...fields } : r));
     await fetch('/admin/api/bot-media', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: row.id, active: !row.active }),
+      body: JSON.stringify({ id, ...fields }),
     });
     setSavingId(null);
   }
 
+  function toggleActive(row: MediaRow) {
+    patchRow(row.id, { active: !row.active });
+  }
+
+  function toggleArchived(row: MediaRow) {
+    const archiving = !row.archived;
+    // Archiving also stops it matching keywords; unarchiving leaves active
+    // as-is so it doesn't silently start firing again without a deliberate
+    // second step.
+    patchRow(row.id, archiving ? { archived: true, active: false } : { archived: false });
+  }
+
   async function handleDelete(row: MediaRow) {
-    if (!confirm(`Delete "${row.title}"? This can't be undone.`)) return;
+    if (!confirm(`Permanently delete "${row.title}"? This can't be undone - consider Archive instead if you might need it again.`)) return;
     setSavingId(row.id);
     const res = await fetch(`/admin/api/bot-media?id=${row.id}`, { method: 'DELETE' });
     if (res.ok) setRows(prev => prev.filter(r => r.id !== row.id));
     setSavingId(null);
+  }
+
+  function openCreate() {
+    setForm(emptyForm);
+    setFile(null);
+    setEditingId(null);
+    setShowForm(true);
+  }
+
+  function openEdit(row: MediaRow) {
+    setForm({
+      title: row.title,
+      key: row.key || '',
+      trigger_keywords: row.trigger_keywords.join(', '),
+      tag_filter: row.tag_filter || '',
+      caption: row.caption,
+      file_url: row.file_url,
+      filename: row.filename,
+      buttons: row.buttons.length > 0 ? row.buttons : emptyForm.buttons,
+    });
+    setFile(null);
+    setEditingId(row.id);
+    setShowForm(true);
+  }
+
+  function openDuplicate(row: MediaRow) {
+    setForm({
+      title: `${row.title} (copy)`,
+      key: '',
+      trigger_keywords: row.trigger_keywords.join(', '),
+      tag_filter: row.tag_filter || '',
+      caption: row.caption,
+      file_url: row.file_url,
+      filename: row.filename,
+      buttons: row.buttons.length > 0 ? row.buttons : emptyForm.buttons,
+    });
+    setFile(null);
+    setEditingId(null); // duplicating always creates a new row, never patches the source
+    setShowForm(true);
+  }
+
+  function closeForm() {
+    setShowForm(false);
+    setForm(emptyForm);
+    setFile(null);
+    setEditingId(null);
   }
 
   function updateButton(idx: number, field: 'id' | 'title', value: string) {
@@ -95,38 +157,65 @@ export default function BotMediaPage() {
       alert('Title, caption, and at least one trigger keyword are required.');
       return;
     }
-    if (!file && !form.file_url.trim()) {
+    if (!editingId && !file && !form.file_url.trim()) {
       alert('Upload a file or paste a file URL.');
       return;
     }
     setIsSaving(true);
     try {
-      const fd = new FormData();
-      fd.append('title', form.title);
-      fd.append('key', form.key);
-      fd.append('trigger_keywords', form.trigger_keywords);
-      fd.append('tag_filter', form.tag_filter);
-      fd.append('caption', form.caption);
-      fd.append('buttons', JSON.stringify(form.buttons.filter(b => b.title.trim())));
-      if (file) fd.append('file', file);
-      else {
-        fd.append('file_url', form.file_url);
-        fd.append('filename', form.filename);
-      }
+      const trigger_keywords = form.trigger_keywords.split(',').map(k => k.trim()).filter(Boolean);
+      const buttons = form.buttons.filter(b => b.title.trim());
 
-      const res = await fetch('/admin/api/bot-media', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setRows(prev => [data.row, ...prev]);
-      setForm(emptyForm);
-      setFile(null);
-      setShowForm(false);
+      if (editingId) {
+        // Edits are field-only - no re-upload here. Swap the file by
+        // duplicating and uploading a new one instead.
+        const res = await fetch('/admin/api/bot-media', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: editingId,
+            title: form.title,
+            key: form.key || null,
+            trigger_keywords,
+            tag_filter: form.tag_filter || null,
+            caption: form.caption,
+            buttons,
+            file_url: form.file_url,
+            filename: form.filename,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setRows(prev => prev.map(r => r.id === editingId ? data.row : r));
+      } else {
+        const fd = new FormData();
+        fd.append('title', form.title);
+        fd.append('key', form.key);
+        fd.append('trigger_keywords', form.trigger_keywords);
+        fd.append('tag_filter', form.tag_filter);
+        fd.append('caption', form.caption);
+        fd.append('buttons', JSON.stringify(buttons));
+        if (file) fd.append('file', file);
+        else {
+          fd.append('file_url', form.file_url);
+          fd.append('filename', form.filename);
+        }
+
+        const res = await fetch('/admin/api/bot-media', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setRows(prev => [data.row, ...prev]);
+      }
+      closeForm();
     } catch (err: any) {
       alert(err.message);
     } finally {
       setIsSaving(false);
     }
   }
+
+  const visibleRows = rows.filter(r => showArchived ? r.archived : !r.archived);
+  const archivedCount = rows.filter(r => r.archived).length;
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -136,13 +225,19 @@ export default function BotMediaPage() {
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">Bot Media</h1>
             <p className="text-sm text-slate-500 mt-1">Files the WhatsApp bot sends, matched by keyword - no more hardcoded links in the route.</p>
           </div>
-          <button onClick={() => setShowForm(s => !s)} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors">
-            <Plus size={14} /> Add Media
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowArchived(s => !s)} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-colors ${showArchived ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200 hover:border-slate-400'}`}>
+              <Archive size={14} /> Archived ({archivedCount})
+            </button>
+            <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors">
+              <Plus size={14} /> Add Media
+            </button>
+          </div>
         </div>
 
         {showForm && (
           <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 p-6 mb-6 space-y-4">
+            <h3 className="font-black text-slate-800">{editingId ? 'Edit media' : 'Add media'}</h3>
             <div className="grid grid-cols-2 gap-3">
               <input placeholder="Title (admin-facing)" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
               <input placeholder="Key (optional, stable slug)" value={form.key} onChange={e => setForm(p => ({ ...p, key: e.target.value }))} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
@@ -153,12 +248,24 @@ export default function BotMediaPage() {
 
             <div>
               <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">File</label>
-              <input type="file" onChange={e => setFile(e.target.files?.[0] || null)} className="text-sm mb-2" />
-              {!file && (
-                <div className="grid grid-cols-2 gap-3 mt-2">
-                  <input placeholder="...or paste a file URL instead" value={form.file_url} onChange={e => setForm(p => ({ ...p, file_url: e.target.value }))} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-slate-400" />
-                  <input placeholder="Filename shown in WhatsApp" value={form.filename} onChange={e => setForm(p => ({ ...p, filename: e.target.value }))} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-slate-400" />
-                </div>
+              {editingId ? (
+                <>
+                  <p className="text-[11px] text-slate-400 mb-2">Editing doesn't re-upload a file - to swap the file, use Duplicate on the original and upload a new one there.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input placeholder="File URL" value={form.file_url} onChange={e => setForm(p => ({ ...p, file_url: e.target.value }))} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-slate-400" />
+                    <input placeholder="Filename shown in WhatsApp" value={form.filename} onChange={e => setForm(p => ({ ...p, filename: e.target.value }))} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-slate-400" />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <input type="file" onChange={e => setFile(e.target.files?.[0] || null)} className="text-sm mb-2" />
+                  {!file && (
+                    <div className="grid grid-cols-2 gap-3 mt-2">
+                      <input placeholder="...or paste a file URL instead" value={form.file_url} onChange={e => setForm(p => ({ ...p, file_url: e.target.value }))} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-slate-400" />
+                      <input placeholder="Filename shown in WhatsApp" value={form.filename} onChange={e => setForm(p => ({ ...p, filename: e.target.value }))} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-slate-400" />
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -187,20 +294,20 @@ export default function BotMediaPage() {
             </div>
 
             <div className="flex gap-2 pt-2">
-              <button type="button" onClick={() => { setShowForm(false); setForm(emptyForm); setFile(null); }} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
-              <button type="submit" disabled={isSaving} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">{isSaving ? 'Saving...' : 'Save'}</button>
+              <button type="button" onClick={closeForm} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
+              <button type="submit" disabled={isSaving} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">{isSaving ? 'Saving...' : editingId ? 'Save Changes' : 'Save'}</button>
             </div>
           </form>
         )}
 
         {loading ? (
           <div className="py-24 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading...</div>
-        ) : rows.length === 0 ? (
-          <div className="py-24 text-center text-slate-400 text-sm">No media yet. Add the first one.</div>
+        ) : visibleRows.length === 0 ? (
+          <div className="py-24 text-center text-slate-400 text-sm">{showArchived ? 'Nothing archived.' : 'No media yet. Add the first one.'}</div>
         ) : (
           <div className="space-y-3">
-            {rows.map(row => (
-              <div key={row.id} className={`bg-white rounded-2xl border p-4 flex items-start gap-4 ${row.active ? 'border-slate-200' : 'border-slate-100 opacity-50'}`}>
+            {visibleRows.map(row => (
+              <div key={row.id} className={`bg-white rounded-2xl border p-4 flex items-start gap-4 ${row.active && !row.archived ? 'border-slate-200' : 'border-slate-100 opacity-50'}`}>
                 <FileText size={20} className="text-slate-400 shrink-0 mt-1" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -216,10 +323,17 @@ export default function BotMediaPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {savingId === row.id && <Loader2 size={14} className="animate-spin text-slate-300" />}
-                  <button onClick={() => toggleActive(row)} title={row.active ? 'Deactivate' : 'Activate'} className={`p-2 rounded-lg ${row.active ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:bg-slate-100'}`}>
-                    {row.active ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
+                  <button onClick={() => openEdit(row)} title="Edit" className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Pencil size={16} /></button>
+                  <button onClick={() => openDuplicate(row)} title="Duplicate" className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"><Copy size={16} /></button>
+                  {!row.archived && (
+                    <button onClick={() => toggleActive(row)} title={row.active ? 'Deactivate' : 'Activate'} className={`p-2 rounded-lg ${row.active ? 'text-emerald-600 hover:bg-emerald-50' : 'text-slate-400 hover:bg-slate-100'}`}>
+                      {row.active ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
+                    </button>
+                  )}
+                  <button onClick={() => toggleArchived(row)} title={row.archived ? 'Unarchive' : 'Archive'} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                    {row.archived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
                   </button>
-                  <button onClick={() => handleDelete(row)} title="Delete" className="p-2 rounded-lg text-rose-400 hover:bg-rose-50"><Trash2 size={16} /></button>
+                  <button onClick={() => handleDelete(row)} title="Delete permanently" className="p-2 rounded-lg text-rose-400 hover:bg-rose-50"><Trash2 size={16} /></button>
                 </div>
               </div>
             ))}

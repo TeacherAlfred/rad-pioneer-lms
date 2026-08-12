@@ -87,7 +87,7 @@ export async function PATCH(req: Request) {
     const { id, ...fields } = body;
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
 
-    const allowed = ['key', 'title', 'trigger_keywords', 'tag_filter', 'caption', 'buttons', 'active', 'file_url', 'filename'];
+    const allowed = ['key', 'title', 'trigger_keywords', 'tag_filter', 'caption', 'buttons', 'active', 'archived', 'file_url', 'filename'];
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     for (const key of allowed) {
       if (key in fields) update[key] = fields[key];
