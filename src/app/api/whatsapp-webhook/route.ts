@@ -261,96 +261,23 @@ export async function POST(request: Request) {
                 }
               }
 
-              // --- STAGE 2 & 3: INTERACTIVE FUNNEL ROUTING ---
+              // --- STAGE 2: ANY BUTTON TAP -> HAND OFF TO A HUMAN ---
+              // Every button (whichever flow it came from - welcome, guide,
+              // bot_media) now routes the same way: acknowledge, flag the
+              // lead as needing a human, and tell the admin exactly which
+              // button was tapped so they know what the lead is asking for
+              // without having to guess from the conversation alone.
               if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
-                const buttonId = message.interactive.button_reply?.id;
+                const buttonTitle = message.interactive.button_reply?.title || message.interactive.button_reply?.id || 'a button';
 
-                if (buttonId === 'btn_human') {
-                  await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
-                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
-                  await notifyAdmin(senderPhone, "🚨 DIRECT REQUEST: Wants to speak to an Educator.");
-
-                } else if (buttonId === 'btn_do_it') {
-                  // WARM LEAD: Booking Process
-                  const bookingText = "Awesome! Getting your child enrolled takes just 3 quick steps:\n\n1️⃣ Pick your city.\n2️⃣ Choose your date.\n3️⃣ Secure the spot.\n\nLet's start—where are you located?";
-                  await sendWhatsAppMessage(senderPhone, {
-                    type: 'interactive',
-                    interactive: {
-                      type: 'button',
-                      body: { text: bookingText },
-                      action: {
-                        buttons: [
-                          { type: 'reply', reply: { id: 'btn_pta', title: 'Pretoria' } },
-                          { type: 'reply', reply: { id: 'btn_plk', title: 'Polokwane' } },
-                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
-                        ]
-                      }
-                    }
-                  });
-                  await supabase.from('leads').update({ status: 'booking_started' }).eq('id', lead.id);
-                  await notifyAdmin(senderPhone, "🔥 WARM LEAD: Clicked 'Let RAD Do It'. Selecting their city now.");
-
-                } else if (buttonId === 'btn_webinar') {
-                  // COLD LEAD: Nurture Process
-                  const webinarText = "Great choice! The free webinar is 20 minutes long and will show you exactly how to implement the guide.\n\nJust 2 steps:\n1️⃣ Get the link.\n2️⃣ Watch anytime.\n\nReady for the link?";
-                  await sendWhatsAppMessage(senderPhone, {
-                    type: 'interactive',
-                    interactive: {
-                      type: 'button',
-                      body: { text: webinarText },
-                      action: {
-                        buttons: [
-                          { type: 'reply', reply: { id: 'btn_webinar_link', title: 'Get Webinar Link' } },
-                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
-                        ]
-                      }
-                    }
-                  });
-                  await supabase.from('leads').update({ status: 'nurture_webinar' }).eq('id', lead.id);
-                  await notifyAdmin(senderPhone, "❄️ COLD LEAD: Opted for the Free Webinar.");
-
-                } else if (buttonId === 'btn_pta') {
-                  // PRETORIA WORKSHOPS
-                  const ptaText = "Great! Here are our upcoming Pretoria workshops:\n\n📅 9-12 Aug: Minecraft Education\n📅 13-31 Aug: Robotics for Sports\n📅 1-23 Sept: Advanced Robotics\n\nReply to this message with the date you'd like, or tap below to chat with us!";
-                  await sendWhatsAppMessage(senderPhone, {
-                    type: 'interactive',
-                    interactive: {
-                      type: 'button',
-                      body: { text: ptaText },
-                      action: {
-                        buttons: [
-                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
-                        ]
-                      }
-                    }
-                  });
-                  await notifyAdmin(senderPhone, "📍 Selected Pretoria.");
-
-                } else if (buttonId === 'btn_plk') {
-                  // POLOKWANE WORKSHOPS
-                  const plkText = "Awesome! We have two immersive workshops in Polokwane this October. You can choose one, or book both for a complete tech weekend!\n\n📍 Location: Polokwane\n📅 Oct 3: Minecraft Education\n📅 Oct 4: Robotics";
-                  await sendWhatsAppMessage(senderPhone, {
-                    type: 'interactive',
-                    interactive: {
-                      type: 'button',
-                      body: { text: plkText },
-                      action: {
-                        buttons: [
-                          { type: 'reply', reply: { id: 'btn_plk_mc', title: 'Oct 3: Minecraft' } },
-                          { type: 'reply', reply: { id: 'btn_plk_rob', title: 'Oct 4: Robotics' } },
-                          { type: 'reply', reply: { id: 'btn_plk_both', title: 'Book Both Days' } }
-                        ]
-                      }
-                    }
-                  });
-                  await notifyAdmin(senderPhone, "📍 Selected Polokwane.");
-                  
-                } else if (buttonId === 'btn_webinar_link') {
-                  // WEBINAR LINK DELIVERY
-                  const linkText = "Here is your link to the webinar: [INSERT_YOUTUBE_OR_ZOOM_LINK]\n\nEnjoy the session! If you have any questions afterward, just reply here.";
-                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: linkText } });
-                  await notifyAdmin(senderPhone, "📺 Accessed the Webinar Link.");
-                }
+                await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
+                const ackResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
+                await supabase.from('messages').insert([{
+                  lead_id: lead.id,
+                  direction: 'outbound',
+                  body: ackResult.ok ? '[Delivered human-handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${ackResult.error}]`,
+                }]);
+                await notifyAdmin(senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`);
               }
 
             }

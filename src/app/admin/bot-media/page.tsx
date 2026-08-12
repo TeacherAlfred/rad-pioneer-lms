@@ -273,7 +273,7 @@ export default function BotMediaPage() {
               <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Buttons (max 3)</label>
               <div className="flex items-start gap-2 mb-2 text-[11px] text-amber-600 bg-amber-50 rounded-lg p-2">
                 <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                Only the listed button IDs are actually wired up in the webhook's tap router - a custom ID will show but do nothing when tapped, until the webhook is updated to handle it.
+                Any button tap now hands the conversation to a human, regardless of id - the id just has to be unique among this message's own buttons. The dropdown below is only a naming convenience.
               </div>
               {form.buttons.map((b, i) => (
                 <div key={i} className="flex gap-2 mb-2">
