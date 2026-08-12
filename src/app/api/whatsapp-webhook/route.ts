@@ -52,21 +52,41 @@ async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ o
   return { ok: true };
 }
 
+// Statuses the admin can log directly from a pipeline alert's buttons.
+// Button title max 20 chars (Meta error 131009); id prefix + "_" + leadId
+// is what STAGE 2's admin button handler matches back to a status update.
+const STATUS_BUTTONS: Record<string, { title: string; status: string; label: string }> = {
+  status_contacted: { title: 'Contacted', status: 'contacted', label: 'Contacted successfully' },
+  status_no_response: { title: 'No Response', status: 'no_response', label: 'Contacted, no response' },
+  status_followup: { title: 'Follow-up Set', status: 'followup_scheduled', label: 'Follow-up/call scheduled' },
+};
+
 // 2. Core Helper: Admin Pipeline Tracker
 // Meta only allows free-form (non-template) sends to a number within 24hrs of
 // that number last messaging the WABA - the "customer service window". If the
 // admin hasn't texted the bot recently, this send gets rejected by Meta. Queue
 // it instead of losing it silently; it surfaces as a catch-up summary the
 // moment the admin next messages the bot (see isFromAdmin below).
-async function notifyAdmin(supabase: any, senderPhone: string, stageText: string) {
+async function notifyAdmin(supabase: any, senderPhone: string, stageText: string, leadId: string) {
   const adminPhone = process.env.ADMIN_PHONE_NUMBER;
   if (!adminPhone) return;
 
   const adminAlertText = `🚦 *Pipeline Update*\n\nLead: +${senderPhone}\nStage: ${stageText}\n\nReach out instantly: https://wa.me/${senderPhone}`;
 
+  // Buttons let the admin log the outcome straight from the alert instead of
+  // touching the database directly - handled by the STATUS_BUTTONS map below.
   const result = await sendWhatsAppMessage(adminPhone, {
-    type: 'text',
-    text: { body: adminAlertText }
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      body: { text: adminAlertText },
+      action: {
+        buttons: Object.entries(STATUS_BUTTONS).map(([prefix, def]) => ({
+          type: 'reply',
+          reply: { id: `${prefix}_${leadId}`, title: def.title }
+        }))
+      }
+    }
   });
 
   if (!result.ok) {
@@ -106,10 +126,10 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
   const sendResult = await sendWhatsAppMessage(senderPhone, mediaPayload);
   if (sendResult.ok) {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]` }]);
-    await notifyAdmin(supabase, senderPhone, `📥 Downloaded the ${matchedMedia.title}.`);
+    await notifyAdmin(supabase, senderPhone, `📥 Downloaded the ${matchedMedia.title}.`, lead.id);
   } else {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
-    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`);
+    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`, lead.id);
   }
   return sendResult;
 }
@@ -198,11 +218,15 @@ export async function POST(request: Request) {
                 }
 
                 if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
-                  const buttonId = message.interactive.button_reply?.id;
-                  if (buttonId?.startsWith('contacted_')) {
-                    const targetLeadId = buttonId.replace('contacted_', '');
-                    await supabase.from('leads').update({ status: 'contacted', contacted_at: new Date().toISOString() }).eq('id', targetLeadId);
-                    await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "✅ Lead marked as contacted in database." } });
+                  const buttonId = message.interactive.button_reply?.id || '';
+                  const matchedPrefix = Object.keys(STATUS_BUTTONS).find(prefix => buttonId.startsWith(`${prefix}_`));
+                  if (matchedPrefix) {
+                    const targetLeadId = buttonId.slice(matchedPrefix.length + 1);
+                    const { status, label } = STATUS_BUTTONS[matchedPrefix];
+                    const update: Record<string, any> = { status };
+                    if (status === 'contacted') update.contacted_at = new Date().toISOString();
+                    await supabase.from('leads').update(update).eq('id', targetLeadId);
+                    await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: `✅ Logged: ${label}` } });
                   }
                 }
                 continue;
@@ -232,7 +256,7 @@ export async function POST(request: Request) {
 
               if (lead) {
                 // Alert Admin of brand new lead
-                await notifyAdmin(supabase, senderPhone, "🆕 Brand New Lead entered the funnel.");
+                await notifyAdmin(supabase, senderPhone, "🆕 Brand New Lead entered the funnel.", lead.id);
               } else {
                 const { data: existingLead } = await supabase
                   .from('leads')
@@ -260,7 +284,7 @@ export async function POST(request: Request) {
                 if (textLower.includes('irene') && textLower.includes('voting')) {
                   await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
                   await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } });
-                  await notifyAdmin(supabase, senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.");
+                  await notifyAdmin(supabase, senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.", lead.id);
                   continue;
                 }
               }
@@ -328,7 +352,7 @@ export async function POST(request: Request) {
                   direction: 'outbound',
                   body: ackResult.ok ? '[Delivered human-handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${ackResult.error}]`,
                 }]);
-                await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`);
+                await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`, lead.id);
               }
 
             }
