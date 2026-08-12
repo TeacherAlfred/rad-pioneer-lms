@@ -170,9 +170,13 @@ export async function POST(request: Request) {
               const senderPhone = message.from || message.from_user_id;
               if (!senderPhone) continue;
 
+              // Service role, not anon: this route is server-only (never shipped to
+              // a browser), and NEXT_PUBLIC_SUPABASE_ANON_KEY is public by design -
+              // using it here meant leads/messages RLS had to stay open to anyone
+              // holding that key, not just this webhook. See rad-pioneer RLS lockdown.
               const supabase = createClient(
                 process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+                process.env.SUPABASE_SERVICE_ROLE_KEY!
               );
 
               // Meta delivers webhooks at-least-once, so retries can redeliver the

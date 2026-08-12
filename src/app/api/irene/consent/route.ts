@@ -14,9 +14,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'voter_id and consent_marketing are required' }, { status: 400 });
     }
 
+    // Service role, not anon - this route is server-only and also writes to
+    // leads, same reasoning as the WhatsApp webhook's switch away from anon.
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
     // Real client IP as consent evidence - the vote/voter flow runs entirely
