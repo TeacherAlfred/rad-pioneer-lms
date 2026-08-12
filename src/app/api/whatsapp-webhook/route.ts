@@ -21,10 +21,13 @@ function isValidMetaSignature(rawBody: string, signatureHeader: string | null): 
 }
 
 // 1. Core Helper: Send WhatsApp Message
-async function sendWhatsAppMessage(to: string, messagePayload: any) {
+// Returns whether Meta actually accepted the send, plus its error detail if
+// not - callers that log "[Delivered ...]" or notify the admin need this,
+// otherwise a rejected send still gets recorded as if it succeeded.
+async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string }> {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
-  
+
   const response = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
     method: 'POST',
     headers: {
@@ -41,10 +44,12 @@ async function sendWhatsAppMessage(to: string, messagePayload: any) {
 
   const data = await response.json();
   if (!response.ok) {
+    const errorDetail = data?.error?.message || JSON.stringify(data);
     console.error(`❌ Meta API Error sending to ${to}:`, JSON.stringify(data, null, 2));
-  } else {
-    console.log(`✅ Message successfully sent to ${to}`);
+    return { ok: false, error: errorDetail };
   }
+  console.log(`✅ Message successfully sent to ${to}`);
+  return { ok: true };
 }
 
 // 2. Core Helper: Admin Pipeline Tracker
@@ -223,9 +228,17 @@ export async function POST(request: Request) {
                       }
                     }
                   };
-                  await sendWhatsAppMessage(senderPhone, mediaPayload);
-                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]` }]);
-                  await notifyAdmin(senderPhone, `📥 Downloaded the ${matchedMedia.title}.`);
+                  const sendResult = await sendWhatsAppMessage(senderPhone, mediaPayload);
+                  if (sendResult.ok) {
+                    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]` }]);
+                    await notifyAdmin(senderPhone, `📥 Downloaded the ${matchedMedia.title}.`);
+                  } else {
+                    // Meta rejected the send (bad file link, malformed buttons, etc.) -
+                    // record the real reason instead of a false "delivered" log, since
+                    // that's exactly what made a broken media item hard to diagnose.
+                    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
+                    await notifyAdmin(senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`);
+                  }
                 } else {
                   // Catch-All Welcome
                   const welcomePayload = {
