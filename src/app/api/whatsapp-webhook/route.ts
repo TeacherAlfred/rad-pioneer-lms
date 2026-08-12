@@ -195,34 +195,37 @@ export async function POST(request: Request) {
               if (message.type === 'text') {
                 const textLower = messageText.toLowerCase();
 
-                if (textLower.includes('guide')) {
-                  const pdfPayload = {
+                // Media (guide PDFs, brochures, etc.) lives in bot_media, managed from
+                // /admin/bot-media - no more hardcoded files/links in this route. A
+                // tag-specific entry (tag_filter) wins over a generic one for the
+                // same keyword when the lead actually has that tag; otherwise the
+                // generic (no tag_filter) entry is the fallback.
+                const { data: mediaCandidates } = await supabase.from('bot_media').select('*').eq('active', true);
+                const keywordMatches = (mediaCandidates || []).filter((m: any) =>
+                  (m.trigger_keywords || []).some((k: string) => textLower.includes(k.toLowerCase()))
+                );
+                const matchedMedia = keywordMatches.find((m: any) => m.tag_filter && (lead.tags || []).includes(m.tag_filter))
+                  || keywordMatches.find((m: any) => !m.tag_filter);
+
+                if (matchedMedia) {
+                  const mediaPayload = {
                     type: 'interactive',
                     interactive: {
                       type: 'button',
                       header: {
                         type: 'document',
-                        document: {
-                          link: 'https://pub-5baa3fb9dc2549008c18dac88b524ed9.r2.dev/marketing_material/pdfs/RAD_Hacking_Screen_Time.pdf',
-                          filename: 'RAD_Hacking_Screen_Time.pdf'
-                        }
+                        document: { link: matchedMedia.file_url, filename: matchedMedia.filename }
                       },
-                      body: {
-                        text: "Here is your *Hacking Screen Time* guide! 🚀\n\nWhile you read it, here are the 3 golden rules:\n\n1️⃣ *Demand an ROI:* Stop timing them. Ask them to explain how their game works.\n2️⃣ *Redstone = Engineering:* They are secretly learning Boolean logic and binary code.\n3️⃣ *Player to Developer:* Using syntax to change their game world turns consumers into creators.\n\nWhat is your next step?"
-                      },
+                      body: { text: matchedMedia.caption },
                       footer: { text: "RAD Academy" },
                       action: {
-                        buttons: [
-                          { type: 'reply', reply: { id: 'btn_do_it', title: 'Let RAD Do It' } },
-                          { type: 'reply', reply: { id: 'btn_webinar', title: 'Watch Webinar' } },
-                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
-                        ]
+                        buttons: (matchedMedia.buttons || []).map((b: any) => ({ type: 'reply', reply: { id: b.id, title: b.title } }))
                       }
                     }
                   };
-                  await sendWhatsAppMessage(senderPhone, pdfPayload);
-                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: "[Delivered Guide & 3 Rules]" }]);
-                  await notifyAdmin(senderPhone, "📥 Downloaded the Hacking Screen Time Guide.");
+                  await sendWhatsAppMessage(senderPhone, mediaPayload);
+                  await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]` }]);
+                  await notifyAdmin(senderPhone, `📥 Downloaded the ${matchedMedia.title}.`);
                 } else {
                   // Catch-All Welcome
                   const welcomePayload = {
