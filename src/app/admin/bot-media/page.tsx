@@ -24,10 +24,12 @@ type MediaRow = {
   created_at: string;
 };
 
-// Buttons the webhook's own button-tap router currently recognizes - a
-// button with any other id will render fine but silently do nothing when
-// tapped, since routing is still separate hardcoded logic in the webhook.
-const KNOWN_BUTTON_IDS = ['btn_do_it', 'btn_webinar', 'btn_human', 'btn_pta', 'btn_plk', 'btn_webinar_link'];
+// "btn_guide" is reserved by the webhook: tapping any button with this exact
+// id re-delivers whatever media currently matches the "guide" keyword instead
+// of the normal human handoff, regardless of which media item it's attached
+// to. Don't reuse it on an unrelated item's button unless that's the intent.
+const RESERVED_BUTTON_ID = 'btn_guide';
+const SUGGESTED_BUTTON_IDS = ['btn_human'];
 
 const emptyForm = {
   title: '', key: '', trigger_keywords: '', tag_filter: '', caption: '',
@@ -273,16 +275,16 @@ export default function BotMediaPage() {
               <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Buttons (max 3)</label>
               <div className="flex items-start gap-2 mb-2 text-[11px] text-amber-600 bg-amber-50 rounded-lg p-2">
                 <AlertTriangle size={13} className="shrink-0 mt-0.5" />
-                Any button tap now hands the conversation to a human, regardless of id - the id just has to be unique among this message's own buttons. The dropdown below is only a naming convenience.
+                Any button tap hands the conversation to a human by default - the id just has to be unique among this message's own buttons. The one exception is the reserved id "{RESERVED_BUTTON_ID}", which instead re-delivers the current "guide" keyword match. Don't use it here unless that's what you want.
               </div>
               {form.buttons.map((b, i) => (
                 <div key={i} className="flex gap-2 mb-2">
-                  <select value={KNOWN_BUTTON_IDS.includes(b.id) ? b.id : 'custom'} onChange={e => updateButton(i, 'id', e.target.value === 'custom' ? '' : e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 text-xs outline-none">
-                    {KNOWN_BUTTON_IDS.map(id => <option key={id} value={id}>{id}</option>)}
+                  <select value={SUGGESTED_BUTTON_IDS.includes(b.id) ? b.id : 'custom'} onChange={e => updateButton(i, 'id', e.target.value === 'custom' ? '' : e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 text-xs outline-none">
+                    {SUGGESTED_BUTTON_IDS.map(id => <option key={id} value={id}>{id}</option>)}
                     <option value="custom">custom...</option>
                   </select>
-                  {!KNOWN_BUTTON_IDS.includes(b.id) && (
-                    <input placeholder="custom_button_id" value={b.id} onChange={e => updateButton(i, 'id', e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 text-xs outline-none w-28" />
+                  {!SUGGESTED_BUTTON_IDS.includes(b.id) && (
+                    <input placeholder="custom_button_id" value={b.id} onChange={e => updateButton(i, 'id', e.target.value)} className={`bg-slate-50 border rounded-lg px-2 py-2 text-xs outline-none w-28 ${b.id === RESERVED_BUTTON_ID ? 'border-amber-400' : 'border-slate-200'}`} />
                   )}
                   <div className="flex-1 relative">
                     <input placeholder="Button label" value={b.title} onChange={e => updateButton(i, 'title', e.target.value)} maxLength={20} className={`w-full bg-slate-50 border rounded-lg px-3 py-2 pr-10 text-xs outline-none ${b.title.length > 20 ? 'border-rose-400' : 'border-slate-200'}`} />

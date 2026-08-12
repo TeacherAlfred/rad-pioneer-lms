@@ -225,8 +225,20 @@ export async function POST(request: Request) {
                     const { status, label } = STATUS_BUTTONS[matchedPrefix];
                     const update: Record<string, any> = { status };
                     if (status === 'contacted') update.contacted_at = new Date().toISOString();
-                    await supabase.from('leads').update(update).eq('id', targetLeadId);
-                    await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: `✅ Logged: ${label}` } });
+                    // .select().maybeSingle() so a bad id or an RLS block shows up as
+                    // "not found"/no error instead of a false "Logged" confirmation.
+                    const { data: updatedLead, error: statusError } = await supabase
+                      .from('leads')
+                      .update(update)
+                      .eq('id', targetLeadId)
+                      .select()
+                      .maybeSingle();
+                    const confirmText = statusError
+                      ? `⚠️ Failed to log status: ${statusError.message}`
+                      : !updatedLead
+                        ? `⚠️ No lead found for that button - status not logged.`
+                        : `✅ Logged: ${label}`;
+                    await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: confirmText } });
                   }
                 }
                 continue;
