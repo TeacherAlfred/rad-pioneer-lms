@@ -260,17 +260,36 @@ export async function POST(request: Request) {
                 }
               }
 
+              // Click-to-WhatsApp ads attach this to the first inbound message of the
+              // conversation they open - captured only at insert time (first touch),
+              // never overwritten on a returning lead's later messages, so this stays
+              // "which ad actually brought them in" rather than "most recent ad seen".
+              const referral = message.referral;
+
               // Get or Create Lead. Insert-first relies on the UNIQUE constraint on
               // leads.phone to atomically reject a duplicate, so two concurrent
               // webhook deliveries for the same brand-new number can't both succeed
               // in creating a lead - the loser falls back to selecting the winner's row.
               let { data: lead } = await supabase
                 .from('leads')
-                .insert([{ phone: senderPhone, status: 'new_lead' }])
+                .insert([{
+                  phone: senderPhone,
+                  status: 'new_lead',
+                  ...(referral ? {
+                    ad_id: referral.source_id || null,
+                    ad_headline: referral.headline || null,
+                    ctwa_clid: referral.ctwa_clid || null,
+                  } : {}),
+                }])
                 .select()
                 .single();
 
-              if (lead) {
+              // Captured before the fallback fetch overwrites `lead` below - used to
+              // pick different welcome copy for a lead we already know (STAGE 1),
+              // instead of greeting an existing/imported contact like a stranger.
+              const isNewLead = !!lead;
+
+              if (isNewLead) {
                 // Alert Admin of brand new lead
                 await notifyAdmin(supabase, senderPhone, "🆕 Brand New Lead entered the funnel.", lead.id);
               } else {
@@ -289,6 +308,23 @@ export async function POST(request: Request) {
                 direction: 'inbound',
                 body: messageText
               }]);
+
+              // --- OPT-OUT (POPIA) ---
+              // Exact-message match only, not substring/keyword-in-sentence - "please
+              // stop by our stand" must never be read as an opt-out. This only records
+              // the flag; it doesn't gate anything in this webhook, since everything
+              // it sends is a reactive reply to something the lead just asked for, not
+              // unsolicited marketing. Any future proactive/campaign send path must
+              // check leads.opted_out before sending.
+              if (message.type === 'text') {
+                const trimmed = messageText.trim().toLowerCase();
+                if (['stop', 'unsubscribe', 'opt out', 'optout'].includes(trimmed)) {
+                  await supabase.from('leads').update({ opted_out: true }).eq('id', lead.id);
+                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "You've been unsubscribed from marketing messages from RAD Academy. Reply anytime if you still need help - we're still here for that." } });
+                  await notifyAdmin(supabase, senderPhone, "🚫 Opted out of marketing.", lead.id);
+                  continue;
+                }
+              }
 
               // --- IRENE VOTING SUPPORT DETECTION ---
               // The Irene voting page's "Need Help" button prefills a message
@@ -319,13 +355,20 @@ export async function POST(request: Request) {
                 if (matchedMedia) {
                   await deliverBotMedia(supabase, senderPhone, lead, matchedMedia);
                 } else {
-                  // Catch-All Welcome
+                  // Catch-All Welcome - a lead we already have on file (an existing
+                  // contact, or anyone carried over from the warm-list import) gets a
+                  // "good to hear from you" framing instead of a first-contact
+                  // "Welcome to RAD Academy", since we may well already have a
+                  // commercial relationship with them.
+                  const welcomeText = isNewLead
+                    ? "👋 Hi! Welcome to RAD Academy.\n\nWhether you're a returning parent or new to our community, we help turn screen time into skill-building. What would you like to explore?"
+                    : "👋 Hey, great to hear from you!\n\nWhat can we help you with today?";
                   const welcomePayload = {
                     type: 'interactive',
                     interactive: {
                       type: 'button',
                       body: {
-                        text: "👋 Hi! Welcome to RAD Academy.\n\nWhether you're a returning parent or new to our community, we help turn screen time into skill-building. What would you like to explore?"
+                        text: welcomeText
                       },
                       action: {
                         buttons: [
