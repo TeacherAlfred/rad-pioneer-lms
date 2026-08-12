@@ -284,7 +284,10 @@ export default function BotMediaPage() {
                   {!KNOWN_BUTTON_IDS.includes(b.id) && (
                     <input placeholder="custom_button_id" value={b.id} onChange={e => updateButton(i, 'id', e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 text-xs outline-none w-28" />
                   )}
-                  <input placeholder="Button label" value={b.title} onChange={e => updateButton(i, 'title', e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none" />
+                  <div className="flex-1 relative">
+                    <input placeholder="Button label" value={b.title} onChange={e => updateButton(i, 'title', e.target.value)} maxLength={20} className={`w-full bg-slate-50 border rounded-lg px-3 py-2 pr-10 text-xs outline-none ${b.title.length > 20 ? 'border-rose-400' : 'border-slate-200'}`} />
+                    <span className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold ${b.title.length > 20 ? 'text-rose-500' : 'text-slate-300'}`}>{b.title.length}/20</span>
+                  </div>
                   <button type="button" onClick={() => removeButton(i)} className="text-rose-400 hover:text-rose-600"><Trash2 size={14} /></button>
                 </div>
               ))}

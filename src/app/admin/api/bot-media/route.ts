@@ -10,6 +10,21 @@ const supabaseAdmin = createClient(
 
 const STORAGE_BUCKET = 'bot-media';
 
+// WhatsApp interactive button messages: max 3 buttons, each title 1-20 chars
+// (Meta error 131009 otherwise) - and Meta rejects the whole message if any
+// one button fails this, not just the offending button, so this has to be
+// caught before it's saved, not after a live send fails.
+function validateButtons(buttons: any[]): string | null {
+  if (!Array.isArray(buttons)) return 'buttons must be an array';
+  if (buttons.length > 3) return 'Max 3 buttons per message';
+  for (const b of buttons) {
+    if (!b?.id || !String(b.id).trim()) return 'Every button needs an id';
+    const titleLen = String(b.title || '').trim().length;
+    if (titleLen < 1 || titleLen > 20) return `Button "${b.title}" is ${titleLen} characters - must be 1-20`;
+  }
+  return null;
+}
+
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from('bot_media')
@@ -38,6 +53,8 @@ export async function POST(req: Request) {
     if (!title || !caption || trigger_keywords.length === 0) {
       return NextResponse.json({ error: 'title, caption, and at least one trigger keyword are required' }, { status: 400 });
     }
+    const buttonsErr = validateButtons(buttons);
+    if (buttonsErr) return NextResponse.json({ error: buttonsErr }, { status: 400 });
 
     let file_url = String(form.get('file_url') || '').trim();
     let filename = String(form.get('filename') || '').trim();
@@ -86,6 +103,11 @@ export async function PATCH(req: Request) {
     const body = await req.json();
     const { id, ...fields } = body;
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
+
+    if ('buttons' in fields) {
+      const buttonsErr = validateButtons(fields.buttons);
+      if (buttonsErr) return NextResponse.json({ error: buttonsErr }, { status: 400 });
+    }
 
     const allowed = ['key', 'title', 'trigger_keywords', 'tag_filter', 'caption', 'buttons', 'active', 'archived', 'file_url', 'filename'];
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
