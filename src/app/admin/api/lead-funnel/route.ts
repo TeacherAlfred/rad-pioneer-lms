@@ -26,33 +26,53 @@ export async function GET() {
   return NextResponse.json({ rows });
 }
 
-// Edits tags, status, and/or household_id. Status edits are the manual path
-// (from the stages dashboard) for outcomes the bot/admin-button flow can't
-// set itself - primarily converted/lost, but any stage can be corrected
-// here. household_id: null unlinks a lead from its household (linking 2+
-// leads together is a separate action - see household/route.ts).
+// Edits tags, status, household_id, and/or the lead's own contact details
+// (name, phone, email, school, class, children_names). Status edits are the
+// manual path (from the stages dashboard) for outcomes the bot/admin-button
+// flow can't set itself - primarily converted/lost, but any stage can be
+// corrected here. household_id: null unlinks a lead from its household
+// (linking 2+ leads together is a separate action - see household/route.ts).
 export async function PATCH(req: Request) {
   try {
-    const { id, tags, status, household_id } = await req.json();
+    const body = await req.json();
+    const { id, tags, status, household_id, name, phone, email, school, children_names } = body;
+    // "class" is a reserved word, can't destructure it bare above.
+    const className = body.class;
+
     if (!id) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
     if (tags !== undefined && !Array.isArray(tags)) {
       return NextResponse.json({ error: 'tags must be an array' }, { status: 400 });
     }
+    if (children_names !== undefined && children_names !== null && !Array.isArray(children_names)) {
+      return NextResponse.json({ error: 'children_names must be an array' }, { status: 400 });
+    }
     if (status !== undefined && !FUNNEL_STAGES.includes(status)) {
       return NextResponse.json({ error: `status must be one of: ${FUNNEL_STAGES.join(', ')}` }, { status: 400 });
+    }
+    if (phone !== undefined && !String(phone).trim()) {
+      return NextResponse.json({ error: 'Phone cannot be empty' }, { status: 400 });
     }
 
     const update: Record<string, any> = {};
     if (tags !== undefined) update.tags = tags;
     if (household_id !== undefined) update.household_id = household_id;
+    if (name !== undefined) update.name = name || null;
+    // Normalized to digits only, same format the webhook stores/matches on -
+    // an admin typing "+27 82 123 4567" must still match future inbound
+    // messages from that number.
+    if (phone !== undefined) update.phone = String(phone).replace(/\D/g, '');
+    if (email !== undefined) update.email = email || null;
+    if (school !== undefined) update.school = school || null;
+    if (className !== undefined) update.class = className || null;
+    if (children_names !== undefined) update.children_names = children_names;
     if (status !== undefined) {
       update.status = status;
       if (status === 'contacted') update.contacted_at = new Date().toISOString();
     }
     if (Object.keys(update).length === 0) {
-      return NextResponse.json({ error: 'Nothing to update - provide tags, status, and/or household_id' }, { status: 400 });
+      return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
     }
 
     const { data, error } = await supabaseAdmin
@@ -62,7 +82,12 @@ export async function PATCH(req: Request) {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505') {
+        return NextResponse.json({ error: 'That phone number is already used by another lead.' }, { status: 409 });
+      }
+      throw error;
+    }
     if (status !== undefined) await recordStatusChange(supabaseAdmin, id, status);
     return NextResponse.json({ row: data });
   } catch (error: any) {

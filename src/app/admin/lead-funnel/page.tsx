@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
-  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2,
+  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2, Pencil,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -26,6 +26,9 @@ type Lead = {
   created_at?: string | null;
   household_id?: string | null;
   household_name?: string | null;
+  school?: string | null;
+  class?: string | null;
+  children_names?: string[] | null;
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -259,6 +262,64 @@ export default function LeadFunnelPage() {
       });
     } finally {
       setSavingId(null);
+    }
+  }
+
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', phone: '', email: '', school: '', class: '', children_names: '' });
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  function openEdit(lead: Lead) {
+    setEditingLead(lead);
+    setEditForm({
+      name: lead.name || '',
+      phone: lead.phone || '',
+      email: lead.email || '',
+      school: lead.school || '',
+      class: lead.class || '',
+      children_names: (lead.children_names || []).join(', '),
+    });
+    setEditError(null);
+  }
+
+  function closeEdit() {
+    setEditingLead(null);
+    setEditError(null);
+  }
+
+  async function saveEdit() {
+    if (!editingLead) return;
+    if (!editForm.phone.trim()) {
+      setEditError('Phone cannot be empty.');
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const res = await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingLead.id,
+          name: editForm.name.trim() || null,
+          phone: editForm.phone.trim(),
+          email: editForm.email.trim() || null,
+          school: editForm.school.trim() || null,
+          class: editForm.class.trim() || null,
+          children_names: editForm.children_names.split(',').map(s => s.trim()).filter(Boolean),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save');
+      // Merge rather than replace - the PATCH response is a bare leads row
+      // (no households(name) embed), so this preserves household_name.
+      setRows(prev => prev.map(r => r.id === editingLead.id ? { ...r, ...data.row } : r));
+      setEditingLead(null);
+    } catch (err: any) {
+      setEditError(err.message);
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -515,8 +576,16 @@ export default function LeadFunnelPage() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <div className="font-bold text-slate-800">{r.name || '(no name)'}</div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="font-bold text-slate-800">{r.name || '(no name)'}</div>
+                            <button onClick={() => openEdit(r)} title="Edit lead details" className="text-slate-300 hover:text-slate-600">
+                              <Pencil size={11} />
+                            </button>
+                          </div>
                           <div className="text-xs text-slate-400">+{r.phone}{r.email ? ` · ${r.email}` : ''}</div>
+                          {(r.children_names || []).length > 0 && (
+                            <div className="text-[11px] text-slate-400 mt-0.5">Children: {(r.children_names || []).join(', ')}</div>
+                          )}
                           {r.opted_out && <span className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-rose-50 text-rose-500 px-2 py-0.5 rounded-full">Opted out</span>}
                           {r.household_name && (
                             <div className="inline-flex items-center gap-1 mt-1">
@@ -748,6 +817,62 @@ export default function LeadFunnelPage() {
               >
                 {householdSaving ? 'Linking...' : 'Link Household'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingLead && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-slate-800">Edit Lead</h3>
+              <button onClick={closeEdit} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Name</label>
+                <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Phone</label>
+                <input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                <p className="text-[11px] text-slate-400 mt-1">Normalized to digits only on save - this is what the bot matches future messages against.</p>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Email</label>
+                <input value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">School</label>
+                  <input value={editForm.school} onChange={e => setEditForm(f => ({ ...f, school: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Class</label>
+                  <input value={editForm.class} onChange={e => setEditForm(f => ({ ...f, class: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Children's Names</label>
+                <input
+                  placeholder="Comma-separated, e.g. Liam, Ava"
+                  value={editForm.children_names}
+                  onChange={e => setEditForm(f => ({ ...f, children_names: e.target.value }))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                />
+              </div>
+              {editError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3">{editError}</div>}
+              <div className="flex gap-2 pt-2">
+                <button onClick={closeEdit} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
+                <button
+                  onClick={saveEdit}
+                  disabled={editSaving}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50"
+                >
+                  {editSaving ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
