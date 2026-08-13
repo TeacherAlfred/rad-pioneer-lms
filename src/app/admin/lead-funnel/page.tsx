@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
-  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch,
+  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -24,6 +24,8 @@ type Lead = {
   opted_out?: boolean | null;
   contacted_at?: string | null;
   created_at?: string | null;
+  household_id?: string | null;
+  household_name?: string | null;
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -212,6 +214,54 @@ export default function LeadFunnelPage() {
     setSelectedVariableNames([]);
   }
 
+  const [showHouseholdModal, setShowHouseholdModal] = useState(false);
+  const [householdName, setHouseholdName] = useState('');
+  const [householdSaving, setHouseholdSaving] = useState(false);
+  const [householdError, setHouseholdError] = useState<string | null>(null);
+
+  function closeHouseholdModal() {
+    setShowHouseholdModal(false);
+    setHouseholdName('');
+    setHouseholdError(null);
+  }
+
+  async function linkHousehold() {
+    setHouseholdSaving(true);
+    setHouseholdError(null);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/household', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadIds: Array.from(selectedIds), name: householdName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to link household');
+      const refreshed = await fetch('/admin/api/lead-funnel');
+      const refreshedData = await refreshed.json();
+      setRows(refreshedData.rows || []);
+      setSelectedIds(new Set());
+      closeHouseholdModal();
+    } catch (err: any) {
+      setHouseholdError(err.message);
+    } finally {
+      setHouseholdSaving(false);
+    }
+  }
+
+  async function unlinkHousehold(lead: Lead) {
+    setSavingId(lead.id);
+    setRows(prev => prev.map(r => r.id === lead.id ? { ...r, household_id: null, household_name: null } : r));
+    try {
+      await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: lead.id, household_id: null }),
+      });
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   async function toggleInhouse(lead: Lead) {
     const currentTags = lead.tags || [];
     const newTags = isInhouse(lead)
@@ -259,6 +309,13 @@ export default function LeadFunnelPage() {
     const optedOut = statsRows.filter(r => r.opted_out).length;
     const fromAds = statsRows.filter(r => r.ad_id).length;
 
+    // Distinct households + leads with no household count once each - the
+    // "how many actual prospects/families" number, vs. raw lead-row count
+    // above which counts both parents of the same family separately.
+    const householdIds = new Set(statsRows.filter(r => r.household_id).map(r => r.household_id));
+    const standalone = statsRows.filter(r => !r.household_id).length;
+    const households = householdIds.size + standalone;
+
     const byStatus: Record<string, number> = {};
     const bySource: Record<string, number> = {};
     const byAd: Record<string, number> = {};
@@ -276,7 +333,7 @@ export default function LeadFunnelPage() {
       }
     }
 
-    return { total, newToday, newThisWeek, needsHuman, optedOut, fromAds, byStatus, bySource, byAd };
+    return { total, newToday, newThisWeek, needsHuman, optedOut, fromAds, households, byStatus, bySource, byAd };
   }, [statsRows]);
 
   const statusOptions = useMemo(() => Array.from(new Set(rows.map(r => r.status || 'unknown'))).sort(), [rows]);
@@ -354,8 +411,9 @@ export default function LeadFunnelPage() {
           <div className="py-24 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading...</div>
         ) : (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
               <StatCard icon={Users} label="Total Leads" value={stats.total} />
+              <StatCard icon={Users2} label="Households" value={stats.households} accent="text-purple-600" />
               <StatCard icon={UserPlus} label="New Today" value={stats.newToday} />
               <StatCard icon={CalendarClock} label="New This Week" value={stats.newThisWeek} />
               <StatCard icon={MessageCircleWarning} label="Needs Human" value={stats.needsHuman} accent="text-amber-600" />
@@ -410,6 +468,14 @@ export default function LeadFunnelPage() {
                 <button onClick={openSendModal} className="flex items-center gap-2 px-4 py-2 bg-white text-slate-900 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-100">
                   <Send size={14} /> Send Template
                 </button>
+                <button
+                  onClick={() => setShowHouseholdModal(true)}
+                  disabled={selectedIds.size < 2}
+                  title={selectedIds.size < 2 ? 'Select at least 2 leads (e.g. both parents)' : undefined}
+                  className="flex items-center gap-2 px-4 py-2 bg-white text-slate-900 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-100 disabled:opacity-50"
+                >
+                  <Users2 size={14} /> Link as Household
+                </button>
                 <button onClick={() => setSelectedIds(new Set())} className="text-xs font-black uppercase tracking-widest text-slate-400 hover:text-white ml-auto">
                   Clear selection
                 </button>
@@ -452,6 +518,21 @@ export default function LeadFunnelPage() {
                           <div className="font-bold text-slate-800">{r.name || '(no name)'}</div>
                           <div className="text-xs text-slate-400">+{r.phone}{r.email ? ` · ${r.email}` : ''}</div>
                           {r.opted_out && <span className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-rose-50 text-rose-500 px-2 py-0.5 rounded-full">Opted out</span>}
+                          {r.household_name && (
+                            <div className="inline-flex items-center gap-1 mt-1">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">
+                                <Users2 size={10} /> {r.household_name}
+                              </span>
+                              <button
+                                onClick={() => unlinkHousehold(r)}
+                                disabled={savingId === r.id}
+                                title="Unlink from household"
+                                className="text-slate-300 hover:text-rose-500 disabled:opacity-50"
+                              >
+                                <X size={11} />
+                              </button>
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${STATUS_STYLES[r.status || ''] || 'bg-slate-100 text-slate-500'}`}>
@@ -637,6 +718,37 @@ export default function LeadFunnelPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {showHouseholdModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-slate-800">Link as Household</h3>
+              <button onClick={closeHouseholdModal} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Linking <b>{selectedIds.size}</b> leads as one household - e.g. both parents of the same child. Each keeps their own conversation and status; this only groups them for counting and display.
+            </p>
+            <input
+              placeholder="Household name, e.g. Smith Family"
+              value={householdName}
+              onChange={e => setHouseholdName(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400 mb-3"
+            />
+            {householdError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3 mb-3">{householdError}</div>}
+            <div className="flex gap-2">
+              <button onClick={closeHouseholdModal} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
+              <button
+                onClick={linkHousehold}
+                disabled={householdSaving}
+                className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50"
+              >
+                {householdSaving ? 'Linking...' : 'Link Household'}
+              </button>
+            </div>
           </div>
         </div>
       )}
