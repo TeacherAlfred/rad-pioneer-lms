@@ -60,7 +60,7 @@ export function useStudentDashboard() {
         const thresholdDate = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
         const { data: upcomingLessons } = await supabase
           .from('lesson_schedule')
-          .select('start_time, topic, delivery_mode, location_or_link')
+          .select('start_time, topic, delivery_mode, location_or_link, teacher_id')
           .eq('student_id', userId)
           .gte('start_time', thresholdDate)
           .order('start_time', { ascending: true })
@@ -68,12 +68,22 @@ export function useStudentDashboard() {
 
         if (upcomingLessons && upcomingLessons.length > 0) {
           const lesson = upcomingLessons[0];
+
+          // Count siblings sharing the same teacher + start_time to detect a small-group lesson,
+          // without ever fetching the other students' names/profiles.
+          const { count: groupCount } = await supabase
+            .from('lesson_schedule')
+            .select('id', { count: 'exact', head: true })
+            .eq('teacher_id', lesson.teacher_id)
+            .eq('start_time', lesson.start_time);
+
           setNextLiveSession({
             date: lesson.start_time,
             topic: lesson.topic,
             type: lesson.delivery_mode || 'in-person',
             location: lesson.location_or_link || 'Centurion Main Lab',
-            link: lesson.delivery_mode === 'online' ? lesson.location_or_link : ''
+            link: lesson.delivery_mode === 'online' ? lesson.location_or_link : '',
+            groupSize: groupCount || 1
           });
         }
 

@@ -23,6 +23,7 @@ type LessonInstance = {
 
 const ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const ALL_HOURS = Array.from({ length: 14 }).map((_, i) => `${(i + 7).toString().padStart(2, '0')}:00`); // 07:00 to 20:00
+const MAX_GROUP_SIZE = 4; // Online lessons are small-group, capped at 4 students per slot
 
 export default function TeacherSchedulePage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -521,7 +522,7 @@ export default function TeacherSchedulePage() {
                 <button onClick={() => setSlotConfig(p => ({...p, delivery: 'in-person'}))} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.delivery === 'in-person' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
                   <MapPin size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">In-Person</span>
                 </button>
-                <button onClick={() => { if (slotConfig.studentIds.length > 1) return alert("Online slots max 1 student. Remove students first."); setSlotConfig(p => ({...p, delivery: 'online'})) }} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.delivery === 'online' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
+                <button onClick={() => setSlotConfig(p => ({...p, delivery: 'online'}))} className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${slotConfig.delivery === 'online' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-black/30 border-white/5 text-slate-500 hover:text-white'}`}>
                   <Video size={16}/> <span className="text-[9px] font-black uppercase tracking-widest">Online</span>
                 </button>
               </div>
@@ -544,7 +545,7 @@ export default function TeacherSchedulePage() {
               <div className="bg-black/40 border border-white/5 rounded-2xl p-4">
                 <div className="flex justify-between items-center mb-4">
                   <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Current Roster</p>
-                  <span className="text-xs font-bold text-white bg-white/10 px-2 py-0.5 rounded">{slotConfig.studentIds.length}</span>
+                  <span className="text-xs font-bold text-white bg-white/10 px-2 py-0.5 rounded">{slotConfig.studentIds.length}{slotConfig.delivery === 'online' ? ` / ${MAX_GROUP_SIZE}` : ''}</span>
                 </div>
                 
                 <div className="space-y-2 mb-4 max-h-32 overflow-y-auto custom-scrollbar pr-2">
@@ -563,7 +564,7 @@ export default function TeacherSchedulePage() {
                   )}
                 </div>
 
-                {myStudents.length > 0 && (slotConfig.delivery === 'in-person' || slotConfig.studentIds.length === 0) && (
+                {myStudents.length > 0 && (slotConfig.delivery === 'in-person' || slotConfig.studentIds.length < MAX_GROUP_SIZE) && (
                     <div className="relative mt-2">
                         <select 
                             className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-white outline-none focus:border-blue-500 transition-colors appearance-none font-bold text-sm shadow-inner"
@@ -582,9 +583,9 @@ export default function TeacherSchedulePage() {
                         <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">▼</div>
                     </div>
                 )}
-                {slotConfig.delivery === 'online' && slotConfig.studentIds.length >= 1 && (
+                {slotConfig.delivery === 'online' && slotConfig.studentIds.length >= MAX_GROUP_SIZE && (
                   <div className="p-3 border border-amber-500/20 bg-amber-500/10 rounded-xl mt-2">
-                      <p className="text-[9px] text-amber-500 font-bold uppercase tracking-widest text-center">Online capacity reached (1 Max)</p>
+                      <p className="text-[9px] text-amber-500 font-bold uppercase tracking-widest text-center">Group lesson full ({MAX_GROUP_SIZE}/{MAX_GROUP_SIZE} students)</p>
                   </div>
                 )}
               </div>
