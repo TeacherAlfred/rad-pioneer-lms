@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
+  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle,
 } from "lucide-react";
 
 type Lead = {
@@ -58,6 +59,13 @@ function isInhouse(lead: Lead) {
   return (lead.tags || []).some(t => t.toLowerCase() === INHOUSE_TAG.toLowerCase());
 }
 
+// Matches the server-side cap in /admin/api/lead-funnel/send-template -
+// sends happen sequentially in one request, and a Vercel function has a
+// hard execution time limit.
+const MAX_RECIPIENTS = 50;
+
+type SendResult = { leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string };
+
 export default function LeadFunnelPage() {
   const [rows, setRows] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,6 +76,87 @@ export default function LeadFunnelPage() {
   const [search, setSearch] = useState('');
   const [showInhouse, setShowInhouse] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showSendModal, setShowSendModal] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [languageCode, setLanguageCode] = useState('en_US');
+  const [variables, setVariables] = useState<string[]>([]);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendResults, setSendResults] = useState<SendResult[] | null>(null);
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    const selectable = filteredRows.filter(r => !r.opted_out);
+    const allSelected = selectable.length > 0 && selectable.every(r => selectedIds.has(r.id));
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) {
+        selectable.forEach(r => next.delete(r.id));
+      } else {
+        selectable.forEach(r => next.add(r.id));
+      }
+      return next;
+    });
+  }
+
+  function addVariable() {
+    setVariables(prev => [...prev, '']);
+  }
+
+  function updateVariable(idx: number, value: string) {
+    setVariables(prev => prev.map((v, i) => i === idx ? value : v));
+  }
+
+  function removeVariable(idx: number) {
+    setVariables(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  async function handleSend() {
+    setSendError(null);
+    if (!templateName.trim() || !languageCode.trim()) {
+      setSendError('Template name and language code are required.');
+      return;
+    }
+    setSending(true);
+    setSendResults(null);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/send-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leadIds: Array.from(selectedIds),
+          templateName: templateName.trim(),
+          languageCode: languageCode.trim(),
+          variables: variables.filter(v => v.trim()),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Send failed');
+      setSendResults(data.results || []);
+    } catch (err: any) {
+      setSendError(err.message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function closeSendModal() {
+    setShowSendModal(false);
+    setTemplateName('');
+    setLanguageCode('en_US');
+    setVariables([]);
+    setSendError(null);
+    setSendResults(null);
+  }
 
   async function toggleInhouse(lead: Lead) {
     const currentTags = lead.tags || [];
@@ -226,11 +315,33 @@ export default function LeadFunnelPage() {
               <span className="text-xs text-slate-400 ml-auto">{filteredRows.length} of {showInhouse ? rows.length : statsRows.length}</span>
             </div>
 
+            {selectedIds.size > 0 && (
+              <div className="bg-slate-900 text-white rounded-2xl p-4 mb-4 flex items-center gap-4 flex-wrap">
+                <span className="text-sm font-bold">{selectedIds.size} lead{selectedIds.size === 1 ? '' : 's'} selected</span>
+                {selectedIds.size > MAX_RECIPIENTS && (
+                  <span className="flex items-center gap-1 text-xs text-amber-300"><AlertTriangle size={13} /> Max {MAX_RECIPIENTS} per send - deselect some first</span>
+                )}
+                <button onClick={() => setShowSendModal(true)} className="flex items-center gap-2 px-4 py-2 bg-white text-slate-900 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-100">
+                  <Send size={14} /> Send Template
+                </button>
+                <button onClick={() => setSelectedIds(new Set())} className="text-xs font-black uppercase tracking-widest text-slate-400 hover:text-white ml-auto">
+                  Clear selection
+                </button>
+              </div>
+            )}
+
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      <th className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={filteredRows.filter(r => !r.opted_out).length > 0 && filteredRows.filter(r => !r.opted_out).every(r => selectedIds.has(r.id))}
+                          onChange={toggleSelectAllVisible}
+                        />
+                      </th>
                       <th className="px-4 py-3">Lead</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">Source</th>
@@ -242,6 +353,15 @@ export default function LeadFunnelPage() {
                   <tbody>
                     {filteredRows.map(r => (
                       <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(r.id)}
+                            disabled={!!r.opted_out}
+                            title={r.opted_out ? "Opted out - can't send a template to this lead" : undefined}
+                            onChange={() => toggleSelect(r.id)}
+                          />
+                        </td>
                         <td className="px-4 py-3">
                           <div className="font-bold text-slate-800">{r.name || '(no name)'}</div>
                           <div className="text-xs text-slate-400">+{r.phone}{r.email ? ` · ${r.email}` : ''}</div>
@@ -283,7 +403,7 @@ export default function LeadFunnelPage() {
                       </tr>
                     ))}
                     {filteredRows.length === 0 && (
-                      <tr><td colSpan={6} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
+                      <tr><td colSpan={7} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -292,6 +412,74 @@ export default function LeadFunnelPage() {
           </>
         )}
       </div>
+
+      {showSendModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-slate-800">Send Meta Template</h3>
+              <button onClick={closeSendModal} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              Sending to <b>{selectedIds.size}</b> lead{selectedIds.size === 1 ? '' : 's'}. Template name must exactly match one approved in Meta Business Manager - this doesn't validate that for you. Opted-out leads in your selection are skipped automatically.
+            </p>
+
+            {sendResults ? (
+              <div className="space-y-3">
+                <div className="flex gap-3 text-xs font-black uppercase tracking-widest">
+                  <span className="flex items-center gap-1 text-emerald-600"><CheckCircle2 size={14} /> {sendResults.filter(r => r.ok).length} delivered</span>
+                  <span className="flex items-center gap-1 text-rose-500"><XCircle size={14} /> {sendResults.filter(r => !r.ok && !r.skipped).length} failed</span>
+                  <span className="flex items-center gap-1 text-slate-400"><PhoneOff size={14} /> {sendResults.filter(r => r.skipped).length} skipped</span>
+                </div>
+                <div className="max-h-64 overflow-y-auto space-y-1">
+                  {sendResults.filter(r => !r.ok).map(r => (
+                    <div key={r.leadId} className="text-xs bg-rose-50 text-rose-600 rounded-lg px-3 py-2">
+                      +{r.phone}: {r.skipped ? 'Skipped (opted out)' : r.error}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={closeSendModal} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900">Done</button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <input placeholder="Template name (exact)" value={templateName} onChange={e => setTemplateName(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                  <input placeholder="Language code (e.g. en_US)" value={languageCode} onChange={e => setLanguageCode(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Body Variables (in order, matches {'{{1}}'}, {'{{2}}'}...)</label>
+                  <p className="text-[11px] text-slate-400 mb-2">Use <code>{'{{name}}'}</code> or <code>{'{{phone}}'}</code> as a value to personalize per lead automatically.</p>
+                  {variables.map((v, i) => (
+                    <div key={i} className="flex gap-2 mb-2">
+                      <input placeholder={`Variable ${i + 1}, e.g. {{name}}`} value={v} onChange={e => updateVariable(i, e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none" />
+                      <button type="button" onClick={() => removeVariable(i)} className="text-rose-400 hover:text-rose-600"><Trash2 size={14} /></button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={addVariable} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+                    <Plus size={11} className="inline -mt-0.5" /> add variable
+                  </button>
+                </div>
+
+                {sendError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3">{sendError}</div>}
+
+                <div className="flex gap-2 pt-2">
+                  <button type="button" onClick={closeSendModal} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
+                  <button
+                    type="button"
+                    onClick={handleSend}
+                    disabled={sending || selectedIds.size === 0 || selectedIds.size > MAX_RECIPIENTS}
+                    className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50"
+                  >
+                    {sending ? 'Sending...' : `Send to ${selectedIds.size}`}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
