@@ -67,6 +67,11 @@ const MAX_RECIPIENTS = 50;
 type SendResult = { leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string };
 type MetaTemplate = { name: string; language: string; category: string; variableNames: string[]; bodyPreview: string };
 
+// Placeholder names that auto-fill from that column on the lead's own row
+// (see resolveVariable in the send-template route) instead of needing the
+// admin to type a token by hand. Anything else stays blank for manual entry.
+const LEAD_AUTOFIELDS = ['name', 'phone', 'email', 'school', 'class', 'source'];
+
 export default function LeadFunnelPage() {
   const [rows, setRows] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,7 +124,7 @@ export default function LeadFunnelPage() {
     if (!t) return;
     setTemplateName(t.name);
     setLanguageCode(t.language);
-    setVariables(Array(t.variableNames.length).fill(''));
+    setVariables(t.variableNames.map(vn => LEAD_AUTOFIELDS.includes(vn.toLowerCase()) ? `{{${vn}}}` : ''));
     setSelectedVariableNames(t.variableNames);
   }
 
@@ -161,6 +166,10 @@ export default function LeadFunnelPage() {
     setSendError(null);
     if (!templateName.trim() || !languageCode.trim()) {
       setSendError('Template name and language code are required.');
+      return;
+    }
+    if (variables.some(v => !v.trim())) {
+      setSendError('Every body variable needs a value - fill in each field (or use a {{column}} token) before sending. Meta rejects the whole send otherwise.');
       return;
     }
     setSending(true);
@@ -523,7 +532,7 @@ export default function LeadFunnelPage() {
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
                     Body Variables{!manualEntry && selectedVariableNames.length > 0 ? ` (${selectedVariableNames.length} required by this template, in order)` : ''}
                   </label>
-                  <p className="text-[11px] text-slate-400 mb-2">Use <code>{'{{name}}'}</code> or <code>{'{{phone}}'}</code> as a value to personalize per lead automatically.</p>
+                  <p className="text-[11px] text-slate-400 mb-2">Fields matching a lead column (<code>{'{{name}}'}</code>, <code>{'{{phone}}'}</code>, <code>{'{{email}}'}</code>, <code>{'{{school}}'}</code>, <code>{'{{class}}'}</code>, <code>{'{{source}}'}</code>) auto-fill per lead. Anything else is sent as literal text to everyone.</p>
                   {variables.map((v, i) => (
                     <div key={i} className="flex gap-2 mb-2">
                       <input

@@ -11,6 +11,19 @@ const supabaseAdmin = createClient(
 // the cap enforced in the UI; raise both together if that ever binds.
 const MAX_RECIPIENTS = 50;
 
+// Generic per-lead personalization: {{name}}, {{school}}, {{class}}, etc.
+// resolve against that column on the lead's own row if it exists, rather
+// than special-casing a fixed list of fields - no schema alignment needed
+// beyond a template's placeholder happening to share a column's name. A
+// token with no matching column is left untouched (better than guessing).
+function resolveVariable(value: string, lead: Record<string, any>): string {
+  return value.replace(/\{\{\s*([a-zA-Z_][\w]*)\s*\}\}/g, (match, field) => {
+    const key = String(field).toLowerCase();
+    const v = lead[key];
+    return v !== null && v !== undefined && v !== '' ? String(v) : match;
+  });
+}
+
 async function sendTemplate(to: string, templateName: string, languageCode: string, bodyValues: string[], variableNames: string[]) {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
@@ -85,11 +98,7 @@ export async function POST(req: Request) {
         continue;
       }
 
-      const bodyValues = (variables || []).map((v: string) =>
-        String(v)
-          .replace(/\{\{\s*name\s*\}\}/gi, lead.name || 'there')
-          .replace(/\{\{\s*phone\s*\}\}/gi, lead.phone)
-      );
+      const bodyValues = (variables || []).map((v: string) => resolveVariable(String(v), lead));
 
       const sendResult = await sendTemplate(lead.phone, templateName.trim(), languageCode.trim(), bodyValues, variableNames || []);
 
