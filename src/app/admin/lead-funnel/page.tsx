@@ -65,6 +65,7 @@ function isInhouse(lead: Lead) {
 const MAX_RECIPIENTS = 50;
 
 type SendResult = { leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string };
+type MetaTemplate = { name: string; language: string; category: string; variableCount: number; bodyPreview: string };
 
 export default function LeadFunnelPage() {
   const [rows, setRows] = useState<Lead[]>([]);
@@ -85,6 +86,40 @@ export default function LeadFunnelPage() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendResults, setSendResults] = useState<SendResult[] | null>(null);
+
+  const [templates, setTemplates] = useState<MetaTemplate[]>([]);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState('');
+  const [manualEntry, setManualEntry] = useState(false);
+
+  async function openSendModal() {
+    setShowSendModal(true);
+    if (templates.length === 0 && !templatesError) {
+      setTemplatesLoading(true);
+      try {
+        const res = await fetch('/admin/api/lead-funnel/templates');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load templates');
+        setTemplates(data.templates || []);
+        if ((data.templates || []).length === 0) setManualEntry(true);
+      } catch (err: any) {
+        setTemplatesError(err.message);
+        setManualEntry(true);
+      } finally {
+        setTemplatesLoading(false);
+      }
+    }
+  }
+
+  function selectTemplate(key: string) {
+    setSelectedTemplateKey(key);
+    const t = templates.find(t => `${t.name}|${t.language}` === key);
+    if (!t) return;
+    setTemplateName(t.name);
+    setLanguageCode(t.language);
+    setVariables(Array(t.variableCount).fill(''));
+  }
 
   function toggleSelect(id: string) {
     setSelectedIds(prev => {
@@ -156,6 +191,8 @@ export default function LeadFunnelPage() {
     setVariables([]);
     setSendError(null);
     setSendResults(null);
+    setSelectedTemplateKey('');
+    setManualEntry(false);
   }
 
   async function toggleInhouse(lead: Lead) {
@@ -321,7 +358,7 @@ export default function LeadFunnelPage() {
                 {selectedIds.size > MAX_RECIPIENTS && (
                   <span className="flex items-center gap-1 text-xs text-amber-300"><AlertTriangle size={13} /> Max {MAX_RECIPIENTS} per send - deselect some first</span>
                 )}
-                <button onClick={() => setShowSendModal(true)} className="flex items-center gap-2 px-4 py-2 bg-white text-slate-900 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-100">
+                <button onClick={openSendModal} className="flex items-center gap-2 px-4 py-2 bg-white text-slate-900 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-100">
                   <Send size={14} /> Send Template
                 </button>
                 <button onClick={() => setSelectedIds(new Set())} className="text-xs font-black uppercase tracking-widest text-slate-400 hover:text-white ml-auto">
@@ -443,10 +480,40 @@ export default function LeadFunnelPage() {
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <input placeholder="Template name (exact)" value={templateName} onChange={e => setTemplateName(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-                  <input placeholder="Language code (e.g. en_US)" value={languageCode} onChange={e => setLanguageCode(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
-                </div>
+                {templatesLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-slate-400 py-2"><Loader2 size={14} className="animate-spin" /> Loading approved templates from Meta...</div>
+                ) : !manualEntry && templates.length > 0 ? (
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Approved Template</label>
+                    <select value={selectedTemplateKey} onChange={e => selectTemplate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400 mb-1">
+                      <option value="">Select a template...</option>
+                      {templates.map(t => (
+                        <option key={`${t.name}|${t.language}`} value={`${t.name}|${t.language}`}>{t.name} ({t.language}, {t.category})</option>
+                      ))}
+                    </select>
+                    {selectedTemplateKey && (
+                      <p className="text-[11px] text-slate-400 italic mb-1">"{templates.find(t => `${t.name}|${t.language}` === selectedTemplateKey)?.bodyPreview}"</p>
+                    )}
+                    <button type="button" onClick={() => setManualEntry(true)} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+                      Type name/language manually instead
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    {templatesError && (
+                      <p className="text-[11px] text-amber-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> Couldn't load templates from Meta ({templatesError}) - enter details manually.</p>
+                    )}
+                    <div className="grid grid-cols-2 gap-3">
+                      <input placeholder="Template name (exact)" value={templateName} onChange={e => setTemplateName(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                      <input placeholder="Language code (e.g. en_US)" value={languageCode} onChange={e => setLanguageCode(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                    </div>
+                    {templates.length > 0 && (
+                      <button type="button" onClick={() => setManualEntry(false)} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 mt-2">
+                        Choose from approved list instead
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Body Variables (in order, matches {'{{1}}'}, {'{{2}}'}...)</label>
