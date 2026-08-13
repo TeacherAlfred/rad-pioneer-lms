@@ -355,6 +355,7 @@ export default function AdminDashboard() {
         { label: 'Prospects', icon: Target, path: '/admin/prospects', color: 'hover:border-fuchsia-500' },
         { label: 'Acquisitions', icon: Send, path: '/admin/acquisition', color: 'hover:border-purple-500' },
         { label: 'Leads', icon: Inbox, path: '/admin/leads', color: 'hover:border-blue-500' },
+        { label: 'Lead Funnel (WhatsApp)', icon: BarChart3, path: '/admin/lead-funnel', color: 'hover:border-teal-500' },
         { label: 'Add a Guardian', icon: UserPlus, path: '/admin/intake', color: 'hover:border-blue-400' },
         { label: 'Outbound Invites', icon: Send, path: '/admin/invites', color: 'hover:border-purple-500' },
         { label: 'Events & Bootcamps', icon: CalendarDays, path: '/admin/events', color: 'hover:border-yellow-500' },
