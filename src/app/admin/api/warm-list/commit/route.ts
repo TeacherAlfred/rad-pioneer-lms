@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { recordStatusChange } from '@/lib/leadStatusHistory';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -61,19 +62,20 @@ export async function POST(req: Request) {
         await supabaseAdmin.from('leads').update({ tags: mergedTags }).eq('id', existing.id);
         alreadyExisted++;
       } else {
-        const { error: insertErr } = await supabaseAdmin.from('leads').insert([{
+        const { data: newLead, error: insertErr } = await supabaseAdmin.from('leads').insert([{
           phone: row.phone || null,
           email: row.email || null,
           name: row.name || null,
           status: 'new_lead',
           source: row.source || 'warm_list',
           tags: row.tags || [],
-        }]);
+        }]).select().single();
         if (insertErr) {
           skipped++;
           skippedReasons.push(`${row.name || row.id}: ${insertErr.message}`);
           continue;
         }
+        await recordStatusChange(supabaseAdmin, newLead.id, 'new_lead');
         inserted++;
       }
 

@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
-  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare,
+  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch,
 } from "lucide-react";
 
 type Lead = {
@@ -27,9 +27,11 @@ type Lead = {
 const STATUS_STYLES: Record<string, string> = {
   new_lead: 'bg-slate-100 text-slate-600',
   needs_human: 'bg-amber-50 text-amber-600',
-  contacted: 'bg-emerald-50 text-emerald-600',
+  contacted: 'bg-blue-50 text-blue-600',
   no_response: 'bg-rose-50 text-rose-600',
   followup_scheduled: 'bg-indigo-50 text-indigo-600',
+  converted: 'bg-emerald-50 text-emerald-600',
+  lost: 'bg-slate-100 text-slate-400',
 };
 
 function statusLabel(status: string | null) {
@@ -301,6 +303,9 @@ export default function LeadFunnelPage() {
             <ArrowLeft size={14} /> Command Center
           </Link>
           <div className="flex items-center gap-4">
+            <Link href="/admin/lead-funnel/stages" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <GitBranch size={14} /> Funnel Stages
+            </Link>
             <Link href="/admin/lead-funnel/messages" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <MessageSquare size={14} /> Message Activity
             </Link>

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { recordStatusChange } from '@/lib/leadStatusHistory';
 
 // Bump this whenever the consent copy shown in the tier modal changes, so
 // stored consent always records exactly what the parent agreed to.
@@ -75,6 +76,8 @@ export async function POST(request: Request) {
       // its funnel status and prior data alone rather than overwrite it.
       if (!newLead) {
         console.log(`ℹ️ Irene consent: ${phone} already has a lead record, left as-is.`);
+      } else {
+        await recordStatusChange(supabase, newLead.id, 'new_lead');
       }
     }
 

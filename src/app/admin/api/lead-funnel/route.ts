@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { recordStatusChange } from '@/lib/leadStatusHistory';
+import { FUNNEL_STAGES } from '@/lib/funnelStages';
 
 // Service role: leads has zero anon RLS policies since the 2026-08-12
 // lockdown, so a browser-side client can no longer read this table directly.
@@ -18,23 +20,41 @@ export async function GET() {
   return NextResponse.json({ rows: data });
 }
 
-// Tags-only edit - currently just used to toggle the "Inhouse" tag (test/staff/
-// teacher leads) so they can stay in the database for testing without
-// polluting the funnel stats, which filter on that tag client-side.
+// Edits tags and/or status. Status edits are the manual path (from the
+// stages dashboard) for outcomes the bot/admin-button flow can't set
+// itself - primarily converted/lost, but any stage can be corrected here.
 export async function PATCH(req: Request) {
   try {
-    const { id, tags } = await req.json();
-    if (!id || !Array.isArray(tags)) {
-      return NextResponse.json({ error: 'id and tags[] are required' }, { status: 400 });
+    const { id, tags, status } = await req.json();
+    if (!id) {
+      return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
+    if (tags !== undefined && !Array.isArray(tags)) {
+      return NextResponse.json({ error: 'tags must be an array' }, { status: 400 });
+    }
+    if (status !== undefined && !FUNNEL_STAGES.includes(status)) {
+      return NextResponse.json({ error: `status must be one of: ${FUNNEL_STAGES.join(', ')}` }, { status: 400 });
+    }
+
+    const update: Record<string, any> = {};
+    if (tags !== undefined) update.tags = tags;
+    if (status !== undefined) {
+      update.status = status;
+      if (status === 'contacted') update.contacted_at = new Date().toISOString();
+    }
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json({ error: 'Nothing to update - provide tags and/or status' }, { status: 400 });
+    }
+
     const { data, error } = await supabaseAdmin
       .from('leads')
-      .update({ tags })
+      .update(update)
       .eq('id', id)
       .select()
       .single();
 
     if (error) throw error;
+    if (status !== undefined) await recordStatusChange(supabaseAdmin, id, status);
     return NextResponse.json({ row: data });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { recordStatusChange } from '@/lib/leadStatusHistory';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
 // signature Meta signs the raw body with, using the app secret.
@@ -242,6 +243,7 @@ export async function POST(request: Request) {
                       : !updatedLead
                         ? `⚠️ No lead found for that button - status not logged.`
                         : `✅ Logged: ${label}`;
+                    if (updatedLead) await recordStatusChange(supabase, targetLeadId, status);
                     await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: confirmText } });
                   }
                 }
@@ -290,6 +292,7 @@ export async function POST(request: Request) {
               const isNewLead = !!lead;
 
               if (isNewLead) {
+                await recordStatusChange(supabase, lead.id, 'new_lead');
                 // Alert Admin of brand new lead
                 await notifyAdmin(supabase, senderPhone, "🆕 Brand New Lead entered the funnel.", lead.id);
               } else {
@@ -320,7 +323,12 @@ export async function POST(request: Request) {
                 const trimmed = messageText.trim().toLowerCase();
                 if (['stop', 'unsubscribe', 'opt out', 'optout'].includes(trimmed)) {
                   await supabase.from('leads').update({ opted_out: true }).eq('id', lead.id);
-                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "You've been unsubscribed from marketing messages from RAD Academy. Reply anytime if you still need help - we're still here for that." } });
+                  const optOutResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "You've been unsubscribed from marketing messages from RAD Academy. Reply anytime if you still need help - we're still here for that." } });
+                  await supabase.from('messages').insert([{
+                    lead_id: lead.id,
+                    direction: 'outbound',
+                    body: optOutResult.ok ? '[Delivered opt-out confirmation]' : `[FAILED to deliver opt-out confirmation: ${optOutResult.error}]`,
+                  }]);
                   await notifyAdmin(supabase, senderPhone, "🚫 Opted out of marketing.", lead.id);
                   continue;
                 }
@@ -335,7 +343,13 @@ export async function POST(request: Request) {
                 const textLower = messageText.toLowerCase();
                 if (textLower.includes('irene') && textLower.includes('voting')) {
                   await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
-                  await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } });
+                  await recordStatusChange(supabase, lead.id, 'needs_human');
+                  const ireneAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } });
+                  await supabase.from('messages').insert([{
+                    lead_id: lead.id,
+                    direction: 'outbound',
+                    body: ireneAckResult.ok ? '[Delivered Irene voting support acknowledgment]' : `[FAILED to deliver Irene voting support acknowledgment: ${ireneAckResult.error}]`,
+                  }]);
                   await notifyAdmin(supabase, senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.", lead.id);
                   continue;
                 }
@@ -405,6 +419,7 @@ export async function POST(request: Request) {
                 }
 
                 await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
+                await recordStatusChange(supabase, lead.id, 'needs_human');
                 const ackResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
                 await supabase.from('messages').insert([{
                   lead_id: lead.id,
