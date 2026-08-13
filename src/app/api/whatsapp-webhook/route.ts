@@ -260,6 +260,14 @@ export async function POST(request: Request) {
                 } else {
                   messageText = '[Interactive Message]';
                 }
+              } else if (message.type === 'button') {
+                // Quick-reply buttons attached to an approved TEMPLATE arrive as
+                // type "button", not "interactive" - a different shape than our
+                // own bot-sent buttons (message.button.text/.payload, not
+                // message.interactive.button_reply.title/.id). Missing this meant
+                // every template button tap fell through every check below with
+                // no reply, no guide, no handoff - silently.
+                messageText = `[Button Reply: ${message.button?.text} (${message.button?.payload})]`;
               }
 
               // Click-to-WhatsApp ads attach this to the first inbound message of the
@@ -398,17 +406,26 @@ export async function POST(request: Request) {
               }
 
               // --- STAGE 2: BUTTON TAP ---
+              // Two different shapes tap through here: our own bot-sent buttons
+              // (welcome message, bot_media) arrive as type "interactive" with
+              // interactive.button_reply.{id,title}; a quick-reply button on an
+              // approved TEMPLATE arrives as type "button" with button.{payload,
+              // text} instead - a template's button payload isn't something this
+              // app defines, so "is this the guide button" is matched on the
+              // known title text, not a specific id, to work for both shapes.
               // "Get Free Guide" delivers the guide immediately, same as typing
               // "guide" would - it shouldn't make the lead wait on a human just
               // to get the thing they explicitly asked for. Every other button
-              // (whichever flow it came from - welcome, bot_media) routes the
-              // same way: acknowledge, flag the lead as needing a human, and
-              // tell the admin exactly which button was tapped.
-              if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
-                const buttonId = message.interactive.button_reply?.id;
-                const buttonTitle = message.interactive.button_reply?.title || buttonId || 'a button';
+              // routes the same way: acknowledge, flag the lead as needing a
+              // human, and tell the admin exactly which button was tapped.
+              const isBotButtonReply = message.type === 'interactive' && message.interactive?.type === 'button_reply';
+              const isTemplateButtonReply = message.type === 'button';
 
-                if (buttonId === 'btn_guide') {
+              if (isBotButtonReply || isTemplateButtonReply) {
+                const buttonId = isBotButtonReply ? message.interactive.button_reply?.id : message.button?.payload;
+                const buttonTitle = (isBotButtonReply ? message.interactive.button_reply?.title : message.button?.text) || buttonId || 'a button';
+
+                if (buttonId === 'btn_guide' || buttonTitle.toLowerCase().includes('guide')) {
                   const matchedMedia = await matchBotMedia(supabase, 'guide', lead);
                   if (matchedMedia) {
                     await deliverBotMedia(supabase, senderPhone, lead, matchedMedia);
