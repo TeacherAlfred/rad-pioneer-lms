@@ -11,9 +11,19 @@ const supabaseAdmin = createClient(
 // the cap enforced in the UI; raise both together if that ever binds.
 const MAX_RECIPIENTS = 50;
 
-async function sendTemplate(to: string, templateName: string, languageCode: string, bodyValues: string[]) {
+async function sendTemplate(to: string, templateName: string, languageCode: string, bodyValues: string[], variableNames: string[]) {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
+
+  // Numbered placeholders ({{1}}, {{2}}) send positionally with no extra
+  // field. Named placeholders ({{name}}) need `parameter_name` set to the
+  // exact placeholder name, or Meta rejects the send as a parameter-count
+  // mismatch even when the right number of values is sent.
+  const parameters = bodyValues.map((text, i) => {
+    const varName = variableNames[i];
+    const isNamed = varName !== undefined && Number.isNaN(Number(varName));
+    return isNamed ? { type: 'text', parameter_name: varName, text } : { type: 'text', text };
+  });
 
   const payload: any = {
     messaging_product: 'whatsapp',
@@ -23,8 +33,8 @@ async function sendTemplate(to: string, templateName: string, languageCode: stri
     template: {
       name: templateName,
       language: { code: languageCode },
-      ...(bodyValues.length > 0 ? {
-        components: [{ type: 'body', parameters: bodyValues.map(text => ({ type: 'text', text })) }],
+      ...(parameters.length > 0 ? {
+        components: [{ type: 'body', parameters }],
       } : {}),
     },
   };
@@ -44,7 +54,7 @@ async function sendTemplate(to: string, templateName: string, languageCode: stri
 
 export async function POST(req: Request) {
   try {
-    const { leadIds, templateName, languageCode, variables } = await req.json();
+    const { leadIds, templateName, languageCode, variables, variableNames } = await req.json();
 
     if (!Array.isArray(leadIds) || leadIds.length === 0) {
       return NextResponse.json({ error: 'leadIds[] is required' }, { status: 400 });
@@ -81,7 +91,7 @@ export async function POST(req: Request) {
           .replace(/\{\{\s*phone\s*\}\}/gi, lead.phone)
       );
 
-      const sendResult = await sendTemplate(lead.phone, templateName.trim(), languageCode.trim(), bodyValues);
+      const sendResult = await sendTemplate(lead.phone, templateName.trim(), languageCode.trim(), bodyValues, variableNames || []);
 
       await supabaseAdmin.from('messages').insert([{
         lead_id: lead.id,

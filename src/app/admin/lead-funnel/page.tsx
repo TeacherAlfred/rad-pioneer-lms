@@ -65,7 +65,7 @@ function isInhouse(lead: Lead) {
 const MAX_RECIPIENTS = 50;
 
 type SendResult = { leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string };
-type MetaTemplate = { name: string; language: string; category: string; variableCount: number; bodyPreview: string };
+type MetaTemplate = { name: string; language: string; category: string; variableNames: string[]; bodyPreview: string };
 
 export default function LeadFunnelPage() {
   const [rows, setRows] = useState<Lead[]>([]);
@@ -92,6 +92,7 @@ export default function LeadFunnelPage() {
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('');
   const [manualEntry, setManualEntry] = useState(false);
+  const [selectedVariableNames, setSelectedVariableNames] = useState<string[]>([]);
 
   async function openSendModal() {
     setShowSendModal(true);
@@ -118,7 +119,8 @@ export default function LeadFunnelPage() {
     if (!t) return;
     setTemplateName(t.name);
     setLanguageCode(t.language);
-    setVariables(Array(t.variableCount).fill(''));
+    setVariables(Array(t.variableNames.length).fill(''));
+    setSelectedVariableNames(t.variableNames);
   }
 
   function toggleSelect(id: string) {
@@ -171,7 +173,8 @@ export default function LeadFunnelPage() {
           leadIds: Array.from(selectedIds),
           templateName: templateName.trim(),
           languageCode: languageCode.trim(),
-          variables: variables.filter(v => v.trim()),
+          variables,
+          variableNames: manualEntry ? [] : selectedVariableNames,
         }),
       });
       const data = await res.json();
@@ -193,6 +196,7 @@ export default function LeadFunnelPage() {
     setSendResults(null);
     setSelectedTemplateKey('');
     setManualEntry(false);
+    setSelectedVariableNames([]);
   }
 
   async function toggleInhouse(lead: Lead) {
@@ -516,17 +520,28 @@ export default function LeadFunnelPage() {
                 )}
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Body Variables (in order, matches {'{{1}}'}, {'{{2}}'}...)</label>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">
+                    Body Variables{!manualEntry && selectedVariableNames.length > 0 ? ` (${selectedVariableNames.length} required by this template, in order)` : ''}
+                  </label>
                   <p className="text-[11px] text-slate-400 mb-2">Use <code>{'{{name}}'}</code> or <code>{'{{phone}}'}</code> as a value to personalize per lead automatically.</p>
                   {variables.map((v, i) => (
                     <div key={i} className="flex gap-2 mb-2">
-                      <input placeholder={`Variable ${i + 1}, e.g. {{name}}`} value={v} onChange={e => updateVariable(i, e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none" />
-                      <button type="button" onClick={() => removeVariable(i)} className="text-rose-400 hover:text-rose-600"><Trash2 size={14} /></button>
+                      <input
+                        placeholder={selectedVariableNames[i] ? `{{${selectedVariableNames[i]}}} - e.g. {{name}}` : `Variable ${i + 1}, e.g. {{name}}`}
+                        value={v}
+                        onChange={e => updateVariable(i, e.target.value)}
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
+                      />
+                      {manualEntry && (
+                        <button type="button" onClick={() => removeVariable(i)} className="text-rose-400 hover:text-rose-600"><Trash2 size={14} /></button>
+                      )}
                     </div>
                   ))}
-                  <button type="button" onClick={addVariable} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-                    <Plus size={11} className="inline -mt-0.5" /> add variable
-                  </button>
+                  {manualEntry && (
+                    <button type="button" onClick={addVariable} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+                      <Plus size={11} className="inline -mt-0.5" /> add variable
+                    </button>
+                  )}
                 </div>
 
                 {sendError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3">{sendError}</div>}
