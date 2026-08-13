@@ -139,7 +139,7 @@ export default function LeadFunnelPage() {
   }
 
   function toggleSelectAllVisible() {
-    const selectable = filteredRows.filter(r => !r.opted_out);
+    const selectable = pagedRows.filter(r => !r.opted_out);
     const allSelected = selectable.length > 0 && selectable.every(r => selectedIds.has(r.id));
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -295,6 +295,18 @@ export default function LeadFunnelPage() {
     });
   }, [rows, statsRows, showInhouse, statusFilter, sourceFilter, adOnly, search]);
 
+  // Stats/breakdowns above need the full filtered set - only the table
+  // rendering itself is paged, so this never truncates what the numbers say.
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  useEffect(() => { setPage(0); }, [statusFilter, sourceFilter, adOnly, search, showInhouse]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+  const pagedRows = useMemo(
+    () => filteredRows.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
+    [filteredRows, currentPage, pageSize]
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="max-w-6xl mx-auto">
@@ -398,7 +410,7 @@ export default function LeadFunnelPage() {
                       <th className="px-4 py-3">
                         <input
                           type="checkbox"
-                          checked={filteredRows.filter(r => !r.opted_out).length > 0 && filteredRows.filter(r => !r.opted_out).every(r => selectedIds.has(r.id))}
+                          checked={pagedRows.filter(r => !r.opted_out).length > 0 && pagedRows.filter(r => !r.opted_out).every(r => selectedIds.has(r.id))}
                           onChange={toggleSelectAllVisible}
                         />
                       </th>
@@ -411,7 +423,7 @@ export default function LeadFunnelPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRows.map(r => (
+                    {pagedRows.map(r => (
                       <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
                         <td className="px-4 py-3">
                           <input
@@ -468,6 +480,39 @@ export default function LeadFunnelPage() {
                   </tbody>
                 </table>
               </div>
+              {filteredRows.length > 0 && (
+                <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-t border-slate-100">
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <span>
+                      Showing {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, filteredRows.length)} of {filteredRows.length}
+                    </span>
+                    <select
+                      value={pageSize}
+                      onChange={e => { setPageSize(Number(e.target.value)); setPage(0); }}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs outline-none"
+                    >
+                      {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPage(p => Math.max(0, p - 1))}
+                      disabled={currentPage === 0}
+                      className="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs text-slate-400">Page {currentPage + 1} of {totalPages}</span>
+                    <button
+                      onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={currentPage >= totalPages - 1}
+                      className="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
