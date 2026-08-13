@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
-  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle,
+  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare,
 } from "lucide-react";
 
 type Lead = {
@@ -300,9 +300,14 @@ export default function LeadFunnelPage() {
           <Link href="/admin/dashboard" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
             <ArrowLeft size={14} /> Command Center
           </Link>
-          <Link href="/admin/warm-list" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-            <ClipboardList size={14} /> Import / Review Leads (Warm List)
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link href="/admin/lead-funnel/messages" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <MessageSquare size={14} /> Message Activity
+            </Link>
+            <Link href="/admin/warm-list" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <ClipboardList size={14} /> Import / Review Leads (Warm List)
+            </Link>
+          </div>
         </div>
 
         <div className="mb-6">
