@@ -6,6 +6,8 @@ import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
   Users2, Search, MessageSquare,
 } from "lucide-react";
+import { SortableHeader } from "@/components/admin/SortableHeader";
+import { sortRows, type SortDirection } from "@/lib/tableSort";
 
 type MessageRow = {
   id: string;
@@ -139,20 +141,56 @@ export default function MessageActivityPage() {
     };
   }, [parsedStatsRows]);
 
+  // Parsed once here (kind/label/detail flattened onto the row) so sorting
+  // can reference the derived "Type"/"Detail" columns, not just raw fields -
+  // and the table below reuses this instead of re-parsing per render.
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const source = showInhouse ? rows : statsRows;
-    return source.filter(r => {
-      if (directionFilter !== 'all' && r.direction !== directionFilter) return false;
-      const parsed = parseMessage(r);
-      if (kindFilter !== 'all' && parsed.kind !== kindFilter) return false;
-      if (q) {
-        const haystack = `${r.lead_phone || ''} ${r.lead_name || ''} ${r.body}`.toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-      return true;
-    });
+    return source
+      .filter(r => {
+        if (directionFilter !== 'all' && r.direction !== directionFilter) return false;
+        const parsed = parseMessage(r);
+        if (kindFilter !== 'all' && parsed.kind !== kindFilter) return false;
+        if (q) {
+          const haystack = `${r.lead_phone || ''} ${r.lead_name || ''} ${r.body}`.toLowerCase();
+          if (!haystack.includes(q)) return false;
+        }
+        return true;
+      })
+      .map(r => {
+        const parsed = parseMessage(r);
+        return {
+          ...r,
+          _kind: KIND_LABEL[parsed.kind] || parsed.kind,
+          _label: parsed.label,
+          _detail: 'detail' in parsed ? parsed.detail : undefined,
+          _ok: 'status' in parsed ? parsed.status === 'delivered' : true,
+        };
+      });
   }, [rows, statsRows, showInhouse, directionFilter, kindFilter, search]);
+
+  const [sortColumn, setSortColumn] = useState<string | null>('created_at');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  function handleSort(column: string) {
+    if (sortColumn === column) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  }
+  const sortedRows = useMemo(() => sortRows(filteredRows, sortColumn, sortDirection), [filteredRows, sortColumn, sortDirection]);
+
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, search, showInhouse]);
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+  const pagedRows = useMemo(
+    () => sortedRows.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
+    [sortedRows, currentPage, pageSize]
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -226,51 +264,80 @@ export default function MessageActivityPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">
-                      <th className="px-4 py-3">Lead</th>
-                      <th className="px-4 py-3">Direction</th>
-                      <th className="px-4 py-3">Type</th>
-                      <th className="px-4 py-3">Detail</th>
-                      <th className="px-4 py-3">When</th>
+                      <SortableHeader label="Lead" column="lead_name" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Direction" column="direction" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Type" column="_kind" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Detail" column="_label" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="When" column="created_at" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRows.map(r => {
-                      const parsed = parseMessage(r);
-                      const isOk = 'status' in parsed ? parsed.status === 'delivered' : true;
-                      return (
-                        <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
-                          <td className="px-4 py-3">
-                            <div className="font-bold text-slate-800">{r.lead_name || '(no name)'}</div>
-                            <div className="text-xs text-slate-400">+{r.lead_phone}</div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${r.direction === 'outbound' ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-600'}`}>
-                              {r.direction}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${isOk ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                              {KIND_LABEL[parsed.kind] || parsed.kind}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-slate-600">
-                            {parsed.kind === 'text' ? <span className="line-clamp-2">{parsed.label}</span> : parsed.label}
-                            {'detail' in parsed && parsed.detail && (
-                              <div className="text-[11px] text-slate-400 mt-0.5">{parsed.detail}</div>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
-                            {r.created_at ? new Date(r.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {pagedRows.map(r => (
+                      <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                        <td className="px-4 py-3">
+                          <div className="font-bold text-slate-800">{r.lead_name || '(no name)'}</div>
+                          <div className="text-xs text-slate-400">+{r.lead_phone}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${r.direction === 'outbound' ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-600'}`}>
+                            {r.direction}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${r._ok ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                            {r._kind}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          <span className="line-clamp-2">{r._label}</span>
+                          {r._detail && (
+                            <div className="text-[11px] text-slate-400 mt-0.5">{r._detail}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
+                          {r.created_at ? new Date(r.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
+                        </td>
+                      </tr>
+                    ))}
                     {filteredRows.length === 0 && (
                       <tr><td colSpan={5} className="px-4 py-16 text-center text-slate-400 text-sm">No messages match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>
               </div>
+              {filteredRows.length > 0 && (
+                <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-t border-slate-100">
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <span>
+                      Showing {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, filteredRows.length)} of {filteredRows.length}
+                    </span>
+                    <select
+                      value={pageSize}
+                      onChange={e => { setPageSize(Number(e.target.value)); setPage(0); }}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs outline-none"
+                    >
+                      {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPage(p => Math.max(0, p - 1))}
+                      disabled={currentPage === 0}
+                      className="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs text-slate-400">Page {currentPage + 1} of {totalPages}</span>
+                    <button
+                      onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={currentPage >= totalPages - 1}
+                      className="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}

@@ -6,6 +6,8 @@ import {
   Loader2, ArrowLeft, Search, Clock, MessageSquare, Users,
 } from "lucide-react";
 import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS } from "@/lib/funnelStages";
+import { SortableHeader } from "@/components/admin/SortableHeader";
+import { sortRows, type SortDirection } from "@/lib/tableSort";
 
 type LeadStageRow = {
   id: string;
@@ -94,8 +96,33 @@ export default function FunnelStagesPage() {
       if (stageFilter !== 'all' && l.status !== stageFilter) return false;
       if (q && !`${l.phone} ${l.name || ''}`.toLowerCase().includes(q)) return false;
       return true;
-    }).sort((a, b) => b.daysInStage - a.daysInStage);
+    });
   }, [leads, statsLeads, showInhouse, stageFilter, search]);
+
+  // Longest-stuck-first by default - same intent as the old hardcoded sort,
+  // now just the default state of the same sortColumn/sortDirection any
+  // column header can be clicked to change.
+  const [sortColumn, setSortColumn] = useState<string | null>('daysInStage');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  function handleSort(column: string) {
+    if (sortColumn === column) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  }
+  const sortedLeads = useMemo(() => sortRows(filteredLeads, sortColumn, sortDirection), [filteredLeads, sortColumn, sortDirection]);
+
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  useEffect(() => { setPage(0); }, [stageFilter, search, showInhouse]);
+  const totalPages = Math.max(1, Math.ceil(sortedLeads.length / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+  const pagedLeads = useMemo(
+    () => sortedLeads.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
+    [sortedLeads, currentPage, pageSize]
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -162,14 +189,14 @@ export default function FunnelStagesPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">
-                      <th className="px-4 py-3">Lead</th>
-                      <th className="px-4 py-3">Stage</th>
-                      <th className="px-4 py-3">Time in Stage</th>
-                      <th className="px-4 py-3">Messages in Stage</th>
+                      <SortableHeader label="Lead" column="name" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Stage" column="status" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Time in Stage" column="daysInStage" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Messages in Stage" column="messagesInStage" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredLeads.map(l => (
+                    {pagedLeads.map(l => (
                       <tr key={l.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
                         <td className="px-4 py-3">
                           <div className="font-bold text-slate-800">{l.name || '(no name)'}</div>
@@ -196,6 +223,39 @@ export default function FunnelStagesPage() {
                   </tbody>
                 </table>
               </div>
+              {filteredLeads.length > 0 && (
+                <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-t border-slate-100">
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <span>
+                      Showing {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, filteredLeads.length)} of {filteredLeads.length}
+                    </span>
+                    <select
+                      value={pageSize}
+                      onChange={e => { setPageSize(Number(e.target.value)); setPage(0); }}
+                      className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs outline-none"
+                    >
+                      {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPage(p => Math.max(0, p - 1))}
+                      disabled={currentPage === 0}
+                      className="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs text-slate-400">Page {currentPage + 1} of {totalPages}</span>
+                    <button
+                      onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={currentPage >= totalPages - 1}
+                      className="px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}

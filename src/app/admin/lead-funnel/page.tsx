@@ -7,6 +7,8 @@ import {
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
   Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch,
 } from "lucide-react";
+import { SortableHeader } from "@/components/admin/SortableHeader";
+import { sortRows, type SortDirection } from "@/lib/tableSort";
 
 type Lead = {
   id: string;
@@ -295,16 +297,28 @@ export default function LeadFunnelPage() {
     });
   }, [rows, statsRows, showInhouse, statusFilter, sourceFilter, adOnly, search]);
 
+  const [sortColumn, setSortColumn] = useState<string | null>('created_at');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  function handleSort(column: string) {
+    if (sortColumn === column) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  }
+  const sortedRows = useMemo(() => sortRows(filteredRows, sortColumn, sortDirection), [filteredRows, sortColumn, sortDirection]);
+
   // Stats/breakdowns above need the full filtered set - only the table
   // rendering itself is paged, so this never truncates what the numbers say.
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
   useEffect(() => { setPage(0); }, [statusFilter, sourceFilter, adOnly, search, showInhouse]);
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
   const pagedRows = useMemo(
-    () => filteredRows.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
-    [filteredRows, currentPage, pageSize]
+    () => sortedRows.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
+    [sortedRows, currentPage, pageSize]
   );
 
   return (
@@ -414,11 +428,11 @@ export default function LeadFunnelPage() {
                           onChange={toggleSelectAllVisible}
                         />
                       </th>
-                      <th className="px-4 py-3">Lead</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3">Source</th>
+                      <SortableHeader label="Lead" column="name" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Status" column="status" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Source" column="source" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <th className="px-4 py-3">Tags</th>
-                      <th className="px-4 py-3">Created</th>
+                      <SortableHeader label="Created" column="created_at" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <th className="px-4 py-3">Inhouse</th>
                     </tr>
                   </thead>
