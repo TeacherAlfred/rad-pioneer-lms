@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
-  MessageCircleWarning, Megaphone, Search,
+  MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
 } from "lucide-react";
 
 type Lead = {
@@ -49,6 +49,15 @@ function isToday(iso: string | null | undefined) {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }
 
+// Test/staff/teacher leads - kept in the database on purpose (for testing
+// the funnel itself) but excluded from every stat below so they don't
+// skew real lead numbers. Reuses the existing tags[] column rather than a
+// new schema field, same as any other tag (e.g. "Irene Primary").
+const INHOUSE_TAG = 'Inhouse';
+function isInhouse(lead: Lead) {
+  return (lead.tags || []).some(t => t.toLowerCase() === INHOUSE_TAG.toLowerCase());
+}
+
 export default function LeadFunnelPage() {
   const [rows, setRows] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,6 +66,27 @@ export default function LeadFunnelPage() {
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [adOnly, setAdOnly] = useState(false);
   const [search, setSearch] = useState('');
+  const [showInhouse, setShowInhouse] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  async function toggleInhouse(lead: Lead) {
+    const currentTags = lead.tags || [];
+    const newTags = isInhouse(lead)
+      ? currentTags.filter(t => t.toLowerCase() !== INHOUSE_TAG.toLowerCase())
+      : [...currentTags, INHOUSE_TAG];
+
+    setSavingId(lead.id);
+    setRows(prev => prev.map(r => r.id === lead.id ? { ...r, tags: newTags } : r));
+    try {
+      await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: lead.id, tags: newTags }),
+      });
+    } finally {
+      setSavingId(null);
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -73,19 +103,24 @@ export default function LeadFunnelPage() {
     })();
   }, []);
 
+  // Every stat below is computed off statsRows (inhouse leads excluded) -
+  // the table listing is the only thing the showInhouse toggle affects.
+  const statsRows = useMemo(() => rows.filter(r => !isInhouse(r)), [rows]);
+  const inhouseCount = rows.length - statsRows.length;
+
   const stats = useMemo(() => {
-    const total = rows.length;
-    const newToday = rows.filter(r => isToday(r.created_at)).length;
-    const newThisWeek = rows.filter(r => isWithinDays(r.created_at, 7)).length;
-    const needsHuman = rows.filter(r => r.status === 'needs_human').length;
-    const optedOut = rows.filter(r => r.opted_out).length;
-    const fromAds = rows.filter(r => r.ad_id).length;
+    const total = statsRows.length;
+    const newToday = statsRows.filter(r => isToday(r.created_at)).length;
+    const newThisWeek = statsRows.filter(r => isWithinDays(r.created_at, 7)).length;
+    const needsHuman = statsRows.filter(r => r.status === 'needs_human').length;
+    const optedOut = statsRows.filter(r => r.opted_out).length;
+    const fromAds = statsRows.filter(r => r.ad_id).length;
 
     const byStatus: Record<string, number> = {};
     const bySource: Record<string, number> = {};
     const byAd: Record<string, number> = {};
 
-    for (const r of rows) {
+    for (const r of statsRows) {
       const s = r.status || 'unknown';
       byStatus[s] = (byStatus[s] || 0) + 1;
 
@@ -99,14 +134,15 @@ export default function LeadFunnelPage() {
     }
 
     return { total, newToday, newThisWeek, needsHuman, optedOut, fromAds, byStatus, bySource, byAd };
-  }, [rows]);
+  }, [statsRows]);
 
   const statusOptions = useMemo(() => Array.from(new Set(rows.map(r => r.status || 'unknown'))).sort(), [rows]);
   const sourceOptions = useMemo(() => Array.from(new Set(rows.map(r => r.source || 'organic / direct'))).sort(), [rows]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter(r => {
+    const source = showInhouse ? rows : statsRows;
+    return source.filter(r => {
       if (statusFilter !== 'all' && (r.status || 'unknown') !== statusFilter) return false;
       if (sourceFilter !== 'all' && (r.source || 'organic / direct') !== sourceFilter) return false;
       if (adOnly && !r.ad_id) return false;
@@ -116,14 +152,19 @@ export default function LeadFunnelPage() {
       }
       return true;
     });
-  }, [rows, statusFilter, sourceFilter, adOnly, search]);
+  }, [rows, statsRows, showInhouse, statusFilter, sourceFilter, adOnly, search]);
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="max-w-6xl mx-auto">
-        <Link href="/admin/dashboard" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 mb-4">
-          <ArrowLeft size={14} /> Command Center
-        </Link>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+          <Link href="/admin/dashboard" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+            <ArrowLeft size={14} /> Command Center
+          </Link>
+          <Link href="/admin/warm-list" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+            <ClipboardList size={14} /> Import / Review Leads (Warm List)
+          </Link>
+        </div>
 
         <div className="mb-6">
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Lead Funnel</h1>
@@ -179,7 +220,10 @@ export default function LeadFunnelPage() {
               <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
                 <input type="checkbox" checked={adOnly} onChange={e => setAdOnly(e.target.checked)} /> Ad-attributed only
               </label>
-              <span className="text-xs text-slate-400 ml-auto">{filteredRows.length} of {rows.length}</span>
+              <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
+                <input type="checkbox" checked={showInhouse} onChange={e => setShowInhouse(e.target.checked)} /> Show inhouse ({inhouseCount})
+              </label>
+              <span className="text-xs text-slate-400 ml-auto">{filteredRows.length} of {showInhouse ? rows.length : statsRows.length}</span>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -192,6 +236,7 @@ export default function LeadFunnelPage() {
                       <th className="px-4 py-3">Source</th>
                       <th className="px-4 py-3">Tags</th>
                       <th className="px-4 py-3">Created</th>
+                      <th className="px-4 py-3">Inhouse</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -225,10 +270,20 @@ export default function LeadFunnelPage() {
                         <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
                           {r.created_at ? new Date(r.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
                         </td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => toggleInhouse(r)}
+                            disabled={savingId === r.id}
+                            title="Toggle Inhouse - excludes this lead from all stats above, keeps it in the database"
+                            className={`inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full border transition-colors disabled:opacity-50 ${isInhouse(r) ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-400 border-slate-200 hover:border-slate-400'}`}
+                          >
+                            <Home size={11} /> {savingId === r.id ? '...' : isInhouse(r) ? 'Inhouse' : 'Mark'}
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {filteredRows.length === 0 && (
-                      <tr><td colSpan={5} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
+                      <tr><td colSpan={6} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>

@@ -17,3 +17,26 @@ export async function GET() {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ rows: data });
 }
+
+// Tags-only edit - currently just used to toggle the "Inhouse" tag (test/staff/
+// teacher leads) so they can stay in the database for testing without
+// polluting the funnel stats, which filter on that tag client-side.
+export async function PATCH(req: Request) {
+  try {
+    const { id, tags } = await req.json();
+    if (!id || !Array.isArray(tags)) {
+      return NextResponse.json({ error: 'id and tags[] are required' }, { status: 400 });
+    }
+    const { data, error } = await supabaseAdmin
+      .from('leads')
+      .update({ tags })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return NextResponse.json({ row: data });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
