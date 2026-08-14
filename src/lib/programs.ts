@@ -14,6 +14,8 @@ export const PROGRAM_TYPES = [
 export const AUDIENCES = ['student', 'guardian', 'teacher', 'family'];
 export const PROGRAM_LEVELS = ['Foundation', 'Intermediate', 'Advanced'];
 
+export const VENUE_TYPES = ['physical', 'online'];
+
 export const SESSION_STATUSES = ['draft', 'selling', 'confirmed', 'delivered', 'cancelled'];
 export const ENROLMENT_STATUSES = ['interested', 'registered', 'active', 'completed', 'withdrawn'];
 export const PASS_CREDIT_STATUSES = ['unredeemed', 'redeemed'];

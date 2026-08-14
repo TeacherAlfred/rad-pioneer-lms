@@ -18,7 +18,7 @@ export async function GET(req: Request) {
 
   let query = supabaseAdmin
     .from('sessions')
-    .select('*, programs(id, code, name), enrolments(id)')
+    .select('*, programs(id, code, name), venues(id, name, type, address, latitude, longitude, maps_url), enrolments(id)')
     .order('starts_at', { ascending: true, nullsFirst: false });
   if (programmeId) query = query.eq('programme_id', programmeId);
 
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const {
       programmeId, parentSessionId, starts_at, ends_at, sales_open_at, sales_close_at,
-      early_bird_ends_at, venue, capacity, min_viable_enrolments, go_no_go_at,
+      early_bird_ends_at, venue, venueId, capacity, min_viable_enrolments, go_no_go_at,
       status, price, currency, notes,
     } = body;
 
@@ -65,6 +65,7 @@ export async function POST(req: Request) {
         sales_close_at: sales_close_at || null,
         early_bird_ends_at: early_bird_ends_at || null,
         venue: venue || null,
+        venue_id: venueId || null,
         capacity: capacity === '' || capacity === undefined ? null : Number(capacity),
         min_viable_enrolments: min_viable_enrolments === '' || min_viable_enrolments === undefined ? null : Number(min_viable_enrolments),
         go_no_go_at: go_no_go_at || null,
@@ -73,7 +74,7 @@ export async function POST(req: Request) {
         currency: currency || 'ZAR',
         notes: notes || null,
       }])
-      .select('*, programs(id, code, name)')
+      .select('*, programs(id, code, name), venues(id, name, type, address, latitude, longitude, maps_url)')
       .single();
     if (error) throw error;
     return NextResponse.json({ row: data });
@@ -99,6 +100,7 @@ export async function PATCH(req: Request) {
     const update: Record<string, any> = {};
     for (const f of fields) if (body[f] !== undefined) update[f] = body[f] || null;
     for (const f of numericFields) if (body[f] !== undefined) update[f] = body[f] === '' ? null : Number(body[f]);
+    if (body.venueId !== undefined) update.venue_id = body.venueId || null;
     if (Object.keys(update).length === 0) {
       return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
     }
@@ -107,7 +109,7 @@ export async function PATCH(req: Request) {
       .from('sessions')
       .update(update)
       .eq('id', id)
-      .select('*, programs(id, code, name)')
+      .select('*, programs(id, code, name), venues(id, name, type, address, latitude, longitude, maps_url)')
       .single();
     if (error) throw error;
     return NextResponse.json({ row: data });

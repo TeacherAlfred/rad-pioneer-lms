@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Baby, ShoppingBag, Plus, X, Pencil, Trash2, Users2,
-  Calendar, MapPin, CalendarClock, Layers,
+  Calendar, MapPin, CalendarClock, Layers, Globe, ExternalLink,
 } from "lucide-react";
-import { formatLabel, PROGRAM_TYPES, AUDIENCES, PROGRAM_LEVELS, SESSION_STATUSES } from "@/lib/programs";
+import { formatLabel, PROGRAM_TYPES, AUDIENCES, PROGRAM_LEVELS, SESSION_STATUSES, VENUE_TYPES } from "@/lib/programs";
 
 type PrereqRef = { id: string; code: string; name: string } | null;
 
@@ -31,6 +31,18 @@ type Programme = {
   session_count: number;
 };
 
+type Venue = {
+  id: string;
+  name: string;
+  type: string;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  maps_url: string | null;
+  notes: string | null;
+  active: boolean;
+};
+
 type Session = {
   id: string;
   programme_id: string;
@@ -41,6 +53,7 @@ type Session = {
   sales_close_at: string | null;
   early_bird_ends_at: string | null;
   venue: string | null;
+  venue_id: string | null;
   capacity: number | null;
   min_viable_enrolments: number | null;
   go_no_go_at: string | null;
@@ -49,6 +62,7 @@ type Session = {
   currency: string;
   notes: string | null;
   programs: { id: string; code: string; name: string } | null;
+  venues: Venue | null;
   enrolment_count: number;
 };
 
@@ -67,9 +81,11 @@ const emptyProgrammeForm = {
 };
 
 const emptySessionForm = {
-  starts_at: '', ends_at: '', sales_open_at: '', sales_close_at: '', venue: '',
+  starts_at: '', ends_at: '', sales_open_at: '', sales_close_at: '', venueId: '',
   capacity: '', min_viable_enrolments: '', go_no_go_at: '', status: 'draft', price: '', notes: '',
 };
+
+const emptyVenueForm = { name: '', type: 'physical', address: '', maps_url: '', notes: '' };
 
 const TYPE_STYLES: Record<string, string> = {
   workshop: 'bg-blue-50 text-blue-600',
@@ -99,6 +115,7 @@ function fmtDate(iso: string | null) {
 export default function ProgramsPage() {
   const [programmes, setProgrammes] = useState<Programme[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -109,15 +126,18 @@ export default function ProgramsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [progRes, sessRes] = await Promise.all([
+      const [progRes, sessRes, venueRes] = await Promise.all([
         fetch('/admin/api/programs'),
         fetch('/admin/api/sessions'),
+        fetch('/admin/api/venues'),
       ]);
       const progData = await progRes.json();
       if (!progRes.ok) throw new Error(progData.error || 'Failed to load programmes');
       const sessData = await sessRes.json();
+      const venueData = await venueRes.json();
       setProgrammes(progData.rows || []);
       setSessions(sessData.rows || []);
+      setVenues(venueData.rows || []);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -251,6 +271,50 @@ export default function ProgramsPage() {
     setSessionError(null);
   }
 
+  // --- Quick "add venue" modal, opened from inside the session form ---
+  const [showVenueModal, setShowVenueModal] = useState(false);
+  const [venueForm, setVenueForm] = useState(emptyVenueForm);
+  const [venueSaving, setVenueSaving] = useState(false);
+  const [venueError, setVenueError] = useState<string | null>(null);
+
+  function openAddVenue() {
+    setVenueForm(emptyVenueForm);
+    setVenueError(null);
+    setShowVenueModal(true);
+  }
+
+  async function saveVenue() {
+    if (!venueForm.name.trim()) {
+      setVenueError('Name is required.');
+      return;
+    }
+    setVenueSaving(true);
+    setVenueError(null);
+    try {
+      const res = await fetch('/admin/api/venues', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: venueForm.name.trim(),
+          type: venueForm.type,
+          address: venueForm.address.trim() || null,
+          maps_url: venueForm.maps_url.trim() || null,
+          notes: venueForm.notes.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add venue');
+      const venueRes = await fetch('/admin/api/venues');
+      setVenues((await venueRes.json()).rows || []);
+      setSessionForm(f => ({ ...f, venueId: data.row.id }));
+      setShowVenueModal(false);
+    } catch (err: any) {
+      setVenueError(err.message);
+    } finally {
+      setVenueSaving(false);
+    }
+  }
+
   const sessionsForManaging = useMemo(
     () => managingProg ? sessions.filter(s => s.programme_id === managingProg.id).sort((a, b) => (a.starts_at || '').localeCompare(b.starts_at || '')) : [],
     [sessions, managingProg]
@@ -270,7 +334,7 @@ export default function ProgramsPage() {
           ends_at: sessionForm.ends_at || null,
           sales_open_at: sessionForm.sales_open_at || null,
           sales_close_at: sessionForm.sales_close_at || null,
-          venue: sessionForm.venue.trim() || null,
+          venueId: sessionForm.venueId || null,
           capacity: sessionForm.capacity,
           min_viable_enrolments: sessionForm.min_viable_enrolments,
           go_no_go_at: sessionForm.go_no_go_at || null,
@@ -605,7 +669,18 @@ export default function ProgramsPage() {
                       {s.ends_at && <span className="text-slate-400">→ {fmtDate(s.ends_at)}</span>}
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400 flex-wrap">
-                      {s.venue && <span className="flex items-center gap-1"><MapPin size={11} /> {s.venue}</span>}
+                      {s.venues && (
+                        s.venues.type === 'online' ? (
+                          <span className="flex items-center gap-1"><Globe size={11} /> {s.venues.name}</span>
+                        ) : s.venues.maps_url ? (
+                          <a href={s.venues.maps_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-slate-600 hover:underline">
+                            <MapPin size={11} /> {s.venues.name} <ExternalLink size={9} />
+                          </a>
+                        ) : (
+                          <span className="flex items-center gap-1"><MapPin size={11} /> {s.venues.name}</span>
+                        )
+                      )}
+                      {!s.venues && s.venue && <span className="flex items-center gap-1"><MapPin size={11} /> {s.venue}</span>}
                       {s.capacity && <span>{s.enrolment_count}/{s.capacity} seats</span>}
                       {s.price !== null && <span>{s.currency} {s.price}</span>}
                       {s.sales_close_at && <span>Sales close {fmtDate(s.sales_close_at)}</span>}
@@ -643,8 +718,15 @@ export default function ProgramsPage() {
                   <p className="text-[10px] text-slate-400 mt-0.5">Must be ≥48h before start - a later booking can't complete the deposit flow.</p>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Venue</label>
-                  <input value={sessionForm.venue} onChange={e => setSessionForm(f => ({ ...f, venue: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400">Venue</label>
+                    <button type="button" onClick={openAddVenue} className="text-[10px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-700">+ Add</button>
+                  </div>
+                  <select value={sessionForm.venueId} onChange={e => setSessionForm(f => ({ ...f, venueId: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-slate-400">
+                    <option value="">Select a venue...</option>
+                    {venues.filter(v => v.type === 'online').map(v => <option key={v.id} value={v.id}>🌐 {v.name}</option>)}
+                    {venues.filter(v => v.type === 'physical').map(v => <option key={v.id} value={v.id}>📍 {v.name}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Capacity</label>
@@ -669,6 +751,55 @@ export default function ProgramsPage() {
               <button onClick={addSession} disabled={sessionSaving} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">
                 {sessionSaving ? 'Adding...' : 'Add Session'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVenueModal && (
+        <div className="fixed inset-0 bg-slate-900/25 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-black/5 w-full max-w-sm">
+            <div className="flex items-center justify-between px-6 pt-6 pb-1">
+              <h3 className="text-[16px] font-semibold text-slate-900">Add Venue</h3>
+              <button onClick={() => setShowVenueModal(false)} className="h-7 w-7 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"><X size={13} /></button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={LABEL_CLS}>Name</label>
+                  <input placeholder="e.g. Menlyn Square" value={venueForm.name} onChange={e => setVenueForm(f => ({ ...f, name: e.target.value }))} className={INPUT_CLS} />
+                </div>
+                <div>
+                  <label className={LABEL_CLS}>Type</label>
+                  <select value={venueForm.type} onChange={e => setVenueForm(f => ({ ...f, type: e.target.value }))} className={INPUT_CLS}>
+                    {VENUE_TYPES.map(t => <option key={t} value={t}>{formatLabel(t)}</option>)}
+                  </select>
+                </div>
+              </div>
+              {venueForm.type === 'physical' && (
+                <>
+                  <div>
+                    <label className={LABEL_CLS}>Address</label>
+                    <input value={venueForm.address} onChange={e => setVenueForm(f => ({ ...f, address: e.target.value }))} className={INPUT_CLS} />
+                  </div>
+                  <div>
+                    <label className={LABEL_CLS}>Google Maps Link</label>
+                    <input placeholder="https://maps.app.goo.gl/..." value={venueForm.maps_url} onChange={e => setVenueForm(f => ({ ...f, maps_url: e.target.value }))} className={INPUT_CLS} />
+                    <p className={HINT_CLS}>Paste a share link - GPS coordinates are pulled from it automatically.</p>
+                  </div>
+                </>
+              )}
+              <div>
+                <label className={LABEL_CLS}>Notes</label>
+                <input value={venueForm.notes} onChange={e => setVenueForm(f => ({ ...f, notes: e.target.value }))} className={INPUT_CLS} />
+              </div>
+              {venueError && <div className="bg-rose-50 text-rose-600 text-[13px] rounded-xl px-4 py-2.5">{venueError}</div>}
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => setShowVenueModal(false)} className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors duration-150">Cancel</button>
+                <button onClick={saveVenue} disabled={venueSaving} className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 transition-colors duration-150">
+                  {venueSaving ? 'Saving…' : 'Add Venue'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
