@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Loader2, ArrowLeft, Baby, Users2, Phone, GraduationCap, Search, X, Plus,
-  Trash2, Pencil, BookOpen, Link as LinkIcon, ShoppingBag,
+  Trash2, Pencil, BookOpen, Link as LinkIcon, ShoppingBag, CalendarClock,
 } from "lucide-react";
 import { formatLabel, ENROLMENT_STATUSES } from "@/lib/programs";
 
@@ -13,7 +13,7 @@ type LeadRef = { id: string; name: string | null; phone: string };
 type Guardian = { id: string; relationship: string | null; lead_id: string; leads: LeadRef | null };
 type ProgramRef = { id: string; code: string; name: string; type: string };
 type SessionRef = { id: string; starts_at: string | null; programme_id: string; programs: ProgramRef | null };
-type Enrolment = { id: string; status: string; notes: string | null; session_id: string; sessions: SessionRef | null };
+type Enrolment = { id: string; status: string; notes: string | null; attended: boolean | null; session_id: string; sessions: SessionRef | null };
 
 type Kid = {
   id: string;
@@ -307,6 +307,9 @@ function KidsPageInner() {
             <Link href="/admin/programs" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <BookOpen size={14} /> Programmes
             </Link>
+            <Link href="/admin/sessions" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <CalendarClock size={14} /> Upcoming Sessions
+            </Link>
             <Link href="/admin/commerce" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <ShoppingBag size={14} /> Commerce
             </Link>
@@ -415,6 +418,9 @@ function KidsPageInner() {
                                 <span className="text-xs text-slate-500 truncate max-w-[130px]" title={e.sessions?.programs?.name}>
                                   {e.sessions?.programs?.code}{e.sessions?.starts_at ? ` · ${new Date(e.sessions.starts_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}` : ''}
                                 </span>
+                                {e.attended !== null && (
+                                  <span title={e.attended ? 'Attended' : 'Absent'} className={`h-1.5 w-1.5 rounded-full shrink-0 ${e.attended ? 'bg-emerald-500' : 'bg-rose-400'}`} />
+                                )}
                                 <button onClick={() => removeEnrollment(e.id)} title="Remove enrollment" className="text-slate-300 hover:text-rose-500">
                                   <X size={10} />
                                 </button>

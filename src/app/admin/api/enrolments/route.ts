@@ -18,7 +18,7 @@ export async function GET(req: Request) {
 
   let query = supabaseAdmin
     .from('enrolments')
-    .select('*, kids(id, name), sessions(id, starts_at, programme_id, programs(id, code, name))')
+    .select('*, kids(id, name, phone), sessions(id, starts_at, programme_id, programs(id, code, name))')
     .order('created_at', { ascending: false });
   if (studentId) query = query.eq('student_id', studentId);
   if (sessionId) query = query.eq('session_id', sessionId);
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
-    const { id, status, notes } = await req.json();
+    const { id, status, notes, attended } = await req.json();
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
     if (status !== undefined && !ENROLMENT_STATUSES.includes(status)) {
       return NextResponse.json({ error: `status must be one of: ${ENROLMENT_STATUSES.join(', ')}` }, { status: 400 });
@@ -59,6 +59,13 @@ export async function PATCH(req: Request) {
     const update: Record<string, any> = {};
     if (status !== undefined) update.status = status;
     if (notes !== undefined) update.notes = notes || null;
+    // attended is a tri-state (true/false/null) - marking it, in either
+    // direction, timestamps when it was recorded; clearing it back to
+    // "unmarked" clears the timestamp too.
+    if (attended !== undefined) {
+      update.attended = attended;
+      update.attended_at = attended === null ? null : new Date().toISOString();
+    }
     if (Object.keys(update).length === 0) {
       return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
     }

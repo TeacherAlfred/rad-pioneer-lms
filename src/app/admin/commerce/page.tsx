@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Baby, Users2, BookOpen, Plus, X, Trash2,
-  Ticket, Package, Receipt, Search,
+  Ticket, Package, Receipt, Search, CalendarClock,
 } from "lucide-react";
 import { formatLabel, ORDER_STATUSES } from "@/lib/programs";
 
@@ -24,7 +24,10 @@ type Order = {
   leads: LeadRef | null; bundles: { id: string; name: string } | null;
 };
 
-type PassCredit = { id: string; status: string; enrolment_id: string | null; redeemed_at: string | null };
+type PassCredit = {
+  id: string; status: string; enrolment_id: string | null; redeemed_at: string | null;
+  enrolments: { id: string; student_id: string; session_id: string; kids: { id: string; name: string } | null; sessions: SessionRef | null } | null;
+};
 type Pass = {
   id: string; guardian_lead_id: string; credits_total: number; credits_used: number;
   qualifying_location: string | null; purchased_at: string; expires_at: string; first_session_id: string;
@@ -95,6 +98,9 @@ export default function CommercePage() {
             </Link>
             <Link href="/admin/programs" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <BookOpen size={14} /> Programmes
+            </Link>
+            <Link href="/admin/sessions" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <CalendarClock size={14} /> Upcoming Sessions
             </Link>
           </div>
         </div>
@@ -451,6 +457,47 @@ function PassesTab({ passes, leads, sessions, kids, onChange }: { passes: Pass[]
     }
   }
 
+  // --- Redeem an unredeemed credit ---
+  const [redeeming, setRedeeming] = useState<{ passId: string; creditId: string } | null>(null);
+  const [redeemStudentId, setRedeemStudentId] = useState('');
+  const [redeemSessionId, setRedeemSessionId] = useState('');
+  const [redeemSaving, setRedeemSaving] = useState(false);
+  const [redeemError, setRedeemError] = useState<string | null>(null);
+
+  function openRedeem(passId: string, creditId: string) {
+    setRedeeming({ passId, creditId });
+    setRedeemStudentId('');
+    setRedeemSessionId('');
+    setRedeemError(null);
+  }
+
+  async function redeem() {
+    if (!redeeming || !redeemStudentId || !redeemSessionId) {
+      setRedeemError('Pick who this credit is for and which session.');
+      return;
+    }
+    setRedeemSaving(true);
+    setRedeemError(null);
+    try {
+      const res = await fetch('/admin/api/passes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          passId: redeeming.passId, redeemCreditId: redeeming.creditId,
+          studentId: redeemStudentId, sessionId: redeemSessionId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to redeem credit');
+      onChange();
+      setRedeeming(null);
+    } catch (err: any) {
+      setRedeemError(err.message);
+    } finally {
+      setRedeemSaving(false);
+    }
+  }
+
   return (
     <div>
       <button onClick={() => setShowAdd(true)} className="mb-4 flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800">
@@ -469,11 +516,28 @@ function PassesTab({ passes, leads, sessions, kids, onChange }: { passes: Pass[]
               {p.qualifying_location && <span>{p.qualifying_location}</span>}
               <span>Expires {fmtDate(p.expires_at)}</span>
             </div>
-            <div className="mt-2 flex flex-wrap gap-1">
+            <div className="mt-2 space-y-1">
               {p.pass_credits.map(c => (
-                <span key={c.id} className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${c.status === 'redeemed' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-                  {c.status}
-                </span>
+                <div key={c.id} className="flex items-center justify-between gap-2 text-xs">
+                  {c.status === 'redeemed' ? (
+                    <span className="flex items-center gap-1.5 text-slate-500 truncate">
+                      <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 shrink-0">Redeemed</span>
+                      <span className="truncate">
+                        {c.enrolments?.kids?.name || '?'} · {c.enrolments?.sessions?.programs?.code} {fmtDate(c.enrolments?.sessions?.starts_at || null)}
+                      </span>
+                    </span>
+                  ) : (
+                    <>
+                      <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-100 text-slate-400">Unredeemed</span>
+                      <button
+                        onClick={() => openRedeem(p.id, c.id)}
+                        className="text-[10px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-700"
+                      >
+                        Redeem →
+                      </button>
+                    </>
+                  )}
+                </div>
               ))}
             </div>
           </div>
@@ -540,6 +604,43 @@ function PassesTab({ passes, leads, sessions, kids, onChange }: { passes: Pass[]
               <div className="flex gap-2 pt-1">
                 <button onClick={() => setShowAdd(false)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
                 <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">{saving ? 'Saving...' : 'Add'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {redeeming && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-slate-800">Redeem Credit</h3>
+              <button onClick={() => setRedeeming(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              If the student is already enrolled on the session you pick, this attaches the credit to that existing enrolment instead of creating a second one - they won't be double-counted on the roster.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Student</label>
+                <select value={redeemStudentId} onChange={e => setRedeemStudentId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400">
+                  <option value="">Select kid...</option>
+                  {kids.map(k => <option key={k.id} value={k.id}>{k.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Session</label>
+                <select value={redeemSessionId} onChange={e => setRedeemSessionId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400">
+                  <option value="">Select session...</option>
+                  {sessions.map(s => <option key={s.id} value={s.id}>{s.programs?.code} · {fmtDate(s.starts_at)}</option>)}
+                </select>
+              </div>
+              {redeemError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3">{redeemError}</div>}
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => setRedeeming(null)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
+                <button onClick={redeem} disabled={redeemSaving} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">
+                  {redeemSaving ? 'Redeeming...' : 'Redeem'}
+                </button>
               </div>
             </div>
           </div>

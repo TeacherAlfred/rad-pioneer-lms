@@ -18,15 +18,23 @@ export async function GET(req: Request) {
 
   let query = supabaseAdmin
     .from('sessions')
-    .select('*, programs(id, code, name), venues(id, name, type, address, latitude, longitude, maps_url), enrolments(id)')
+    .select('*, programs(id, code, name), venues(id, name, type, address, latitude, longitude, maps_url), enrolments(id, status, attended, kids(id, name))')
     .order('starts_at', { ascending: true, nullsFirst: false });
   if (programmeId) query = query.eq('programme_id', programmeId);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // enrolled_kids is a light roster preview (name/status/attended only) so
+  // list views like /admin/sessions can render an avatar stack without a
+  // second request per session; the full roster still comes from
+  // /admin/api/enrolments?sessionId= when a session is opened.
   const rows = (data || []).map((r: any) => {
     const { enrolments, ...rest } = r;
-    return { ...rest, enrolment_count: (enrolments || []).length };
+    return {
+      ...rest,
+      enrolment_count: (enrolments || []).length,
+      enrolled_kids: (enrolments || []).map((e: any) => ({ id: e.kids?.id, name: e.kids?.name, status: e.status, attended: e.attended })),
+    };
   });
   return NextResponse.json({ rows });
 }

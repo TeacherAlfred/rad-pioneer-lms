@@ -11,7 +11,7 @@ const supabaseAdmin = createClient(
 const KID_SELECT = `
   *,
   kid_guardians(id, relationship, lead_id, leads(id, name, phone)),
-  enrolments(id, status, notes, session_id, sessions(id, starts_at, programme_id, programs(id, code, name, type)))
+  enrolments(id, status, notes, attended, session_id, sessions(id, starts_at, programme_id, programs(id, code, name, type)))
 `;
 
 // ?leadId= scopes the roster to kids linked to one lead (used by the

@@ -459,6 +459,9 @@ export default function LeadFunnelPage() {
             <Link href="/admin/kids" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <Baby size={14} /> Kids
             </Link>
+            <Link href="/admin/sessions" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <CalendarClock size={14} /> Upcoming Sessions
+            </Link>
           </div>
         </div>
 

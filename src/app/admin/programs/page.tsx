@@ -66,6 +66,15 @@ type Session = {
   enrolment_count: number;
 };
 
+type Enrolment = {
+  id: string;
+  status: string;
+  notes: string | null;
+  attended: boolean | null;
+  attended_at: string | null;
+  kids: { id: string; name: string; phone: string | null } | null;
+};
+
 const LABEL_CLS = "block text-[13px] font-medium text-slate-700 mb-1.5";
 const INPUT_CLS = "w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none transition-all duration-150 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10";
 const HINT_CLS = "text-[12px] text-slate-400 mt-1.5 leading-relaxed";
@@ -110,6 +119,16 @@ const SESSION_STATUS_STYLES: Record<string, string> = {
 function fmtDate(iso: string | null) {
   if (!iso) return null;
   return new Date(iso).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+// datetime-local inputs need "YYYY-MM-DDTHH:mm" in the browser's local
+// time - matches how the Add Session form already sends these straight
+// through without an explicit timezone conversion.
+function toDatetimeLocal(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export default function ProgramsPage() {
@@ -264,9 +283,35 @@ export default function ProgramsPage() {
   const [sessionForm, setSessionForm] = useState(emptySessionForm);
   const [sessionSaving, setSessionSaving] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
 
   function openSessions(p: Programme) {
     setManagingProg(p);
+    setSessionForm(emptySessionForm);
+    setSessionError(null);
+    setEditingSessionId(null);
+  }
+
+  function openEditSession(s: Session) {
+    setEditingSessionId(s.id);
+    setSessionError(null);
+    setSessionForm({
+      starts_at: toDatetimeLocal(s.starts_at),
+      ends_at: toDatetimeLocal(s.ends_at),
+      sales_open_at: toDatetimeLocal(s.sales_open_at),
+      sales_close_at: toDatetimeLocal(s.sales_close_at),
+      venueId: s.venue_id || '',
+      capacity: s.capacity === null ? '' : String(s.capacity),
+      min_viable_enrolments: s.min_viable_enrolments === null ? '' : String(s.min_viable_enrolments),
+      go_no_go_at: toDatetimeLocal(s.go_no_go_at),
+      status: s.status,
+      price: s.price === null ? '' : String(s.price),
+      notes: s.notes || '',
+    });
+  }
+
+  function cancelSessionEdit() {
+    setEditingSessionId(null);
     setSessionForm(emptySessionForm);
     setSessionError(null);
   }
@@ -320,33 +365,69 @@ export default function ProgramsPage() {
     [sessions, managingProg]
   );
 
-  async function addSession() {
+  // --- Roster / attendance modal (per session) ---
+  const [rosterSession, setRosterSession] = useState<Session | null>(null);
+  const [rosterEnrolments, setRosterEnrolments] = useState<Enrolment[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+
+  async function loadRoster(sessionId: string) {
+    setRosterLoading(true);
+    setRosterError(null);
+    try {
+      const res = await fetch(`/admin/api/enrolments?sessionId=${encodeURIComponent(sessionId)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load roster');
+      setRosterEnrolments(data.rows || []);
+    } catch (err: any) {
+      setRosterError(err.message);
+    } finally {
+      setRosterLoading(false);
+    }
+  }
+
+  function openRoster(s: Session) {
+    setRosterSession(s);
+    loadRoster(s.id);
+  }
+
+  async function markAttendance(enrolmentId: string, attended: boolean | null) {
+    setRosterEnrolments(prev => prev.map(e => e.id === enrolmentId ? { ...e, attended, attended_at: attended === null ? null : new Date().toISOString() } : e));
+    await fetch('/admin/api/enrolments', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: enrolmentId, attended }),
+    });
+  }
+
+  async function saveSession() {
     if (!managingProg) return;
     setSessionSaving(true);
     setSessionError(null);
     try {
+      const payload = {
+        starts_at: sessionForm.starts_at || null,
+        ends_at: sessionForm.ends_at || null,
+        sales_open_at: sessionForm.sales_open_at || null,
+        sales_close_at: sessionForm.sales_close_at || null,
+        venueId: sessionForm.venueId || null,
+        capacity: sessionForm.capacity,
+        min_viable_enrolments: sessionForm.min_viable_enrolments,
+        go_no_go_at: sessionForm.go_no_go_at || null,
+        status: sessionForm.status,
+        price: sessionForm.price,
+        notes: sessionForm.notes.trim() || null,
+      };
       const res = await fetch('/admin/api/sessions', {
-        method: 'POST',
+        method: editingSessionId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          programmeId: managingProg.id,
-          starts_at: sessionForm.starts_at || null,
-          ends_at: sessionForm.ends_at || null,
-          sales_open_at: sessionForm.sales_open_at || null,
-          sales_close_at: sessionForm.sales_close_at || null,
-          venueId: sessionForm.venueId || null,
-          capacity: sessionForm.capacity,
-          min_viable_enrolments: sessionForm.min_viable_enrolments,
-          go_no_go_at: sessionForm.go_no_go_at || null,
-          status: sessionForm.status,
-          price: sessionForm.price,
-          notes: sessionForm.notes.trim() || null,
-        }),
+        body: JSON.stringify(editingSessionId ? { id: editingSessionId, ...payload } : { programmeId: managingProg.id, ...payload }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to add session');
+      if (!res.ok) throw new Error(data.error || `Failed to ${editingSessionId ? 'save' : 'add'} session`);
       await load();
       setSessionForm(emptySessionForm);
+      setEditingSessionId(null);
     } catch (err: any) {
       setSessionError(err.message);
     } finally {
@@ -389,6 +470,9 @@ export default function ProgramsPage() {
             </Link>
             <Link href="/admin/kids" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <Baby size={14} /> Kids
+            </Link>
+            <Link href="/admin/sessions" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <CalendarClock size={14} /> Upcoming Sessions
             </Link>
             <Link href="/admin/commerce" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <ShoppingBag size={14} /> Commerce
@@ -687,6 +771,13 @@ export default function ProgramsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => openRoster(s)}
+                      title="View roster / mark attendance"
+                      className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded-lg"
+                    >
+                      <Users2 size={12} /> {s.enrolment_count}
+                    </button>
                     <select
                       value={s.status}
                       onChange={e => updateSessionStatus(s.id, e.target.value)}
@@ -694,6 +785,7 @@ export default function ProgramsPage() {
                     >
                       {SESSION_STATUSES.map(st => <option key={st} value={st}>{formatLabel(st)}</option>)}
                     </select>
+                    <button onClick={() => openEditSession(s)} title="Edit session" className="text-slate-300 hover:text-slate-600"><Pencil size={13} /></button>
                     <button onClick={() => deleteSession(s)} className="text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
                   </div>
                 </div>
@@ -702,7 +794,12 @@ export default function ProgramsPage() {
             </div>
 
             <div className="border-t border-slate-100 pt-4">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Add Session</h4>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">{editingSessionId ? 'Edit Session' : 'Add Session'}</h4>
+                {editingSessionId && (
+                  <button type="button" onClick={cancelSessionEdit} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Cancel edit</button>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Starts</label>
@@ -748,8 +845,8 @@ export default function ProgramsPage() {
                 </div>
               </div>
               {sessionError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3 mb-3">{sessionError}</div>}
-              <button onClick={addSession} disabled={sessionSaving} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">
-                {sessionSaving ? 'Adding...' : 'Add Session'}
+              <button onClick={saveSession} disabled={sessionSaving} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">
+                {sessionSaving ? 'Saving...' : editingSessionId ? 'Save Changes' : 'Add Session'}
               </button>
             </div>
           </div>
@@ -800,6 +897,72 @@ export default function ProgramsPage() {
                   {venueSaving ? 'Saving…' : 'Add Venue'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rosterSession && (
+        <div className="fixed inset-0 bg-slate-900/25 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="flex items-start justify-between px-7 pt-7 pb-4 shrink-0">
+              <div>
+                <h3 className="text-[17px] font-semibold text-slate-900 tracking-tight">Roster</h3>
+                <p className="text-[13px] text-slate-400 mt-0.5">
+                  {rosterSession.programs?.code} · {fmtDate(rosterSession.starts_at) || 'No date set'}
+                </p>
+              </div>
+              <button onClick={() => setRosterSession(null)} className="h-8 w-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500">
+                <X size={15} />
+              </button>
+            </div>
+
+            {!rosterLoading && rosterEnrolments.length > 0 && (
+              <div className="flex items-center gap-4 px-7 pb-4 text-[12px] text-slate-500 shrink-0">
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {rosterEnrolments.filter(e => e.attended === true).length} present</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-400" /> {rosterEnrolments.filter(e => e.attended === false).length} absent</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-300" /> {rosterEnrolments.filter(e => e.attended === null).length} unmarked</span>
+                <span className="ml-auto text-slate-400">{rosterEnrolments.length} enrolled</span>
+              </div>
+            )}
+
+            <div className="overflow-y-auto flex-1 px-7 pb-7">
+              {rosterLoading ? (
+                <div className="py-12 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin" size={18} /></div>
+              ) : rosterError ? (
+                <div className="bg-rose-50 text-rose-600 text-[13px] rounded-xl px-4 py-2.5">{rosterError}</div>
+              ) : rosterEnrolments.length === 0 ? (
+                <p className="text-[13px] text-slate-400 py-6 text-center">No one enrolled on this session yet.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {rosterEnrolments.map(e => (
+                    <div key={e.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-slate-50 last:border-0">
+                      <div className="min-w-0">
+                        <div className="text-[14px] font-medium text-slate-800 truncate">{e.kids?.name || '(unknown)'}</div>
+                        <div className="text-[12px] text-slate-400">{formatLabel(e.status)}{e.kids?.phone ? ` · +${e.kids.phone}` : ''}</div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => markAttendance(e.id, e.attended === true ? null : true)}
+                          className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors duration-150 ${
+                            e.attended === true ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600'
+                          }`}
+                        >
+                          Present
+                        </button>
+                        <button
+                          onClick={() => markAttendance(e.id, e.attended === false ? null : false)}
+                          className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors duration-150 ${
+                            e.attended === false ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-500 hover:bg-rose-50 hover:text-rose-600'
+                          }`}
+                        >
+                          Absent
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
