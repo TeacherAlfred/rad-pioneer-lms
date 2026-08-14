@@ -5,19 +5,21 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Loader2, ArrowLeft, Baby, Users2, Phone, GraduationCap, Search, X, Plus,
-  Trash2, Pencil, BookOpen, Link as LinkIcon,
+  Trash2, Pencil, BookOpen, Link as LinkIcon, ShoppingBag,
 } from "lucide-react";
-import { formatLabel, ENROLLMENT_STATUSES } from "@/lib/programs";
+import { formatLabel, ENROLMENT_STATUSES } from "@/lib/programs";
 
 type LeadRef = { id: string; name: string | null; phone: string };
 type Guardian = { id: string; relationship: string | null; lead_id: string; leads: LeadRef | null };
-type ProgramRef = { id: string; name: string; type: string };
-type Enrollment = { id: string; status: string; notes: string | null; program_id: string; programs: ProgramRef | null };
+type ProgramRef = { id: string; code: string; name: string; type: string };
+type SessionRef = { id: string; starts_at: string | null; programme_id: string; programs: ProgramRef | null };
+type Enrolment = { id: string; status: string; notes: string | null; session_id: string; sessions: SessionRef | null };
 
 type Kid = {
   id: string;
   name: string;
   age: number | null;
+  date_of_birth: string | null;
   grade: string | null;
   phone: string | null;
   email: string | null;
@@ -25,11 +27,11 @@ type Kid = {
   source: string | null;
   created_at: string | null;
   kid_guardians: Guardian[];
-  program_enrollments: Enrollment[];
+  enrolments: Enrolment[];
 };
 
 type LeadOption = { id: string; name: string | null; phone: string };
-type ProgramOption = { id: string; name: string; type: string; status: string };
+type SessionOption = { id: string; starts_at: string | null; venue: string | null; status: string; programme_id: string; programs: ProgramRef | null };
 
 const ENROLLMENT_STATUS_STYLES: Record<string, string> = {
   interested: 'bg-slate-100 text-slate-500',
@@ -39,7 +41,22 @@ const ENROLLMENT_STATUS_STYLES: Record<string, string> = {
   withdrawn: 'bg-rose-50 text-rose-500',
 };
 
-const emptyForm = { name: '', age: '', grade: '', phone: '', email: '', notes: '' };
+const emptyForm = { name: '', age: '', date_of_birth: '', grade: '', phone: '', email: '', notes: '' };
+
+// date_of_birth is the preferred source once known - age is just what
+// WhatsApp usually gives us first and goes stale.
+function displayAge(kid: Kid): string | null {
+  if (kid.date_of_birth) {
+    const dob = new Date(kid.date_of_birth);
+    const now = new Date();
+    let years = now.getFullYear() - dob.getFullYear();
+    const beforeBirthday = now.getMonth() < dob.getMonth() || (now.getMonth() === dob.getMonth() && now.getDate() < dob.getDate());
+    if (beforeBirthday) years -= 1;
+    return `${years} yrs`;
+  }
+  if (kid.age) return `${kid.age} yrs (approx.)`;
+  return null;
+}
 
 export default function KidsPage() {
   return (
@@ -55,7 +72,7 @@ function KidsPageInner() {
 
   const [kids, setKids] = useState<Kid[]>([]);
   const [leads, setLeads] = useState<LeadOption[]>([]);
-  const [programs, setPrograms] = useState<ProgramOption[]>([]);
+  const [sessions, setSessions] = useState<SessionOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -65,18 +82,18 @@ function KidsPageInner() {
     setError(null);
     try {
       const kidsUrl = leadIdFilter ? `/admin/api/kids?leadId=${encodeURIComponent(leadIdFilter)}` : '/admin/api/kids';
-      const [kidsRes, leadsRes, programsRes] = await Promise.all([
+      const [kidsRes, leadsRes, sessionsRes] = await Promise.all([
         fetch(kidsUrl),
         fetch('/admin/api/lead-funnel'),
-        fetch('/admin/api/programs'),
+        fetch('/admin/api/sessions'),
       ]);
       const kidsData = await kidsRes.json();
       if (!kidsRes.ok) throw new Error(kidsData.error || 'Failed to load kids');
       const leadsData = await leadsRes.json();
-      const programsData = await programsRes.json();
+      const sessionsData = await sessionsRes.json();
       setKids(kidsData.rows || []);
       setLeads((leadsData.rows || []).map((r: any) => ({ id: r.id, name: r.name, phone: r.phone })));
-      setPrograms(programsData.rows || []);
+      setSessions(sessionsData.rows || []);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -100,7 +117,7 @@ function KidsPageInner() {
     const total = kids.length;
     const withOwnContact = kids.filter(k => k.phone || k.email).length;
     const linkedToGuardian = kids.filter(k => k.kid_guardians.length > 0).length;
-    const enrolled = kids.filter(k => k.program_enrollments.some(e => e.status === 'active' || e.status === 'registered')).length;
+    const enrolled = kids.filter(k => k.enrolments.some(e => e.status === 'active' || e.status === 'registered')).length;
     return { total, withOwnContact, linkedToGuardian, enrolled };
   }, [kids]);
 
@@ -125,6 +142,7 @@ function KidsPageInner() {
     setKidForm({
       name: kid.name,
       age: kid.age === null ? '' : String(kid.age),
+      date_of_birth: kid.date_of_birth || '',
       grade: kid.grade || '',
       phone: kid.phone || '',
       email: kid.email || '',
@@ -157,6 +175,7 @@ function KidsPageInner() {
             id: editingKid.id,
             name: kidForm.name.trim(),
             age: kidForm.age,
+            date_of_birth: kidForm.date_of_birth,
             grade: kidForm.grade.trim(),
             phone: kidForm.phone.trim(),
             email: kidForm.email.trim(),
@@ -172,6 +191,7 @@ function KidsPageInner() {
           body: JSON.stringify({
             name: kidForm.name.trim(),
             age: kidForm.age,
+            date_of_birth: kidForm.date_of_birth,
             grade: kidForm.grade.trim(),
             phone: kidForm.phone.trim(),
             email: kidForm.email.trim(),
@@ -221,30 +241,31 @@ function KidsPageInner() {
     await loadAll();
   }
 
-  // --- Enrollment modal ---
+  // --- Enrolment modal - a student enrols on a Session (a dated
+  // delivery), not a Programme directly. ---
   const [enrollingKid, setEnrollingKid] = useState<Kid | null>(null);
-  const [enrollProgramId, setEnrollProgramId] = useState('');
+  const [enrollSessionId, setEnrollSessionId] = useState('');
   const [enrollSaving, setEnrollSaving] = useState(false);
   const [enrollError, setEnrollError] = useState<string | null>(null);
 
   function openEnroll(kid: Kid) {
     setEnrollingKid(kid);
-    setEnrollProgramId('');
+    setEnrollSessionId('');
     setEnrollError(null);
   }
 
   async function addEnrollment() {
-    if (!enrollingKid || !enrollProgramId) return;
+    if (!enrollingKid || !enrollSessionId) return;
     setEnrollSaving(true);
     setEnrollError(null);
     try {
-      const res = await fetch('/admin/api/enrollments', {
+      const res = await fetch('/admin/api/enrolments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kidId: enrollingKid.id, programId: enrollProgramId }),
+        body: JSON.stringify({ studentId: enrollingKid.id, sessionId: enrollSessionId }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to enroll');
+      if (!res.ok) throw new Error(data.error || 'Failed to enrol');
       await loadAll();
       setEnrollingKid(null);
     } catch (err: any) {
@@ -255,7 +276,7 @@ function KidsPageInner() {
   }
 
   async function updateEnrollmentStatus(enrollmentId: string, status: string) {
-    await fetch('/admin/api/enrollments', {
+    await fetch('/admin/api/enrolments', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: enrollmentId, status }),
@@ -264,7 +285,7 @@ function KidsPageInner() {
   }
 
   async function removeEnrollment(enrollmentId: string) {
-    await fetch('/admin/api/enrollments', {
+    await fetch('/admin/api/enrolments', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: enrollmentId }),
@@ -284,7 +305,10 @@ function KidsPageInner() {
               <Users2 size={14} /> Lead Funnel
             </Link>
             <Link href="/admin/programs" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <BookOpen size={14} /> Programs
+              <BookOpen size={14} /> Programmes
+            </Link>
+            <Link href="/admin/commerce" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <ShoppingBag size={14} /> Commerce
             </Link>
           </div>
         </div>
@@ -354,7 +378,7 @@ function KidsPageInner() {
                           {kid.notes && <div className="text-[11px] text-slate-400 mt-0.5 max-w-[180px]">{kid.notes}</div>}
                         </td>
                         <td className="px-4 py-3 text-slate-600">
-                          {kid.age ? `${kid.age} yrs` : '—'}{kid.grade ? ` · ${kid.grade}` : ''}
+                          {displayAge(kid) || '—'}{kid.grade ? ` · ${kid.grade}` : ''}
                         </td>
                         <td className="px-4 py-3 text-slate-500 text-xs">
                           {kid.phone || kid.email ? (
@@ -379,16 +403,18 @@ function KidsPageInner() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-1">
-                            {kid.program_enrollments.map(e => (
+                            {kid.enrolments.map(e => (
                               <div key={e.id} className="flex items-center gap-1">
                                 <select
                                   value={e.status}
                                   onChange={ev => updateEnrollmentStatus(e.id, ev.target.value)}
                                   className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border-0 outline-none ${ENROLLMENT_STATUS_STYLES[e.status] || 'bg-slate-100 text-slate-500'}`}
                                 >
-                                  {ENROLLMENT_STATUSES.map(s => <option key={s} value={s}>{formatLabel(s)}</option>)}
+                                  {ENROLMENT_STATUSES.map(s => <option key={s} value={s}>{formatLabel(s)}</option>)}
                                 </select>
-                                <span className="text-xs text-slate-500 truncate max-w-[100px]" title={e.programs?.name}>{e.programs?.name}</span>
+                                <span className="text-xs text-slate-500 truncate max-w-[130px]" title={e.sessions?.programs?.name}>
+                                  {e.sessions?.programs?.code}{e.sessions?.starts_at ? ` · ${new Date(e.sessions.starts_at).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}` : ''}
+                                </span>
                                 <button onClick={() => removeEnrollment(e.id)} title="Remove enrollment" className="text-slate-300 hover:text-rose-500">
                                   <X size={10} />
                                 </button>
@@ -431,13 +457,18 @@ function KidsPageInner() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Age</label>
-                  <input type="number" min={0} value={kidForm.age} onChange={e => setKidForm(f => ({ ...f, age: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Date of Birth</label>
+                  <input type="date" value={kidForm.date_of_birth} onChange={e => setKidForm(f => ({ ...f, date_of_birth: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Grade</label>
                   <input placeholder="e.g. Grade 4" value={kidForm.grade} onChange={e => setKidForm(f => ({ ...f, grade: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
                 </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Age (fallback, if DOB unknown)</label>
+                <input type="number" min={0} value={kidForm.age} onChange={e => setKidForm(f => ({ ...f, age: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
+                <p className="text-[11px] text-slate-400 mt-1">Programme eligibility uses date of birth once known - age is just what WhatsApp usually gives us first.</p>
               </div>
               <p className="text-[11px] text-slate-400 -mt-1">Phone/email below are optional - only fill in if this kid has their own contact details on file.</p>
               <div className="grid grid-cols-2 gap-3">
@@ -506,19 +537,25 @@ function KidsPageInner() {
               <h3 className="font-black text-slate-800">Enroll {enrollingKid.name}</h3>
               <button onClick={() => setEnrollingKid(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
             </div>
-            <select value={enrollProgramId} onChange={e => setEnrollProgramId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400 mb-3">
-              <option value="">Select a program...</option>
-              {programs.filter(p => p.status === 'active').map(p => (
-                <option key={p.id} value={p.id}>{p.name} ({formatLabel(p.type)})</option>
-              ))}
+            <select value={enrollSessionId} onChange={e => setEnrollSessionId(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400 mb-3">
+              <option value="">Select a session...</option>
+              {sessions.filter(s => s.status === 'selling' || s.status === 'confirmed').map(s => {
+                const date = s.starts_at ? new Date(s.starts_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', year: 'numeric' }) : 'No date set';
+                const time = s.starts_at ? new Date(s.starts_at).toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit' }) : '—';
+                return (
+                  <option key={s.id} value={s.id}>
+                    {date} - {time} - {s.programs?.name}
+                  </option>
+                );
+              })}
             </select>
-            {programs.length === 0 && (
-              <p className="text-xs text-slate-400 mb-3">No programs yet - <Link href="/admin/programs" className="underline">create one first</Link>.</p>
+            {sessions.filter(s => s.status === 'selling' || s.status === 'confirmed').length === 0 && (
+              <p className="text-xs text-slate-400 mb-3">No sessions open for enrolment yet - <Link href="/admin/programs" className="underline">create one first</Link>.</p>
             )}
             {enrollError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3 mb-3">{enrollError}</div>}
             <div className="flex gap-2">
               <button onClick={() => setEnrollingKid(null)} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
-              <button onClick={addEnrollment} disabled={enrollSaving || !enrollProgramId} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">
+              <button onClick={addEnrollment} disabled={enrollSaving || !enrollSessionId} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">
                 {enrollSaving ? 'Enrolling...' : 'Enroll'}
               </button>
             </div>

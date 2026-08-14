@@ -11,7 +11,7 @@ const supabaseAdmin = createClient(
 const KID_SELECT = `
   *,
   kid_guardians(id, relationship, lead_id, leads(id, name, phone)),
-  program_enrollments(id, status, notes, program_id, programs(id, name, type))
+  enrolments(id, status, notes, session_id, sessions(id, starts_at, programme_id, programs(id, code, name, type)))
 `;
 
 // ?leadId= scopes the roster to kids linked to one lead (used by the
@@ -44,7 +44,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, age, grade, phone, email, notes, leadIds } = body;
+    const { name, age, date_of_birth, grade, phone, email, notes, leadIds } = body;
 
     if (!name || !String(name).trim()) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -57,7 +57,10 @@ export async function POST(req: Request) {
       .from('kids')
       .insert([{
         name: String(name).trim(),
+        // date_of_birth is preferred once known; age is kept as a
+        // fallback since WhatsApp-captured data is usually just an age.
         age: age === '' || age === undefined || age === null ? null : Number(age),
+        date_of_birth: date_of_birth || null,
         grade: grade || null,
         phone: phone || null,
         email: email || null,
@@ -84,7 +87,7 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { id, name, age, grade, phone, email, notes } = body;
+    const { id, name, age, date_of_birth, grade, phone, email, notes } = body;
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
     if (name !== undefined && !String(name).trim()) {
       return NextResponse.json({ error: 'Name cannot be empty' }, { status: 400 });
@@ -93,6 +96,7 @@ export async function PATCH(req: Request) {
     const update: Record<string, any> = {};
     if (name !== undefined) update.name = String(name).trim();
     if (age !== undefined) update.age = age === '' || age === null ? null : Number(age);
+    if (date_of_birth !== undefined) update.date_of_birth = date_of_birth || null;
     if (grade !== undefined) update.grade = grade || null;
     if (phone !== undefined) update.phone = phone || null;
     if (email !== undefined) update.email = email || null;
@@ -109,8 +113,8 @@ export async function PATCH(req: Request) {
   }
 }
 
-// Cascades to kid_guardians and program_enrollments (on delete cascade) -
-// removing a kid also removes their guardian links and enrollments.
+// Cascades to kid_guardians and enrolments (on delete cascade) -
+// removing a kid also removes their guardian links and enrolments.
 export async function DELETE(req: Request) {
   try {
     const { id } = await req.json();
