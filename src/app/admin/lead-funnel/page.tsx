@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
-  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2, Pencil,
+  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2, Pencil, Baby,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -456,6 +456,9 @@ export default function LeadFunnelPage() {
             <Link href="/admin/warm-list" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <ClipboardList size={14} /> Import / Review Leads (Warm List)
             </Link>
+            <Link href="/admin/kids" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <Baby size={14} /> Kids
+            </Link>
           </div>
         </div>
 
@@ -861,6 +864,12 @@ export default function LeadFunnelPage() {
                   onChange={e => setEditForm(f => ({ ...f, children_names: e.target.value }))}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                 />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Informal list only. For ages, grades, contact details, and course/event registrations, use{' '}
+                  <Link href={`/admin/kids?leadId=${editingLead.id}`} className="underline inline-flex items-center gap-0.5">
+                    <Baby size={11} /> Kids
+                  </Link>.
+                </p>
               </div>
               {editError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3">{editError}</div>}
               <div className="flex gap-2 pt-2">
