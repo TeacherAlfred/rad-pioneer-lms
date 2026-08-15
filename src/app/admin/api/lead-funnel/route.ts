@@ -26,16 +26,18 @@ export async function GET() {
   return NextResponse.json({ rows });
 }
 
-// Edits tags, status, household_id, and/or the lead's own contact details
-// (name, phone, email, school, class, children_names). Status edits are the
-// manual path (from the stages dashboard) for outcomes the bot/admin-button
-// flow can't set itself - primarily converted/lost, but any stage can be
-// corrected here. household_id: null unlinks a lead from its household
-// (linking 2+ leads together is a separate action - see household/route.ts).
+// Edits tags, status, household_id, is_potential_student, and/or the lead's
+// own contact details (name, phone, email, school, class, children_names).
+// Status edits are the manual path (from the stages dashboard) for outcomes
+// the bot/admin-button flow can't set itself - primarily converted/lost, but
+// any stage can be corrected here. household_id: null unlinks a lead from
+// its household (linking 2+ leads together is a separate action - see
+// household/route.ts). Notes are a separate running log, not a field here -
+// see notes/route.ts.
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { id, tags, status, household_id, name, phone, email, school, children_names } = body;
+    const { id, tags, status, household_id, name, phone, email, school, children_names, is_potential_student } = body;
     // "class" is a reserved word, can't destructure it bare above.
     const className = body.class;
 
@@ -67,6 +69,7 @@ export async function PATCH(req: Request) {
     if (school !== undefined) update.school = school || null;
     if (className !== undefined) update.class = className || null;
     if (children_names !== undefined) update.children_names = children_names;
+    if (is_potential_student !== undefined) update.is_potential_student = !!is_potential_student;
     if (status !== undefined) {
       update.status = status;
       if (status === 'contacted') update.contacted_at = new Date().toISOString();

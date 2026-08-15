@@ -6,6 +6,7 @@ import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
   Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2, Pencil, Baby,
+  GraduationCap, StickyNote, Tag,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -29,7 +30,10 @@ type Lead = {
   school?: string | null;
   class?: string | null;
   children_names?: string[] | null;
+  is_potential_student?: boolean | null;
 };
+
+type LeadNote = { id: string; note: string; created_at: string; created_by: string | null };
 
 const STATUS_STYLES: Record<string, string> = {
   new_lead: 'bg-slate-100 text-slate-600',
@@ -281,11 +285,100 @@ export default function LeadFunnelPage() {
       children_names: (lead.children_names || []).join(', '),
     });
     setEditError(null);
+    setNewTag('');
+    loadNotes(lead.id);
   }
 
   function closeEdit() {
     setEditingLead(null);
     setEditError(null);
+    setLeadNotes([]);
+  }
+
+  // --- Tags: general-purpose add/remove, saved immediately (same
+  // pattern as toggleInhouse, which is really just a shortcut for one
+  // specific tag value). ---
+  const [newTag, setNewTag] = useState('');
+
+  async function addTag() {
+    if (!editingLead || !newTag.trim()) return;
+    const tag = newTag.trim();
+    const currentTags = editingLead.tags || [];
+    if (currentTags.some(t => t.toLowerCase() === tag.toLowerCase())) { setNewTag(''); return; }
+    const nextTags = [...currentTags, tag];
+    await patchLeadField(editingLead.id, { tags: nextTags });
+    setEditingLead(l => l ? { ...l, tags: nextTags } : l);
+    setNewTag('');
+  }
+
+  async function removeTag(tag: string) {
+    if (!editingLead) return;
+    const nextTags = (editingLead.tags || []).filter(t => t !== tag);
+    await patchLeadField(editingLead.id, { tags: nextTags });
+    setEditingLead(l => l ? { ...l, tags: nextTags } : l);
+  }
+
+  async function togglePotentialStudent() {
+    if (!editingLead) return;
+    const next = !editingLead.is_potential_student;
+    await patchLeadField(editingLead.id, { is_potential_student: next });
+    setEditingLead(l => l ? { ...l, is_potential_student: next } : l);
+  }
+
+  async function patchLeadField(id: string, patch: Record<string, any>) {
+    const res = await fetch('/admin/api/lead-funnel', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ...patch }),
+    });
+    const data = await res.json();
+    if (res.ok) setRows(prev => prev.map(r => r.id === id ? { ...r, ...data.row } : r));
+  }
+
+  // --- Notes: a running log per lead (location, feedback from calls/
+  // WhatsApp), not a single overwritable field. ---
+  const [leadNotes, setLeadNotes] = useState<LeadNote[]>([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [newNote, setNewNote] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
+
+  async function loadNotes(leadId: string) {
+    setNotesLoading(true);
+    try {
+      const res = await fetch(`/admin/api/lead-funnel/notes?leadId=${encodeURIComponent(leadId)}`);
+      const data = await res.json();
+      setLeadNotes(data.rows || []);
+    } finally {
+      setNotesLoading(false);
+    }
+  }
+
+  async function addNote() {
+    if (!editingLead || !newNote.trim()) return;
+    setNoteSaving(true);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: editingLead.id, note: newNote.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setLeadNotes(prev => [data.row, ...prev]);
+        setNewNote('');
+      }
+    } finally {
+      setNoteSaving(false);
+    }
+  }
+
+  async function deleteNote(id: string) {
+    setLeadNotes(prev => prev.filter(n => n.id !== id));
+    await fetch('/admin/api/lead-funnel/notes', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
   }
 
   async function saveEdit() {
@@ -624,6 +717,11 @@ export default function LeadFunnelPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1">
+                            {r.is_potential_student && (
+                              <span title="Potential Student" className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">
+                                <GraduationCap size={10} /> Student
+                              </span>
+                            )}
                             {(r.tags || []).map(t => (
                               <span key={t} className="text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{t}</span>
                             ))}
@@ -874,6 +972,80 @@ export default function LeadFunnelPage() {
                   </Link>.
                 </p>
               </div>
+
+              <div>
+                <button
+                  onClick={togglePotentialStudent}
+                  className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl border transition-colors ${
+                    editingLead.is_potential_student ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-400'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest">
+                    <GraduationCap size={13} /> Potential Student
+                  </span>
+                  <span className="text-[10px] font-black uppercase tracking-widest">{editingLead.is_potential_student ? 'Yes' : 'Mark'}</span>
+                </button>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  This lead is themselves within RAD's student age range (not a parent enquiring for a child). Flags them for follow-up - it doesn't create a Kids record, since attending still needs a guardian's consent.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1"><Tag size={11} /> Tags</label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {(editingLead.tags || []).map(t => (
+                    <span key={t} className="inline-flex items-center gap-1 text-[11px] font-medium bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full">
+                      {t}
+                      <button onClick={() => removeTag(t)} className="hover:text-rose-500"><X size={10} /></button>
+                    </span>
+                  ))}
+                  {(editingLead.tags || []).length === 0 && <span className="text-xs text-slate-300">No tags yet</span>}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={newTag}
+                    onChange={e => setNewTag(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+                    placeholder="e.g. Menlyn, Referral, Polokwane"
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-slate-400"
+                  />
+                  <button onClick={addTag} className="px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900">Add</button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1"><StickyNote size={11} /> Notes</label>
+                <div className="flex gap-2 mb-2">
+                  <textarea
+                    value={newNote}
+                    onChange={e => setNewNote(e.target.value)}
+                    placeholder="Location, feedback from a call or WhatsApp exchange..."
+                    rows={2}
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-slate-400"
+                  />
+                </div>
+                <button onClick={addNote} disabled={noteSaving || !newNote.trim()} className="w-full mb-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">
+                  {noteSaving ? 'Adding...' : 'Add Note'}
+                </button>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {notesLoading ? (
+                    <div className="flex items-center justify-center py-4 text-slate-300"><Loader2 className="animate-spin" size={16} /></div>
+                  ) : leadNotes.length === 0 ? (
+                    <p className="text-xs text-slate-300 text-center py-2">No notes yet.</p>
+                  ) : (
+                    leadNotes.map(n => (
+                      <div key={n.id} className="bg-slate-50 rounded-xl px-3 py-2 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-[13px] text-slate-700">{n.note}</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">{new Date(n.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                        </div>
+                        <button onClick={() => deleteNote(n.id)} className="text-slate-300 hover:text-rose-500 shrink-0"><X size={12} /></button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
               {editError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3">{editError}</div>}
               <div className="flex gap-2 pt-2">
                 <button onClick={closeEdit} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
