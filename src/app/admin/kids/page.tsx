@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import {
   Loader2, ArrowLeft, Baby, Users2, Phone, GraduationCap, Search, X, Plus,
   Trash2, Pencil, BookOpen, Link as LinkIcon, ShoppingBag, CalendarClock,
+  Copy, Check, ShieldCheck, RotateCcw,
 } from "lucide-react";
 import { formatLabel, ENROLMENT_STATUSES } from "@/lib/programs";
 
@@ -241,6 +242,69 @@ function KidsPageInner() {
     await loadAll();
   }
 
+  // --- Consent link modal - a magic link a guardian uses to fill in the
+  // consent/medical form for this kid (and any siblings linked to them). ---
+  const [consentKid, setConsentKid] = useState<Kid | null>(null);
+  const [consentGuardianId, setConsentGuardianId] = useState<string | null>(null);
+  const [consentUrl, setConsentUrl] = useState<string | null>(null);
+  const [consentLoading, setConsentLoading] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+  const [consentCopied, setConsentCopied] = useState(false);
+
+  function openConsentLink(kid: Kid) {
+    setConsentKid(kid);
+    setConsentUrl(null);
+    setConsentError(null);
+    setConsentCopied(false);
+    if (kid.kid_guardians.length === 1) {
+      generateConsentLink(kid.kid_guardians[0].lead_id);
+    } else {
+      setConsentGuardianId(null);
+    }
+  }
+
+  async function generateConsentLink(guardianLeadId: string) {
+    setConsentGuardianId(guardianLeadId);
+    setConsentLoading(true);
+    setConsentError(null);
+    try {
+      const res = await fetch('/admin/api/consent-tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guardianLeadId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to generate link');
+      setConsentUrl(data.url);
+    } catch (err: any) {
+      setConsentError(err.message);
+    } finally {
+      setConsentLoading(false);
+    }
+  }
+
+  async function copyConsentUrl() {
+    if (!consentUrl) return;
+    await navigator.clipboard.writeText(consentUrl);
+    setConsentCopied(true);
+    setTimeout(() => setConsentCopied(false), 2000);
+  }
+
+  async function revokeConsentLink() {
+    if (!consentGuardianId) return;
+    setConsentLoading(true);
+    try {
+      await fetch('/admin/api/consent-tokens', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ guardianLeadId: consentGuardianId }),
+      });
+      await generateConsentLink(consentGuardianId);
+    } finally {
+      setConsentLoading(false);
+    }
+  }
+
   // --- Enrolment modal - a student enrols on a Session (a dated
   // delivery), not a Programme directly. ---
   const [enrollingKid, setEnrollingKid] = useState<Kid | null>(null);
@@ -402,6 +466,11 @@ function KidsPageInner() {
                               </span>
                             ))}
                             {kid.kid_guardians.length === 0 && <span className="text-xs text-slate-300">None linked</span>}
+                            {kid.kid_guardians.length > 0 && (
+                              <button onClick={() => openConsentLink(kid)} className="text-[10px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-700 w-fit">
+                                Consent Link →
+                              </button>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-3">
@@ -565,6 +634,54 @@ function KidsPageInner() {
                 {enrollSaving ? 'Enrolling...' : 'Enroll'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {consentKid && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-sm">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-black text-slate-800 flex items-center gap-1.5"><ShieldCheck size={16} className="text-slate-400" /> Consent Link</h3>
+              <button onClick={() => setConsentKid(null)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Sends the guardian to the Consent &amp; Medical form for every child linked to them, including {consentKid.name}.
+            </p>
+
+            {!consentGuardianId ? (
+              <div className="space-y-2 mb-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Which guardian?</p>
+                {consentKid.kid_guardians.map(g => (
+                  <button
+                    key={g.id}
+                    onClick={() => generateConsentLink(g.lead_id)}
+                    className="w-full text-left px-3 py-2.5 rounded-xl border border-slate-200 hover:border-slate-400 text-sm"
+                  >
+                    {g.leads?.name || `+${g.leads?.phone}`}
+                  </button>
+                ))}
+              </div>
+            ) : consentLoading ? (
+              <div className="py-8 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin" size={18} /></div>
+            ) : consentUrl ? (
+              <div className="space-y-3">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-600 break-all">
+                  {consentUrl}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={copyConsentUrl} className="flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900 flex items-center justify-center gap-1.5">
+                    {consentCopied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy Link</>}
+                  </button>
+                  <button onClick={revokeConsentLink} title="Revoke and issue a fresh link" className="px-3 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 hover:border-rose-300 hover:text-rose-500 flex items-center gap-1.5">
+                    <RotateCcw size={13} />
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400">Long-lived until revoked - safe to send via WhatsApp. Revoking issues a fresh one instantly.</p>
+              </div>
+            ) : null}
+
+            {consentError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3 mt-3">{consentError}</div>}
           </div>
         </div>
       )}
