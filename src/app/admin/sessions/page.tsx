@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Baby, Users2, BookOpen, ShoppingBag, Search, X,
-  MapPin, Globe, ExternalLink, ChevronRight,
+  MapPin, Globe, ExternalLink, ChevronRight, MessageSquareQuote, Copy, Check, RotateCcw,
 } from "lucide-react";
 import { formatLabel } from "@/lib/programs";
 
@@ -141,6 +141,56 @@ export default function SessionsPage() {
   function closePanel() {
     setPanelVisible(false);
     setTimeout(() => setPanelSession(null), 250);
+    setKioskUrl(null);
+    setKioskError(null);
+  }
+
+  // --- Kiosk link (child post-session review) ---
+  const [kioskUrl, setKioskUrl] = useState<string | null>(null);
+  const [kioskLoading, setKioskLoading] = useState(false);
+  const [kioskError, setKioskError] = useState<string | null>(null);
+  const [kioskCopied, setKioskCopied] = useState(false);
+
+  async function generateKioskLink() {
+    if (!panelSession) return;
+    setKioskLoading(true);
+    setKioskError(null);
+    try {
+      const res = await fetch('/admin/api/kiosk-tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: panelSession.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to generate kiosk link');
+      setKioskUrl(data.url);
+    } catch (err: any) {
+      setKioskError(err.message);
+    } finally {
+      setKioskLoading(false);
+    }
+  }
+
+  async function copyKioskUrl() {
+    if (!kioskUrl) return;
+    await navigator.clipboard.writeText(kioskUrl);
+    setKioskCopied(true);
+    setTimeout(() => setKioskCopied(false), 2000);
+  }
+
+  async function revokeKioskLink() {
+    if (!panelSession) return;
+    setKioskLoading(true);
+    try {
+      await fetch('/admin/api/kiosk-tokens', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: panelSession.id }),
+      });
+      await generateKioskLink();
+    } finally {
+      setKioskLoading(false);
+    }
   }
 
   async function markAttendance(enrolmentId: string, attended: boolean | null) {
@@ -176,6 +226,9 @@ export default function SessionsPage() {
             </Link>
             <Link href="/admin/commerce" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <ShoppingBag size={14} /> Commerce
+            </Link>
+            <Link href="/admin/reviews" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <MessageSquareQuote size={14} /> Reviews
             </Link>
           </div>
         </div>
@@ -325,6 +378,27 @@ export default function SessionsPage() {
                   )
                 ) : <span>Venue TBC</span>}
               </div>
+
+              {kioskUrl ? (
+                <div className="mt-3 flex items-center gap-2">
+                  <div className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-[11px] text-slate-500 truncate">{kioskUrl}</div>
+                  <button onClick={copyKioskUrl} title="Copy kiosk link" className="h-8 w-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 shrink-0">
+                    {kioskCopied ? <Check size={14} /> : <Copy size={14} />}
+                  </button>
+                  <button onClick={revokeKioskLink} title="Revoke and issue a fresh link" className="h-8 w-8 rounded-lg bg-slate-100 hover:bg-rose-50 hover:text-rose-500 flex items-center justify-center text-slate-500 shrink-0">
+                    <RotateCcw size={13} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={generateKioskLink}
+                  disabled={kioskLoading}
+                  className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-blue-500 hover:text-blue-700 disabled:opacity-50"
+                >
+                  <MessageSquareQuote size={12} /> {kioskLoading ? 'Generating…' : 'Get kiosk link for post-session review'}
+                </button>
+              )}
+              {kioskError && <p className="text-[11px] text-rose-500 mt-1">{kioskError}</p>}
             </div>
 
             {!rosterLoading && rosterEnrolments.length > 0 && (
