@@ -19,7 +19,7 @@ type RosterKid = Kid & { guardians: Guardian[]; review: Review; photoConsent: Ph
 type Clearance = { tier: number; tierKey: PhotoTierKey | null; pendingSubjectKidIds: string[]; declinedSubjectKidIds: string[] };
 type Subject = { id: string; kid_id: string; identifiable: boolean; selected_for_parent: boolean; kids: Kid };
 type FaceBox = { x: number; y: number; width: number; height: number };
-type Face = { id: string; bbox: FaceBox; kid_id: string | null };
+type Face = { id: string; bbox: FaceBox; kid_id: string | null; suggested_kid_id: string | null };
 type Photo = {
   id: string; r2_key: string; url: string; taken_at: string | null;
   quality: number | null; content_tags: string[]; background_checked: boolean;
@@ -580,17 +580,42 @@ function PhotoCard({ photo, roster, detecting, onPatchPhoto, onDelete, onTagSubj
           >
             <button
               onClick={() => setActiveFaceId(activeFaceId === face.id ? null : face.id)}
-              className={`w-full h-full rounded border-2 ${face.kid_id ? 'border-emerald-400' : 'border-amber-400 border-dashed'}`}
-              title={face.kid_id ? kidNameById.get(face.kid_id) || 'Tagged' : 'Click to tag this face'}
+              className={`w-full h-full rounded border-2 ${
+                face.kid_id ? 'border-emerald-400' : face.suggested_kid_id ? 'border-blue-400 border-dashed' : 'border-amber-400 border-dashed'
+              }`}
+              title={
+                face.kid_id ? kidNameById.get(face.kid_id) || 'Tagged'
+                  : face.suggested_kid_id ? `Maybe ${kidNameById.get(face.suggested_kid_id) || 'someone'}? Click to confirm or pick someone else.`
+                  : 'Click to tag this face'
+              }
             />
             {face.kid_id && (
               <span className="absolute bottom-1 left-1 bg-emerald-500 text-white text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap">
                 {kidNameById.get(face.kid_id) || 'Tagged'}
               </span>
             )}
+            {!face.kid_id && face.suggested_kid_id && (
+              <span className="absolute bottom-1 left-1 bg-blue-500 text-white text-[9px] px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                Maybe {kidNameById.get(face.suggested_kid_id) || '...'}?
+              </span>
+            )}
             {activeFaceId === face.id && !face.kid_id && (
-              <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg p-1.5 z-10 w-40 max-h-40 overflow-y-auto">
-                {roster.map(k => (
+              <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg p-1.5 z-10 w-44 max-h-48 overflow-y-auto">
+                {face.suggested_kid_id && kidNameById.has(face.suggested_kid_id) && (
+                  <>
+                    {/* Pre-filled from this kid's cross-session profile
+                        (src/lib/faceProfile.ts) - still just a suggestion,
+                        one tap away from a normal confirmed tag. */}
+                    <button
+                      onClick={() => { onAssignFace(face.id, face.suggested_kid_id!, kidNameById.get(face.suggested_kid_id!)!); setActiveFaceId(null); }}
+                      className="block w-full text-left text-[12px] font-semibold text-blue-600 bg-blue-50 px-2 py-1.5 rounded mb-1"
+                    >
+                      ✓ Yes, it's {kidNameById.get(face.suggested_kid_id)}
+                    </button>
+                    <div className="border-t border-slate-100 my-1" />
+                  </>
+                )}
+                {roster.filter(k => k.id !== face.suggested_kid_id).map(k => (
                   <button
                     key={k.id}
                     onClick={() => { onAssignFace(face.id, k.id, k.name); setActiveFaceId(null); }}

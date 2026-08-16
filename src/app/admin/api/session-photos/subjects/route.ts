@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { removeFromProfile } from '@/lib/faceProfile';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -102,10 +103,26 @@ export async function DELETE(req: Request) {
     // A face box assigned to this kid on this photo must go back to
     // unassigned, not keep pointing at a subject that no longer exists -
     // otherwise the face overlay still shows the old name after untagging.
+    // Any face here that had already been folded into the kid's
+    // cross-session profile (profile_updated) gets exactly subtracted
+    // back out first, so correcting a mistake doesn't leave the profile
+    // permanently skewed by it (see removeFromProfile).
     if (subject) {
+      const { data: facesToClear } = await supabaseAdmin
+        .from('session_photo_faces')
+        .select('id, descriptor, profile_updated')
+        .eq('photo_id', subject.photo_id)
+        .eq('kid_id', subject.kid_id);
+
+      for (const face of facesToClear || []) {
+        if (face.profile_updated) {
+          await removeFromProfile(supabaseAdmin, subject.kid_id, face.descriptor as number[]);
+        }
+      }
+
       await supabaseAdmin
         .from('session_photo_faces')
-        .update({ kid_id: null })
+        .update({ kid_id: null, profile_updated: false, suggested_kid_id: null, suggested_distance: null })
         .eq('photo_id', subject.photo_id)
         .eq('kid_id', subject.kid_id);
     }

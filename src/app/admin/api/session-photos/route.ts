@@ -71,7 +71,7 @@ export async function GET(req: Request) {
 
   const { data: photos, error: photosErr } = await supabaseAdmin
     .from('session_photos')
-    .select('*, session_photo_subjects(id, kid_id, identifiable, selected_for_parent, kids(id, name)), session_photo_faces(id, bbox, kid_id)')
+    .select('*, session_photo_subjects(id, kid_id, identifiable, selected_for_parent, kids(id, name)), session_photo_faces(id, bbox, kid_id, suggested_kid_id)')
     .eq('session_id', sessionId)
     .order('created_at', { ascending: true });
   if (photosErr) return NextResponse.json({ error: photosErr.message }, { status: 500 });
