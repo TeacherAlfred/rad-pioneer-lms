@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { ageFromDob } from '@/lib/consent';
+import { checkTestimonialAgainstPublishedPhotos } from '@/lib/coPublishCheck';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -91,7 +92,17 @@ export async function PATCH(req: Request) {
     }
     const { data, error } = await supabaseAdmin.from('testimonials').update(update).eq('id', id).select().single();
     if (error) throw error;
-    return NextResponse.json({ row: data });
+
+    // Reciprocal half of the co-publish check (spec S10.2 / photo spec
+    // S5 rule 3) - the photo side already checks for a live testimonial
+    // before publishing; this catches the opposite order, a testimonial
+    // going live after a photo already did. Advisory only.
+    let warnings: string[] = [];
+    if (status === 'approved' || status === 'published') {
+      warnings = await checkTestimonialAgainstPublishedPhotos(supabaseAdmin, id);
+    }
+
+    return NextResponse.json({ row: data, warnings });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

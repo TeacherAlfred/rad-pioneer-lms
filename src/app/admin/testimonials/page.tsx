@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Loader2, ArrowLeft, MessageSquareQuote, ShieldCheck, ShieldAlert, Pencil, Check, X,
+  Loader2, ArrowLeft, MessageSquareQuote, ShieldCheck, ShieldAlert, Pencil, Check, X, AlertTriangle,
 } from "lucide-react";
 import { formatLabel } from "@/lib/sessionReview";
 
@@ -29,6 +29,7 @@ export default function TestimonialsPage() {
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
+  const [warning, setWarning] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -48,11 +49,15 @@ export default function TestimonialsPage() {
   useEffect(() => { load(); }, [tab]);
 
   async function setStatus(t: Testimonial, status: string) {
-    await fetch('/admin/api/testimonials', {
+    const res = await fetch('/admin/api/testimonials', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: t.id, status, approvedBy: 'Alfred' }),
     });
+    const data = await res.json();
+    // Co-publish safety check (spec S10.2) - advisory, the status change
+    // above already happened, this just makes sure it's not missed.
+    setWarning(data.warnings?.length > 0 ? data.warnings[0] : null);
     setRows(prev => prev.filter(r => r.id !== t.id));
   }
 
@@ -107,6 +112,13 @@ export default function TestimonialsPage() {
         </div>
 
         {error && <div className="mb-6 bg-rose-50 border border-rose-200 text-rose-600 text-sm rounded-xl p-4">{error}</div>}
+        {warning && (
+          <div className="mb-6 bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-xl p-4 flex items-start gap-2">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+            <p className="flex-1">{warning}</p>
+            <button onClick={() => setWarning(null)} className="text-amber-400 hover:text-amber-600 shrink-0"><X size={15} /></button>
+          </div>
+        )}
 
         {loading ? (
           <div className="py-24 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading...</div>

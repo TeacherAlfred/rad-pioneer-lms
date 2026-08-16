@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { computePhotoClearance, DESTINATION_MIN_TIER } from '@/lib/photoClearance';
+import { LIVE_TESTIMONIAL_STATUSES } from '@/lib/coPublishCheck';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -86,7 +87,7 @@ export async function POST(req: Request) {
               .from('testimonials')
               .select('id')
               .in('source_review_id', reviewIds)
-              .eq('status', 'approved');
+              .in('status', LIVE_TESTIMONIAL_STATUSES);
             if ((testimonials || []).length > 0) {
               warnings.push(
                 'A testimonial quote from a child in this photo is already published - publishing both together risks re-identifying that child to their own school community (spec S5 rule 3).'

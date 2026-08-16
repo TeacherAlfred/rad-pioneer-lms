@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { ENJOYMENT_FACES, DIFFICULTY_OPTIONS, COMPLETION_OPTIONS, WANTS_MORE_OPTIONS } from "@/lib/sessionReview";
 
@@ -26,7 +26,9 @@ const BIG_TAP = "w-full py-5 rounded-3xl text-[17px] font-medium transition-all 
 
 export default function KioskPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const token = params.token as string;
+  const remindedStudentId = searchParams.get('student');
 
   const [mode, setMode] = useState<'loading' | 'error' | 'picker' | 'intro' | 'flow' | 'done'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -45,7 +47,14 @@ export default function KioskPage() {
       if (!res.ok) throw new Error(data.error || 'This link could not be loaded.');
       setSession(data.session);
       setRoster(data.roster);
-      setMode('picker');
+      // A "Remind" tap from the admin's Reviews Status Panel deep-links
+      // straight to that child's form instead of the roster picker.
+      const remindedKid = remindedStudentId ? (data.roster as RosterKid[]).find(k => k.id === remindedStudentId) : null;
+      if (remindedKid) {
+        pickChild(remindedKid);
+      } else {
+        setMode('picker');
+      }
     } catch (err: any) {
       setErrorMsg(err.message);
       setMode('error');

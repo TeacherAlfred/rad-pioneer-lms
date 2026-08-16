@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Baby, Users2, BookOpen, ShoppingBag, Search, X,
-  MapPin, Globe, ExternalLink, ChevronRight, MessageSquareQuote, Copy, Check, RotateCcw,
+  MapPin, Globe, ExternalLink, ChevronRight, ChevronDown, MessageSquareQuote, Copy, Check, RotateCcw, Bell,
 } from "lucide-react";
 import { formatLabel } from "@/lib/programs";
+import { ENJOYMENT_FACES } from "@/lib/sessionReview";
 
 type ProgramRef = { id: string; code: string; name: string };
 type Venue = { id: string; name: string; type: string; maps_url: string | null } | null;
@@ -406,7 +407,15 @@ export default function SessionsPage() {
               >
                 <ChevronRight size={12} /> Manage session photos
               </Link>
+              <Link
+                href={`/admin/session-reports/${panelSession.id}`}
+                className="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-blue-500 hover:text-blue-700 w-fit"
+              >
+                <ChevronRight size={12} /> View session report
+              </Link>
             </div>
+
+            <ReviewsStatusPanel sessionId={panelSession.id} />
 
             {!rosterLoading && rosterEnrolments.length > 0 && (
               <div className="flex items-center gap-4 px-7 py-3 text-[12px] text-slate-500 shrink-0 border-b border-slate-50">
@@ -461,6 +470,133 @@ export default function SessionsPage() {
               )}
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ReviewRosterEntry = { kidId: string; kidName: string; review: { hold_status: string; completed_at: string | null; enjoyment: number | null; difficulty: string | null; wants_more: string | null } | null };
+type ReviewsReport = {
+  counts: { booked: number; reviewed: number };
+  rating: { value: number | null; responseCount: number; rosterSize: number; confidence: 'low' | 'normal' };
+  roster: ReviewRosterEntry[];
+};
+
+function emojiFor(v: number | null) {
+  return ENJOYMENT_FACES.find(f => f.value === v)?.emoji || '—';
+}
+
+// The REVIEWS status widget (RAD_Post_Session_Review_Spec.md S9.1) -
+// highest-value in the last 10 minutes of a session, while the
+// not-yet-submitted kids are still in the room to chase. Sorted to the
+// top on purpose; the submitted list collapses since the count and
+// rating already carry its summary.
+function ReviewsStatusPanel({ sessionId }: { sessionId: string }) {
+  const [report, setReport] = useState<ReviewsReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [remindingId, setRemindingId] = useState<string | null>(null);
+  const [remindedId, setRemindedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/admin/api/session-reports?sessionId=${sessionId}`)
+      .then(r => r.json())
+      .then(data => { if (!cancelled) setReport(data); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  async function remind(kidId: string) {
+    setRemindingId(kidId);
+    try {
+      const res = await fetch('/admin/api/kiosk-tokens', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      const deepLink = `${data.url}?student=${kidId}`;
+      await navigator.clipboard.writeText(deepLink);
+      setRemindedId(kidId);
+      setTimeout(() => setRemindedId(null), 2000);
+    } catch {
+      // best-effort - the plain kiosk link in the section above still works as a fallback
+    } finally {
+      setRemindingId(null);
+    }
+  }
+
+  if (loading || !report) {
+    return <div className="px-7 py-4 border-b border-slate-50"><Loader2 size={14} className="animate-spin text-slate-300" /></div>;
+  }
+  if (report.counts.booked === 0) return null;
+
+  const notSubmitted = report.roster.filter(r => !r.review);
+  const submitted = report.roster.filter(r => r.review);
+  const pct = report.counts.booked > 0 ? Math.round((report.counts.reviewed / report.counts.booked) * 100) : 0;
+
+  return (
+    <div className="px-7 py-4 border-b border-slate-50">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Reviews</span>
+        <span className="text-[12px] text-slate-500">{report.counts.reviewed} / {report.counts.booked}</span>
+      </div>
+      <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden mb-2">
+        <div className="h-full bg-blue-400 rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
+      </div>
+      {report.rating.value !== null && (
+        <div className="flex items-center gap-1.5 mb-3 text-[12px] text-slate-500">
+          <span className="font-semibold text-slate-800">{report.rating.value.toFixed(1)} ★</span>
+          <span className="text-slate-400">({report.rating.responseCount} of {report.rating.rosterSize})</span>
+          {report.rating.confidence === 'low' && (
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">Low confidence</span>
+          )}
+        </div>
+      )}
+
+      {notSubmitted.length > 0 && (
+        <div className="space-y-1 mb-2">
+          <p className="text-[11px] font-medium text-slate-400">Not yet submitted ({notSubmitted.length})</p>
+          {notSubmitted.map(r => (
+            <div key={r.kidId} className="flex items-center justify-between gap-2 py-1">
+              <span className="text-[13px] text-slate-700">{r.kidName}</span>
+              <button
+                onClick={() => remind(r.kidId)}
+                disabled={remindingId === r.kidId}
+                className="flex items-center gap-1 text-[11px] font-medium text-blue-500 hover:text-blue-700 disabled:opacity-50"
+              >
+                {remindedId === r.kidId ? <><Check size={11} /> Copied</> : <><Bell size={11} /> Remind</>}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {submitted.length > 0 && (
+        <div>
+          <button onClick={() => setExpanded(e => !e)} className="flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-slate-600">
+            <ChevronDown size={12} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} /> Submitted ({submitted.length})
+          </button>
+          {expanded && (
+            <div className="mt-1.5 space-y-1">
+              {submitted.map(r => (
+                <div key={r.kidId} className="flex items-center gap-2 py-1 text-[12px]">
+                  <span className="text-slate-700 w-24 truncate shrink-0">{r.kidName}</span>
+                  <span>{emojiFor(r.review!.enjoyment)}</span>
+                  <span className="text-slate-400 truncate">{r.review!.difficulty || '—'}</span>
+                  <span className="text-slate-400 truncate">{r.review!.wants_more || '—'}</span>
+                  {r.review!.hold_status === 'held' && (
+                    <span className="ml-auto text-[9px] font-semibold uppercase tracking-wide text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded-full shrink-0">Held</span>
+                  )}
+                  {!r.review!.completed_at && r.review!.hold_status !== 'held' && (
+                    <span className="ml-auto text-[9px] font-semibold uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full shrink-0">In progress</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
