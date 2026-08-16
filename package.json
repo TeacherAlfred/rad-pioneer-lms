@@ -23,6 +23,7 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "epubjs": "^0.3.93",
+    "face-api.js": "^0.22.2",
     "framer-motion": "^12.38.0",
     "html-to-image": "^1.11.13",
     "jspdf": "^4.2.1",

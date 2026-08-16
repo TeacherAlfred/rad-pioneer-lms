@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { CONSENT_WORDING_VERSION } from '@/lib/consent';
+import { detectDowngradedTiers, flagUsageForDowngradedChild } from '@/lib/photoConsentDiff';
 
 // Service role: consent_forms/guardian_consent_tokens carry POPIA special
 // personal information (health + children's data). RLS is enabled with
@@ -159,6 +160,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       return NextResponse.json({ error: 'Please confirm you have parental responsibility for this child.' }, { status: 400 });
     }
 
+    // Grab the outgoing current row's photo tiers before it flips, so a
+    // downgrade (spec S5: "withdrawn... previously granted, since
+    // revoked") can be detected against what's being submitted now.
+    const { data: previousCurrent } = await supabaseAdmin
+      .from('consent_forms')
+      .select('payload')
+      .eq('child_id', childId)
+      .eq('is_current', true)
+      .maybeSingle();
+
     await supabaseAdmin.from('consent_forms').update({ is_current: false }).eq('child_id', childId).eq('is_current', true);
 
     const { data: saved, error: insertErr } = await supabaseAdmin
@@ -176,6 +187,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
       .select()
       .single();
     if (insertErr) throw insertErr;
+
+    // If any photo tier just went true -> false, flag every past usage
+    // log entry for this child that relied on it, so it surfaces in the
+    // admin's needs-removal queue (RAD_Session_Photography_Process.md
+    // S5's withdrawal path - "find every logged usage... mark it").
+    const downgradedTiers = detectDowngradedTiers(previousCurrent?.payload?.photo, payload?.photo);
+    if (downgradedTiers.length > 0) {
+      await flagUsageForDowngradedChild(supabaseAdmin, childId, downgradedTiers);
+    }
 
     // Backfill date_of_birth on the canonical kid record if it wasn't
     // known yet - never overwrites an existing value.

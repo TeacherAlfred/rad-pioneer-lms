@@ -399,6 +399,13 @@ export default function SessionsPage() {
                 </button>
               )}
               {kioskError && <p className="text-[11px] text-rose-500 mt-1">{kioskError}</p>}
+
+              <Link
+                href={`/admin/session-photos/${panelSession.id}`}
+                className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-blue-500 hover:text-blue-700 w-fit"
+              >
+                <ChevronRight size={12} /> Manage session photos
+              </Link>
             </div>
 
             {!rosterLoading && rosterEnrolments.length > 0 && (
