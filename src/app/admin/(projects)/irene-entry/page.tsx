@@ -432,6 +432,22 @@ export default function IreneResponseManager() {
     } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
   };
 
+  // cub_full_names is a plain array index-aligned to cubs (not a per-cub object), so unlike
+  // saveInlineField this has to read-modify-write the whole array rather than set one column.
+  const saveInlineCubFullName = async (index: number) => {
+    if (!activeRecord) return;
+    setIsSubmitting(true);
+    try {
+      const updated = [...(activeRecord.cub_full_names || [])];
+      while (updated.length <= index) updated.push(null);
+      updated[index] = inlineEditValue.trim() || null;
+      const { error } = await supabase.from('irene_responses').update({ cub_full_names: updated }).eq('id', activeRecord.id);
+      if (error) throw error;
+      setRecords(prev => prev.map(r => r.id === activeRecord.id ? { ...r, cub_full_names: updated } : r));
+      setInlineEditField(null);
+    } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
+  };
+
   const startInlineTagEdit = (field: 'activity_tags' | 'goal_tags' | 'club_tags', currentTags: string[]) => {
     setInlineEditField(field);
     setInlineEditTags(currentTags || []);
@@ -1431,22 +1447,65 @@ export default function IreneResponseManager() {
                             <button type="button" onClick={() => startInlineEdit('parent_first_name', activeRecord?.parent_first_name)} title="Edit parent name" className="text-slate-300 hover:text-amber-500 transition-colors normal-case not-italic shrink-0">
                               <Edit2 size={14} />
                             </button>
-                            {activeRecord?.parent_relationship && (
-                              <span title="Private, admin-only" className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 px-2 py-1 rounded-full flex items-center gap-1 shrink-0">
-                                <EyeOff size={10} /> {activeRecord.parent_relationship}
+                            {inlineEditField === 'parent_relationship' ? (
+                              <span className="flex items-center gap-1 shrink-0 normal-case not-italic">
+                                <select
+                                  autoFocus
+                                  value={inlineEditValue}
+                                  onChange={(e) => setInlineEditValue(e.target.value)}
+                                  className="text-[10px] font-black uppercase tracking-widest text-slate-600 bg-white border border-amber-300 rounded-full px-2 py-1 outline-none"
+                                >
+                                  <option value="">Not set</option>
+                                  <option value="Mom">Mom</option>
+                                  <option value="Dad">Dad</option>
+                                  <option value="Aunt">Aunt</option>
+                                  <option value="Uncle">Uncle</option>
+                                  <option value="Guardian">Guardian</option>
+                                  <option value="Other">Other</option>
+                                </select>
+                                <button type="button" disabled={isSubmitting} onClick={() => saveInlineField('parent_relationship')} className="p-1.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50">{isSubmitting ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}</button>
+                                <button type="button" onClick={() => setInlineEditField(null)} className="p-1.5 bg-white border border-slate-200 text-slate-400 rounded-lg hover:bg-slate-100"><X size={10} /></button>
                               </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startInlineEdit('parent_relationship', activeRecord?.parent_relationship || '')}
+                                title="Private, admin-only — click to edit"
+                                className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full flex items-center gap-1 shrink-0 normal-case not-italic transition-colors ${activeRecord?.parent_relationship ? 'text-slate-400 bg-slate-100 hover:bg-slate-200' : 'text-slate-300 bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300'}`}
+                              >
+                                <EyeOff size={10} /> {activeRecord?.parent_relationship || 'Add relationship'} <Edit2 size={9} />
+                              </button>
                             )}
                           </h4>
                         )}
                         <div className="flex flex-wrap gap-2 mt-2">{activeRecord?.cubs?.map((cub: any, i: number) => {
                           const fullName = (activeRecord?.cub_full_names || [])[i];
+                          const fieldKey = `cub_full_name_${i}`;
+                          const isEditingName = inlineEditField === fieldKey;
                           return (
                             <span key={i} className="text-[9px] font-black text-slate-600 bg-slate-200 px-2 py-1 rounded uppercase tracking-widest flex items-center gap-1.5">
                               Initial: {cub.cub_initial || '-'} • {cub.grade} ({cub.class_name})
-                              {fullName && (
-                                <span title="Private, admin-only" className="flex items-center gap-1 text-slate-500 bg-slate-300/60 px-1.5 py-0.5 rounded normal-case">
-                                  <EyeOff size={9} /> {fullName}
+                              {isEditingName ? (
+                                <span className="flex items-center gap-1 normal-case">
+                                  <input
+                                    autoFocus
+                                    value={inlineEditValue}
+                                    onChange={(e) => setInlineEditValue(e.target.value)}
+                                    placeholder="Full name"
+                                    className="text-slate-700 bg-white border border-amber-300 rounded px-1.5 py-0.5 text-[10px] outline-none w-28 focus:border-amber-500"
+                                  />
+                                  <button type="button" disabled={isSubmitting} onClick={() => saveInlineCubFullName(i)} className="p-1 bg-emerald-500 text-white rounded hover:bg-emerald-600 disabled:opacity-50">{isSubmitting ? <Loader2 size={9} className="animate-spin" /> : <Check size={9} />}</button>
+                                  <button type="button" onClick={() => setInlineEditField(null)} className="p-1 bg-white border border-slate-200 text-slate-400 rounded hover:bg-slate-100"><X size={9} /></button>
                                 </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => startInlineEdit(fieldKey, fullName || '')}
+                                  title="Private, admin-only — click to edit"
+                                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded normal-case transition-colors ${fullName ? 'text-slate-500 bg-slate-300/60 hover:bg-slate-300' : 'text-slate-400 bg-slate-100 hover:bg-slate-200 border border-dashed border-slate-300'}`}
+                                >
+                                  <EyeOff size={9} /> {fullName || 'Add name'} <Edit2 size={8} />
+                                </button>
                               )}
                             </span>
                           );
