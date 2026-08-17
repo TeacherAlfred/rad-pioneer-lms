@@ -11,7 +11,11 @@
 export function resolveVariable(value: string, lead: Record<string, any>): string {
   return value.replace(/\{\{\s*([a-zA-Z_][\w]*)\s*\}\}/g, (match, field) => {
     const key = String(field).toLowerCase();
-    const v = lead[key];
+    let v = lead[key];
+    // {{name}} reads first name only - "Hi Jane" not "Hi Jane van der Merwe".
+    // leads.name has no separate first/last columns, so this just takes the
+    // first whitespace-separated token.
+    if (key === 'name' && v) v = String(v).trim().split(/\s+/)[0];
     return v !== null && v !== undefined && v !== '' ? String(v) : match;
   });
 }
