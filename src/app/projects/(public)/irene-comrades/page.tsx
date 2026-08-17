@@ -26,7 +26,8 @@ const TIER_RANK: Record<string, number> = { anonymous: 0, email: 1, whatsapp: 2 
 const DAILY_TAP_CAP = 30;
 // Anonymous voters get a much smaller daily allowance than tiered voters -
 // this is the nudge toward providing email/WhatsApp, not just an anti-spam cap.
-const ANONYMOUS_DAILY_TAP_CAP = 3;
+// Temporarily bumped to 10 for testing (was 3) — revert once testing wraps up.
+const ANONYMOUS_DAILY_TAP_CAP = 10;
 
 // The actual Cloud API / WABA number behind PHONE_NUMBER_ID - this is what
 // the webhook (src/app/api/whatsapp-webhook/route.ts) listens on. Deliberately
@@ -1046,7 +1047,10 @@ function MilestoneMarkers({ milestones, kmProgress }: { milestones: typeof MILES
         const isFirst = i === 0;
         const isLast = i === milestones.length - 1;
         const dotAlign = isFirst ? '' : isLast ? '-translate-x-full' : '-translate-x-1/2';
-        const popupAlign = isFirst ? 'left-0' : isLast ? 'right-0' : 'left-1/2 -translate-x-1/2';
+        // Popup is w-52 (208px) — wide enough that any dot within ~20% of either edge
+        // (not just the literal first/last, e.g. Fields Hill at 16/90≈18%) clips off
+        // the side of the screen when centered on the dot. Anchor to that edge instead.
+        const popupAlign = percent < 20 ? 'left-0' : percent > 80 ? 'right-0' : 'left-1/2 -translate-x-1/2';
         return (
           <div key={m.km} className="absolute top-0" style={{ left: `${percent}%` }}>
             {/* p-3 -m-3 grows the tappable hit area to ~44px on touch devices
