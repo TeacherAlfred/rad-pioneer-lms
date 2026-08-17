@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
+import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -97,13 +98,6 @@ function childrenLabel(response: any) {
   return (response.cubs || []).map((c: any) => `${childInitials(c)} · ${c.grade}${c.class_name ? ` (${c.class_name})` : ''}`).join('  •  ');
 }
 
-// Single-line "{{Parent}} - {{Initial}}: {{Grade-Class}}" roster label — same privacy
-// rule as childrenLabel (initials only), just combined onto one line for the roster row.
-function nameLine(response: any) {
-  const kids = (response.cubs || []).map((c: any) => `${childInitials(c)}: ${c.grade}${c.class_name ? `-${c.class_name}` : ''}`).join(', ');
-  return kids ? `${firstName(response)} - ${kids}` : firstName(response);
-}
-
 // Privacy: only ever show the parent's first name publicly, never the full name on file.
 function firstName(response: any) {
   return (response.parent_first_name || '').trim().split(/\s+/)[0] || 'A Parent';
@@ -122,6 +116,12 @@ function TrackerContent() {
   const [responses, setResponses] = useState<any[]>([]);
   const [votes, setVotes] = useState<any[]>([]);
   const [voters, setVoters] = useState<any[]>([]);
+
+  // Roster vote-count ordering, frozen at first load — fetchData() re-runs on every
+  // realtime vote insert from ANY user, and without this the roster would reshuffle
+  // out from under someone mid-session, right after they voted for a specific family.
+  // Only a real page load/refresh (a fresh mount) recomputes it.
+  const [rosterOrder, setRosterOrder] = useState<string[] | null>(null);
 
   // --- PHASE STATE (irene_settings, realtime) ---
   const [phase, setPhase] = useState<'setup' | 'educators' | 'parents' | 'closed'>('setup');
@@ -279,6 +279,17 @@ function TrackerContent() {
         setResponses(respData || []);
         setVotes(voteData || []);
         setVoters(voterData || []);
+
+        // Only compute this the first time — see the rosterOrder declaration for why.
+        setRosterOrder(prev => {
+          if (prev) return prev;
+          const totals: Record<string, number> = {};
+          (voteData || []).forEach((v: any) => { totals[v.response_id] = (totals[v.response_id] || 0) + v.weight; });
+          return (respData || [])
+            .slice()
+            .sort((a: any, b: any) => (totals[b.id] || 0) - (totals[a.id] || 0))
+            .map((r: any) => r.id);
+        });
       })();
 
       await Promise.race([fetchPromise, timeout]);
@@ -341,7 +352,17 @@ function TrackerContent() {
       if (firstName(r).toLowerCase().includes(q)) return true;
       return (r.cubs || []).some((c: any) => `${childInitials(c)} ${c.grade} ${c.class_name}`.toLowerCase().includes(q));
     })
-    .sort((a, b) => totalForResponse(b.id) - totalForResponse(a.id));
+    // Sorted by the order frozen at page load, not live totals — see rosterOrder.
+    // Anything not in that snapshot (shouldn't normally happen) sorts to the end,
+    // by current total as a fallback.
+    .sort((a, b) => {
+      const ai = rosterOrder ? rosterOrder.indexOf(a.id) : -1;
+      const bi = rosterOrder ? rosterOrder.indexOf(b.id) : -1;
+      if (ai === -1 && bi === -1) return totalForResponse(b.id) - totalForResponse(a.id);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
 
   const getTop3Classes = (gradeFilter: string[]) => Object.values(classTotals)
     .filter(c => gradeFilter.includes(c.grade))
@@ -660,6 +681,7 @@ function TrackerContent() {
 
       {/* --- HERO / 90KM PROGRESS BAR --- */}
       <header className="bg-slate-900 text-white px-4 pt-8 pb-16 text-center shadow-lg relative">
+        <Image src="/logo/rad-logo_white_2.png" alt="RAD Academy" width={70} height={23} unoptimized className="absolute top-4 right-4 opacity-70" />
         <div className="relative z-10 max-w-2xl mx-auto">
           <h1 className="text-2xl md:text-3xl font-black tracking-tight mb-1">Irene Comrades Tracker</h1>
           <p className="text-slate-400 text-[10px] md:text-xs font-medium uppercase tracking-widest mb-6">1 Vote = 100m • Durban → Pietermaritzburg • 90km Up Run</p>
@@ -969,6 +991,13 @@ function TrackerContent() {
         </>
       )}
 
+      {/* --- FOOTER CREDIT --- */}
+      <footer className="text-center px-6 mt-10">
+        <p className="text-[10px] text-slate-400 font-medium">
+          Proudly developed &amp; sponsored by <span className="font-bold text-slate-500">RAD Academy</span> for Irene Primary School
+        </p>
+      </footer>
+
       {/* --- TIER STATUS PILL --- */}
       {myVoter && (myVoter.voter_type === 'whatsapp' || myVoter.voter_type === 'email') && phase === 'parents' && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white px-4 py-2 rounded-full shadow-xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
@@ -1203,8 +1232,11 @@ function RosterCard({ response, total, counts, isTop, tappedKeys, phase, educato
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="min-w-0 flex-1">
           <p className="font-bold text-sm text-slate-900 truncate flex items-center gap-1.5 leading-tight">
-            {nameLine(response)}
+            {firstName(response)} - {(response.cubs || []).map((c: any) => childInitials(c)).join(', ')}
             {isTop && <Sparkles size={12} className="text-amber-500 fill-amber-500 shrink-0" />}
+          </p>
+          <p className="text-xs font-normal text-slate-400 truncate mt-0.5">
+            {(response.cubs || []).map((c: any) => `${c.grade}${c.class_name ? `-${c.class_name}` : ''}`).join(', ')}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
