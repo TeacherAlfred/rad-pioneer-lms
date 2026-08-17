@@ -22,15 +22,17 @@ function validateButtons(buttons: any[]): string | null {
 function validate(body: any): string | null {
   if (!body.trigger_button_id?.trim()) return 'trigger_button_id is required';
   if (!body.label?.trim()) return 'label is required';
-  if (!['message', 'template'].includes(body.action_type)) return 'action_type must be "message" or "template"';
+  if (!['message', 'template', 'bot_media'].includes(body.action_type)) return 'action_type must be "message", "template", or "bot_media"';
 
   if (body.action_type === 'message') {
     if (!body.message_body?.trim()) return 'message_body is required for a message flow';
     const buttonsErr = validateButtons(body.message_buttons || []);
     if (buttonsErr) return buttonsErr;
-  } else {
+  } else if (body.action_type === 'template') {
     if (!body.template_name?.trim()) return 'template_name is required for a template flow';
     if (!body.template_language?.trim()) return 'template_language is required for a template flow';
+  } else {
+    if (!body.bot_media_keyword?.trim()) return 'bot_media_keyword is required for a bot media flow - the keyword to look up in /admin/bot-media';
   }
   if (body.expects_reply && !body.reply_label?.trim()) {
     return 'reply_label is required when this message expects a reply';
@@ -67,6 +69,7 @@ export async function POST(req: Request) {
         template_variables: body.template_variables || [],
         template_variable_names: body.template_variable_names || [],
         template_button_payloads: body.template_button_payloads || [],
+        bot_media_keyword: body.bot_media_keyword || null,
         set_source: body.set_source || null,
         add_tags: body.add_tags || [],
         notify_admin: !!body.notify_admin,
@@ -112,7 +115,7 @@ export async function PATCH(req: Request) {
     const allowed = [
       'trigger_button_id', 'label', 'action_type', 'message_body', 'message_buttons',
       'template_name', 'template_language', 'template_variables', 'template_variable_names', 'template_button_payloads',
-      'set_source', 'add_tags', 'notify_admin', 'skip_human_handoff', 'active',
+      'bot_media_keyword', 'set_source', 'add_tags', 'notify_admin', 'skip_human_handoff', 'active',
       'expects_reply', 'reply_label', 'reply_confirmation', 'completion_tag',
     ];
     const update: Record<string, any> = { updated_at: new Date().toISOString() };

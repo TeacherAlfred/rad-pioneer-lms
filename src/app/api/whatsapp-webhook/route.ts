@@ -138,12 +138,29 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
   return sendResult;
 }
 
+// The fallback for any button tap that isn't handled by a matching
+// bot_flows row - acknowledge, flag the lead as needing a human, and tell
+// the admin exactly which button was tapped. Also what a bot_media-type
+// flow (e.g. btn_guide) falls back to if its keyword currently matches
+// nothing in bot_media, rather than going silent on the lead.
+async function handleGenericHandoff(supabase: any, senderPhone: string, lead: any, buttonTitle: string) {
+  await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
+  const ackResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
+  await supabase.from('messages').insert([{
+    lead_id: lead.id,
+    direction: 'outbound',
+    body: ackResult.ok ? '[Delivered human-handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${ackResult.error}]`,
+  }]);
+  await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`, lead.id);
+}
+
 // 4. Core Helper: bot_flows - admin-configured automated responses, keyed
-// by button id, that either send a freeform message (optionally with its
-// own buttons, so steps chain: tapping one flow's button can itself be
-// another flow's trigger_button_id) or fire a Meta template. This is how
-// self-serve multi-step menus (e.g. "What's On" -> city -> "Hold My Spot")
-// get built without a code change per step - see /admin/bot-flows.
+// by button id, that send a freeform message (optionally with its own
+// buttons, so steps chain: tapping one flow's button can itself be another
+// flow's trigger_button_id), fire a Meta template, or deliver a bot_media
+// item (the "Get Free Guide" mechanism - this used to be hardcoded to
+// btn_guide specifically; now it's just another flow, like any other
+// button, configured via /admin/bot-flows rather than baked into this file).
 async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: any, buttonTitle: string) {
   const leadUpdate: Record<string, any> = {};
   if (flow.set_source) leadUpdate.source = flow.set_source;
@@ -160,6 +177,19 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     await supabase.from('leads').update(leadUpdate).eq('id', lead.id);
   }
   const effectiveLead = { ...lead, ...leadUpdate };
+
+  if (flow.action_type === 'bot_media') {
+    // deliverBotMedia handles its own messages-log + admin notify (e.g.
+    // "📥 Downloaded the X.") - no needs_human, no generic "Tapped ..."
+    // notify, same as the old hardcoded btn_guide behavior.
+    const matchedMedia = await matchBotMedia(supabase, flow.bot_media_keyword || '', effectiveLead);
+    if (matchedMedia) {
+      await deliverBotMedia(supabase, senderPhone, effectiveLead, matchedMedia);
+    } else {
+      await handleGenericHandoff(supabase, senderPhone, effectiveLead, buttonTitle);
+    }
+    return;
+  }
 
   let sendResult: { ok: boolean; error?: string };
   if (flow.action_type === 'message') {
@@ -547,14 +577,10 @@ export async function POST(request: Request) {
               // (welcome message, bot_media) arrive as type "interactive" with
               // interactive.button_reply.{id,title}; a quick-reply button on an
               // approved TEMPLATE arrives as type "button" with button.{payload,
-              // text} instead - a template's button payload isn't something this
-              // app defines, so "is this the guide button" is matched on the
-              // known title text, not a specific id, to work for both shapes.
-              // "Get Free Guide" delivers the guide immediately, same as typing
-              // "guide" would - it shouldn't make the lead wait on a human just
-              // to get the thing they explicitly asked for. Every other button
-              // routes the same way: acknowledge, flag the lead as needing a
-              // human, and tell the admin exactly which button was tapped.
+              // text} instead. Every button - including "Get Free Guide" - is
+              // just a bot_flows lookup by id now (see /admin/bot-flows); nothing
+              // about a specific button is hardcoded in this file anymore. No
+              // matching flow falls to the generic human handoff.
               const isBotButtonReply = message.type === 'interactive' && message.interactive?.type === 'button_reply';
               const isTemplateButtonReply = message.type === 'button';
 
@@ -570,16 +596,6 @@ export async function POST(request: Request) {
                   lead.awaiting_reply_flow_id = null;
                 }
 
-                if (buttonId === 'btn_guide' || buttonTitle.toLowerCase().includes('guide')) {
-                  const matchedMedia = await matchBotMedia(supabase, 'guide', lead);
-                  if (matchedMedia) {
-                    await deliverBotMedia(supabase, senderPhone, lead, matchedMedia);
-                    continue;
-                  }
-                  // No guide configured in bot_media - fall through to the
-                  // human handoff below rather than going silent on the lead.
-                }
-
                 const { data: flow } = await supabase
                   .from('bot_flows')
                   .select('*')
@@ -591,14 +607,7 @@ export async function POST(request: Request) {
                   continue;
                 }
 
-                await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
-                const ackResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
-                await supabase.from('messages').insert([{
-                  lead_id: lead.id,
-                  direction: 'outbound',
-                  body: ackResult.ok ? '[Delivered human-handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${ackResult.error}]`,
-                }]);
-                await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`, lead.id);
+                await handleGenericHandoff(supabase, senderPhone, lead, buttonTitle);
               }
 
             }

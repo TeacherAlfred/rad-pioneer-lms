@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, Plus, Trash2, CheckCircle2, XCircle, Pencil, AlertTriangle,
-  ArrowLeft, MessageSquare, Send, GitBranch,
+  ArrowLeft, MessageSquare, Send, GitBranch, FileText,
 } from "lucide-react";
 
 type Button = { id: string; title: string };
@@ -13,7 +13,7 @@ type FlowRow = {
   id: string;
   trigger_button_id: string;
   label: string;
-  action_type: 'message' | 'template';
+  action_type: 'message' | 'template' | 'bot_media';
   message_body: string | null;
   message_buttons: Button[];
   template_name: string | null;
@@ -21,6 +21,7 @@ type FlowRow = {
   template_variables: string[];
   template_variable_names: string[];
   template_button_payloads: string[];
+  bot_media_keyword: string | null;
   set_source: string | null;
   add_tags: string[];
   notify_admin: boolean;
@@ -41,7 +42,7 @@ type MetaTemplate = {
 const emptyForm = {
   trigger_button_id: '',
   label: '',
-  action_type: 'message' as 'message' | 'template',
+  action_type: 'message' as 'message' | 'template' | 'bot_media',
   message_body: '',
   message_buttons: [] as Button[],
   template_key: '', // "name|language" combined key for the picker
@@ -51,6 +52,7 @@ const emptyForm = {
   template_variable_names: [] as string[],
   template_quick_reply_buttons: [] as { text: string; index: number }[],
   template_button_payloads: {} as Record<number, string>,
+  bot_media_keyword: '',
   set_source: '',
   add_tags: '',
   notify_admin: false,
@@ -166,6 +168,7 @@ export default function BotFlowsPage() {
       template_variable_names: row.template_variable_names || [],
       template_quick_reply_buttons: [],
       template_button_payloads: Object.fromEntries((row.template_button_payloads || []).map((p, i) => [i, p]).filter(([, p]) => p)),
+      bot_media_keyword: row.bot_media_keyword || '',
       set_source: row.set_source || '',
       add_tags: (row.add_tags || []).join(', '),
       notify_admin: row.notify_admin,
@@ -233,6 +236,10 @@ export default function BotFlowsPage() {
       setSaveError('Pick an approved template.');
       return;
     }
+    if (form.action_type === 'bot_media' && !form.bot_media_keyword.trim()) {
+      setSaveError('Give the bot_media keyword to look up (e.g. "guide").');
+      return;
+    }
     if (form.expects_reply && !form.reply_label.trim()) {
       setSaveError('Give the expected reply a label (e.g. "Email address").');
       return;
@@ -254,6 +261,7 @@ export default function BotFlowsPage() {
         template_variables: form.action_type === 'template' ? form.template_variables : [],
         template_variable_names: form.action_type === 'template' ? form.template_variable_names : [],
         template_button_payloads: form.action_type === 'template' ? templateButtonPayloadsArray : [],
+        bot_media_keyword: form.action_type === 'bot_media' ? form.bot_media_keyword.trim() : null,
         set_source: form.set_source.trim() || null,
         add_tags: form.add_tags.split(',').map(t => t.trim()).filter(Boolean),
         notify_admin: form.notify_admin,
@@ -303,7 +311,7 @@ export default function BotFlowsPage() {
         <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">Bot Flows</h1>
-            <p className="text-sm text-slate-500 mt-1">Automated responses keyed by button id - chain a self-serve message or fire a template, without a code change.</p>
+            <p className="text-sm text-slate-500 mt-1">Automated responses keyed by button id - chain a self-serve message, fire a template, or deliver a bot_media item, without a code change.</p>
           </div>
           <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors">
             <Plus size={14} /> Add Flow
@@ -329,6 +337,9 @@ export default function BotFlowsPage() {
               <button type="button" onClick={() => { setForm(p => ({ ...p, action_type: 'template' })); loadTemplatesIfNeeded(); }} className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border ${form.action_type === 'template' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'}`}>
                 <Send size={13} className="inline -mt-0.5 mr-1" /> Meta Template
               </button>
+              <button type="button" onClick={() => setForm(p => ({ ...p, action_type: 'bot_media' }))} className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border ${form.action_type === 'bot_media' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'}`}>
+                <FileText size={13} className="inline -mt-0.5 mr-1" /> Bot Media
+              </button>
             </div>
 
             {form.action_type === 'message' ? (
@@ -351,6 +362,18 @@ export default function BotFlowsPage() {
                   )}
                 </div>
               </>
+            ) : form.action_type === 'bot_media' ? (
+              <div>
+                <input
+                  placeholder='Keyword to look up in bot_media, e.g. "guide"'
+                  value={form.bot_media_keyword}
+                  onChange={e => setForm(p => ({ ...p, bot_media_keyword: e.target.value }))}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Matched the same way typing this word would - <Link href="/admin/bot-media" className="underline">/admin/bot-media</Link>'s tag_filter still applies, so a lead with a matching tag gets the audience-specific version over the generic one.
+                </p>
+              </div>
             ) : (
               <div>
                 {templatesLoading ? (
@@ -479,14 +502,20 @@ export default function BotFlowsPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <b className="text-slate-800">{row.label}</b>
                     <span className="text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{row.trigger_button_id}</span>
-                    <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${row.action_type === 'template' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>
-                      {row.action_type === 'template' ? 'Template' : 'Message'}
+                    <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                      row.action_type === 'template' ? 'bg-indigo-50 text-indigo-600' : row.action_type === 'bot_media' ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'
+                    }`}>
+                      {row.action_type === 'template' ? 'Template' : row.action_type === 'bot_media' ? 'Bot Media' : 'Message'}
                     </span>
                     {row.set_source && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">source: {row.set_source}</span>}
                     {row.expects_reply && <span className="text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">captures: {row.reply_label}</span>}
                   </div>
                   <p className="text-xs text-slate-500 mt-1 line-clamp-2">
-                    {row.action_type === 'template' ? `Template: ${row.template_name} (${row.template_language})` : row.message_body}
+                    {row.action_type === 'template'
+                      ? `Template: ${row.template_name} (${row.template_language})`
+                      : row.action_type === 'bot_media'
+                        ? `Bot Media keyword: "${row.bot_media_keyword}"`
+                        : row.message_body}
                   </p>
                   {row.message_buttons?.length > 0 && (
                     <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-400">
