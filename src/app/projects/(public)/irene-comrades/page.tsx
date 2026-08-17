@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
-import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -681,7 +680,6 @@ function TrackerContent() {
 
       {/* --- HERO / 90KM PROGRESS BAR --- */}
       <header className="bg-slate-900 text-white px-4 pt-8 pb-16 text-center shadow-lg relative">
-        <Image src="/logo/rad-logo_white_2.png" alt="RAD Academy" width={70} height={23} unoptimized className="absolute top-4 right-4 opacity-70" />
         <div className="relative z-10 max-w-2xl mx-auto">
           <h1 className="text-2xl md:text-3xl font-black tracking-tight mb-1">Irene Comrades Tracker</h1>
           <p className="text-slate-400 text-[10px] md:text-xs font-medium uppercase tracking-widest mb-6">1 Vote = 100m • Durban → Pietermaritzburg • 90km Up Run</p>
@@ -991,21 +989,14 @@ function TrackerContent() {
         </>
       )}
 
-      {/* --- FOOTER CREDIT --- */}
-      <footer className="text-center px-6 mt-10">
-        <p className="text-[10px] text-slate-400 font-medium">
-          Proudly developed &amp; sponsored by <span className="font-bold text-slate-500">RAD Academy</span> for Irene Primary School
-        </p>
-      </footer>
-
-      {/* --- TIER STATUS PILL --- */}
+      {/* --- TIER STATUS PILL (sits just above the fixed footer bar below) --- */}
       {myVoter && (myVoter.voter_type === 'whatsapp' || myVoter.voter_type === 'email') && phase === 'parents' && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white px-4 py-2 rounded-full shadow-xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
+        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white px-4 py-2 rounded-full shadow-xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
           <Zap size={12} className="text-amber-400" /> {TIER_WEIGHTS[myVoter.voter_type]}x Power Voter
         </div>
       )}
       {phase === 'parents' && (!myVoter || myVoter.voter_type === 'anonymous') && !showTierModal && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1.5">
+        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1.5">
           <div className="bg-slate-900/90 text-white px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">
             {Math.max(0, ANONYMOUS_DAILY_TAP_CAP - dailyTapCount)} free {ANONYMOUS_DAILY_TAP_CAP - dailyTapCount === 1 ? 'vote' : 'votes'} left today
           </div>
@@ -1017,17 +1008,21 @@ function TrackerContent() {
         </div>
       )}
 
-      {/* --- PERSISTENT CONTACT (opposite corner from the tier pills above,
-           visible in every phase/state, not just parents) --- */}
-      <a
-        href={contactRadLink(`I'm on the ${phase} phase and need a hand.`)}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="fixed bottom-4 right-4 z-40 bg-emerald-500 text-white w-12 h-12 rounded-full shadow-xl flex items-center justify-center hover:bg-emerald-600 transition-colors"
-        title="Need help? Chat with RAD Academy on WhatsApp"
-      >
-        <MessageCircle size={20} />
-      </a>
+      {/* --- FIXED FOOTER BAR: credit text + WhatsApp contact, always visible --- */}
+      <footer className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-sm border-t border-slate-200 px-4 py-2.5 flex items-center justify-between gap-3 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
+        <p className="text-[9px] md:text-[10px] text-slate-400 font-medium leading-tight min-w-0">
+          Proudly developed &amp; sponsored by <span className="font-bold text-slate-500">RAD Academy</span> for Irene Primary School
+        </p>
+        <a
+          href={contactRadLink(`I'm on the ${phase} phase and need a hand.`)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 bg-emerald-500 text-white w-10 h-10 rounded-full shadow-lg flex items-center justify-center hover:bg-emerald-600 transition-colors"
+          title="Need help? Chat with RAD Academy on WhatsApp"
+        >
+          <MessageCircle size={18} />
+        </a>
+      </footer>
     </div>
   );
 }

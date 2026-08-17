@@ -1,4 +1,5 @@
 import React from 'react';
+import Image from 'next/image';
 
 export const metadata = {
   title: 'Irene Primary Comrades Tracker | Powered by RAD Academy',
@@ -27,6 +28,7 @@ export default function IreneComradesLayout({
               <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Comrades Tracker</p>
             </div>
           </div>
+          <Image src="/logo/rad-logo.png" alt="RAD Academy" width={70} height={23} unoptimized />
         </div>
       </nav>
 
