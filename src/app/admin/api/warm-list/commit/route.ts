@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { recordStatusChange } from '@/lib/leadStatusHistory';
+import { recordStageChange } from '@/lib/leadStageHistory';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -67,6 +67,7 @@ export async function POST(req: Request) {
           email: row.email || null,
           name: row.name || null,
           status: 'new_lead',
+          lifecycle_stage: 'new',
           source: row.source || 'warm_list',
           tags: row.tags || [],
         }]).select().single();
@@ -75,7 +76,7 @@ export async function POST(req: Request) {
           skippedReasons.push(`${row.name || row.id}: ${insertErr.message}`);
           continue;
         }
-        await recordStatusChange(supabaseAdmin, newLead.id, 'new_lead');
+        await recordStageChange(supabaseAdmin, newLead.id, { toStage: 'new' });
         inserted++;
       }
 

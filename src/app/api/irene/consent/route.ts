@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { recordStatusChange } from '@/lib/leadStatusHistory';
+import { recordStageChange } from '@/lib/leadStageHistory';
 
 // Bump this whenever the consent copy shown in the tier modal changes, so
 // stored consent always records exactly what the parent agreed to.
@@ -60,6 +60,7 @@ export async function POST(request: Request) {
         .insert([{
           phone,
           status: 'new_lead',
+          lifecycle_stage: 'new',
           source: 'irene_ips',
           school: 'Irene Primary',
           class: class_name || null,
@@ -77,7 +78,7 @@ export async function POST(request: Request) {
       if (!newLead) {
         console.log(`ℹ️ Irene consent: ${phone} already has a lead record, left as-is.`);
       } else {
-        await recordStatusChange(supabase, newLead.id, 'new_lead');
+        await recordStageChange(supabase, newLead.id, { toStage: 'new' });
       }
     }
 

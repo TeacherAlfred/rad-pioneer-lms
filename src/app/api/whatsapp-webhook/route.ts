@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { recordStatusChange } from '@/lib/leadStatusHistory';
+import { recordStageChange } from '@/lib/leadStageHistory';
 import { resolveVariable, sendMetaTemplate } from '@/lib/metaTemplate';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
@@ -54,13 +54,15 @@ async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ o
   return { ok: true };
 }
 
-// Statuses the admin can log directly from a pipeline alert's buttons.
-// Button title max 20 chars (Meta error 131009); id prefix + "_" + leadId
-// is what STAGE 2's admin button handler matches back to a status update.
-const STATUS_BUTTONS: Record<string, { title: string; status: string; label: string }> = {
-  status_contacted: { title: 'Contacted', status: 'contacted', label: 'Contacted successfully' },
-  status_no_response: { title: 'No Response', status: 'no_response', label: 'Contacted, no response' },
-  status_followup: { title: 'Follow-up Set', status: 'followup_scheduled', label: 'Follow-up/call scheduled' },
+// Contact-attempt outcomes the admin can log directly from a pipeline
+// alert's buttons. Button title max 20 chars (Meta error 131009); id
+// prefix + "_" + leadId is what STAGE 2's admin button handler matches
+// back to a lead_activities row. These log what happened on this attempt -
+// they never move lifecycle_stage (see RAD_Lead_Stages_and_Followup_Spec.md).
+const STATUS_BUTTONS: Record<string, { title: string; outcome: string; label: string }> = {
+  status_contacted: { title: 'Contacted', outcome: 'contacted', label: 'Contacted successfully' },
+  status_no_response: { title: 'No Response', outcome: 'no_response', label: 'Contacted, no response' },
+  status_followup: { title: 'Follow-up Set', outcome: 'followup_scheduled', label: 'Follow-up/call scheduled' },
 };
 
 // 2. Core Helper: Admin Pipeline Tracker
@@ -180,8 +182,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
   }
 
   if (!flow.skip_human_handoff) {
-    await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
-    await recordStatusChange(supabase, lead.id, 'needs_human');
+    await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
   }
   if (flow.notify_admin) {
     await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — ${flow.label}`, lead.id);
@@ -280,9 +281,9 @@ export async function POST(request: Request) {
                   const matchedPrefix = Object.keys(STATUS_BUTTONS).find(prefix => buttonId.startsWith(`${prefix}_`));
                   if (matchedPrefix) {
                     const targetLeadId = buttonId.slice(matchedPrefix.length + 1);
-                    const { status, label } = STATUS_BUTTONS[matchedPrefix];
-                    const update: Record<string, any> = { status };
-                    if (status === 'contacted') update.contacted_at = new Date().toISOString();
+                    const { outcome, label } = STATUS_BUTTONS[matchedPrefix];
+                    const update: Record<string, any> = { needs_human: false };
+                    if (outcome === 'contacted') update.contacted_at = new Date().toISOString();
                     // .select().maybeSingle() so a bad id or an RLS block shows up as
                     // "not found"/no error instead of a false "Logged" confirmation.
                     const { data: updatedLead, error: statusError } = await supabase
@@ -292,11 +293,22 @@ export async function POST(request: Request) {
                       .select()
                       .maybeSingle();
                     const confirmText = statusError
-                      ? `⚠️ Failed to log status: ${statusError.message}`
+                      ? `⚠️ Failed to log outcome: ${statusError.message}`
                       : !updatedLead
-                        ? `⚠️ No lead found for that button - status not logged.`
+                        ? `⚠️ No lead found for that button - outcome not logged.`
                         : `✅ Logged: ${label}`;
-                    if (updatedLead) await recordStatusChange(supabase, targetLeadId, status);
+                    // Logs the outcome of this contact attempt only - it never moves
+                    // lifecycle_stage, which advances on what the lead does, not what
+                    // the admin tried (RAD_Lead_Stages_and_Followup_Spec.md §2).
+                    if (updatedLead) {
+                      await supabase.from('lead_activities').insert([{
+                        lead_id: targetLeadId,
+                        channel: 'whatsapp',
+                        direction: 'outbound',
+                        outcome,
+                        created_by: senderPhone,
+                      }]);
+                    }
                     await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: confirmText } });
                   }
                 }
@@ -338,6 +350,7 @@ export async function POST(request: Request) {
                 .insert([{
                   phone: senderPhone,
                   status: 'new_lead',
+                  lifecycle_stage: 'new',
                   ...(referral ? {
                     ad_id: referral.source_id || null,
                     ad_headline: referral.headline || null,
@@ -353,7 +366,7 @@ export async function POST(request: Request) {
               const isNewLead = !!lead;
 
               if (isNewLead) {
-                await recordStatusChange(supabase, lead.id, 'new_lead');
+                await recordStageChange(supabase, lead.id, { toStage: 'new' });
                 // Alert Admin of brand new lead
                 await notifyAdmin(supabase, senderPhone, "🆕 Brand New Lead entered the funnel.", lead.id);
               } else {
@@ -366,6 +379,32 @@ export async function POST(request: Request) {
               }
 
               if (!lead) continue;
+
+              // Any inbound message is fresh signal of warmth, regardless of what
+              // it says - update recency, and forward-only bump 'new' to 'engaged'
+              // once this isn't their very first message (the first message is
+              // what creates a lead at 'new' - it shouldn't also bump it forward
+              // before the bot's had a chance to get a reply to that outreach).
+              // An auto-expired 'lost' lead reopens on any new inbound (spec §3);
+              // a manually-lost lead does not.
+              const inboundLeadUpdate: Record<string, any> = { last_inbound_at: new Date().toISOString() };
+              if (!isNewLead && lead.lifecycle_stage === 'new') {
+                inboundLeadUpdate.lifecycle_stage = 'engaged';
+                inboundLeadUpdate.stage_entered_at = new Date().toISOString();
+              } else if (lead.lifecycle_stage === 'lost' && lead.lost_reason === 'auto_expired') {
+                inboundLeadUpdate.lifecycle_stage = 'engaged';
+                inboundLeadUpdate.stage_entered_at = new Date().toISOString();
+                inboundLeadUpdate.lost_reason = null;
+              }
+              if (inboundLeadUpdate.lifecycle_stage) {
+                await recordStageChange(supabase, lead.id, {
+                  fromStage: lead.lifecycle_stage,
+                  toStage: inboundLeadUpdate.lifecycle_stage,
+                  reason: 'inbound_reply',
+                });
+              }
+              await supabase.from('leads').update(inboundLeadUpdate).eq('id', lead.id);
+              lead = { ...lead, ...inboundLeadUpdate };
 
               await supabase.from('messages').insert([{
                 lead_id: lead.id,
@@ -403,8 +442,7 @@ export async function POST(request: Request) {
               if (message.type === 'text') {
                 const textLower = messageText.toLowerCase();
                 if (textLower.includes('irene') && textLower.includes('voting')) {
-                  await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
-                  await recordStatusChange(supabase, lead.id, 'needs_human');
+                  await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
                   const ireneAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } });
                   await supabase.from('messages').insert([{
                     lead_id: lead.id,
@@ -499,8 +537,7 @@ export async function POST(request: Request) {
                   continue;
                 }
 
-                await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
-                await recordStatusChange(supabase, lead.id, 'needs_human');
+                await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
                 const ackResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
                 await supabase.from('messages').insert([{
                   lead_id: lead.id,

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { FUNNEL_STAGES } from '@/lib/funnelStages';
+import { LIFECYCLE_STAGES } from '@/lib/funnelStages';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,8 +17,8 @@ function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
-// Turns leads.status (a single current value) + lead_status_history (an
-// append-only log of when it changed) into, per lead: how long they've
+// Turns leads.lifecycle_stage (a single current value) + lead_stage_history
+// (an append-only log of when it changed) into, per lead: how long they've
 // been in their current stage, and how many outbound messages were sent
 // while they were in it. Also aggregates, per stage: how many leads are
 // there now, and - for leads who have since moved on - the average number
@@ -28,8 +28,8 @@ function round1(n: number): number {
 // a stage today (their count is still rising).
 export async function GET() {
   const [{ data: leads, error: leadsErr }, { data: history, error: histErr }, { data: messages, error: msgErr }] = await Promise.all([
-    supabaseAdmin.from('leads').select('id, name, phone, tags, status, opted_out, created_at'),
-    supabaseAdmin.from('lead_status_history').select('lead_id, status, changed_at').order('changed_at', { ascending: true }),
+    supabaseAdmin.from('leads').select('id, name, phone, tags, lifecycle_stage, opted_out, created_at'),
+    supabaseAdmin.from('lead_stage_history').select('lead_id, to_stage, changed_at').order('changed_at', { ascending: true }),
     supabaseAdmin.from('messages').select('lead_id, created_at').eq('direction', 'outbound'),
   ]);
 
@@ -37,7 +37,7 @@ export async function GET() {
   if (histErr) return NextResponse.json({ error: histErr.message }, { status: 500 });
   if (msgErr) return NextResponse.json({ error: msgErr.message }, { status: 500 });
 
-  const historyByLead = new Map<string, { status: string; changed_at: string }[]>();
+  const historyByLead = new Map<string, { to_stage: string; changed_at: string }[]>();
   for (const h of history || []) {
     if (!historyByLead.has(h.lead_id)) historyByLead.set(h.lead_id, []);
     historyByLead.get(h.lead_id)!.push(h);
@@ -60,7 +60,7 @@ export async function GET() {
       // Shouldn't happen once every writer records history, but a lead
       // created before that was wired up (or the backfill hasn't run yet)
       // still needs a starting point.
-      hist = [{ status: lead.status, changed_at: lead.created_at }];
+      hist = [{ to_stage: lead.lifecycle_stage, changed_at: lead.created_at }];
     }
     const leadMessageTimes = (messagesByLead.get(lead.id) || []).sort((a, b) => a - b);
 
@@ -76,7 +76,7 @@ export async function GET() {
         currentStageStart = hist[i].changed_at;
         currentStageMessages = messagesInPeriod;
       } else {
-        completedPeriods.push({ stage: hist[i].status, messages: messagesInPeriod, isInhouse });
+        completedPeriods.push({ stage: hist[i].to_stage, messages: messagesInPeriod, isInhouse });
       }
     }
 
@@ -86,15 +86,15 @@ export async function GET() {
       phone: lead.phone,
       tags: lead.tags || [],
       opted_out: lead.opted_out,
-      status: lead.status,
+      lifecycle_stage: lead.lifecycle_stage,
       stageStartedAt: currentStageStart,
       daysInStage: round1((now - new Date(currentStageStart).getTime()) / DAY_MS),
       messagesInStage: currentStageMessages,
     });
   }
 
-  const stages = FUNNEL_STAGES.map(stage => {
-    const current = leadSummaries.filter(l => l.status === stage && !(l.tags || []).some((t: string) => t.toLowerCase() === INHOUSE_TAG));
+  const stages = LIFECYCLE_STAGES.map(stage => {
+    const current = leadSummaries.filter(l => l.lifecycle_stage === stage && !(l.tags || []).some((t: string) => t.toLowerCase() === INHOUSE_TAG));
     const completed = completedPeriods.filter(p => p.stage === stage && !p.isInhouse);
     return {
       stage,

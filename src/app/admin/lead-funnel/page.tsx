@@ -16,7 +16,8 @@ type Lead = {
   phone: string;
   email?: string | null;
   name?: string | null;
-  status: string | null;
+  lifecycle_stage: string | null;
+  needs_human?: boolean | null;
   source?: string | null;
   tags?: string[] | null;
   ad_id?: string | null;
@@ -39,13 +40,14 @@ type Lead = {
 type LeadNote = { id: string; note: string; created_at: string; created_by: string | null };
 
 const STATUS_STYLES: Record<string, string> = {
-  new_lead: 'bg-slate-100 text-slate-600',
-  needs_human: 'bg-amber-50 text-amber-600',
-  contacted: 'bg-blue-50 text-blue-600',
-  no_response: 'bg-rose-50 text-rose-600',
-  followup_scheduled: 'bg-indigo-50 text-indigo-600',
-  converted: 'bg-emerald-50 text-emerald-600',
+  new: 'bg-slate-100 text-slate-600',
+  engaged: 'bg-blue-50 text-blue-600',
+  qualified: 'bg-amber-50 text-amber-600',
+  offered: 'bg-indigo-50 text-indigo-600',
+  won: 'bg-emerald-50 text-emerald-600',
+  re_nurture: 'bg-purple-50 text-purple-600',
   lost: 'bg-slate-100 text-slate-400',
+  opted_out: 'bg-rose-50 text-rose-400',
 };
 
 function statusLabel(status: string | null) {
@@ -516,7 +518,7 @@ export default function LeadFunnelPage() {
     const total = statsRows.length;
     const newToday = statsRows.filter(r => isToday(r.created_at)).length;
     const newThisWeek = statsRows.filter(r => isWithinDays(r.created_at, 7)).length;
-    const needsHuman = statsRows.filter(r => r.status === 'needs_human').length;
+    const needsHuman = statsRows.filter(r => r.needs_human).length;
     const optedOut = statsRows.filter(r => r.opted_out).length;
     const fromAds = statsRows.filter(r => r.ad_id).length;
 
@@ -532,7 +534,7 @@ export default function LeadFunnelPage() {
     const byAd: Record<string, number> = {};
 
     for (const r of statsRows) {
-      const s = r.status || 'unknown';
+      const s = r.lifecycle_stage || 'unknown';
       byStatus[s] = (byStatus[s] || 0) + 1;
 
       const src = r.source || 'organic / direct';
@@ -547,14 +549,14 @@ export default function LeadFunnelPage() {
     return { total, newToday, newThisWeek, needsHuman, optedOut, fromAds, households, byStatus, bySource, byAd };
   }, [statsRows]);
 
-  const statusOptions = useMemo(() => Array.from(new Set(rows.map(r => r.status || 'unknown'))).sort(), [rows]);
+  const statusOptions = useMemo(() => Array.from(new Set(rows.map(r => r.lifecycle_stage || 'unknown'))).sort(), [rows]);
   const sourceOptions = useMemo(() => Array.from(new Set(rows.map(r => r.source || 'organic / direct'))).sort(), [rows]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const source = showInhouse ? rows : statsRows;
     return source.filter(r => {
-      if (statusFilter !== 'all' && (r.status || 'unknown') !== statusFilter) return false;
+      if (statusFilter !== 'all' && (r.lifecycle_stage || 'unknown') !== statusFilter) return false;
       if (sourceFilter !== 'all' && (r.source || 'organic / direct') !== sourceFilter) return false;
       if (adOnly && !r.ad_id) return false;
       if (q) {
@@ -764,9 +766,16 @@ export default function LeadFunnelPage() {
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${STATUS_STYLES[r.status || ''] || 'bg-slate-100 text-slate-500'}`}>
-                            {statusLabel(r.status)}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${STATUS_STYLES[r.lifecycle_stage || ''] || 'bg-slate-100 text-slate-500'}`}>
+                              {statusLabel(r.lifecycle_stage)}
+                            </span>
+                            {r.needs_human && (
+                              <span title="Awaiting a human reply" className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-amber-50 text-amber-600">
+                                Needs Reply
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="text-slate-600">{r.source || 'organic / direct'}</div>

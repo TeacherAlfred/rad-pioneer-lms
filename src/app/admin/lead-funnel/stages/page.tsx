@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Search, Clock, MessageSquare, Users,
 } from "lucide-react";
-import { FUNNEL_STAGES, FUNNEL_STAGE_LABELS } from "@/lib/funnelStages";
+import { LIFECYCLE_STAGES, LIFECYCLE_STAGE_LABELS } from "@/lib/funnelStages";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
 
@@ -15,7 +15,7 @@ type LeadStageRow = {
   phone: string;
   tags: string[];
   opted_out: boolean | null;
-  status: string;
+  lifecycle_stage: string;
   stageStartedAt: string;
   daysInStage: number;
   messagesInStage: number;
@@ -30,13 +30,14 @@ type StageStat = {
 };
 
 const STAGE_COLORS: Record<string, string> = {
-  new_lead: 'bg-slate-800',
-  needs_human: 'bg-amber-500',
-  contacted: 'bg-blue-500',
-  followup_scheduled: 'bg-indigo-500',
-  no_response: 'bg-rose-400',
-  converted: 'bg-emerald-500',
+  new: 'bg-slate-800',
+  engaged: 'bg-blue-500',
+  qualified: 'bg-amber-500',
+  offered: 'bg-indigo-500',
+  won: 'bg-emerald-500',
+  re_nurture: 'bg-purple-400',
   lost: 'bg-slate-300',
+  opted_out: 'bg-rose-300',
 };
 
 const INHOUSE_TAG = 'Inhouse';
@@ -71,15 +72,26 @@ export default function FunnelStagesPage() {
 
   useEffect(() => { load(); }, []);
 
-  async function changeStage(lead: LeadStageRow, status: string) {
+  async function changeStage(lead: LeadStageRow, lifecycle_stage: string) {
+    // Manual `lost` requires a reason (spec §7) - auto-expiry writes its own.
+    let lost_reason: string | undefined;
+    if (lifecycle_stage === 'lost') {
+      const reason = window.prompt('Why is this lead lost?');
+      if (!reason) return;
+      lost_reason = reason;
+    }
     setSavingId(lead.id);
     try {
-      await fetch('/admin/api/lead-funnel', {
+      const res = await fetch('/admin/api/lead-funnel', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: lead.id, status }),
+        body: JSON.stringify({ id: lead.id, lifecycle_stage, lost_reason }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update stage');
       await load();
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSavingId(null);
     }
@@ -93,7 +105,7 @@ export default function FunnelStagesPage() {
     const q = search.trim().toLowerCase();
     const source = showInhouse ? leads : statsLeads;
     return source.filter(l => {
-      if (stageFilter !== 'all' && l.status !== stageFilter) return false;
+      if (stageFilter !== 'all' && l.lifecycle_stage !== stageFilter) return false;
       if (q && !`${l.phone} ${l.name || ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -151,7 +163,7 @@ export default function FunnelStagesPage() {
               <div className="space-y-3">
                 {stages.map(s => (
                   <div key={s.stage} className="flex items-center gap-3">
-                    <span className="text-xs font-bold text-slate-600 w-40 shrink-0">{FUNNEL_STAGE_LABELS[s.stage] || s.stage}</span>
+                    <span className="text-xs font-bold text-slate-600 w-40 shrink-0">{LIFECYCLE_STAGE_LABELS[s.stage] || s.stage}</span>
                     <div className="flex-1 bg-slate-50 rounded-full h-5 overflow-hidden">
                       <div className={`${STAGE_COLORS[s.stage] || 'bg-slate-400'} h-full rounded-full flex items-center justify-end pr-2 transition-all`} style={{ width: `${(s.count / maxCount) * 100}%` }}>
                         {s.count > 0 && <span className="text-[10px] font-black text-white">{s.count}</span>}
@@ -176,7 +188,7 @@ export default function FunnelStagesPage() {
               </div>
               <select value={stageFilter} onChange={e => setStageFilter(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none">
                 <option value="all">All stages</option>
-                {FUNNEL_STAGES.map(s => <option key={s} value={s}>{FUNNEL_STAGE_LABELS[s]}</option>)}
+                {LIFECYCLE_STAGES.map(s => <option key={s} value={s}>{LIFECYCLE_STAGE_LABELS[s]}</option>)}
               </select>
               <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
                 <input type="checkbox" checked={showInhouse} onChange={e => setShowInhouse(e.target.checked)} /> Show inhouse ({inhouseCount})
@@ -190,7 +202,7 @@ export default function FunnelStagesPage() {
                   <thead>
                     <tr className="border-b border-slate-100 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">
                       <SortableHeader label="Lead" column="name" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                      <SortableHeader label="Stage" column="status" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Stage" column="lifecycle_stage" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <SortableHeader label="Time in Stage" column="daysInStage" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <SortableHeader label="Messages in Stage" column="messagesInStage" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     </tr>
@@ -205,12 +217,12 @@ export default function FunnelStagesPage() {
                         </td>
                         <td className="px-4 py-3">
                           <select
-                            value={l.status}
+                            value={l.lifecycle_stage}
                             disabled={savingId === l.id}
                             onChange={e => changeStage(l, e.target.value)}
                             className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none disabled:opacity-50"
                           >
-                            {FUNNEL_STAGES.map(s => <option key={s} value={s}>{FUNNEL_STAGE_LABELS[s]}</option>)}
+                            {LIFECYCLE_STAGES.map(s => <option key={s} value={s}>{LIFECYCLE_STAGE_LABELS[s]}</option>)}
                           </select>
                         </td>
                         <td className="px-4 py-3 text-slate-600">{l.daysInStage}d</td>
