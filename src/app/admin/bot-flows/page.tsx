@@ -28,6 +28,7 @@ type FlowRow = {
   expects_reply: boolean;
   reply_label: string | null;
   reply_confirmation: string | null;
+  completion_tag: string | null;
   active: boolean;
   created_at: string;
 };
@@ -57,6 +58,7 @@ const emptyForm = {
   expects_reply: false,
   reply_label: '',
   reply_confirmation: '',
+  completion_tag: '',
 };
 
 export default function BotFlowsPage() {
@@ -171,6 +173,7 @@ export default function BotFlowsPage() {
       expects_reply: row.expects_reply,
       reply_label: row.reply_label || '',
       reply_confirmation: row.reply_confirmation || '',
+      completion_tag: row.completion_tag || '',
     });
     setEditingId(row.id);
     setSaveError(null);
@@ -258,6 +261,7 @@ export default function BotFlowsPage() {
         expects_reply: form.expects_reply,
         reply_label: form.expects_reply ? form.reply_label.trim() : null,
         reply_confirmation: form.reply_confirmation.trim() || null,
+        completion_tag: form.expects_reply ? (form.completion_tag.trim() || null) : null,
       };
 
       const res = editingId
@@ -441,6 +445,13 @@ export default function BotFlowsPage() {
                       rows={2}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
                     />
+                    <input
+                      placeholder='Tag to add to the lead once captured (optional) - e.g. "webinar_registered"'
+                      value={form.completion_tag}
+                      onChange={e => setForm(p => ({ ...p, completion_tag: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
+                    />
+                    <p className="text-[11px] text-slate-400">Reporting only - shows up in the lead's tags in /admin/lead-funnel so you can filter who completed this. Doesn't change bot behavior.</p>
                   </>
                 )}
               </div>

@@ -154,6 +154,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     leadUpdate.awaiting_reply_flow_id = flow.id;
     leadUpdate.awaiting_reply_label = flow.reply_label || flow.label;
     leadUpdate.awaiting_reply_confirmation = flow.reply_confirmation || null;
+    leadUpdate.awaiting_reply_completion_tag = flow.completion_tag || null;
   }
   if (Object.keys(leadUpdate).length > 0) {
     await supabase.from('leads').update(leadUpdate).eq('id', lead.id);
@@ -454,12 +455,20 @@ export async function POST(request: Request) {
                   note: `${label}: ${messageText}`,
                   created_by: 'bot_flow_capture',
                 }]);
-                await supabase.from('leads').update({
+                const captureUpdate: Record<string, any> = {
                   awaiting_reply_flow_id: null,
                   awaiting_reply_label: null,
                   awaiting_reply_confirmation: null,
+                  awaiting_reply_completion_tag: null,
                   needs_human: true,
-                }).eq('id', lead.id);
+                };
+                // Reporting-only label (e.g. "webinar_registered") so admins can
+                // filter who actually completed this flow - doesn't affect
+                // needs_human or any other bot behavior.
+                if (lead.awaiting_reply_completion_tag) {
+                  captureUpdate.tags = Array.from(new Set([...(lead.tags || []), lead.awaiting_reply_completion_tag]));
+                }
+                await supabase.from('leads').update(captureUpdate).eq('id', lead.id);
                 const confirmationText = lead.awaiting_reply_confirmation || "Thanks, I've passed that on to the team.";
                 const captureAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: confirmationText } });
                 await supabase.from('messages').insert([{
@@ -557,7 +566,7 @@ export async function POST(request: Request) {
                 // question they were mid-answering - don't let a later,
                 // unrelated message get captured as the answer to it.
                 if (lead.awaiting_reply_flow_id) {
-                  await supabase.from('leads').update({ awaiting_reply_flow_id: null, awaiting_reply_label: null, awaiting_reply_confirmation: null }).eq('id', lead.id);
+                  await supabase.from('leads').update({ awaiting_reply_flow_id: null, awaiting_reply_label: null, awaiting_reply_confirmation: null, awaiting_reply_completion_tag: null }).eq('id', lead.id);
                   lead.awaiting_reply_flow_id = null;
                 }
 
