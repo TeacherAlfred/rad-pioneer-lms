@@ -116,6 +116,10 @@ export default function LeadFunnelPage() {
   const [selectedVariableNames, setSelectedVariableNames] = useState<string[]>([]);
   const [selectedQuickReplyButtons, setSelectedQuickReplyButtons] = useState<{ text: string; index: number }[]>([]);
   const [buttonPayloads, setButtonPayloads] = useState<Record<number, string>>({});
+  const [knownTriggerIds, setKnownTriggerIds] = useState<string[]>([]);
+  // Reserved id (see whatsapp-webhook/route.ts) - special-cased to deliver
+  // the guide even though it may not exist as its own bot_flows row.
+  const payloadOptions = Array.from(new Set(['btn_guide', ...knownTriggerIds])).sort();
 
   async function openSendModal() {
     setShowSendModal(true);
@@ -132,6 +136,15 @@ export default function LeadFunnelPage() {
         setManualEntry(true);
       } finally {
         setTemplatesLoading(false);
+      }
+    }
+    if (knownTriggerIds.length === 0) {
+      try {
+        const res = await fetch('/admin/api/bot-flows');
+        const data = await res.json();
+        if (res.ok) setKnownTriggerIds((data.rows || []).map((r: any) => r.trigger_button_id));
+      } catch {
+        // Non-fatal - payload dropdowns just fall back to btn_guide only.
       }
     }
   }
@@ -856,17 +869,19 @@ export default function LeadFunnelPage() {
                       <div className="mt-3">
                         <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Button Payloads (optional)</label>
                         <p className="text-[11px] text-slate-400 mb-2">
-                          Meta only lets you set a quick-reply button's payload here, at send time - not when the template was created. Leave blank to use Meta's default (won't match anything in Bot Flows). Set to a Bot Flows trigger id (e.g. <code>btn_events</code>) to route that tap through an automated flow.
+                          Meta only lets you set a quick-reply button's payload here, at send time - not when the template was created. Choices below are limited to ids that actually exist in Bot Flows, so you can't pick one that won't route anywhere.
                         </p>
                         {selectedQuickReplyButtons.map(b => (
                           <div key={b.index} className="flex items-center gap-2 mb-2">
                             <span className="text-xs text-slate-500 w-32 shrink-0 truncate" title={b.text}>{b.text}</span>
-                            <input
-                              placeholder="e.g. btn_events"
+                            <select
                               value={buttonPayloads[b.index] || ''}
                               onChange={e => setButtonPayloads(prev => ({ ...prev, [b.index]: e.target.value }))}
                               className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
-                            />
+                            >
+                              <option value="">— Use Meta's default (won't match Bot Flows) —</option>
+                              {payloadOptions.map(id => <option key={id} value={id}>{id}</option>)}
+                            </select>
                           </div>
                         ))}
                       </div>

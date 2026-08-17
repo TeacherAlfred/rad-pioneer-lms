@@ -67,6 +67,10 @@ export default function BotFlowsPage() {
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [templatesLoading, setTemplatesLoading] = useState(false);
 
+  // Reserved id (see whatsapp-webhook/route.ts) - special-cased to deliver
+  // the guide even though it may not exist as its own bot_flows row.
+  const payloadOptions = Array.from(new Set(['btn_guide', ...rows.map(r => r.trigger_button_id)])).sort();
+
   useEffect(() => { fetchRows(); }, []);
 
   // Editing an existing template flow opens the form before templates have
@@ -358,17 +362,19 @@ export default function BotFlowsPage() {
                       <div className="mt-2">
                         <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Button Payloads (optional)</label>
                         <p className="text-[11px] text-slate-400 mb-2">
-                          Meta only lets a quick-reply button's payload be set here, at send time. Leave blank for Meta's default.
+                          Meta only lets a quick-reply button's payload be set here, at send time. Choices are limited to ids that actually exist in Bot Flows.
                         </p>
                         {form.template_quick_reply_buttons.map(b => (
                           <div key={b.index} className="flex items-center gap-2 mb-2">
                             <span className="text-xs text-slate-500 w-32 shrink-0 truncate" title={b.text}>{b.text}</span>
-                            <input
-                              placeholder="e.g. btn_events"
+                            <select
                               value={form.template_button_payloads[b.index] || ''}
                               onChange={e => setForm(p => ({ ...p, template_button_payloads: { ...p.template_button_payloads, [b.index]: e.target.value } }))}
                               className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
-                            />
+                            >
+                              <option value="">— Use Meta's default (won't match Bot Flows) —</option>
+                              {payloadOptions.map(id => <option key={id} value={id}>{id}</option>)}
+                            </select>
                           </div>
                         ))}
                       </div>
