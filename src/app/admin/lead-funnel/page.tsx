@@ -6,7 +6,7 @@ import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
   Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2, Pencil, Baby,
-  GraduationCap, StickyNote, Tag,
+  GraduationCap, StickyNote, Tag, BookOpen,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -149,9 +149,9 @@ export default function LeadFunnelPage() {
   const [selectedQuickReplyButtons, setSelectedQuickReplyButtons] = useState<{ text: string; index: number }[]>([]);
   const [buttonPayloads, setButtonPayloads] = useState<Record<number, string>>({});
   const [knownTriggerIds, setKnownTriggerIds] = useState<string[]>([]);
-  // Reserved id (see whatsapp-webhook/route.ts) - special-cased to deliver
-  // the guide even though it may not exist as its own bot_flows row.
-  const payloadOptions = Array.from(new Set(['btn_guide', ...knownTriggerIds])).sort();
+  // "btn_guide" is no longer hardcoded/reserved (see whatsapp-webhook's
+  // 2026-08-15 change) - it's just whatever bot_flows rows happen to exist.
+  const payloadOptions = Array.from(new Set(knownTriggerIds)).sort();
 
   async function openSendModal() {
     setShowSendModal(true);
@@ -600,6 +600,9 @@ export default function LeadFunnelPage() {
             <ArrowLeft size={14} /> Command Center
           </Link>
           <div className="flex items-center gap-4">
+            <Link href="/admin/lead-funnel/guide" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <BookOpen size={14} /> Guide
+            </Link>
             <Link href="/admin/bot-flows" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <GitBranch size={14} /> Bot Flows
             </Link>

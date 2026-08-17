@@ -30,6 +30,7 @@ function isInhouseRow(m: MessageRow) {
 // parses that back out into something a dashboard can group and count.
 type Parsed =
   | { kind: 'template'; status: 'delivered' | 'failed'; label: string; detail?: string }
+  | { kind: 'bot_flow'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'bot_media'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'human_handoff'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'button_tap'; label: string; detail?: string }
@@ -51,6 +52,14 @@ function parseMessage(m: MessageRow): Parsed {
     match = body.match(/^\[FAILED to deliver acknowledgment: (.+)\]$/);
     if (match) return { kind: 'human_handoff', status: 'failed', label: 'Human handoff acknowledgment', detail: match[1] };
 
+    // Checked before the generic "[Delivered X]" bot_media catch-all below,
+    // which would otherwise also match this and mislabel every Bot Flows
+    // message-type send as Bot Media.
+    match = body.match(/^\[Delivered flow: (.+)\]$/);
+    if (match) return { kind: 'bot_flow', status: 'delivered', label: match[1] };
+    match = body.match(/^\[FAILED to deliver flow (.+?): (.+)\]$/);
+    if (match) return { kind: 'bot_flow', status: 'failed', label: match[1], detail: match[2] };
+
     match = body.match(/^\[FAILED to deliver "(.+?)": (.+)\]$/);
     if (match) return { kind: 'bot_media', status: 'failed', label: match[1], detail: match[2] };
 
@@ -67,6 +76,7 @@ function parseMessage(m: MessageRow): Parsed {
 
 const KIND_LABEL: Record<string, string> = {
   template: 'Template Send',
+  bot_flow: 'Bot Flow',
   bot_media: 'Bot Media',
   human_handoff: 'Human Handoff',
   button_tap: 'Button Tap',
