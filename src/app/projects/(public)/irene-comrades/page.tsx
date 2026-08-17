@@ -685,10 +685,15 @@ function TrackerContent() {
           <h1 className="text-2xl md:text-3xl font-black tracking-tight mb-1">Irene Comrades Tracker</h1>
           <p className="text-slate-400 text-[10px] md:text-xs font-medium uppercase tracking-widest mb-6">1 Vote = 100m • Durban → Pietermaritzburg • 90km Up Run</p>
 
-          <div className="relative h-2 bg-white/10 rounded-full overflow-hidden mb-1">
-            <motion.div initial={{ width: 0 }} animate={{ width: `${kmPercent}%` }} transition={{ duration: 0.8 }} className="h-full bg-gradient-to-r from-amber-400 to-emerald-400 rounded-full" />
+          {/* Shared positioning context for the route line + milestone dots, which now
+              alternate above/below the line (see MilestoneMarkers) so closely-spaced
+              milestones don't crowd or overlap on one row. */}
+          <div className="relative h-14">
+            <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-2 bg-white/10 rounded-full overflow-hidden">
+              <motion.div initial={{ width: 0 }} animate={{ width: `${kmPercent}%` }} transition={{ duration: 0.8 }} className="h-full bg-gradient-to-r from-amber-400 to-emerald-400 rounded-full" />
+            </div>
+            <MilestoneMarkers milestones={MILESTONES} kmProgress={kmProgress} />
           </div>
-          <MilestoneMarkers milestones={MILESTONES} kmProgress={kmProgress} />
           <p className="text-[8px] text-slate-500 font-bold uppercase tracking-widest mt-2">Hover or tap the dots for fun facts about the route 💡</p>
           <p className="text-xs font-black text-white mt-3">{kmProgress.toFixed(1)}km <span className="text-slate-500 font-medium">of 90km</span></p>
 
@@ -1040,7 +1045,7 @@ function MilestoneMarkers({ milestones, kmProgress }: { milestones: typeof MILES
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   return (
-    <div className="relative h-6 mt-1 mb-1">
+    <div className="absolute inset-0">
       {milestones.map((m, i) => {
         const percent = (m.km / 90) * 100;
         const reached = kmProgress >= m.km;
@@ -1051,8 +1056,14 @@ function MilestoneMarkers({ milestones, kmProgress }: { milestones: typeof MILES
         // (not just the literal first/last, e.g. Fields Hill at 16/90≈18%) clips off
         // the side of the screen when centered on the dot. Anchor to that edge instead.
         const popupAlign = percent < 20 ? 'left-0' : percent > 80 ? 'right-0' : 'left-1/2 -translate-x-1/2';
+        // Alternate above/below the route line — several milestones sit close together
+        // (e.g. Polly Shortts 83km and Pietermaritzburg 90km, 7km apart), and on one row
+        // their ~44px touch targets crowd or overlap. This keeps neighbors clear of each other.
+        const above = i % 2 === 0;
         return (
-          <div key={m.km} className="absolute top-0" style={{ left: `${percent}%` }}>
+          <div key={m.km} className="absolute top-1/2" style={{ left: `${percent}%` }}>
+            {/* Stem connecting the dot to the route line */}
+            <div className={`absolute left-1/2 -translate-x-1/2 w-px h-3 bg-white/15 ${above ? 'bottom-0' : 'top-0'}`} />
             {/* p-3 -m-3 grows the tappable hit area to ~44px on touch devices
                 without visually enlarging the dot — the negative margin pulls
                 the layout box back to the dot's original footprint. */}
@@ -1061,7 +1072,7 @@ function MilestoneMarkers({ milestones, kmProgress }: { milestones: typeof MILES
               onMouseEnter={() => setActiveIndex(i)}
               onMouseLeave={() => setActiveIndex(null)}
               onClick={() => setActiveIndex(prev => (prev === i ? null : i))}
-              className={`group flex items-center justify-center p-3 -m-3 ${dotAlign}`}
+              className={`absolute group flex items-center justify-center p-3 -m-3 ${dotAlign} ${above ? '-translate-y-[26px]' : 'translate-y-[14px]'}`}
               aria-label={`${m.label}, ${m.km} kilometers`}
             >
               <span className={`block w-2.5 h-2.5 rounded-full border-2 transition-transform group-hover:scale-125 ${reached ? 'bg-amber-400 border-amber-200' : 'bg-slate-600 border-slate-500'}`} />
@@ -1069,11 +1080,11 @@ function MilestoneMarkers({ milestones, kmProgress }: { milestones: typeof MILES
             <AnimatePresence>
               {activeIndex === i && (
                 <motion.div
-                  initial={{ opacity: 0, y: 6 }}
+                  initial={{ opacity: 0, y: above ? -6 : 6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 6 }}
+                  exit={{ opacity: 0, y: above ? -6 : 6 }}
                   transition={{ duration: 0.15 }}
-                  className={`absolute z-30 top-6 w-52 bg-white text-slate-900 rounded-2xl shadow-2xl p-4 text-left ${popupAlign}`}
+                  className={`absolute z-30 w-52 bg-white text-slate-900 rounded-2xl shadow-2xl p-4 text-left ${popupAlign} ${above ? 'bottom-6' : 'top-6'}`}
                 >
                   <p className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] mb-1">{m.label} · {m.km}km</p>
                   <p className="text-[11px] text-slate-600 leading-snug">💡 Did you know? {m.fact}</p>

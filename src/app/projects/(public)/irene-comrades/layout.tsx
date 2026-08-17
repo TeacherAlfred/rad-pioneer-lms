@@ -19,9 +19,9 @@ export default function IreneComradesLayout({
       <nav className="sticky top-0 z-50 w-full bg-white/70 backdrop-blur-xl border-b border-black/5">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {/* Minimalist Logo Area */}
+            {/* Minimalist Logo Area — IPS placeholder until the school's own logo is provided */}
             <div className="w-8 h-8 rounded-lg bg-[#0066cc] flex items-center justify-center text-white font-black italic text-xs">
-              RAD
+              IPS
             </div>
             <div>
               <h1 className="text-sm font-bold tracking-tight leading-none">Irene Primary</h1>
