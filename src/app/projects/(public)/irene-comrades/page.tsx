@@ -150,7 +150,7 @@ function TrackerContent() {
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [familySearch, setFamilySearch] = useState('');
 
-  // --- PRIVATE NAME SEARCH (find a family by the child's actual name on file, which is
+  // --- PRIVATE NAME SEARCH (find a family by the child's first name on file, which is
   // never shown publicly — the name is only ever sent to the server for matching, never
   // rendered back; a successful match just fills the normal search box with the child's
   // already-public initial/grade/class, so it surfaces via the existing search logic) ---
@@ -985,17 +985,17 @@ function TrackerContent() {
 
             <div className="mb-6 text-center">
               <button type="button" onClick={() => setShowNameSearch(v => !v)} className="text-[10px] font-black text-[#0066cc] uppercase tracking-widest hover:underline">
-                {showNameSearch ? 'Hide' : "Can't find your family? Search by your child's name"}
+                {showNameSearch ? 'Hide' : "Can't find your response?"}
               </button>
               <AnimatePresence>
                 {showNameSearch && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                     <div className="mt-3 bg-white rounded-2xl border border-slate-200 shadow-sm p-4 text-left">
-                      <p className="text-[10px] text-slate-400 font-medium mb-3">Your child's actual name on file — not shown to anyone, just used to find your family.</p>
+                      <p className="text-[10px] text-slate-400 font-medium mb-3">Your child's first name on file — not shown to anyone, just used to find your family.</p>
                       <div className="flex flex-col sm:flex-row gap-2">
                         <input
                           type="text"
-                          placeholder="Child's full name"
+                          placeholder="Child's first name"
                           value={nameSearchInput}
                           onChange={(e) => { setNameSearchInput(e.target.value); setNameSearchStatus('idle'); }}
                           className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-[#0066cc]"

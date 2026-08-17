@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Public-callable by design — lets a parent who knows their child's actual name on file
+// Public-callable by design — lets a parent who knows their child's first name on file
 // (an admin-only field, never shown anywhere on the public voting page) find their
-// family's response by name + grade. Same pattern as verify-staff-code: the secret
+// family's response by first name + grade. Same pattern as verify-staff-code: the secret
 // (here, the child's name) is only ever compared server-side via the service-role key.
 // The response returns nothing but info that's already public elsewhere on the site
 // (initial/grade/class) — never the name itself, and never a hint on a near-miss.
@@ -31,8 +31,10 @@ export async function POST(req: Request) {
       const cubs = r.cubs || [];
       const fullNames = r.cub_full_names || [];
       for (let i = 0; i < cubs.length; i++) {
-        const fullName = (fullNames[i] || '').trim().toLowerCase();
-        if (fullName && fullName === needle && cubs[i].grade === grade) {
+        // Match on first name only — cub_full_names may hold a full name or just a first
+        // name depending on what the admin entered, so always compare the first token.
+        const storedFirstName = (fullNames[i] || '').trim().toLowerCase().split(/\s+/)[0] || '';
+        if (storedFirstName && storedFirstName === needle && cubs[i].grade === grade) {
           return NextResponse.json({
             found: true,
             initial: cubs[i].cub_initial,
