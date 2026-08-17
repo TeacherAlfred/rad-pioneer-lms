@@ -1156,41 +1156,47 @@ function StorySection({ response, category, count, tappedKeys, phase, educatorUn
   const disabled = tapped || phase === 'closed';
 
   return (
-    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+    // overflow-hidden establishes a block formatting context so this box's height grows
+    // to contain the floated upvote pill (a floated child otherwise doesn't count toward
+    // its parent's height, which would let the pill poke out past the rounded border).
+    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 overflow-hidden">
       <p className="text-[9px] font-black uppercase tracking-widest mb-1.5 flex items-center gap-1.5" style={{ color: category.color }}>
         <Icon size={11} /> {category.label}
       </p>
-      <div className={showMore ? '' : 'line-clamp-3'}>
+
+      {/* Floated (not flex/grid) so the story text wraps tightly around the upvote pill,
+          Word-style — it sits beside the first line(s) instead of pushing them down. */}
+      <button
+        disabled={disabled}
+        onClick={() => onTap(response, category.key, isEducatorMode)}
+        title={tapped ? 'Voted' : `Upvote ${category.label}`}
+        className={`float-right ml-2 mb-1 flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-full text-[10px] font-black transition-all border active:scale-95 ${tapped ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : phase === 'closed' ? 'bg-white text-slate-300 border-slate-100' : 'bg-white text-slate-600 border-slate-200 hover:border-current'}`}
+        style={!disabled ? { color: category.color } : undefined}
+      >
+        {tapped ? <Check size={13} /> : <ArrowUpCircle size={13} />} {count}
+      </button>
+
+      <div className={showMore ? '' : 'max-h-16 overflow-hidden'}>
         {parts.map((p: any, i: number) => (
           <p key={i} className="text-xs text-slate-600 italic leading-snug mb-1 last:mb-0">
             {p.label && <span className="not-italic font-bold text-slate-500">{p.label}: </span>}"{p.text}"
           </p>
         ))}
       </div>
-      <div className="flex items-center justify-between mt-2">
-        {isLong ? (
-          <button onClick={() => setShowMore(v => !v)} className="text-[9px] font-black uppercase tracking-widest hover:underline" style={{ color: category.color }}>
-            {showMore ? 'View less' : 'View more'}
-          </button>
-        ) : <span />}
-        <button
-          disabled={disabled}
-          onClick={() => onTap(response, category.key, isEducatorMode)}
-          title={tapped ? 'Voted' : `Upvote ${category.label}`}
-          className={`flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-full text-[10px] font-black transition-all border active:scale-95 ${tapped ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : phase === 'closed' ? 'bg-white text-slate-300 border-slate-100' : 'bg-white text-slate-600 border-slate-200 hover:border-current'}`}
-          style={!disabled ? { color: category.color } : undefined}
-        >
-          {tapped ? <Check size={13} /> : <ArrowUpCircle size={13} />} {count}
+
+      {isLong && (
+        <button onClick={() => setShowMore(v => !v)} className="clear-both block text-[9px] font-black uppercase tracking-widest hover:underline mt-1" style={{ color: category.color }}>
+          {showMore ? 'View less' : 'View more'}
         </button>
-      </div>
+      )}
     </div>
   );
 }
 
 function RosterCard({ response, total, counts, isTop, tappedKeys, phase, educatorUnlocked, onTap, onShare, copiedShareId }: any) {
-  // Stories are visible by default now — this toggle just lets someone collapse a
-  // card back down in a long roster, it no longer gates seeing the stories at all.
-  const [expanded, setExpanded] = useState(true);
+  // Collapsed by default so a long roster stays scannable — the glowing button opens
+  // a card's full stories on demand rather than a plain "View Full Stories" link.
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className={`p-4 transition-colors ${isTop ? 'bg-amber-50/50' : 'bg-white hover:bg-slate-50'}`}>
