@@ -31,6 +31,9 @@ type Lead = {
   class?: string | null;
   children_names?: string[] | null;
   is_potential_student?: boolean | null;
+  last_sent_at?: string | null;
+  last_sent_label?: string | null;
+  last_sent_failed?: boolean;
 };
 
 type LeadNote = { id: string; note: string; created_at: string; created_by: string | null };
@@ -62,6 +65,32 @@ function isToday(iso: string | null | undefined) {
   const now = new Date();
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }
+
+function isWithinHours(iso: string | null | undefined, hours: number) {
+  if (!iso) return false;
+  return Date.now() - new Date(iso).getTime() <= hours * 60 * 60 * 1000;
+}
+
+// Recency at a glance, not a raw timestamp - the whole point is "did this
+// happen a few hours ago" being obvious without doing the math yourself.
+function formatRelativeTime(iso: string | null | undefined): string {
+  if (!iso) return 'Never';
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay === 1) return 'Yesterday';
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return new Date(iso).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short' });
+}
+
+// Threshold for the "you probably shouldn't resend yet" amber flag - matches
+// WhatsApp's own 24hr customer-service window, already the central timing
+// concept everywhere else in this funnel.
+const RECENT_SEND_HOURS = 24;
 
 // Test/staff/teacher leads - kept in the database on purpose (for testing
 // the funnel itself) but excluded from every stat below so they don't
@@ -690,6 +719,7 @@ export default function LeadFunnelPage() {
                       <SortableHeader label="Source" column="source" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <th className="px-4 py-3">Tags</th>
                       <SortableHeader label="Created" column="created_at" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Last Sent" column="last_sent_at" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <th className="px-4 py-3">Inhouse</th>
                     </tr>
                   </thead>
@@ -761,6 +791,25 @@ export default function LeadFunnelPage() {
                         <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
                           {r.created_at ? new Date(r.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
                         </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {r.last_sent_at ? (
+                            <span
+                              title={`${r.last_sent_label}${r.last_sent_failed ? ' (failed)' : ''}\n${new Date(r.last_sent_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' })}`}
+                              className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full cursor-default ${
+                                r.last_sent_failed
+                                  ? 'bg-rose-50 text-rose-500'
+                                  : isWithinHours(r.last_sent_at, RECENT_SEND_HOURS)
+                                    ? 'bg-amber-50 text-amber-600'
+                                    : 'bg-slate-50 text-slate-400'
+                              }`}
+                            >
+                              {r.last_sent_failed ? <XCircle size={11} /> : <Send size={11} />}
+                              {formatRelativeTime(r.last_sent_at)}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-slate-300">Never</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <button
                             onClick={() => toggleInhouse(r)}
@@ -774,7 +823,7 @@ export default function LeadFunnelPage() {
                       </tr>
                     ))}
                     {filteredRows.length === 0 && (
-                      <tr><td colSpan={7} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
+                      <tr><td colSpan={8} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>

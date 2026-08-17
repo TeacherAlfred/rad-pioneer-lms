@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { recordStatusChange } from '@/lib/leadStatusHistory';
 import { FUNNEL_STAGES } from '@/lib/funnelStages';
+import { parseOutboundLabel, isFailedOutbound } from '@/lib/outboundMessageLabel';
 
 // Service role: leads has zero anon RLS policies since the 2026-08-12
 // lockdown, so a browser-side client can no longer read this table directly.
@@ -10,18 +11,42 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Recent-activity window, not a full history fetch - same "activity feed,
+// not export tool" tradeoff as Message Activity. Ordered newest-first, so
+// the first row seen per lead is already its most recent outbound send.
+const RECENT_OUTBOUND_LIMIT = 3000;
+
 export async function GET() {
   // households(name) relies on the leads.household_id FK - Supabase embeds
   // the related row automatically once that constraint exists.
-  const { data, error } = await supabaseAdmin
-    .from('leads')
-    .select('*, households(name)')
-    .order('created_at', { ascending: false });
+  const [{ data, error }, { data: outbound, error: outboundError }] = await Promise.all([
+    supabaseAdmin.from('leads').select('*, households(name)').order('created_at', { ascending: false }),
+    supabaseAdmin
+      .from('messages')
+      .select('lead_id, created_at, body')
+      .eq('direction', 'outbound')
+      .order('created_at', { ascending: false })
+      .limit(RECENT_OUTBOUND_LIMIT),
+  ]);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (outboundError) return NextResponse.json({ error: outboundError.message }, { status: 500 });
+
+  const lastSentByLead = new Map<string, { created_at: string; body: string }>();
+  for (const m of outbound || []) {
+    if (!lastSentByLead.has(m.lead_id)) lastSentByLead.set(m.lead_id, m);
+  }
+
   const rows = (data || []).map((r: any) => {
     const { households, ...rest } = r;
-    return { ...rest, household_name: households?.name || null };
+    const lastSent = lastSentByLead.get(r.id);
+    return {
+      ...rest,
+      household_name: households?.name || null,
+      last_sent_at: lastSent?.created_at || null,
+      last_sent_label: lastSent ? parseOutboundLabel(lastSent.body) : null,
+      last_sent_failed: lastSent ? isFailedOutbound(lastSent.body) : false,
+    };
   });
   return NextResponse.json({ rows });
 }
