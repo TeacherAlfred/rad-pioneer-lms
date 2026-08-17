@@ -540,6 +540,9 @@ export default function LeadFunnelPage() {
             <ArrowLeft size={14} /> Command Center
           </Link>
           <div className="flex items-center gap-4">
+            <Link href="/admin/bot-flows" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <GitBranch size={14} /> Bot Flows
+            </Link>
             <Link href="/admin/lead-funnel/stages" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <GitBranch size={14} /> Funnel Stages
             </Link>

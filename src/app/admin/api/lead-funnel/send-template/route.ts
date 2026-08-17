@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveVariable, sendMetaTemplate } from '@/lib/metaTemplate';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -10,60 +11,6 @@ const supabaseAdmin = createClient(
 // but a Vercel function has a hard execution time limit. Cap here matches
 // the cap enforced in the UI; raise both together if that ever binds.
 const MAX_RECIPIENTS = 50;
-
-// Generic per-lead personalization: {{name}}, {{school}}, {{class}}, etc.
-// resolve against that column on the lead's own row if it exists, rather
-// than special-casing a fixed list of fields - no schema alignment needed
-// beyond a template's placeholder happening to share a column's name. A
-// token with no matching column is left untouched (better than guessing).
-function resolveVariable(value: string, lead: Record<string, any>): string {
-  return value.replace(/\{\{\s*([a-zA-Z_][\w]*)\s*\}\}/g, (match, field) => {
-    const key = String(field).toLowerCase();
-    const v = lead[key];
-    return v !== null && v !== undefined && v !== '' ? String(v) : match;
-  });
-}
-
-async function sendTemplate(to: string, templateName: string, languageCode: string, bodyValues: string[], variableNames: string[]) {
-  const phoneId = process.env.PHONE_NUMBER_ID!;
-  const token = process.env.WHATSAPP_TOKEN!;
-
-  // Numbered placeholders ({{1}}, {{2}}) send positionally with no extra
-  // field. Named placeholders ({{name}}) need `parameter_name` set to the
-  // exact placeholder name, or Meta rejects the send as a parameter-count
-  // mismatch even when the right number of values is sent.
-  const parameters = bodyValues.map((text, i) => {
-    const varName = variableNames[i];
-    const isNamed = varName !== undefined && Number.isNaN(Number(varName));
-    return isNamed ? { type: 'text', parameter_name: varName, text } : { type: 'text', text };
-  });
-
-  const payload: any = {
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to,
-    type: 'template',
-    template: {
-      name: templateName,
-      language: { code: languageCode },
-      ...(parameters.length > 0 ? {
-        components: [{ type: 'body', parameters }],
-      } : {}),
-    },
-  };
-
-  const response = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    return { ok: false, error: data?.error?.message || JSON.stringify(data) };
-  }
-  return { ok: true };
-}
 
 export async function POST(req: Request) {
   try {
@@ -100,7 +47,7 @@ export async function POST(req: Request) {
 
       const bodyValues = (variables || []).map((v: string) => resolveVariable(String(v), lead));
 
-      const sendResult = await sendTemplate(lead.phone, templateName.trim(), languageCode.trim(), bodyValues, variableNames || []);
+      const sendResult = await sendMetaTemplate(lead.phone, templateName.trim(), languageCode.trim(), bodyValues, variableNames || []);
 
       await supabaseAdmin.from('messages').insert([{
         lead_id: lead.id,

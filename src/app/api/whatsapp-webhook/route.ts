@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { recordStatusChange } from '@/lib/leadStatusHistory';
+import { resolveVariable, sendMetaTemplate } from '@/lib/metaTemplate';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
 // signature Meta signs the raw body with, using the app secret.
@@ -133,6 +134,58 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
     await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`, lead.id);
   }
   return sendResult;
+}
+
+// 4. Core Helper: bot_flows - admin-configured automated responses, keyed
+// by button id, that either send a freeform message (optionally with its
+// own buttons, so steps chain: tapping one flow's button can itself be
+// another flow's trigger_button_id) or fire a Meta template. This is how
+// self-serve multi-step menus (e.g. "What's On" -> city -> "Hold My Spot")
+// get built without a code change per step - see /admin/bot-flows.
+async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: any, buttonTitle: string) {
+  const leadUpdate: Record<string, any> = {};
+  if (flow.set_source) leadUpdate.source = flow.set_source;
+  if (flow.add_tags?.length) leadUpdate.tags = Array.from(new Set([...(lead.tags || []), ...flow.add_tags]));
+  if (Object.keys(leadUpdate).length > 0) {
+    await supabase.from('leads').update(leadUpdate).eq('id', lead.id);
+  }
+  const effectiveLead = { ...lead, ...leadUpdate };
+
+  let sendResult: { ok: boolean; error?: string };
+  if (flow.action_type === 'message') {
+    const payload = (flow.message_buttons || []).length > 0
+      ? {
+          type: 'interactive',
+          interactive: {
+            type: 'button',
+            body: { text: flow.message_body },
+            action: { buttons: flow.message_buttons.map((b: any) => ({ type: 'reply', reply: { id: b.id, title: b.title } })) },
+          },
+        }
+      : { type: 'text', text: { body: flow.message_body } };
+    sendResult = await sendWhatsAppMessage(senderPhone, payload);
+    await supabase.from('messages').insert([{
+      lead_id: lead.id,
+      direction: 'outbound',
+      body: sendResult.ok ? `[Delivered flow: ${flow.label}]` : `[FAILED to deliver flow ${flow.label}: ${sendResult.error}]`,
+    }]);
+  } else {
+    const bodyValues = (flow.template_variables || []).map((v: string) => resolveVariable(String(v), effectiveLead));
+    sendResult = await sendMetaTemplate(senderPhone, flow.template_name, flow.template_language, bodyValues, flow.template_variable_names || []);
+    await supabase.from('messages').insert([{
+      lead_id: lead.id,
+      direction: 'outbound',
+      body: sendResult.ok ? `[Delivered template: ${flow.template_name}]` : `[FAILED to deliver template ${flow.template_name}: ${sendResult.error}]`,
+    }]);
+  }
+
+  if (!flow.skip_human_handoff) {
+    await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);
+    await recordStatusChange(supabase, lead.id, 'needs_human');
+  }
+  if (flow.notify_admin) {
+    await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — ${flow.label}`, lead.id);
+  }
 }
 
 // Meta verifies the webhook via a GET request
@@ -433,6 +486,17 @@ export async function POST(request: Request) {
                   }
                   // No guide configured in bot_media - fall through to the
                   // human handoff below rather than going silent on the lead.
+                }
+
+                const { data: flow } = await supabase
+                  .from('bot_flows')
+                  .select('*')
+                  .eq('trigger_button_id', buttonId)
+                  .eq('active', true)
+                  .maybeSingle();
+                if (flow) {
+                  await runBotFlow(supabase, senderPhone, lead, flow, buttonTitle);
+                  continue;
                 }
 
                 await supabase.from('leads').update({ status: 'needs_human' }).eq('id', lead.id);

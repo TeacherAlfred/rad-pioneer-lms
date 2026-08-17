@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Loader2, Plus, Trash2, CheckCircle2, XCircle, FileText, ExternalLink,
-  AlertTriangle, Pencil, Copy, Archive, ArchiveRestore,
+  AlertTriangle, Pencil, Copy, Archive, ArchiveRestore, GitBranch,
 } from "lucide-react";
 
 type Button = { id: string; title: string };
@@ -228,6 +229,9 @@ export default function BotMediaPage() {
             <p className="text-sm text-slate-500 mt-1">Files the WhatsApp bot sends, matched by keyword - no more hardcoded links in the route.</p>
           </div>
           <div className="flex gap-2">
+            <Link href="/admin/bot-flows" className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest bg-white text-slate-500 border border-slate-200 hover:border-slate-400">
+              <GitBranch size={14} /> Bot Flows
+            </Link>
             <button onClick={() => setShowArchived(s => !s)} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-colors ${showArchived ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200 hover:border-slate-400'}`}>
               <Archive size={14} /> Archived ({archivedCount})
             </button>
