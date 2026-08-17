@@ -310,6 +310,20 @@ export default function IreneResponseManager() {
     return acc;
   }, {});
 
+  // --- Reconciliation: verified count by grade — every grade seen in the data shows up,
+  // even with a count of zero, so it's obvious which grades are lagging behind on verification.
+  const verifiedByGrade = Object.keys(coverageByGrade).reduce((acc: Record<string, number>, grade) => {
+    acc[grade] = 0;
+    return acc;
+  }, {} as Record<string, number>);
+  records.forEach(r => {
+    if (!r.is_verified) return;
+    (r.cubs || []).forEach((c: any) => {
+      const grade = c.grade || '(unknown)';
+      verifiedByGrade[grade] = (verifiedByGrade[grade] || 0) + 1;
+    });
+  });
+
   const safeIndex = Math.min(currentIndex, Math.max(0, displayedRecords.length - 1));
   const activeRecord = displayedRecords[safeIndex];
 
@@ -911,6 +925,22 @@ export default function IreneResponseManager() {
                   </button>
                   <button onClick={() => setReconcileTab('coverage')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${reconcileTab === 'coverage' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>Coverage</button>
                 </div>
+              </div>
+
+              <div className="pb-6">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Verified by Grade</p>
+                {Object.keys(verifiedByGrade).length === 0 ? (
+                  <p className="text-xs text-slate-300 font-bold">No responses yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(verifiedByGrade).sort(([a], [b]) => a.localeCompare(b)).map(([grade, count]) => (
+                      <div key={grade} className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10px] font-black uppercase tracking-widest ${count > 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>
+                        {grade}
+                        <span className={`min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[9px] ${count > 0 ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-500'}`}>{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
