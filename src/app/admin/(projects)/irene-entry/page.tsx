@@ -1441,9 +1441,13 @@ export default function IreneResponseManager() {
                         <div className="flex flex-wrap gap-2 mt-2">{activeRecord?.cubs?.map((cub: any, i: number) => {
                           const fullName = (activeRecord?.cub_full_names || [])[i];
                           return (
-                            <span key={i} title={fullName ? `Private: ${fullName}` : undefined} className="text-[9px] font-black text-slate-600 bg-slate-200 px-2 py-1 rounded uppercase tracking-widest flex items-center gap-1">
-                              Parent of {cub.cub_initial} • {cub.grade} ({cub.class_name})
-                              {fullName && <EyeOff size={10} className="text-slate-400" />}
+                            <span key={i} className="text-[9px] font-black text-slate-600 bg-slate-200 px-2 py-1 rounded uppercase tracking-widest flex items-center gap-1.5">
+                              Initial: {cub.cub_initial || '-'} • {cub.grade} ({cub.class_name})
+                              {fullName && (
+                                <span title="Private, admin-only" className="flex items-center gap-1 text-slate-500 bg-slate-300/60 px-1.5 py-0.5 rounded normal-case">
+                                  <EyeOff size={9} /> {fullName}
+                                </span>
+                              )}
                             </span>
                           );
                         })}</div>
