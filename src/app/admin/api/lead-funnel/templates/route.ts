@@ -32,7 +32,18 @@ export async function GET() {
       const variableNames = body?.text
         ? [...(body.text as string).matchAll(/\{\{\s*([\w]+)\s*\}\}/g)].map(m => m[1])
         : [];
-      return { name: t.name, language: t.language, category: t.category, variableNames, bodyPreview: body?.text || '' };
+      // Only QUICK_REPLY buttons send a payload back on tap - URL/PHONE_NUMBER
+      // buttons just open a link/dial, nothing for bot_flows to match on.
+      // `index` is this button's position across ALL of the template's
+      // buttons (not just quick-replies) - that's what Meta's send-time
+      // button-component override keys off, so it has to be preserved here
+      // rather than re-derived from a filtered array.
+      const buttonsComponent = (t.components || []).find((c: any) => c.type === 'BUTTONS');
+      const quickReplyButtons = (buttonsComponent?.buttons || [])
+        .map((b: any, index: number) => ({ ...b, index }))
+        .filter((b: any) => b.type === 'QUICK_REPLY')
+        .map((b: any) => ({ text: b.text, index: b.index }));
+      return { name: t.name, language: t.language, category: t.category, variableNames, bodyPreview: body?.text || '', quickReplyButtons };
     });
 
   return NextResponse.json({ templates });

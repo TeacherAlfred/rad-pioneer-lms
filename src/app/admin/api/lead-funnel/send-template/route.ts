@@ -14,7 +14,7 @@ const MAX_RECIPIENTS = 50;
 
 export async function POST(req: Request) {
   try {
-    const { leadIds, templateName, languageCode, variables, variableNames } = await req.json();
+    const { leadIds, templateName, languageCode, variables, variableNames, buttonPayloads } = await req.json();
 
     if (!Array.isArray(leadIds) || leadIds.length === 0) {
       return NextResponse.json({ error: 'leadIds[] is required' }, { status: 400 });
@@ -47,7 +47,7 @@ export async function POST(req: Request) {
 
       const bodyValues = (variables || []).map((v: string) => resolveVariable(String(v), lead));
 
-      const sendResult = await sendMetaTemplate(lead.phone, templateName.trim(), languageCode.trim(), bodyValues, variableNames || []);
+      const sendResult = await sendMetaTemplate(lead.phone, templateName.trim(), languageCode.trim(), bodyValues, variableNames || [], buttonPayloads || []);
 
       await supabaseAdmin.from('messages').insert([{
         lead_id: lead.id,

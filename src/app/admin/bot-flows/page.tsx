@@ -20,6 +20,7 @@ type FlowRow = {
   template_language: string | null;
   template_variables: string[];
   template_variable_names: string[];
+  template_button_payloads: string[];
   set_source: string | null;
   add_tags: string[];
   notify_admin: boolean;
@@ -28,7 +29,10 @@ type FlowRow = {
   created_at: string;
 };
 
-type MetaTemplate = { name: string; language: string; category: string; variableNames: string[]; bodyPreview: string };
+type MetaTemplate = {
+  name: string; language: string; category: string; variableNames: string[]; bodyPreview: string;
+  quickReplyButtons: { text: string; index: number }[];
+};
 
 const emptyForm = {
   trigger_button_id: '',
@@ -41,6 +45,8 @@ const emptyForm = {
   template_language: '',
   template_variables: [] as string[],
   template_variable_names: [] as string[],
+  template_quick_reply_buttons: [] as { text: string; index: number }[],
+  template_button_payloads: {} as Record<number, string>,
   set_source: '',
   add_tags: '',
   notify_admin: false,
@@ -62,6 +68,19 @@ export default function BotFlowsPage() {
   const [templatesLoading, setTemplatesLoading] = useState(false);
 
   useEffect(() => { fetchRows(); }, []);
+
+  // Editing an existing template flow opens the form before templates have
+  // loaded (they're fetched async), so the button-payload inputs have
+  // nothing to render against yet - backfill once they arrive, without
+  // touching whatever payloads were already loaded from the row.
+  useEffect(() => {
+    if (form.template_key && form.template_quick_reply_buttons.length === 0) {
+      const t = templates.find(t => `${t.name}|${t.language}` === form.template_key);
+      if (t && t.quickReplyButtons.length > 0) {
+        setForm(f => ({ ...f, template_quick_reply_buttons: t.quickReplyButtons }));
+      }
+    }
+  }, [templates, form.template_key, form.template_quick_reply_buttons.length]);
 
   async function fetchRows() {
     setLoading(true);
@@ -133,6 +152,8 @@ export default function BotFlowsPage() {
       template_language: row.template_language || '',
       template_variables: row.template_variables || [],
       template_variable_names: row.template_variable_names || [],
+      template_quick_reply_buttons: [],
+      template_button_payloads: Object.fromEntries((row.template_button_payloads || []).map((p, i) => [i, p]).filter(([, p]) => p)),
       set_source: row.set_source || '',
       add_tags: (row.add_tags || []).join(', '),
       notify_admin: row.notify_admin,
@@ -160,6 +181,8 @@ export default function BotFlowsPage() {
       template_language: t?.language || '',
       template_variables: t ? Array(t.variableNames.length).fill('') : [],
       template_variable_names: t?.variableNames || [],
+      template_quick_reply_buttons: t?.quickReplyButtons || [],
+      template_button_payloads: {},
     }));
   }
 
@@ -197,6 +220,9 @@ export default function BotFlowsPage() {
 
     setIsSaving(true);
     try {
+      const maxIndex = Math.max(-1, ...Object.keys(form.template_button_payloads).map(Number));
+      const templateButtonPayloadsArray = Array.from({ length: maxIndex + 1 }, (_, i) => form.template_button_payloads[i] || '');
+
       const payload = {
         trigger_button_id: form.trigger_button_id.trim(),
         label: form.label.trim(),
@@ -207,6 +233,7 @@ export default function BotFlowsPage() {
         template_language: form.action_type === 'template' ? form.template_language.trim() : null,
         template_variables: form.action_type === 'template' ? form.template_variables : [],
         template_variable_names: form.action_type === 'template' ? form.template_variable_names : [],
+        template_button_payloads: form.action_type === 'template' ? templateButtonPayloadsArray : [],
         set_source: form.set_source.trim() || null,
         add_tags: form.add_tags.split(',').map(t => t.trim()).filter(Boolean),
         notify_admin: form.notify_admin,
@@ -326,6 +353,26 @@ export default function BotFlowsPage() {
                         className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none mb-2"
                       />
                     ))}
+
+                    {form.template_quick_reply_buttons.length > 0 && (
+                      <div className="mt-2">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Button Payloads (optional)</label>
+                        <p className="text-[11px] text-slate-400 mb-2">
+                          Meta only lets a quick-reply button's payload be set here, at send time. Leave blank for Meta's default.
+                        </p>
+                        {form.template_quick_reply_buttons.map(b => (
+                          <div key={b.index} className="flex items-center gap-2 mb-2">
+                            <span className="text-xs text-slate-500 w-32 shrink-0 truncate" title={b.text}>{b.text}</span>
+                            <input
+                              placeholder="e.g. btn_events"
+                              value={form.template_button_payloads[b.index] || ''}
+                              onChange={e => setForm(p => ({ ...p, template_button_payloads: { ...p.template_button_payloads, [b.index]: e.target.value } }))}
+                              className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </>
                 )}
               </div>

@@ -21,7 +21,14 @@ export async function sendMetaTemplate(
   templateName: string,
   languageCode: string,
   bodyValues: string[],
-  variableNames: string[] = []
+  variableNames: string[] = [],
+  // Index-ordered, one per QUICK_REPLY button on the template (skip/empty
+  // string for a button you don't want to override). This is the ONLY place
+  // a quick-reply button's payload can be set - Meta doesn't expose it at
+  // template-creation time, only at send time, per-message. Without this,
+  // Meta assigns its own default payload and a tap won't match anything in
+  // bot_flows even if the trigger_button_id looks right.
+  buttonPayloads: string[] = []
 ): Promise<{ ok: boolean; error?: string }> {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
@@ -36,6 +43,21 @@ export async function sendMetaTemplate(
     return isNamed ? { type: 'text', parameter_name: varName, text } : { type: 'text', text };
   });
 
+  const components: any[] = [];
+  if (parameters.length > 0) {
+    components.push({ type: 'body', parameters });
+  }
+  buttonPayloads.forEach((buttonPayload, index) => {
+    if (buttonPayload && buttonPayload.trim()) {
+      components.push({
+        type: 'button',
+        sub_type: 'quick_reply',
+        index: String(index),
+        parameters: [{ type: 'payload', payload: buttonPayload.trim() }],
+      });
+    }
+  });
+
   const payload: any = {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -44,9 +66,7 @@ export async function sendMetaTemplate(
     template: {
       name: templateName,
       language: { code: languageCode },
-      ...(parameters.length > 0 ? {
-        components: [{ type: 'body', parameters }],
-      } : {}),
+      ...(components.length > 0 ? { components } : {}),
     },
   };
 

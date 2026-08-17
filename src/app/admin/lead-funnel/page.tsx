@@ -78,7 +78,10 @@ function isInhouse(lead: Lead) {
 const MAX_RECIPIENTS = 50;
 
 type SendResult = { leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string };
-type MetaTemplate = { name: string; language: string; category: string; variableNames: string[]; bodyPreview: string };
+type MetaTemplate = {
+  name: string; language: string; category: string; variableNames: string[]; bodyPreview: string;
+  quickReplyButtons: { text: string; index: number }[];
+};
 
 // Placeholder names that auto-fill from that column on the lead's own row
 // (see resolveVariable in the send-template route) instead of needing the
@@ -111,6 +114,8 @@ export default function LeadFunnelPage() {
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('');
   const [manualEntry, setManualEntry] = useState(false);
   const [selectedVariableNames, setSelectedVariableNames] = useState<string[]>([]);
+  const [selectedQuickReplyButtons, setSelectedQuickReplyButtons] = useState<{ text: string; index: number }[]>([]);
+  const [buttonPayloads, setButtonPayloads] = useState<Record<number, string>>({});
 
   async function openSendModal() {
     setShowSendModal(true);
@@ -139,6 +144,8 @@ export default function LeadFunnelPage() {
     setLanguageCode(t.language);
     setVariables(t.variableNames.map(vn => LEAD_AUTOFIELDS.includes(vn.toLowerCase()) ? `{{${vn}}}` : ''));
     setSelectedVariableNames(t.variableNames);
+    setSelectedQuickReplyButtons(t.quickReplyButtons || []);
+    setButtonPayloads({});
   }
 
   function toggleSelect(id: string) {
@@ -188,6 +195,11 @@ export default function LeadFunnelPage() {
     setSending(true);
     setSendResults(null);
     try {
+      // Sparse -> dense array up to the highest button index actually set,
+      // since sendMetaTemplate positions these by array index directly.
+      const maxIndex = Math.max(-1, ...Object.keys(buttonPayloads).map(Number));
+      const buttonPayloadsArray = Array.from({ length: maxIndex + 1 }, (_, i) => buttonPayloads[i] || '');
+
       const res = await fetch('/admin/api/lead-funnel/send-template', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -197,6 +209,7 @@ export default function LeadFunnelPage() {
           languageCode: languageCode.trim(),
           variables,
           variableNames: manualEntry ? [] : selectedVariableNames,
+          buttonPayloads: buttonPayloadsArray,
         }),
       });
       const data = await res.json();
@@ -219,6 +232,8 @@ export default function LeadFunnelPage() {
     setSelectedTemplateKey('');
     setManualEntry(false);
     setSelectedVariableNames([]);
+    setSelectedQuickReplyButtons([]);
+    setButtonPayloads({});
   }
 
   const [showHouseholdModal, setShowHouseholdModal] = useState(false);
@@ -836,6 +851,26 @@ export default function LeadFunnelPage() {
                     <button type="button" onClick={() => setManualEntry(true)} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
                       Type name/language manually instead
                     </button>
+
+                    {selectedQuickReplyButtons.length > 0 && (
+                      <div className="mt-3">
+                        <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Button Payloads (optional)</label>
+                        <p className="text-[11px] text-slate-400 mb-2">
+                          Meta only lets you set a quick-reply button's payload here, at send time - not when the template was created. Leave blank to use Meta's default (won't match anything in Bot Flows). Set to a Bot Flows trigger id (e.g. <code>btn_events</code>) to route that tap through an automated flow.
+                        </p>
+                        {selectedQuickReplyButtons.map(b => (
+                          <div key={b.index} className="flex items-center gap-2 mb-2">
+                            <span className="text-xs text-slate-500 w-32 shrink-0 truncate" title={b.text}>{b.text}</span>
+                            <input
+                              placeholder="e.g. btn_events"
+                              value={buttonPayloads[b.index] || ''}
+                              onChange={e => setButtonPayloads(prev => ({ ...prev, [b.index]: e.target.value }))}
+                              className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div>

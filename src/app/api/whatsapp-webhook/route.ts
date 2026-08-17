@@ -171,7 +171,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     }]);
   } else {
     const bodyValues = (flow.template_variables || []).map((v: string) => resolveVariable(String(v), effectiveLead));
-    sendResult = await sendMetaTemplate(senderPhone, flow.template_name, flow.template_language, bodyValues, flow.template_variable_names || []);
+    sendResult = await sendMetaTemplate(senderPhone, flow.template_name, flow.template_language, bodyValues, flow.template_variable_names || [], flow.template_button_payloads || []);
     await supabase.from('messages').insert([{
       lead_id: lead.id,
       direction: 'outbound',

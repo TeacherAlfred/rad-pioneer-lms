@@ -63,6 +63,7 @@ export async function POST(req: Request) {
         template_language: body.template_language || null,
         template_variables: body.template_variables || [],
         template_variable_names: body.template_variable_names || [],
+        template_button_payloads: body.template_button_payloads || [],
         set_source: body.set_source || null,
         add_tags: body.add_tags || [],
         notify_admin: !!body.notify_admin,
@@ -100,7 +101,7 @@ export async function PATCH(req: Request) {
 
     const allowed = [
       'trigger_button_id', 'label', 'action_type', 'message_body', 'message_buttons',
-      'template_name', 'template_language', 'template_variables', 'template_variable_names',
+      'template_name', 'template_language', 'template_variables', 'template_variable_names', 'template_button_payloads',
       'set_source', 'add_tags', 'notify_admin', 'skip_human_handoff', 'active',
     ];
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
