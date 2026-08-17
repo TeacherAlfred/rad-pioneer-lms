@@ -25,8 +25,12 @@ export default function IreneResponseManager() {
   const [classFilter, setClassFilter] = useState<string | null>(null);
 
   // --- QA Viewer: inline single-field editing (pencil icon on a field, no full Edit form) ---
+  // inlineEditField doubles as the tag-group-being-edited when its value is a *_tags name —
+  // inlineEditValue backs the plain text fields, inlineEditTags/inlineTagInput back the tags.
   const [inlineEditField, setInlineEditField] = useState<string | null>(null);
   const [inlineEditValue, setInlineEditValue] = useState('');
+  const [inlineEditTags, setInlineEditTags] = useState<string[]>([]);
+  const [inlineTagInput, setInlineTagInput] = useState('');
 
   // --- QA Viewer: jump-to-record search, scoped to the current viewFilter's queue ---
   const [viewSearchQuery, setViewSearchQuery] = useState('');
@@ -428,6 +432,41 @@ export default function IreneResponseManager() {
     } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
   };
 
+  const startInlineTagEdit = (field: 'activity_tags' | 'goal_tags' | 'club_tags', currentTags: string[]) => {
+    setInlineEditField(field);
+    setInlineEditTags(currentTags || []);
+    setInlineTagInput('');
+  };
+
+  // Takes the tag text as a param (not read from inlineTagInput state) so the "click a
+  // suggestion" and "press Enter" paths both add the exact value the user picked/typed,
+  // without racing the setInlineTagInput('') reset that follows in the same handler.
+  const addInlineTag = (value: string) => {
+    const clean = value.trim().replace(/,/g, '');
+    if (clean && !inlineEditTags.includes(clean)) {
+      setInlineEditTags(prev => [...prev, clean]);
+      if (inlineEditField === 'goal_tags' && !allKnownGoals.includes(clean)) setAllKnownGoals(prev => [...prev, clean].sort());
+      else if (inlineEditField === 'activity_tags' && !allKnownActivities.includes(clean)) setAllKnownActivities(prev => [...prev, clean].sort());
+      else if (inlineEditField === 'club_tags' && !allKnownClubs.includes(clean)) setAllKnownClubs(prev => [...prev, clean].sort());
+    }
+    setInlineTagInput('');
+  };
+
+  const removeInlineTag = (tag: string) => {
+    setInlineEditTags(prev => prev.filter(t => t !== tag));
+  };
+
+  const saveInlineTags = async () => {
+    if (!activeRecord || !inlineEditField) return;
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase.from('irene_responses').update({ [inlineEditField]: inlineEditTags }).eq('id', activeRecord.id);
+      if (error) throw error;
+      setRecords(prev => prev.map(r => r.id === activeRecord.id ? { ...r, [inlineEditField]: inlineEditTags } : r));
+      setInlineEditField(null);
+    } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
+  };
+
   // Entry point from a Coverage-tab grade card: scope the queue to that grade's
   // pending records and land on the first one.
   const handleOpenGradeQueue = (grade: string) => {
@@ -694,6 +733,62 @@ export default function IreneResponseManager() {
           <p className="text-sm font-medium text-slate-800 bg-slate-50 p-3 rounded-lg border border-slate-100 italic">"{displayValue}"</p>
         ) : (
           <p className="text-sm font-medium text-slate-800">{displayValue}</p>
+        )}
+      </div>
+    );
+  };
+
+  // QA Viewer: same pencil-to-edit idea as renderInlineField, but for the tag arrays —
+  // shows removable chips plus an add-tag input with autocomplete from allKnown*, and
+  // saves the whole array back in one update via saveInlineTags.
+  const renderInlineTagGroup = (label: string, field: 'activity_tags' | 'goal_tags' | 'club_tags', icon: React.ReactNode, tags: string[], colorClasses: string) => {
+    const isEditing = inlineEditField === field;
+    const knownList = field === 'goal_tags' ? allKnownGoals : field === 'activity_tags' ? allKnownActivities : allKnownClubs;
+    const suggestions = isEditing && inlineTagInput.trim()
+      ? knownList.filter(t => t.toLowerCase().includes(inlineTagInput.toLowerCase()) && !inlineEditTags.includes(t))
+      : [];
+    return (
+      <div className="space-y-2">
+        <h5 className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] flex items-center gap-1.5">
+          {icon} {label}
+          {!isEditing && (
+            <button type="button" onClick={() => startInlineTagEdit(field, tags || [])} title={`Edit ${label}`} className="text-slate-300 hover:text-amber-500 transition-colors">
+              <Edit2 size={10} />
+            </button>
+          )}
+        </h5>
+        {isEditing ? (
+          <div className="relative">
+            <div className="bg-white border border-amber-300 rounded-lg p-2 min-h-[42px] flex flex-wrap gap-1.5">
+              {inlineEditTags.map(tag => (
+                <span key={tag} className={`${colorClasses} text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-md flex items-center gap-1`}>
+                  {tag} <X size={10} className="cursor-pointer" onClick={() => removeInlineTag(tag)} />
+                </span>
+              ))}
+              <input
+                autoFocus
+                type="text"
+                value={inlineTagInput}
+                onChange={(e) => setInlineTagInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addInlineTag(inlineTagInput); } }}
+                placeholder="Type..."
+                className="flex-1 min-w-[80px] text-xs outline-none bg-transparent"
+              />
+            </div>
+            {suggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border shadow-lg rounded-lg z-10 p-1 flex flex-wrap gap-1">
+                {suggestions.map(tag => (
+                  <button key={tag} type="button" onClick={() => addInlineTag(tag)} className="text-[10px] font-bold uppercase bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded-md">{tag}</button>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 mt-2">
+              <button type="button" disabled={isSubmitting} onClick={saveInlineTags} className="px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-1">{isSubmitting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save</button>
+              <button type="button" onClick={() => setInlineEditField(null)} className="px-3 py-1.5 bg-white border border-slate-200 text-slate-500 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-100">Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">{(tags || []).map((t: string) => <span key={t} className={`${colorClasses} text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md`}>{t}</span>)}</div>
         )}
       </div>
     );
@@ -1356,9 +1451,9 @@ export default function IreneResponseManager() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div className="space-y-2"><h5 className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] flex items-center gap-1.5"><Activity size={12}/> Activity Tags</h5><div className="flex flex-wrap gap-2">{activeRecord?.activity_tags?.map((t:string) => <span key={t} className="bg-blue-50 text-blue-600 border border-blue-200 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md">{t}</span>)}</div></div>
-                      <div className="space-y-2"><h5 className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] flex items-center gap-1.5"><Target size={12}/> Goal Tags</h5><div className="flex flex-wrap gap-2">{activeRecord?.goal_tags?.map((t:string) => <span key={t} className="bg-amber-50 text-amber-600 border border-amber-200 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md">{t}</span>)}</div></div>
-                      <div className="space-y-2"><h5 className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] flex items-center gap-1.5"><MapPin size={12}/> Club Tags</h5><div className="flex flex-wrap gap-2">{activeRecord?.club_tags?.map((t:string) => <span key={t} className="bg-indigo-50 text-indigo-600 border border-indigo-200 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md">{t}</span>)}</div></div>
+                      {renderInlineTagGroup('Activity Tags', 'activity_tags', <Activity size={12}/>, activeRecord?.activity_tags || [], 'bg-blue-50 text-blue-600 border border-blue-200')}
+                      {renderInlineTagGroup('Goal Tags', 'goal_tags', <Target size={12}/>, activeRecord?.goal_tags || [], 'bg-amber-50 text-amber-600 border border-amber-200')}
+                      {renderInlineTagGroup('Club Tags', 'club_tags', <MapPin size={12}/>, activeRecord?.club_tags || [], 'bg-indigo-50 text-indigo-600 border border-indigo-200')}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 pt-4 border-t border-slate-100">
