@@ -652,7 +652,10 @@ function TrackerContent() {
 
       {/* --- HERO / 90KM PROGRESS BAR --- */}
       <header className="bg-slate-900 text-white px-4 pt-8 pb-16 text-center shadow-lg relative">
-        <div className="relative z-10 max-w-2xl mx-auto">
+        {/* z-30 (not z-10) so the milestone popups nested inside — which establish their
+            own stacking context here and can't outrank siblings outside it — render above
+            the educator "Viewing Grade" pill below (z-20), which otherwise blocked them. */}
+        <div className="relative z-30 max-w-2xl mx-auto">
           <h1 className="text-2xl md:text-3xl font-black tracking-tight mb-1">Irene Comrades Tracker</h1>
           <p className="text-slate-400 text-[10px] md:text-xs font-medium uppercase tracking-widest mb-6">1 Vote = 100m • Durban → Pietermaritzburg • 90km Up Run</p>
 
@@ -970,6 +973,7 @@ function TrackerContent() {
       {myVoter && (myVoter.voter_type === 'whatsapp' || myVoter.voter_type === 'email') && phase === 'parents' && (
         <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white px-4 py-2 rounded-full shadow-xl flex items-center gap-2 text-[10px] font-black uppercase tracking-widest">
           <Zap size={12} className="text-amber-400" /> {TIER_WEIGHTS[myVoter.voter_type]}x Power Voter
+          <span className="text-slate-400 normal-case font-bold">· {Math.max(0, DAILY_TAP_CAP - dailyTapCount)} {DAILY_TAP_CAP - dailyTapCount === 1 ? 'vote' : 'votes'} left today</span>
         </div>
       )}
       {phase === 'parents' && (!myVoter || myVoter.voter_type === 'anonymous') && !showTierModal && (
