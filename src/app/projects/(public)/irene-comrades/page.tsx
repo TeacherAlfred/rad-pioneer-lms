@@ -158,16 +158,8 @@ function TrackerContent() {
   const [isUnlocking, setIsUnlocking] = useState(false);
 
   // --- CONSENT STATE ---
-  // The response whose card was just tapped when the modal opened - a best-effort
-  // guess at the voter's own child's class, never a guarantee (they might be
-  // voting for someone else's child, or opened the modal without just voting).
-  // It's only ever used to pre-fill the confirm fields below, which the parent
-  // can correct before consenting.
-  const [lastVotedResponse, setLastVotedResponse] = useState<any>(null);
   const [consentMarketing, setConsentMarketing] = useState(false);
   const [confirmParentName, setConfirmParentName] = useState('');
-  const [confirmGrade, setConfirmGrade] = useState('');
-  const [confirmClassName, setConfirmClassName] = useState('');
 
   // --- REFERRAL STATE ---
   const refResponseId = searchParams.get('ref');
@@ -478,7 +470,6 @@ function TrackerContent() {
       if (!isEducatorTap && !hasSeenUpsell && (voter.voter_type || 'anonymous') === 'anonymous') {
         setHasSeenUpsell(true);
         localStorage.setItem('irene_seen_upsell', 'true');
-        setLastVotedResponse(response);
         setTimeout(() => setShowTierModal(true), 600);
       }
 
@@ -508,8 +499,6 @@ function TrackerContent() {
           whatsapp_number: tierTab === 'whatsapp' ? contactValue : null,
           consent_marketing: consentMarketing,
           parent_first_name: consentMarketing ? confirmParentName : null,
-          grade: consentMarketing ? confirmGrade : null,
-          class_name: consentMarketing ? confirmClassName : null,
         }),
       });
       if (!res.ok) console.error('Consent capture failed:', await res.text());
@@ -519,34 +508,19 @@ function TrackerContent() {
       setContactInput('');
       setConsentMarketing(false);
       setConfirmParentName('');
-      setConfirmGrade('');
-      setConfirmClassName('');
     } catch (err: any) {
       alert('Something went wrong. Please try again.');
     } finally { setIsUnlocking(false); }
   };
 
-  const handleToggleConsent = (checked: boolean) => {
-    setConsentMarketing(checked);
-    // Pre-fill from the response that was just voted on, the first time the
-    // box is ticked - a best-effort guess the parent can correct below.
-    if (checked && !confirmParentName && !confirmGrade && !confirmClassName && lastVotedResponse) {
-      setConfirmParentName((lastVotedResponse.parent_first_name || '').trim().split(/\s+/)[0] || '');
-      const firstCub = (lastVotedResponse.cubs || [])[0];
-      if (firstCub) {
-        setConfirmGrade(firstCub.grade || '');
-        setConfirmClassName(firstCub.class_name || '');
-      }
-    }
-  };
 
   // Shared consent checkbox + confirm-your-details block, used on both the
   // WhatsApp and email tabs - email is PII too, so the same opt-in applies.
   // Full class strings per tier (not interpolated fragments) so Tailwind's
   // static scanner actually picks them up at build time.
   const CONSENT_TAB_STYLES = {
-    whatsapp: { checkbox: 'w-4 h-4 mt-0.5 accent-emerald-500 rounded shrink-0', input: 'w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500', inputHalf: 'w-1/2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500' },
-    email: { checkbox: 'w-4 h-4 mt-0.5 accent-[#0066cc] rounded shrink-0', input: 'w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-[#0066cc]', inputHalf: 'w-1/2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-[#0066cc]' },
+    whatsapp: { checkbox: 'w-4 h-4 mt-0.5 accent-emerald-500 rounded shrink-0', input: 'w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-emerald-500' },
+    email: { checkbox: 'w-4 h-4 mt-0.5 accent-[#0066cc] rounded shrink-0', input: 'w-full bg-white border border-slate-200 rounded-lg px-3 py-2.5 text-xs font-bold outline-none focus:border-[#0066cc]' },
   };
 
   const renderConsentBlock = (tab: 'whatsapp' | 'email') => {
@@ -554,7 +528,7 @@ function TrackerContent() {
     return (
       <>
         <label className="flex items-start gap-2.5 mt-4 px-1 cursor-pointer">
-          <input type="checkbox" checked={consentMarketing} onChange={e => handleToggleConsent(e.target.checked)} className={s.checkbox} />
+          <input type="checkbox" checked={consentMarketing} onChange={e => setConsentMarketing(e.target.checked)} className={s.checkbox} />
           <span className="text-[11px] text-slate-500 leading-snug">
             <b className="text-slate-700">Turn screen time into a skill.</b>
             <br />
@@ -567,11 +541,6 @@ function TrackerContent() {
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 space-y-2 bg-slate-50 rounded-xl p-3">
             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Quick check, so we send the guide to the right place</p>
             <input type="text" placeholder="Your first name" value={confirmParentName} onChange={e => setConfirmParentName(e.target.value)} className={s.input} />
-            <div className="flex gap-2">
-              <input type="text" placeholder="Grade" value={confirmGrade} onChange={e => setConfirmGrade(e.target.value)} className={s.inputHalf} />
-              <input type="text" placeholder="Class" value={confirmClassName} onChange={e => setConfirmClassName(e.target.value)} className={s.inputHalf} />
-            </div>
-            {lastVotedResponse && <p className="text-[10px] text-slate-400">We've filled this in based on the response you just voted for — change it if that's not your child.</p>}
           </motion.div>
         )}
       </>
