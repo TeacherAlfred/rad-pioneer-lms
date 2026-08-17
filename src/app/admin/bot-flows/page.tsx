@@ -25,6 +25,9 @@ type FlowRow = {
   add_tags: string[];
   notify_admin: boolean;
   skip_human_handoff: boolean;
+  expects_reply: boolean;
+  reply_label: string | null;
+  reply_confirmation: string | null;
   active: boolean;
   created_at: string;
 };
@@ -51,6 +54,9 @@ const emptyForm = {
   add_tags: '',
   notify_admin: false,
   skip_human_handoff: true,
+  expects_reply: false,
+  reply_label: '',
+  reply_confirmation: '',
 };
 
 export default function BotFlowsPage() {
@@ -162,6 +168,9 @@ export default function BotFlowsPage() {
       add_tags: (row.add_tags || []).join(', '),
       notify_admin: row.notify_admin,
       skip_human_handoff: row.skip_human_handoff,
+      expects_reply: row.expects_reply,
+      reply_label: row.reply_label || '',
+      reply_confirmation: row.reply_confirmation || '',
     });
     setEditingId(row.id);
     setSaveError(null);
@@ -221,6 +230,10 @@ export default function BotFlowsPage() {
       setSaveError('Pick an approved template.');
       return;
     }
+    if (form.expects_reply && !form.reply_label.trim()) {
+      setSaveError('Give the expected reply a label (e.g. "Email address").');
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -242,6 +255,9 @@ export default function BotFlowsPage() {
         add_tags: form.add_tags.split(',').map(t => t.trim()).filter(Boolean),
         notify_admin: form.notify_admin,
         skip_human_handoff: form.skip_human_handoff,
+        expects_reply: form.expects_reply,
+        reply_label: form.expects_reply ? form.reply_label.trim() : null,
+        reply_confirmation: form.reply_confirmation.trim() || null,
       };
 
       const res = editingId
@@ -401,6 +417,35 @@ export default function BotFlowsPage() {
               </label>
             </div>
 
+            {form.action_type === 'message' && (
+              <div className="border border-slate-200 rounded-xl p-3 space-y-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+                  <input type="checkbox" checked={form.expects_reply} onChange={e => setForm(p => ({ ...p, expects_reply: e.target.checked }))} />
+                  This message asks a question - capture the lead's next reply
+                </label>
+                {form.expects_reply && (
+                  <>
+                    <p className="text-[11px] text-slate-400">
+                      Without this, a lead answering an open question (e.g. "reply with your email") falls through to the generic welcome message instead of being captured.
+                    </p>
+                    <input
+                      placeholder='What is this reply? e.g. "Email address"'
+                      value={form.reply_label}
+                      onChange={e => setForm(p => ({ ...p, reply_label: e.target.value }))}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
+                    />
+                    <textarea
+                      placeholder="Confirmation sent back once captured (optional - defaults to a generic 'passed that on to the team')"
+                      value={form.reply_confirmation}
+                      onChange={e => setForm(p => ({ ...p, reply_confirmation: e.target.value }))}
+                      rows={2}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
+                    />
+                  </>
+                )}
+              </div>
+            )}
+
             {saveError && <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs rounded-xl p-3">{saveError}</div>}
 
             <div className="flex gap-2 pt-2">
@@ -427,6 +472,7 @@ export default function BotFlowsPage() {
                       {row.action_type === 'template' ? 'Template' : 'Message'}
                     </span>
                     {row.set_source && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">source: {row.set_source}</span>}
+                    {row.expects_reply && <span className="text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">captures: {row.reply_label}</span>}
                   </div>
                   <p className="text-xs text-slate-500 mt-1 line-clamp-2">
                     {row.action_type === 'template' ? `Template: ${row.template_name} (${row.template_language})` : row.message_body}

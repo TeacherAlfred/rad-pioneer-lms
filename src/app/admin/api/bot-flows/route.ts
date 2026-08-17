@@ -32,6 +32,9 @@ function validate(body: any): string | null {
     if (!body.template_name?.trim()) return 'template_name is required for a template flow';
     if (!body.template_language?.trim()) return 'template_language is required for a template flow';
   }
+  if (body.expects_reply && !body.reply_label?.trim()) {
+    return 'reply_label is required when this message expects a reply';
+  }
   return null;
 }
 
@@ -68,6 +71,9 @@ export async function POST(req: Request) {
         add_tags: body.add_tags || [],
         notify_admin: !!body.notify_admin,
         skip_human_handoff: body.skip_human_handoff !== false,
+        expects_reply: !!body.expects_reply,
+        reply_label: body.expects_reply ? body.reply_label.trim() : null,
+        reply_confirmation: body.reply_confirmation?.trim() || null,
         active: true,
       }])
       .select()
@@ -98,11 +104,15 @@ export async function PATCH(req: Request) {
       const buttonsErr = validateButtons(fields.message_buttons);
       if (buttonsErr) return NextResponse.json({ error: buttonsErr }, { status: 400 });
     }
+    if (fields.expects_reply && !fields.reply_label?.trim()) {
+      return NextResponse.json({ error: 'reply_label is required when this message expects a reply' }, { status: 400 });
+    }
 
     const allowed = [
       'trigger_button_id', 'label', 'action_type', 'message_body', 'message_buttons',
       'template_name', 'template_language', 'template_variables', 'template_variable_names', 'template_button_payloads',
       'set_source', 'add_tags', 'notify_admin', 'skip_human_handoff', 'active',
+      'expects_reply', 'reply_label', 'reply_confirmation',
     ];
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     for (const key of allowed) {

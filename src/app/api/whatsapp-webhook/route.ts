@@ -148,6 +148,13 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
   const leadUpdate: Record<string, any> = {};
   if (flow.set_source) leadUpdate.source = flow.set_source;
   if (flow.add_tags?.length) leadUpdate.tags = Array.from(new Set([...(lead.tags || []), ...flow.add_tags]));
+  // Marks this lead as mid-question so their next freeform text is captured
+  // (see STAGE 1) instead of falling through to the generic welcome.
+  if (flow.expects_reply) {
+    leadUpdate.awaiting_reply_flow_id = flow.id;
+    leadUpdate.awaiting_reply_label = flow.reply_label || flow.label;
+    leadUpdate.awaiting_reply_confirmation = flow.reply_confirmation || null;
+  }
   if (Object.keys(leadUpdate).length > 0) {
     await supabase.from('leads').update(leadUpdate).eq('id', lead.id);
   }
@@ -434,6 +441,36 @@ export async function POST(request: Request) {
                 }
               }
 
+              // --- CAPTURE A PENDING BOT_FLOW REPLY ---
+              // A flow with expects_reply=true (e.g. "reply with your email
+              // address") sets awaiting_reply_* on the lead when it fires.
+              // Without this, the lead's next message fell through to STAGE
+              // 1's generic keyword/catch-all logic and got the "Hey, great
+              // to hear from you!" welcome instead of being captured.
+              if (message.type === 'text' && lead.awaiting_reply_flow_id) {
+                const label = lead.awaiting_reply_label || 'Reply';
+                await supabase.from('lead_notes').insert([{
+                  lead_id: lead.id,
+                  note: `${label}: ${messageText}`,
+                  created_by: 'bot_flow_capture',
+                }]);
+                await supabase.from('leads').update({
+                  awaiting_reply_flow_id: null,
+                  awaiting_reply_label: null,
+                  awaiting_reply_confirmation: null,
+                  needs_human: true,
+                }).eq('id', lead.id);
+                const confirmationText = lead.awaiting_reply_confirmation || "Thanks, I've passed that on to the team.";
+                const captureAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: confirmationText } });
+                await supabase.from('messages').insert([{
+                  lead_id: lead.id,
+                  direction: 'outbound',
+                  body: captureAckResult.ok ? '[Delivered reply-capture confirmation]' : `[FAILED to deliver reply-capture confirmation: ${captureAckResult.error}]`,
+                }]);
+                await notifyAdmin(supabase, senderPhone, `📝 ${label}: ${messageText}`, lead.id);
+                continue;
+              }
+
               // --- IRENE VOTING SUPPORT DETECTION ---
               // The Irene voting page's "Need Help" button prefills a message
               // tagged with these words. Route straight to a human, same as a
@@ -515,6 +552,14 @@ export async function POST(request: Request) {
               if (isBotButtonReply || isTemplateButtonReply) {
                 const buttonId = isBotButtonReply ? message.interactive.button_reply?.id : message.button?.payload;
                 const buttonTitle = (isBotButtonReply ? message.interactive.button_reply?.title : message.button?.text) || buttonId || 'a button';
+
+                // A button tap means the lead moved on from whatever open
+                // question they were mid-answering - don't let a later,
+                // unrelated message get captured as the answer to it.
+                if (lead.awaiting_reply_flow_id) {
+                  await supabase.from('leads').update({ awaiting_reply_flow_id: null, awaiting_reply_label: null, awaiting_reply_confirmation: null }).eq('id', lead.id);
+                  lead.awaiting_reply_flow_id = null;
+                }
 
                 if (buttonId === 'btn_guide' || buttonTitle.toLowerCase().includes('guide')) {
                   const matchedMedia = await matchBotMedia(supabase, 'guide', lead);

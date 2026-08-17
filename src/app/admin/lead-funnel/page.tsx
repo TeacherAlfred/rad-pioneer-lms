@@ -18,6 +18,7 @@ type Lead = {
   name?: string | null;
   lifecycle_stage: string | null;
   needs_human?: boolean | null;
+  awaiting_reply_label?: string | null;
   source?: string | null;
   tags?: string[] | null;
   ad_id?: string | null;
@@ -773,6 +774,11 @@ export default function LeadFunnelPage() {
                             {r.needs_human && (
                               <span title="Awaiting a human reply" className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-amber-50 text-amber-600">
                                 Needs Reply
+                              </span>
+                            )}
+                            {r.awaiting_reply_label && (
+                              <span title="Bot is waiting on this from the lead" className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-blue-50 text-blue-500">
+                                Awaiting: {r.awaiting_reply_label}
                               </span>
                             )}
                           </div>
