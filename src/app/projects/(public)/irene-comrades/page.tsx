@@ -152,12 +152,15 @@ function TrackerContent() {
 
   // --- PRIVATE NAME SEARCH (find a family by the child's first name on file, which is
   // never shown publicly — the name is only ever sent to the server for matching, never
-  // rendered back; a successful match just fills the normal search box with the child's
-  // already-public initial/grade/class, so it surfaces via the existing search logic) ---
+  // rendered back; a successful match returns the child's already-public initial/grade/
+  // class for each match, which the roster filter surfaces directly — first names aren't
+  // unique, so there can be more than one). Non-empty nameSearchResults takes over the
+  // roster entirely (see rosterResponses) until cleared or the main search box is used.
   const [showNameSearch, setShowNameSearch] = useState(false);
   const [nameSearchInput, setNameSearchInput] = useState('');
   const [nameSearchGrade, setNameSearchGrade] = useState('');
   const [nameSearchStatus, setNameSearchStatus] = useState<'idle' | 'loading' | 'notfound'>('idle');
+  const [nameSearchResults, setNameSearchResults] = useState<{ initial: string; grade: string; className: string }[]>([]);
 
   // --- TIER UPSELL MODAL STATE ---
   const [showTierModal, setShowTierModal] = useState(false);
@@ -345,6 +348,11 @@ function TrackerContent() {
 
   const rosterResponses = filteredResponses
     .filter(r => {
+      // An active private-name-search result takes over the roster entirely, showing
+      // exactly its match(es) — first names aren't unique, so this can be more than one.
+      if (nameSearchResults.length > 0) {
+        return (r.cubs || []).some((c: any) => nameSearchResults.some(m => m.initial === c.cub_initial && m.grade === c.grade && m.className === c.class_name));
+      }
       const q = familySearch.trim().toLowerCase();
       if (!q) return true;
       // Search only matches the parent's FIRST name (never the surname on file), OR a
@@ -593,12 +601,14 @@ function TrackerContent() {
       });
       const data = await res.json();
       if (data.found) {
-        // Hands off to the existing search box using only already-public info (initial +
-        // grade + class) — the name that was typed never gets rendered anywhere. Also
-        // clears any grade/phase scoping so an unrelated filter can't hide the match.
+        // Surfaces every match (first names aren't unique) using only already-public info
+        // (initial/grade/class) — the name that was typed never gets rendered anywhere.
+        // Also clears any grade/phase scoping and the plain text search so an unrelated
+        // filter can't hide a match.
         setSelectedGrade('All');
         setSelectedPhaseFilter('All');
-        setFamilySearch(`${data.initial} ${data.grade} ${data.className}`);
+        setFamilySearch('');
+        setNameSearchResults(data.matches);
         setNameSearchStatus('idle');
         setShowNameSearch(false);
         setNameSearchInput('');
@@ -980,8 +990,17 @@ function TrackerContent() {
             </div>
             <div className="relative mb-2">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-              <input type="text" placeholder="Find your family — parent's first name, or child's initial + grade + class" value={familySearch} onChange={(e) => setFamilySearch(e.target.value)} className="w-full bg-white p-3 pl-11 rounded-2xl border border-slate-200 shadow-sm text-sm font-bold outline-none focus:border-[#0066cc]" />
+              <input type="text" placeholder="Find your family — parent's first name, or child's initial + grade + class" value={familySearch} onChange={(e) => { setFamilySearch(e.target.value); setNameSearchResults([]); }} className="w-full bg-white p-3 pl-11 rounded-2xl border border-slate-200 shadow-sm text-sm font-bold outline-none focus:border-[#0066cc]" />
             </div>
+
+            {nameSearchResults.length > 0 && (
+              <div className="flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-2.5 mb-2 text-[11px]">
+                <span className="font-bold text-emerald-700">
+                  Found {nameSearchResults.length} match{nameSearchResults.length > 1 ? 'es' : ''} below
+                </span>
+                <button type="button" onClick={() => setNameSearchResults([])} className="font-black text-emerald-600 uppercase tracking-widest hover:underline shrink-0">Clear</button>
+              </div>
+            )}
 
             <div className="mb-6 text-center">
               <button type="button" onClick={() => setShowNameSearch(v => !v)} className="text-[10px] font-black text-[#0066cc] uppercase tracking-widest hover:underline">

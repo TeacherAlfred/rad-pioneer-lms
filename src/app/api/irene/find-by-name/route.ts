@@ -26,6 +26,9 @@ export async function POST(req: Request) {
     if (error) throw error;
 
     const needle = name.trim().toLowerCase();
+    // First names aren't unique — collect every match (e.g. two "Alfred"s in the same
+    // grade but different classes) instead of stopping at the first one found.
+    const matches: { initial: string; grade: string; className: string }[] = [];
 
     for (const r of data || []) {
       const cubs = r.cubs || [];
@@ -35,16 +38,12 @@ export async function POST(req: Request) {
         // name depending on what the admin entered, so always compare the first token.
         const storedFirstName = (fullNames[i] || '').trim().toLowerCase().split(/\s+/)[0] || '';
         if (storedFirstName && storedFirstName === needle && cubs[i].grade === grade) {
-          return NextResponse.json({
-            found: true,
-            initial: cubs[i].cub_initial,
-            grade: cubs[i].grade,
-            className: cubs[i].class_name,
-          });
+          matches.push({ initial: cubs[i].cub_initial, grade: cubs[i].grade, className: cubs[i].class_name });
         }
       }
     }
 
+    if (matches.length > 0) return NextResponse.json({ found: true, matches });
     return NextResponse.json({ found: false });
   } catch (error: any) {
     return NextResponse.json({ found: false, error: error.message }, { status: 500 });
