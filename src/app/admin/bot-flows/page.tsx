@@ -39,6 +39,15 @@ type MetaTemplate = {
   quickReplyButtons: { text: string; index: number }[];
 };
 
+type BotMediaItem = {
+  id: string;
+  title: string;
+  trigger_keywords: string[];
+  caption: string;
+  filename: string;
+  archived: boolean;
+};
+
 const emptyForm = {
   trigger_button_id: '',
   label: '',
@@ -53,6 +62,7 @@ const emptyForm = {
   template_quick_reply_buttons: [] as { text: string; index: number }[],
   template_button_payloads: {} as Record<number, string>,
   bot_media_keyword: '',
+  bot_media_selected_id: '', // picker only - the keyword above is what's actually saved
   set_source: '',
   add_tags: '',
   notify_admin: false,
@@ -77,9 +87,14 @@ export default function BotFlowsPage() {
   const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [templatesLoading, setTemplatesLoading] = useState(false);
 
-  // Reserved id (see whatsapp-webhook/route.ts) - special-cased to deliver
-  // the guide even though it may not exist as its own bot_flows row.
-  const payloadOptions = Array.from(new Set(['btn_guide', ...rows.map(r => r.trigger_button_id)])).sort();
+  const [botMediaItems, setBotMediaItems] = useState<BotMediaItem[]>([]);
+  const [botMediaError, setBotMediaError] = useState<string | null>(null);
+  const [botMediaLoading, setBotMediaLoading] = useState(false);
+
+  // "btn_guide" is no longer hardcoded/reserved (see whatsapp-webhook's
+  // 2026-08-15 change) - it's just whatever bot_flows rows happen to exist,
+  // same as everything else.
+  const payloadOptions = Array.from(new Set(rows.map(r => r.trigger_button_id))).sort();
 
   useEffect(() => { fetchRows(); }, []);
 
@@ -95,6 +110,17 @@ export default function BotFlowsPage() {
       }
     }
   }, [templates, form.template_key, form.template_quick_reply_buttons.length]);
+
+  // Same backfill idea as above, for editing an existing bot_media flow -
+  // the row only stores the keyword string, so once items load, reverse-
+  // match it back to whichever item currently carries that keyword so the
+  // dropdown/preview can show something instead of just the raw keyword.
+  useEffect(() => {
+    if (form.action_type === 'bot_media' && form.bot_media_keyword && !form.bot_media_selected_id && botMediaItems.length > 0) {
+      const match = botMediaItems.find(m => (m.trigger_keywords || []).includes(form.bot_media_keyword));
+      if (match) setForm(f => ({ ...f, bot_media_selected_id: match.id }));
+    }
+  }, [botMediaItems, form.action_type, form.bot_media_keyword, form.bot_media_selected_id]);
 
   async function fetchRows() {
     setLoading(true);
@@ -120,6 +146,33 @@ export default function BotFlowsPage() {
     } finally {
       setTemplatesLoading(false);
     }
+  }
+
+  async function loadBotMediaIfNeeded() {
+    if (botMediaItems.length > 0 || botMediaLoading) return;
+    setBotMediaLoading(true);
+    try {
+      const res = await fetch('/admin/api/bot-media');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load bot media');
+      // Archived items can't actually be matched at runtime (matchBotMedia
+      // only looks at active rows) - excluding them here so the dropdown
+      // can't offer something that silently won't fire.
+      setBotMediaItems((data.rows || []).filter((r: any) => !r.archived));
+    } catch (err: any) {
+      setBotMediaError(err.message);
+    } finally {
+      setBotMediaLoading(false);
+    }
+  }
+
+  function selectBotMedia(id: string) {
+    const item = botMediaItems.find(m => m.id === id);
+    setForm(f => ({
+      ...f,
+      bot_media_selected_id: id,
+      bot_media_keyword: item ? (item.trigger_keywords[0] || '') : '',
+    }));
   }
 
   async function patchRow(id: string, fields: Record<string, any>) {
@@ -151,6 +204,7 @@ export default function BotFlowsPage() {
     setSaveError(null);
     setShowForm(true);
     loadTemplatesIfNeeded();
+    loadBotMediaIfNeeded();
   }
 
   function openEdit(row: FlowRow) {
@@ -169,6 +223,7 @@ export default function BotFlowsPage() {
       template_quick_reply_buttons: [],
       template_button_payloads: Object.fromEntries((row.template_button_payloads || []).map((p, i) => [i, p]).filter(([, p]) => p)),
       bot_media_keyword: row.bot_media_keyword || '',
+      bot_media_selected_id: '', // backfilled once botMediaItems loads (see useEffect)
       set_source: row.set_source || '',
       add_tags: (row.add_tags || []).join(', '),
       notify_admin: row.notify_admin,
@@ -182,6 +237,7 @@ export default function BotFlowsPage() {
     setSaveError(null);
     setShowForm(true);
     loadTemplatesIfNeeded();
+    loadBotMediaIfNeeded();
   }
 
   function closeForm() {
@@ -237,7 +293,7 @@ export default function BotFlowsPage() {
       return;
     }
     if (form.action_type === 'bot_media' && !form.bot_media_keyword.trim()) {
-      setSaveError('Give the bot_media keyword to look up (e.g. "guide").');
+      setSaveError('Select a bot media item.');
       return;
     }
     if (form.expects_reply && !form.reply_label.trim()) {
@@ -337,7 +393,7 @@ export default function BotFlowsPage() {
               <button type="button" onClick={() => { setForm(p => ({ ...p, action_type: 'template' })); loadTemplatesIfNeeded(); }} className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border ${form.action_type === 'template' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'}`}>
                 <Send size={13} className="inline -mt-0.5 mr-1" /> Meta Template
               </button>
-              <button type="button" onClick={() => setForm(p => ({ ...p, action_type: 'bot_media' }))} className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border ${form.action_type === 'bot_media' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'}`}>
+              <button type="button" onClick={() => { setForm(p => ({ ...p, action_type: 'bot_media' })); loadBotMediaIfNeeded(); }} className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border ${form.action_type === 'bot_media' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'}`}>
                 <FileText size={13} className="inline -mt-0.5 mr-1" /> Bot Media
               </button>
             </div>
@@ -364,15 +420,33 @@ export default function BotFlowsPage() {
               </>
             ) : form.action_type === 'bot_media' ? (
               <div>
-                <input
-                  placeholder='Keyword to look up in bot_media, e.g. "guide"'
-                  value={form.bot_media_keyword}
-                  onChange={e => setForm(p => ({ ...p, bot_media_keyword: e.target.value }))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                />
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Matched the same way typing this word would - <Link href="/admin/bot-media" className="underline">/admin/bot-media</Link>'s tag_filter still applies, so a lead with a matching tag gets the audience-specific version over the generic one.
-                </p>
+                {botMediaLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-slate-400 py-2"><Loader2 size={14} className="animate-spin" /> Loading bot media...</div>
+                ) : botMediaError ? (
+                  <p className="text-[11px] text-amber-600 flex items-center gap-1"><AlertTriangle size={12} /> Couldn't load bot media ({botMediaError}).</p>
+                ) : (
+                  <>
+                    <select value={form.bot_media_selected_id} onChange={e => selectBotMedia(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400 mb-2">
+                      <option value="">Select a bot media item...</option>
+                      {botMediaItems.map(m => (
+                        <option key={m.id} value={m.id}>{m.title} ({(m.trigger_keywords || []).join(', ')})</option>
+                      ))}
+                    </select>
+                    {form.bot_media_selected_id && (() => {
+                      const selected = botMediaItems.find(m => m.id === form.bot_media_selected_id);
+                      if (!selected) return null;
+                      return (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-2">
+                          <p className="text-[11px] text-slate-400 italic">"{selected.caption}"</p>
+                          <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-1"><FileText size={11} /> {selected.filename}</p>
+                        </div>
+                      );
+                    })()}
+                    <p className="text-[11px] text-slate-400">
+                      Matched at send time by keyword, same as typing it would - <Link href="/admin/bot-media" className="underline">/admin/bot-media</Link>'s tag_filter still applies, so a lead with a matching tag can get an audience-specific version instead of this one.
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               <div>
