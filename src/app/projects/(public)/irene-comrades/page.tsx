@@ -1017,10 +1017,18 @@ function TrackerContent() {
           href={contactRadLink(`I'm on the ${phase} phase and need a hand.`)}
           target="_blank"
           rel="noopener noreferrer"
-          className="shrink-0 bg-emerald-500 text-white w-10 h-10 rounded-full shadow-lg flex items-center justify-center hover:bg-emerald-600 transition-colors"
+          className="shrink-0 flex items-center gap-1.5"
           title="Need help? Chat with RAD Academy on WhatsApp"
         >
-          <MessageCircle size={18} />
+          <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600 whitespace-nowrap">Need Help?</span>
+          {/* Ping halo (same "this is tappable" cue used elsewhere on this page) so the
+              button reads as interactive, not just decorative. */}
+          <span className="relative">
+            <span className="animate-ping absolute inset-0 rounded-full bg-emerald-500 opacity-30" />
+            <span className="relative bg-emerald-500 text-white w-10 h-10 rounded-full shadow-lg flex items-center justify-center hover:bg-emerald-600 transition-colors">
+              <MessageCircle size={18} />
+            </span>
+          </span>
         </a>
       </footer>
     </div>
