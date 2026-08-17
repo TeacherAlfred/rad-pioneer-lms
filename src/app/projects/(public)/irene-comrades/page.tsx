@@ -556,7 +556,9 @@ function TrackerContent() {
         <label className="flex items-start gap-2.5 mt-4 px-1 cursor-pointer">
           <input type="checkbox" checked={consentMarketing} onChange={e => handleToggleConsent(e.target.checked)} className={s.checkbox} />
           <span className="text-[11px] text-slate-500 leading-snug">
-            I'd also like RAD Academy to send me their free <b className="text-slate-700">Parent's Guide to Hacking Screen Time</b>, plus information about their coding and robotics programmes.
+            <b className="text-slate-700">Turn screen time into a skill.</b>
+            <br />
+            Free RAD Academy guide + info on coding &amp; robotics programmes.
             <span className="block text-slate-400 mt-0.5">Optional — you'll still get your votes and results notification either way.</span>
           </span>
         </label>
