@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Save, Download, Trash2, Hash, Activity, Target, Loader2, CheckCircle2, X, Edit2, Plus, Eye, ChevronLeft, ChevronRight, Check, ListChecks, Inbox, UserPlus, MapPin, Flag, AlertTriangle, Layers, FilterX, Search, GitMerge, PlusCircle, Settings2, EyeOff, Tags, ArrowRight, GraduationCap } from 'lucide-react';
+import { Save, Download, Trash2, Hash, Activity, Target, Loader2, CheckCircle2, X, Edit2, Plus, Eye, ChevronLeft, ChevronRight, Check, CheckCheck, ListChecks, Inbox, UserPlus, MapPin, Flag, AlertTriangle, Layers, FilterX, Search, GitMerge, PlusCircle, Settings2, EyeOff, Tags, ArrowRight, GraduationCap } from 'lucide-react';
 
 interface Cub {
   cub_initial: string;
@@ -23,6 +23,13 @@ export default function IreneResponseManager() {
   const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
   const [viewFilter, setViewFilter] = useState<'pending' | 'verified' | 'flagged' | 'name_review' | 'grade_review'>('pending');
   const [classFilter, setClassFilter] = useState<string | null>(null);
+
+  // --- QA Viewer: inline single-field editing (pencil icon on a field, no full Edit form) ---
+  const [inlineEditField, setInlineEditField] = useState<string | null>(null);
+  const [inlineEditValue, setInlineEditValue] = useState('');
+
+  // --- QA Viewer: jump-to-record search, scoped to the current viewFilter's queue ---
+  const [viewSearchQuery, setViewSearchQuery] = useState('');
 
   // --- Data Reconciliation (Phase 0) state ---
   const [reconcileTab, setReconcileTab] = useState<'search' | 'queue' | 'coverage'>('search');
@@ -69,6 +76,8 @@ export default function IreneResponseManager() {
   const initialFormState = {
     cubs: [{ cub_initial: '', grade: '', class_name: '', full_name: '' }] as Cub[],
     parent_first_name: '',
+    // Admin-only, optional — never sent to the public voting page's query.
+    parent_relationship: '',
     q_why_start: '', q_club: '', q_boss_level: '', q_longest_distance: '',
     q_shoes: '', q_weird_habit: '', q_funny_fail: '', q_proudest_moment: '',
     goal_tags: [] as string[], activity_tags: [] as string[], club_tags: [] as string[]
@@ -280,6 +289,19 @@ export default function IreneResponseManager() {
     return true;
   });
 
+  // QA Viewer jump-to-record search — scoped to the current filtered queue (displayedRecords),
+  // since jumping to a record outside it wouldn't have anywhere to land via Next/Prev.
+  const viewSearchMatches = viewSearchQuery.trim()
+    ? displayedRecords
+        .map((r, idx) => ({ r, idx }))
+        .filter(({ r }) => {
+          const q = viewSearchQuery.trim().toLowerCase();
+          if ((r.parent_first_name || '').toLowerCase().includes(q)) return true;
+          return (r.cubs || []).some((c: any) => (c.cub_initial || '').toLowerCase().includes(q));
+        })
+        .slice(0, 8)
+    : [];
+
   // Calculate classes available in the current view filter (ignoring the class filter itself)
   const availableClasses = Array.from(new Set(
     records
@@ -290,13 +312,32 @@ export default function IreneResponseManager() {
   // --- Reconciliation: search-first lookup across ALL records (not just the current viewFilter) ---
   // Three independent filters, combined with AND — leave any blank to widen the search.
   const reconcileHasFilter = !!(reconcileSearchName.trim() || reconcileSearchGrade || reconcileSearchInitial.trim());
+  const reconcileMatchesText = (name: string, cubs: any[]) => {
+    if (reconcileSearchName.trim() && !(name || '').toLowerCase().includes(reconcileSearchName.trim().toLowerCase())) return false;
+    if (reconcileSearchGrade && !cubs.some((c) => c.grade === reconcileSearchGrade)) return false;
+    if (reconcileSearchInitial.trim() && !cubs.some((c) => (c.cub_initial || '').toLowerCase().startsWith(reconcileSearchInitial.trim().toLowerCase()))) return false;
+    return true;
+  };
   const reconcileResults = reconcileHasFilter
-    ? records.filter(r => {
-        if (reconcileSearchName.trim() && !(r.parent_first_name || '').toLowerCase().includes(reconcileSearchName.trim().toLowerCase())) return false;
-        if (reconcileSearchGrade && !(r.cubs || []).some((c: any) => c.grade === reconcileSearchGrade)) return false;
-        if (reconcileSearchInitial.trim() && !(r.cubs || []).some((c: any) => (c.cub_initial || '').toLowerCase().startsWith(reconcileSearchInitial.trim().toLowerCase()))) return false;
-        return true;
-      }).slice(0, 30)
+    ? records.filter(r => reconcileMatchesText(r.parent_first_name, r.cubs || [])).slice(0, 30)
+    : [];
+
+  // Same search, but against the Queue's unresolved merge candidates — so a possible
+  // duplicate doesn't only surface when you happen to click over to the Queue tab.
+  const candidateSearchName = (candidate: any) => {
+    if (candidate.response_b_source === 'neon_internal') {
+      return candidate.response_b_payload?.extra?.parent_first_name || candidate.response_b_payload?.kept?.parent_first_name || '';
+    }
+    return candidate.response_b_payload?.[0]?.parent_first_name || '';
+  };
+  const candidateSearchCubs = (candidate: any) => {
+    const rows: any[] = candidate.response_b_source === 'neon_internal'
+      ? [candidate.response_b_payload?.kept, candidate.response_b_payload?.extra].filter(Boolean)
+      : (candidate.response_b_payload || []);
+    return rows.map((r: any) => ({ cub_initial: r.cub_initial, grade: r.canonical_grade || r.grade, class_name: r.canonical_class_name || r.class_name }));
+  };
+  const reconcileCandidateResults = reconcileHasFilter
+    ? mergeCandidates.filter(c => reconcileMatchesText(candidateSearchName(c), candidateSearchCubs(c)))
     : [];
 
   // --- Reconciliation: coverage by grade, using needs_name_review as the "unresolved" signal ---
@@ -343,6 +384,7 @@ export default function IreneResponseManager() {
     setFormData({
       ...target,
       parent_first_name: target.parent_first_name || '',
+      parent_relationship: target.parent_relationship || '',
       q_why_start: target.q_why_start || '',
       q_club: target.q_club || '',
       q_boss_level: target.q_boss_level || '',
@@ -364,8 +406,27 @@ export default function IreneResponseManager() {
 
   const handleSwitchToCreate = () => { setFormData(initialFormState); setEditingRecordId(null); setReviewQueueGrade(null); setMode('create'); };
   const handleSwitchToView = () => { setEditingRecordId(null); setMode('view'); };
-  const goNext = () => setCurrentIndex(prev => Math.min(displayedRecords.length - 1, prev + 1));
-  const goPrev = () => setCurrentIndex(prev => Math.max(0, prev - 1));
+  const goNext = () => { setInlineEditField(null); setCurrentIndex(prev => Math.min(displayedRecords.length - 1, prev + 1)); };
+  const goPrev = () => { setInlineEditField(null); setCurrentIndex(prev => Math.max(0, prev - 1)); };
+
+  const startInlineEdit = (field: string, currentValue: any) => {
+    setInlineEditField(field);
+    setInlineEditValue(currentValue !== null && currentValue !== undefined ? String(currentValue) : '');
+  };
+
+  // Updates exactly one column on the active record — the point of the QA viewer's pencil
+  // icons is fixing a typo without leaving the record you're reviewing for the full Edit form.
+  const saveInlineField = async (field: string) => {
+    if (!activeRecord) return;
+    setIsSubmitting(true);
+    try {
+      const value: any = field === 'q_shoes' ? (inlineEditValue.trim() ? parseInt(inlineEditValue, 10) : null) : (inlineEditValue || null);
+      const { error } = await supabase.from('irene_responses').update({ [field]: value }).eq('id', activeRecord.id);
+      if (error) throw error;
+      setRecords(prev => prev.map(r => r.id === activeRecord.id ? { ...r, [field]: value } : r));
+      setInlineEditField(null);
+    } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
+  };
 
   // Entry point from a Coverage-tab grade card: scope the queue to that grade's
   // pending records and land on the first one.
@@ -382,20 +443,24 @@ export default function IreneResponseManager() {
     setCurrentIndex(0);
   };
 
-  const handleToggleVerify = async (record?: any) => {
+  // Verifying no longer blocks on needs_name_review — a response can go public/votable
+  // with its name still unconfirmed. `clearNameReview` (default true, matching every
+  // existing call site) treats clicking Verify as that confirmation and clears the flag
+  // too; pass false to verify while deliberately leaving the name-review flag as is (the
+  // QA viewer's two separate Verify buttons use this to offer both explicitly).
+  // Un-verifying always leaves needs_name_review alone.
+  const handleToggleVerify = async (record?: any, clearNameReview: boolean = true) => {
     const target = record || activeRecord;
     if (!target) return;
     const newValue = !target.is_verified;
-    if (newValue && target.needs_name_review) {
-      alert('This response is still flagged for name review. Clear the flag in the Name Review queue before verifying it — free-text answers here are shown publicly.');
-      return;
-    }
     setIsSubmitting(true);
     try {
       const newVerifiedAt = newValue ? new Date().toISOString() : null;
-      const { error } = await supabase.from('irene_responses').update({ is_verified: newValue, verified_at: newVerifiedAt }).eq('id', target.id);
+      const updates: any = { is_verified: newValue, verified_at: newVerifiedAt };
+      if (newValue && clearNameReview) updates.needs_name_review = false;
+      const { error } = await supabase.from('irene_responses').update(updates).eq('id', target.id);
       if (error) throw error;
-      setRecords(prev => prev.map(r => r.id === target.id ? { ...r, is_verified: newValue, verified_at: newVerifiedAt } : r));
+      setRecords(prev => prev.map(r => r.id === target.id ? { ...r, ...updates } : r));
     } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
   };
 
@@ -423,10 +488,11 @@ export default function IreneResponseManager() {
     } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
   };
 
-  // Deliberately does NOT block is_verified the way needs_name_review does — a response's
-  // class/grade can be flagged for a teacher/admin to double-check while it's still
-  // verified and votable, since the free-text answers (the thing needs_name_review guards)
-  // aren't affected by a grade mistake.
+  // Like needs_name_review, this never blocks is_verified — a response's class/grade can
+  // be flagged for a teacher/admin to double-check while it stays verified and votable.
+  // Unlike needs_name_review, verifying doesn't auto-clear it: a wrong grade isn't
+  // something a quick glance during verification reliably catches, so it stays flagged
+  // until someone deliberately confirms it.
   const handleToggleGradeReview = async (record?: any) => {
     const target = record || activeRecord;
     if (!target) return;
@@ -496,7 +562,7 @@ export default function IreneResponseManager() {
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
@@ -596,6 +662,88 @@ export default function IreneResponseManager() {
   const suggestedGoals = goalInput.trim() ? allKnownGoals.filter(t => t.toLowerCase().includes(goalInput.toLowerCase()) && !formData.goal_tags.includes(t)) : [];
   const suggestedClubs = clubInput.trim() ? allKnownClubs.filter(t => t.toLowerCase().includes(clubInput.toLowerCase()) && !formData.club_tags.includes(t)) : [];
 
+  // QA Viewer: a labeled field with a pencil icon that swaps it for an inline input/textarea
+  // and a save/cancel pair — edits exactly that one column via saveInlineField, no need to
+  // open the full Edit form for a one-word fix.
+  const renderInlineField = (label: string, field: string, value: any, opts: { multiline?: boolean; wrapperClassName?: string } = {}) => {
+    const isEditing = inlineEditField === field;
+    const displayValue = value === null || value === undefined || value === '' ? '-' : value;
+    return (
+      <div className={opts.wrapperClassName}>
+        <p className="text-[10px] font-bold text-slate-400 uppercase mb-1 flex items-center gap-1.5">
+          {label}
+          {!isEditing && (
+            <button type="button" onClick={() => startInlineEdit(field, value)} title={`Edit ${label}`} className="text-slate-300 hover:text-amber-500 transition-colors">
+              <Edit2 size={10} />
+            </button>
+          )}
+        </p>
+        {isEditing ? (
+          <div className="flex items-start gap-2">
+            {opts.multiline ? (
+              <textarea autoFocus rows={2} value={inlineEditValue} onChange={(e) => setInlineEditValue(e.target.value)} className="flex-1 bg-white border border-amber-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-amber-500" />
+            ) : (
+              <input autoFocus type={field === 'q_shoes' ? 'number' : 'text'} value={inlineEditValue} onChange={(e) => setInlineEditValue(e.target.value)} className="flex-1 bg-white border border-amber-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-amber-500" />
+            )}
+            <div className="flex gap-1 shrink-0">
+              <button type="button" disabled={isSubmitting} onClick={() => saveInlineField(field)} className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50">{isSubmitting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}</button>
+              <button type="button" onClick={() => setInlineEditField(null)} className="p-2 bg-white border border-slate-200 text-slate-400 rounded-lg hover:bg-slate-100"><X size={12} /></button>
+            </div>
+          </div>
+        ) : opts.multiline ? (
+          <p className="text-sm font-medium text-slate-800 bg-slate-50 p-3 rounded-lg border border-slate-100 italic">"{displayValue}"</p>
+        ) : (
+          <p className="text-sm font-medium text-slate-800">{displayValue}</p>
+        )}
+      </div>
+    );
+  };
+
+  // Shared between the Queue tab and Search tab — a possible duplicate should be
+  // resolvable wherever it's spotted, not just after switching over to Queue.
+  const renderCandidateCard = (candidate: any) => {
+    const isInternal = candidate.response_b_source === 'neon_internal';
+    const supaMatch = candidate.response_a_id ? records.find((r) => r.id === candidate.response_a_id) : null;
+    const leftLabel = isInternal ? 'Kept (already in Supabase)' : 'Existing Supabase Record';
+    const leftData = isInternal ? candidate.response_b_payload.kept : supaMatch;
+    const rightLabel = isInternal ? 'Extra (possible duplicate)' : 'Neon Data';
+    const rightRows: any[] = isInternal ? [candidate.response_b_payload.extra] : candidate.response_b_payload;
+    const isResolving = resolvingCandidateId === candidate.id;
+    return (
+      <div key={candidate.id} className="border border-slate-200 rounded-2xl p-5 bg-slate-50/50">
+        <div className="flex items-center justify-between mb-3">
+          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full border ${candidate.confidence === 'high' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : candidate.confidence === 'medium' ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>{candidate.confidence} confidence</span>
+          <span className="text-[9px] font-bold uppercase text-slate-400">{isInternal ? 'Internal Neon duplicate' : 'Cross-database name match'}</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="bg-white p-3 rounded-xl border border-slate-200">
+            <p className="text-[9px] font-black uppercase text-slate-400 mb-1">{leftLabel}</p>
+            {leftData ? (
+              <>
+                <p className="font-bold text-sm text-slate-900">{leftData.parent_first_name}</p>
+                <p className="text-[11px] text-slate-500">{(isInternal ? [leftData] : leftData.cubs || []).map((c: any) => `${c.cub_initial} · ${c.grade || c.canonical_grade} (${c.class_name || c.canonical_class_name})`).join(', ')}</p>
+              </>
+            ) : <p className="text-xs text-slate-400 italic">Not found (may have been edited/removed since)</p>}
+          </div>
+          <div className="bg-white p-3 rounded-xl border border-slate-200">
+            <p className="text-[9px] font-black uppercase text-slate-400 mb-1">{rightLabel}</p>
+            {rightRows.map((r: any, i: number) => (
+              <div key={i} className={i > 0 ? 'mt-2 pt-2 border-t border-slate-100' : ''}>
+                <p className="font-bold text-sm text-slate-900">{r.parent_first_name}</p>
+                <p className="text-[11px] text-slate-500">{r.cub_initial} · {r.canonical_grade || r.grade} ({r.canonical_class_name || r.class_name})</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button title="Different kids/families — not a real match. Nothing gets added, the candidate is just dismissed." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'rejected')} className="px-4 py-2 bg-white text-slate-500 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 disabled:opacity-50 flex items-center gap-1.5"><X size={12} /> Reject</button>
+          <button title="Not a duplicate — this is real, distinct data. Inserts it as a new response for your normal QA queue." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'add_new')} className="px-4 py-2 bg-white text-indigo-600 border border-indigo-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 disabled:opacity-50 flex items-center gap-1.5"><PlusCircle size={12} /> Add as New</button>
+          <button title="Actual duplicate of the same child — already in Supabase. Nothing gets added, just clears the candidate." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'merged')} className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-1.5">{isResolving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Confirm Duplicate</button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 font-sans text-slate-900 pb-24 relative">
       
@@ -614,7 +762,16 @@ export default function IreneResponseManager() {
             <button onClick={() => handleToggleFlag()} disabled={isSubmitting} title={activeRecord?.is_flagged ? "Unflag" : "Flag Profiling"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.is_flagged ? 'bg-rose-500 text-white shadow-rose-500/30' : 'bg-white text-slate-500 hover:text-rose-500'}`}><Flag size={20} fill={activeRecord?.is_flagged ? "currentColor" : "none"} /></button>
             <button onClick={() => handleToggleNameReview()} disabled={isSubmitting} title={activeRecord?.needs_name_review ? "Clear Review" : "Flag Name Review"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.needs_name_review ? 'bg-amber-500 text-white shadow-amber-500/30' : 'bg-white text-slate-500 hover:text-amber-500'}`}><AlertTriangle size={20} fill={activeRecord?.needs_name_review ? "currentColor" : "none"} /></button>
             <button onClick={() => handleToggleGradeReview()} disabled={isSubmitting} title={activeRecord?.needs_grade_review ? "Clear Grade Review" : "Flag Grade/Class for Review"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.needs_grade_review ? 'bg-sky-500 text-white shadow-sky-500/30' : 'bg-white text-slate-500 hover:text-sky-500'}`}><GraduationCap size={20} /></button>
-            <button onClick={() => handleToggleVerify()} disabled={isSubmitting} title={activeRecord?.is_verified ? "Un-verify" : "Verify"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.is_verified ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 'bg-white text-slate-500 hover:text-emerald-500'}`}>{activeRecord?.is_verified ? <X size={24} /> : <Check size={24} />}</button>
+            {activeRecord?.is_verified ? (
+              <button onClick={() => handleToggleVerify()} disabled={isSubmitting} title="Un-verify" className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 bg-emerald-500 text-white shadow-emerald-500/30"><X size={24} /></button>
+            ) : activeRecord?.needs_name_review ? (
+              <>
+                <button onClick={() => handleToggleVerify(undefined, false)} disabled={isSubmitting} title="Verify — leave name review requirement as is" className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 bg-white text-slate-500 hover:text-emerald-500"><Check size={22} /></button>
+                <button onClick={() => handleToggleVerify(undefined, true)} disabled={isSubmitting} title="Verify — and clear name review requirement" className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 bg-white text-slate-500 hover:text-emerald-600"><CheckCheck size={22} /></button>
+              </>
+            ) : (
+              <button onClick={() => handleToggleVerify()} disabled={isSubmitting} title="Verify" className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 bg-white text-slate-500 hover:text-emerald-500"><Check size={24} /></button>
+            )}
           </>
         )}
         <div className="w-12 h-px bg-slate-200 my-2" />
@@ -919,7 +1076,9 @@ export default function IreneResponseManager() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4 mb-2">
                 <h3 className="text-lg font-black uppercase tracking-tighter text-slate-800">Data Reconciliation</h3>
                 <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
-                  <button onClick={() => setReconcileTab('search')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${reconcileTab === 'search' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>Search</button>
+                  <button onClick={() => setReconcileTab('search')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${reconcileTab === 'search' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>
+                    Search {mergeCandidates.length > 0 && <span className="px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-600 text-[9px]">{mergeCandidates.length}</span>}
+                  </button>
                   <button onClick={() => setReconcileTab('queue')} className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${reconcileTab === 'queue' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>
                     Queue {mergeCandidates.length > 0 && <span className="px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-600 text-[9px]">{mergeCandidates.length}</span>}
                   </button>
@@ -1028,6 +1187,18 @@ export default function IreneResponseManager() {
                     ))}
                   </div>
                 )}
+
+                {reconcileHasFilter && reconcileCandidateResults.length > 0 && (
+                  <div className="mt-6 pt-6 border-t border-slate-100">
+                    <div className="flex items-center gap-2 mb-3">
+                      <GitMerge size={14} className="text-indigo-500" />
+                      <p className="text-[10px] font-black uppercase tracking-widest text-indigo-600">Possible Duplicates in Queue ({reconcileCandidateResults.length})</p>
+                    </div>
+                    <div className="space-y-4">
+                      {reconcileCandidateResults.map(renderCandidateCard)}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1035,48 +1206,7 @@ export default function IreneResponseManager() {
               <div className="p-8 pt-4 pb-8 space-y-4">
                 {mergeCandidates.length === 0 ? (
                   <p className="text-center text-slate-400 text-xs font-bold py-12">Queue is clear — no pending candidates.</p>
-                ) : mergeCandidates.map((candidate) => {
-                  const isInternal = candidate.response_b_source === 'neon_internal';
-                  const supaMatch = candidate.response_a_id ? records.find((r) => r.id === candidate.response_a_id) : null;
-                  const leftLabel = isInternal ? 'Kept (already in Supabase)' : 'Existing Supabase Record';
-                  const leftData = isInternal ? candidate.response_b_payload.kept : supaMatch;
-                  const rightLabel = isInternal ? 'Extra (possible duplicate)' : 'Neon Data';
-                  const rightRows: any[] = isInternal ? [candidate.response_b_payload.extra] : candidate.response_b_payload;
-                  const isResolving = resolvingCandidateId === candidate.id;
-                  return (
-                    <div key={candidate.id} className="border border-slate-200 rounded-2xl p-5 bg-slate-50/50">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full border ${candidate.confidence === 'high' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : candidate.confidence === 'medium' ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>{candidate.confidence} confidence</span>
-                        <span className="text-[9px] font-bold uppercase text-slate-400">{isInternal ? 'Internal Neon duplicate' : 'Cross-database name match'}</span>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                        <div className="bg-white p-3 rounded-xl border border-slate-200">
-                          <p className="text-[9px] font-black uppercase text-slate-400 mb-1">{leftLabel}</p>
-                          {leftData ? (
-                            <>
-                              <p className="font-bold text-sm text-slate-900">{leftData.parent_first_name}</p>
-                              <p className="text-[11px] text-slate-500">{(isInternal ? [leftData] : leftData.cubs || []).map((c: any) => `${c.cub_initial} · ${c.grade || c.canonical_grade} (${c.class_name || c.canonical_class_name})`).join(', ')}</p>
-                            </>
-                          ) : <p className="text-xs text-slate-400 italic">Not found (may have been edited/removed since)</p>}
-                        </div>
-                        <div className="bg-white p-3 rounded-xl border border-slate-200">
-                          <p className="text-[9px] font-black uppercase text-slate-400 mb-1">{rightLabel}</p>
-                          {rightRows.map((r: any, i: number) => (
-                            <div key={i} className={i > 0 ? 'mt-2 pt-2 border-t border-slate-100' : ''}>
-                              <p className="font-bold text-sm text-slate-900">{r.parent_first_name}</p>
-                              <p className="text-[11px] text-slate-500">{r.cub_initial} · {r.canonical_grade || r.grade} ({r.canonical_class_name || r.class_name})</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="flex gap-2 justify-end">
-                        <button title="Different kids/families — not a real match. Nothing gets added, the candidate is just dismissed." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'rejected')} className="px-4 py-2 bg-white text-slate-500 border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 disabled:opacity-50 flex items-center gap-1.5"><X size={12} /> Reject</button>
-                        <button title="Not a duplicate — this is real, distinct data. Inserts it as a new response for your normal QA queue." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'add_new')} className="px-4 py-2 bg-white text-indigo-600 border border-indigo-200 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 disabled:opacity-50 flex items-center gap-1.5"><PlusCircle size={12} /> Add as New</button>
-                        <button title="Actual duplicate of the same child — already in Supabase. Nothing gets added, just clears the candidate." disabled={isResolving} onClick={() => handleResolveCandidate(candidate, 'merged')} className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-1.5">{isResolving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Confirm Duplicate</button>
-                      </div>
-                    </div>
-                  );
-                })}
+                ) : mergeCandidates.map(renderCandidateCard)}
               </div>
             )}
 
@@ -1140,11 +1270,41 @@ export default function IreneResponseManager() {
             ) : (
               <>
                 <div className="p-8 pb-0">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
-                    <h3 className="text-lg font-black uppercase tracking-tighter text-slate-800">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6 gap-4">
+                    <h3 className="text-lg font-black uppercase tracking-tighter text-slate-800 shrink-0">
                       {reviewQueueGrade ? `Reviewing: ${reviewQueueGrade}` : viewFilter === 'pending' ? 'QA Viewer' : viewFilter === 'verified' ? 'Verified Archive' : viewFilter === 'name_review' ? 'Name Review' : viewFilter === 'grade_review' ? 'Grade Review' : 'Profile Inspector'}
                     </h3>
-                    <div className="flex items-center gap-4">
+                    <div className="relative w-full max-w-xs">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={13} />
+                      <input
+                        type="text"
+                        value={viewSearchQuery}
+                        onChange={(e) => setViewSearchQuery(e.target.value)}
+                        placeholder="Jump to a response in this list..."
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-2 text-xs font-bold outline-none focus:border-[#0066cc] focus:bg-white transition-colors"
+                      />
+                      {viewSearchQuery.trim() && (
+                        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 shadow-lg rounded-xl z-20 max-h-64 overflow-y-auto">
+                          {viewSearchMatches.length === 0 ? (
+                            <p className="px-4 py-3 text-xs text-slate-400 font-bold">No matches in this list.</p>
+                          ) : viewSearchMatches.map(({ r, idx }) => (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => { setCurrentIndex(idx); setViewSearchQuery(''); setInlineEditField(null); }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-slate-50 border-b border-slate-50 last:border-0 flex items-center justify-between gap-3"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-900 truncate">{r.parent_first_name}</p>
+                                <p className="text-[10px] text-slate-400 truncate">{(r.cubs || []).map((c: any) => `${c.cub_initial} · ${c.grade}`).join(', ')}</p>
+                              </div>
+                              <span className="text-[9px] font-black text-slate-300 shrink-0">#{idx + 1}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0">
                       <span className="text-xs font-bold text-slate-400">Record {safeIndex + 1} of {displayedRecords.length}</span>
                       <div className="flex gap-1">
                         <button onClick={goPrev} disabled={safeIndex === 0} className="p-2 bg-slate-50 hover:bg-[#0066cc] hover:text-white rounded-lg transition-colors disabled:opacity-30 text-slate-600"><ChevronLeft size={16}/></button>
@@ -1164,7 +1324,25 @@ export default function IreneResponseManager() {
                       </div>
                       <div className="w-16 h-16 mt-2 md:mt-0 bg-[#0066cc]/10 text-[#0066cc] rounded-full flex items-center justify-center font-black text-2xl shadow-inner shrink-0 uppercase overflow-hidden">{String(activeRecord?.cubs?.[0]?.cub_initial || '').charAt(0)}</div>
                       <div className="flex-1 min-w-0 pr-40">
-                        <h4 className="text-2xl font-black italic uppercase tracking-tighter text-slate-900 truncate">{activeRecord?.parent_first_name}</h4>
+                        {inlineEditField === 'parent_first_name' ? (
+                          <div className="flex items-center gap-2 max-w-sm">
+                            <input autoFocus value={inlineEditValue} onChange={(e) => setInlineEditValue(e.target.value)} className="flex-1 bg-white border border-amber-300 rounded-lg px-3 py-2 text-lg font-black outline-none focus:border-amber-500" />
+                            <button type="button" disabled={isSubmitting} onClick={() => saveInlineField('parent_first_name')} className="p-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50 shrink-0">{isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}</button>
+                            <button type="button" onClick={() => setInlineEditField(null)} className="p-2 bg-white border border-slate-200 text-slate-400 rounded-lg hover:bg-slate-100 shrink-0"><X size={14} /></button>
+                          </div>
+                        ) : (
+                          <h4 className="text-2xl font-black italic uppercase tracking-tighter text-slate-900 truncate flex items-center gap-2">
+                            {activeRecord?.parent_first_name}
+                            <button type="button" onClick={() => startInlineEdit('parent_first_name', activeRecord?.parent_first_name)} title="Edit parent name" className="text-slate-300 hover:text-amber-500 transition-colors normal-case not-italic shrink-0">
+                              <Edit2 size={14} />
+                            </button>
+                            {activeRecord?.parent_relationship && (
+                              <span title="Private, admin-only" className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-slate-100 px-2 py-1 rounded-full flex items-center gap-1 shrink-0">
+                                <EyeOff size={10} /> {activeRecord.parent_relationship}
+                              </span>
+                            )}
+                          </h4>
+                        )}
                         <div className="flex flex-wrap gap-2 mt-2">{activeRecord?.cubs?.map((cub: any, i: number) => {
                           const fullName = (activeRecord?.cub_full_names || [])[i];
                           return (
@@ -1184,14 +1362,14 @@ export default function IreneResponseManager() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6 pt-4 border-t border-slate-100">
-                      <div><p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Why start exercising?</p><p className="text-sm font-medium text-slate-800">{activeRecord?.q_why_start || '-'}</p></div>
-                      <div><p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Superhero Team / Club?</p><p className="text-sm font-medium text-slate-800">{activeRecord?.q_club || '-'}</p></div>
-                      <div><p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Boss Level Race/Goal</p><p className="text-sm font-medium text-slate-800">{activeRecord?.q_boss_level || '-'}</p></div>
-                      <div><p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Longest Distance</p><p className="text-sm font-medium text-slate-800">{activeRecord?.q_longest_distance || '-'}</p></div>
-                      <div><p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Weirdest food/drink</p><p className="text-sm font-medium text-slate-800">{activeRecord?.q_weird_habit || '-'}</p></div>
-                      <div><p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Pairs of Shoes</p><p className="text-sm font-medium text-slate-800">{activeRecord?.q_shoes ?? '-'}</p></div>
-                      <div className="md:col-span-2"><p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Funniest/Embarrassing Fail</p><p className="text-sm font-medium text-slate-800 bg-slate-50 p-3 rounded-lg border border-slate-100 italic">"{activeRecord?.q_funny_fail || '-'}"</p></div>
-                      <div className="md:col-span-2"><p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Proudest Moment</p><p className="text-sm font-medium text-slate-800 bg-slate-50 p-3 rounded-lg border border-slate-100 italic">"{activeRecord?.q_proudest_moment || '-'}"</p></div>
+                      {renderInlineField('Why start exercising?', 'q_why_start', activeRecord?.q_why_start)}
+                      {renderInlineField('Superhero Team / Club?', 'q_club', activeRecord?.q_club)}
+                      {renderInlineField('Boss Level Race/Goal', 'q_boss_level', activeRecord?.q_boss_level)}
+                      {renderInlineField('Longest Distance', 'q_longest_distance', activeRecord?.q_longest_distance)}
+                      {renderInlineField('Weirdest food/drink', 'q_weird_habit', activeRecord?.q_weird_habit)}
+                      {renderInlineField('Pairs of Shoes', 'q_shoes', activeRecord?.q_shoes)}
+                      {renderInlineField('Funniest/Embarrassing Fail', 'q_funny_fail', activeRecord?.q_funny_fail, { multiline: true, wrapperClassName: 'md:col-span-2' })}
+                      {renderInlineField('Proudest Moment', 'q_proudest_moment', activeRecord?.q_proudest_moment, { multiline: true, wrapperClassName: 'md:col-span-2' })}
                     </div>
                   </div>
                 </div>
@@ -1232,7 +1410,21 @@ export default function IreneResponseManager() {
 
             <div className="grid grid-cols-1 gap-6">
               <div className="space-y-4 bg-slate-50 p-6 rounded-2xl border border-slate-100"><div className="flex items-center justify-between mb-2"><h4 className="text-[10px] font-black uppercase tracking-widest text-[#0066cc]">Part 1: Parent & Pioneer Details</h4><button type="button" onClick={handleAddCub} className="text-[9px] font-black uppercase tracking-widest text-[#0066cc] bg-[#0066cc]/10 hover:bg-[#0066cc]/20 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"><UserPlus size={12}/> Add Sibling</button></div>
-                <div className="mb-4"><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Parent Name(s)</label><input ref={firstInputRef} required name="parent_first_name" value={formData.parent_first_name} onChange={handleInputChange} className="w-full max-w-sm bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div>
+                <div className="mb-4 flex flex-wrap items-end gap-3">
+                  <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Parent Name(s)</label><input ref={firstInputRef} required name="parent_first_name" value={formData.parent_first_name} onChange={handleInputChange} className="w-full max-w-sm bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div>
+                  <div>
+                    <label className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase mb-1"><EyeOff size={11} /> Relationship — private, admin-only, optional</label>
+                    <select name="parent_relationship" value={formData.parent_relationship} onChange={handleInputChange} className="bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]">
+                      <option value="">Not set</option>
+                      <option value="Mom">Mom</option>
+                      <option value="Dad">Dad</option>
+                      <option value="Aunt">Aunt</option>
+                      <option value="Uncle">Uncle</option>
+                      <option value="Guardian">Guardian</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
                 <div className="space-y-3 border-t border-slate-200 pt-4">{formData.cubs.map((cub, index) => (
                   <div key={index} className="p-3 bg-white border border-slate-100 rounded-xl space-y-2">
                     <div className="grid grid-cols-12 gap-3 items-end">
