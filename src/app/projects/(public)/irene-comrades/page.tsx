@@ -150,6 +150,15 @@ function TrackerContent() {
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [familySearch, setFamilySearch] = useState('');
 
+  // --- PRIVATE NAME SEARCH (find a family by the child's actual name on file, which is
+  // never shown publicly — the name is only ever sent to the server for matching, never
+  // rendered back; a successful match just fills the normal search box with the child's
+  // already-public initial/grade/class, so it surfaces via the existing search logic) ---
+  const [showNameSearch, setShowNameSearch] = useState(false);
+  const [nameSearchInput, setNameSearchInput] = useState('');
+  const [nameSearchGrade, setNameSearchGrade] = useState('');
+  const [nameSearchStatus, setNameSearchStatus] = useState<'idle' | 'loading' | 'notfound'>('idle');
+
   // --- TIER UPSELL MODAL STATE ---
   const [showTierModal, setShowTierModal] = useState(false);
   const [tierTab, setTierTab] = useState<'whatsapp' | 'email'>('whatsapp');
@@ -573,6 +582,35 @@ function TrackerContent() {
     setSelectedGrade(grade);
   };
 
+  const handleNameSearch = async () => {
+    if (!nameSearchInput.trim() || !nameSearchGrade) return;
+    setNameSearchStatus('loading');
+    try {
+      const res = await fetch('/api/irene/find-by-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nameSearchInput.trim(), grade: nameSearchGrade }),
+      });
+      const data = await res.json();
+      if (data.found) {
+        // Hands off to the existing search box using only already-public info (initial +
+        // grade + class) — the name that was typed never gets rendered anywhere. Also
+        // clears any grade/phase scoping so an unrelated filter can't hide the match.
+        setSelectedGrade('All');
+        setSelectedPhaseFilter('All');
+        setFamilySearch(`${data.initial} ${data.grade} ${data.className}`);
+        setNameSearchStatus('idle');
+        setShowNameSearch(false);
+        setNameSearchInput('');
+        setNameSearchGrade('');
+      } else {
+        setNameSearchStatus('notfound');
+      }
+    } catch {
+      setNameSearchStatus('notfound');
+    }
+  };
+
   const handleShare = (response: any) => {
     const url = `${window.location.origin}${window.location.pathname}?ref=${response.id}`;
     navigator.clipboard.writeText(url).then(() => {
@@ -940,10 +978,56 @@ function TrackerContent() {
               <h2 className="text-xl font-black text-slate-800">Find & Vote</h2>
               <span className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] bg-[#0066cc]/10 px-3 py-1 rounded-full">{selectedGrade === 'All' ? 'All Grades' : selectedGrade}</span>
             </div>
-            <div className="relative mb-6">
+            <div className="relative mb-2">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
               <input type="text" placeholder="Find your family — parent's first name, or child's initial + grade + class" value={familySearch} onChange={(e) => setFamilySearch(e.target.value)} className="w-full bg-white p-3 pl-11 rounded-2xl border border-slate-200 shadow-sm text-sm font-bold outline-none focus:border-[#0066cc]" />
             </div>
+
+            <div className="mb-6 text-center">
+              <button type="button" onClick={() => setShowNameSearch(v => !v)} className="text-[10px] font-black text-[#0066cc] uppercase tracking-widest hover:underline">
+                {showNameSearch ? 'Hide' : "Can't find your family? Search by your child's name"}
+              </button>
+              <AnimatePresence>
+                {showNameSearch && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                    <div className="mt-3 bg-white rounded-2xl border border-slate-200 shadow-sm p-4 text-left">
+                      <p className="text-[10px] text-slate-400 font-medium mb-3">Your child's actual name on file — not shown to anyone, just used to find your family.</p>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          placeholder="Child's full name"
+                          value={nameSearchInput}
+                          onChange={(e) => { setNameSearchInput(e.target.value); setNameSearchStatus('idle'); }}
+                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-[#0066cc]"
+                        />
+                        <select
+                          value={nameSearchGrade}
+                          onChange={(e) => { setNameSearchGrade(e.target.value); setNameSearchStatus('idle'); }}
+                          className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:border-[#0066cc]"
+                        >
+                          <option value="">Grade</option>
+                          {[...FOUNDATION_GRADES, ...SENIOR_GRADES].map(g => (
+                            <option key={g} value={g}>{g}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={handleNameSearch}
+                          disabled={!nameSearchInput.trim() || !nameSearchGrade || nameSearchStatus === 'loading'}
+                          className="px-5 py-2.5 bg-[#0066cc] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1.5 shrink-0"
+                        >
+                          {nameSearchStatus === 'loading' ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Find
+                        </button>
+                      </div>
+                      {nameSearchStatus === 'notfound' && (
+                        <p className="text-[11px] text-rose-500 font-bold mt-2">No match for that name and grade — double check the spelling, or try the regular search above.</p>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             {familiesVotedCount > 0 && <p className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">🎉 {familiesVotedCount} {familiesVotedCount === 1 ? 'vote' : 'votes'} cast so far — join in!</p>}
             <div className="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden flex flex-col divide-y divide-slate-100">
               {rosterResponses.map((response) => (
