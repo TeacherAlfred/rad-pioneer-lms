@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Heart, X, Search, Sparkles, MessageCircle, Mail, Loader2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Zap, Share2, Users, Laugh,
-  FlaskConical, Check, Medal, GraduationCap, KeyRound
+  FlaskConical, Check, Medal, GraduationCap, KeyRound, ArrowUpCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -97,6 +97,13 @@ function childrenLabel(response: any) {
   return (response.cubs || []).map((c: any) => `${childInitials(c)} · ${c.grade}${c.class_name ? ` (${c.class_name})` : ''}`).join('  •  ');
 }
 
+// Single-line "{{Parent}} - {{Initial}}: {{Grade-Class}}" roster label — same privacy
+// rule as childrenLabel (initials only), just combined onto one line for the roster row.
+function nameLine(response: any) {
+  const kids = (response.cubs || []).map((c: any) => `${childInitials(c)}: ${c.grade}${c.class_name ? `-${c.class_name}` : ''}`).join(', ');
+  return kids ? `${firstName(response)} - ${kids}` : firstName(response);
+}
+
 // Privacy: only ever show the parent's first name publicly, never the full name on file.
 function firstName(response: any) {
   return (response.parent_first_name || '').trim().split(/\s+/)[0] || 'A Parent';
@@ -111,6 +118,7 @@ function TrackerContent() {
 
   // --- DATA STATE ---
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [responses, setResponses] = useState<any[]>([]);
   const [votes, setVotes] = useState<any[]>([]);
   const [voters, setVoters] = useState<any[]>([]);
@@ -246,19 +254,38 @@ function TrackerContent() {
   }, [votes, myVoter]);
 
   const fetchData = async () => {
+    setLoadError(null);
     try {
-      // Explicit column list — media_url is deliberately excluded, response photos are never public.
-      const { data: respData } = await supabase
-        .from('irene_responses')
-        .select('id, parent_first_name, cubs, q_why_start, q_boss_level, q_funny_fail, q_weird_habit, is_verified, needs_name_review')
-        .eq('is_verified', true);
-      const { data: voteData } = await supabase.from('irene_votes').select('response_id, category, weight, voter_id');
-      const { data: voterData } = await supabase.from('irene_voters').select('id, voter_type, voter_group, referred_by_response_id');
+      // A hung request (no internet route, a DNS/content filter silently dropping the
+      // Supabase domain, etc.) would otherwise never resolve or reject, leaving the
+      // loading screen up forever with no way to tell what's wrong — race it against a
+      // timeout so a bad connection surfaces as a visible, retryable error instead.
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Timed out — check your internet connection and try again.')), 15000)
+      );
 
-      setResponses(respData || []);
-      setVotes(voteData || []);
-      setVoters(voterData || []);
-    } catch (err) { console.error(err); } finally { setLoading(false); }
+      // Explicit column list — media_url is deliberately excluded, response photos are never public.
+      const fetchPromise = (async () => {
+        const { data: respData, error: respErr } = await supabase
+          .from('irene_responses')
+          .select('id, parent_first_name, cubs, q_why_start, q_boss_level, q_funny_fail, q_weird_habit, is_verified, needs_name_review')
+          .eq('is_verified', true);
+        if (respErr) throw respErr;
+        const { data: voteData, error: voteErr } = await supabase.from('irene_votes').select('response_id, category, weight, voter_id');
+        if (voteErr) throw voteErr;
+        const { data: voterData, error: voterErr } = await supabase.from('irene_voters').select('id, voter_type, voter_group, referred_by_response_id');
+        if (voterErr) throw voterErr;
+
+        setResponses(respData || []);
+        setVotes(voteData || []);
+        setVoters(voterData || []);
+      })();
+
+      await Promise.race([fetchPromise, timeout]);
+    } catch (err: any) {
+      console.error(err);
+      setLoadError(err?.message || 'Failed to load. Please check your connection and try again.');
+    } finally { setLoading(false); }
   };
 
   // --- DERIVED: AGGREGATION ---
@@ -566,6 +593,18 @@ function TrackerContent() {
   const kmPercent = (kmProgress / 90) * 100;
 
   if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-slate-400">Loading Dashboard...</div>;
+
+  if (loadError) return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-4 px-6 text-center">
+      <p className="font-bold text-slate-500">{loadError}</p>
+      <button
+        onClick={() => { setLoading(true); fetchData(); }}
+        className="px-6 py-3 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors"
+      >
+        Retry
+      </button>
+    </div>
+  );
 
   return (
     <div className="pb-24 bg-slate-50 min-h-screen">
@@ -1104,16 +1143,63 @@ function CategorySubcard({ response, category, count, tappedKeys, phase, educato
   );
 }
 
-function RosterCard({ response, total, counts, isTop, tappedKeys, phase, educatorUnlocked, onTap, onShare, copiedShareId }: any) {
-  const [expanded, setExpanded] = useState(false);
+// One category's story, always visible in the roster (no expand click needed) — its own
+// upvote pill sits bottom-right instead of sharing one big central icon-as-vote-button.
+function StorySection({ response, category, count, tappedKeys, phase, educatorUnlocked, onTap }: any) {
+  const [showMore, setShowMore] = useState(false);
+  const Icon = category.icon;
+  const parts = categoryContent(response, category.key);
+  const isLong = parts.reduce((n: number, p: any) => n + p.text.length, 0) > 90;
+  const key = `${response.id}::${category.key}`;
+  const tapped = tappedKeys.has(key);
   const isEducatorMode = phase === 'educators' && educatorUnlocked;
+  const disabled = tapped || phase === 'closed';
+
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+      <p className="text-[9px] font-black uppercase tracking-widest mb-1.5 flex items-center gap-1.5" style={{ color: category.color }}>
+        <Icon size={11} /> {category.label}
+      </p>
+      <div className={showMore ? '' : 'line-clamp-3'}>
+        {parts.map((p: any, i: number) => (
+          <p key={i} className="text-xs text-slate-600 italic leading-snug mb-1 last:mb-0">
+            {p.label && <span className="not-italic font-bold text-slate-500">{p.label}: </span>}"{p.text}"
+          </p>
+        ))}
+      </div>
+      <div className="flex items-center justify-between mt-2">
+        {isLong ? (
+          <button onClick={() => setShowMore(v => !v)} className="text-[9px] font-black uppercase tracking-widest hover:underline" style={{ color: category.color }}>
+            {showMore ? 'View less' : 'View more'}
+          </button>
+        ) : <span />}
+        <button
+          disabled={disabled}
+          onClick={() => onTap(response, category.key, isEducatorMode)}
+          title={tapped ? 'Voted' : `Upvote ${category.label}`}
+          className={`flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-full text-[10px] font-black transition-all border active:scale-95 ${tapped ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : phase === 'closed' ? 'bg-white text-slate-300 border-slate-100' : 'bg-white text-slate-600 border-slate-200 hover:border-current'}`}
+          style={!disabled ? { color: category.color } : undefined}
+        >
+          {tapped ? <Check size={13} /> : <ArrowUpCircle size={13} />} {count}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RosterCard({ response, total, counts, isTop, tappedKeys, phase, educatorUnlocked, onTap, onShare, copiedShareId }: any) {
+  // Stories are visible by default now — this toggle just lets someone collapse a
+  // card back down in a long roster, it no longer gates seeing the stories at all.
+  const [expanded, setExpanded] = useState(true);
 
   return (
     <div className={`p-4 transition-colors ${isTop ? 'bg-amber-50/50' : 'bg-white hover:bg-slate-50'}`}>
       <div className="flex items-center justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <p className="font-bold text-sm text-slate-900 truncate flex items-center gap-1.5 leading-tight">{firstName(response)}'s Family{isTop && <Sparkles size={12} className="text-amber-500 fill-amber-500 shrink-0" />}</p>
-          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5 truncate">{childrenLabel(response)}</p>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-sm text-slate-900 truncate flex items-center gap-1.5 leading-tight">
+            {nameLine(response)}
+            {isTop && <Sparkles size={12} className="text-amber-500 fill-amber-500 shrink-0" />}
+          </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <div className="text-center">
@@ -1125,60 +1211,35 @@ function RosterCard({ response, total, counts, isTop, tappedKeys, phase, educato
               {copiedShareId === response.id ? <Check size={14} className="text-emerald-500" /> : <Share2 size={14} />}
             </button>
           )}
+          <div className="relative shrink-0">
+            <span className="animate-ping absolute inset-0 rounded-full bg-[#0066cc] opacity-30" />
+            <button
+              onClick={() => setExpanded(v => !v)}
+              title={expanded ? 'Collapse story' : 'Expand full story'}
+              className="relative min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-[#0066cc] text-white shadow-lg shadow-[#0066cc]/40 hover:scale-105 active:scale-95 transition-transform"
+            >
+              {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Compact 3-column category row — icon doubles as the vote button */}
-      <div className="grid grid-cols-3 divide-x divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden bg-slate-50/50">
-        {CATEGORIES.map(cat => {
-          const Icon = cat.icon;
-          const key = `${response.id}::${cat.key}`;
-          const tapped = tappedKeys.has(key);
-          const disabled = tapped || phase === 'closed';
-          return (
-            <button
-              key={cat.key}
-              disabled={disabled}
-              onClick={() => onTap(response, cat.key, isEducatorMode)}
-              title={`Vote ${cat.label}`}
-              className="flex flex-col items-center gap-1 py-3 group disabled:cursor-default"
-            >
-              <div
-                className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ${tapped ? 'text-white shadow-sm' : phase === 'closed' ? 'bg-white border border-slate-100 text-slate-300' : 'bg-white border border-slate-200 group-hover:scale-105 group-active:scale-95'}`}
-                style={tapped ? { backgroundColor: cat.color } : phase !== 'closed' ? { color: cat.color } : undefined}
-              >
-                {tapped ? <Check size={16} /> : <Icon size={16} />}
-              </div>
-              <span className="text-xs font-black text-slate-900">{counts?.[cat.key] || 0}</span>
-              <span className="text-[8px] font-bold uppercase tracking-wide text-slate-400">{cat.shortLabel}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <button onClick={() => setExpanded(v => !v)} className="w-full flex items-center justify-center gap-1 text-[9px] font-black text-[#0066cc] uppercase tracking-widest mt-1 py-3 min-h-[44px] hover:underline active:opacity-60">
-        {expanded ? <>Show Less <ChevronUp size={11} /></> : <>View Full Stories <ChevronDown size={11} /></>}
-      </button>
-
-      <AnimatePresence>
+      <AnimatePresence initial={false}>
         {expanded && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-            <div className="pt-2 space-y-3">
-              {CATEGORIES.map(cat => {
-                const Icon = cat.icon;
-                return (
-                  <div key={cat.key} className="bg-slate-50/70 rounded-xl border border-slate-100 p-3">
-                    <p className="text-[9px] font-black uppercase tracking-widest mb-1 flex items-center gap-1.5" style={{ color: cat.color }}>
-                      <Icon size={11} /> {cat.label}
-                    </p>
-                    {categoryContent(response, cat.key).map((part, i) => (
-                      <p key={i} className="text-xs text-slate-600 italic leading-snug mb-1 last:mb-0">
-                        {part.label && <span className="not-italic font-bold text-slate-500">{part.label}: </span>}"{part.text}"
-                      </p>
-                    ))}
-                  </div>
-                );
-              })}
+            <div className="space-y-3">
+              {CATEGORIES.map(cat => (
+                <StorySection
+                  key={cat.key}
+                  response={response}
+                  category={cat}
+                  count={counts?.[cat.key] || 0}
+                  tappedKeys={tappedKeys}
+                  phase={phase}
+                  educatorUnlocked={educatorUnlocked}
+                  onTap={onTap}
+                />
+              ))}
             </div>
           </motion.div>
         )}
