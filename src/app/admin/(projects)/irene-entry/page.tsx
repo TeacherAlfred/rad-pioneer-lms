@@ -2,19 +2,26 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Save, Download, Trash2, Hash, Activity, Target, Loader2, CheckCircle2, X, Edit2, Plus, Eye, ChevronLeft, ChevronRight, Check, ListChecks, Inbox, UserPlus, MapPin, Flag, AlertTriangle, Layers, FilterX, Search, GitMerge, PlusCircle, Settings2, EyeOff, Tags, ArrowRight } from 'lucide-react';
+import { Save, Download, Trash2, Hash, Activity, Target, Loader2, CheckCircle2, X, Edit2, Plus, Eye, ChevronLeft, ChevronRight, Check, ListChecks, Inbox, UserPlus, MapPin, Flag, AlertTriangle, Layers, FilterX, Search, GitMerge, PlusCircle, Settings2, EyeOff, Tags, ArrowRight, GraduationCap } from 'lucide-react';
 
 interface Cub {
   cub_initial: string;
   grade: string;
   class_name: string;
+  // Admin-only, optional — stored separately (cub_full_names column), never sent to the
+  // public-facing cubs jsonb, so it never appears on the public voting page.
+  full_name: string;
 }
 
 export default function IreneResponseManager() {
   const [records, setRecords] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [mode, setMode] = useState<'view' | 'edit' | 'create' | 'reconcile' | 'phase' | 'aliases'>('view');
-  const [viewFilter, setViewFilter] = useState<'pending' | 'verified' | 'flagged' | 'name_review'>('pending');
+  // The record actually being edited — set explicitly on entering edit mode so a record
+  // opened from Reconciliation Search (which isn't necessarily in the current viewFilter's
+  // displayedRecords) is edited/verified correctly instead of falling back to activeRecord.
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
+  const [viewFilter, setViewFilter] = useState<'pending' | 'verified' | 'flagged' | 'name_review' | 'grade_review'>('pending');
   const [classFilter, setClassFilter] = useState<string | null>(null);
 
   // --- Data Reconciliation (Phase 0) state ---
@@ -60,7 +67,7 @@ export default function IreneResponseManager() {
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   const initialFormState = {
-    cubs: [{ cub_initial: '', grade: '', class_name: '' }] as Cub[],
+    cubs: [{ cub_initial: '', grade: '', class_name: '', full_name: '' }] as Cub[],
     parent_first_name: '',
     q_why_start: '', q_club: '', q_boss_level: '', q_longest_distance: '',
     q_shoes: '', q_weird_habit: '', q_funny_fail: '', q_proudest_moment: '',
@@ -248,15 +255,17 @@ export default function IreneResponseManager() {
   }, [viewFilter]);
 
   // --- Filtering Logic ---
+  const matchesViewFilter = (r: any) => {
+    if (viewFilter === 'verified') return r.is_verified;
+    if (viewFilter === 'flagged') return r.is_flagged;
+    if (viewFilter === 'name_review') return r.needs_name_review;
+    if (viewFilter === 'grade_review') return r.needs_grade_review;
+    return !r.is_verified;
+  };
+
   const displayedRecords = records.filter(r => {
     // 1. Status Filter
-    let matchesStatus = false;
-    if (viewFilter === 'verified') matchesStatus = r.is_verified;
-    else if (viewFilter === 'flagged') matchesStatus = r.is_flagged;
-    else if (viewFilter === 'name_review') matchesStatus = r.needs_name_review;
-    else matchesStatus = !r.is_verified;
-
-    if (!matchesStatus) return false;
+    if (!matchesViewFilter(r)) return false;
 
     // 2. Grade Queue Filter (set by clicking a Coverage card) takes priority over the class filter
     if (reviewQueueGrade) {
@@ -274,7 +283,7 @@ export default function IreneResponseManager() {
   // Calculate classes available in the current view filter (ignoring the class filter itself)
   const availableClasses = Array.from(new Set(
     records
-      .filter(r => viewFilter === 'verified' ? r.is_verified : viewFilter === 'flagged' ? r.is_flagged : viewFilter === 'name_review' ? r.needs_name_review : !r.is_verified)
+      .filter(matchesViewFilter)
       .flatMap(r => r.cubs?.map((c: any) => c.class_name).filter(Boolean))
   )).sort();
 
@@ -304,34 +313,43 @@ export default function IreneResponseManager() {
   const safeIndex = Math.min(currentIndex, Math.max(0, displayedRecords.length - 1));
   const activeRecord = displayedRecords[safeIndex];
 
+  // The record backing the Edit form's status controls — looked up by id rather than
+  // reused from activeRecord, since records opened from Reconciliation Search are often
+  // outside the current viewFilter's displayedRecords.
+  const editingRecord = editingRecordId ? records.find(r => r.id === editingRecordId) : null;
+
   useEffect(() => {
     if (currentIndex !== safeIndex) setCurrentIndex(safeIndex);
   }, [currentIndex, safeIndex]);
 
   // --- Handlers ---
-  const handleSwitchToEdit = () => {
-    if (!activeRecord) return;
+  const handleSwitchToEdit = (record?: any) => {
+    const target = record || activeRecord;
+    if (!target) return;
     setFormData({
-      ...activeRecord,
-      parent_first_name: activeRecord.parent_first_name || '',
-      q_why_start: activeRecord.q_why_start || '',
-      q_club: activeRecord.q_club || '',
-      q_boss_level: activeRecord.q_boss_level || '',
-      q_longest_distance: activeRecord.q_longest_distance || '',
-      q_weird_habit: activeRecord.q_weird_habit || '',
-      q_funny_fail: activeRecord.q_funny_fail || '',
-      q_proudest_moment: activeRecord.q_proudest_moment || '',
-      cubs: activeRecord.cubs && activeRecord.cubs.length > 0 ? activeRecord.cubs : [{ cub_initial: '', grade: '', class_name: '' }],
-      q_shoes: activeRecord.q_shoes !== null && activeRecord.q_shoes !== undefined ? String(activeRecord.q_shoes) : '',
-      goal_tags: activeRecord.goal_tags || [],
-      activity_tags: activeRecord.activity_tags || [],
-      club_tags: activeRecord.club_tags || []
+      ...target,
+      parent_first_name: target.parent_first_name || '',
+      q_why_start: target.q_why_start || '',
+      q_club: target.q_club || '',
+      q_boss_level: target.q_boss_level || '',
+      q_longest_distance: target.q_longest_distance || '',
+      q_weird_habit: target.q_weird_habit || '',
+      q_funny_fail: target.q_funny_fail || '',
+      q_proudest_moment: target.q_proudest_moment || '',
+      cubs: target.cubs && target.cubs.length > 0
+        ? target.cubs.map((c: any, i: number) => ({ ...c, full_name: (target.cub_full_names || [])[i] || '' }))
+        : [{ cub_initial: '', grade: '', class_name: '', full_name: '' }],
+      q_shoes: target.q_shoes !== null && target.q_shoes !== undefined ? String(target.q_shoes) : '',
+      goal_tags: target.goal_tags || [],
+      activity_tags: target.activity_tags || [],
+      club_tags: target.club_tags || []
     });
+    setEditingRecordId(target.id);
     setMode('edit');
   };
 
-  const handleSwitchToCreate = () => { setFormData(initialFormState); setReviewQueueGrade(null); setMode('create'); };
-  const handleSwitchToView = () => setMode('view');
+  const handleSwitchToCreate = () => { setFormData(initialFormState); setEditingRecordId(null); setReviewQueueGrade(null); setMode('create'); };
+  const handleSwitchToView = () => { setEditingRecordId(null); setMode('view'); };
   const goNext = () => setCurrentIndex(prev => Math.min(displayedRecords.length - 1, prev + 1));
   const goPrev = () => setCurrentIndex(prev => Math.max(0, prev - 1));
 
@@ -350,40 +368,60 @@ export default function IreneResponseManager() {
     setCurrentIndex(0);
   };
 
-  const handleToggleVerify = async () => {
-    if (!activeRecord) return;
-    const newValue = !activeRecord.is_verified;
-    if (newValue && activeRecord.needs_name_review) {
+  const handleToggleVerify = async (record?: any) => {
+    const target = record || activeRecord;
+    if (!target) return;
+    const newValue = !target.is_verified;
+    if (newValue && target.needs_name_review) {
       alert('This response is still flagged for name review. Clear the flag in the Name Review queue before verifying it — free-text answers here are shown publicly.');
       return;
     }
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from('irene_responses').update({ is_verified: newValue }).eq('id', activeRecord.id);
+      const newVerifiedAt = newValue ? new Date().toISOString() : null;
+      const { error } = await supabase.from('irene_responses').update({ is_verified: newValue, verified_at: newVerifiedAt }).eq('id', target.id);
       if (error) throw error;
-      setRecords(prev => prev.map(r => r.id === activeRecord.id ? { ...r, is_verified: newValue } : r));
+      setRecords(prev => prev.map(r => r.id === target.id ? { ...r, is_verified: newValue, verified_at: newVerifiedAt } : r));
     } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
   };
 
-  const handleToggleFlag = async () => {
-    if (!activeRecord) return;
+  const handleToggleFlag = async (record?: any) => {
+    const target = record || activeRecord;
+    if (!target) return;
     setIsSubmitting(true);
-    const newValue = !activeRecord.is_flagged;
+    const newValue = !target.is_flagged;
     try {
-      const { error } = await supabase.from('irene_responses').update({ is_flagged: newValue }).eq('id', activeRecord.id);
+      const { error } = await supabase.from('irene_responses').update({ is_flagged: newValue }).eq('id', target.id);
       if (error) throw error;
-      setRecords(prev => prev.map(r => r.id === activeRecord.id ? { ...r, is_flagged: newValue } : r));
+      setRecords(prev => prev.map(r => r.id === target.id ? { ...r, is_flagged: newValue } : r));
     } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
   };
 
-  const handleToggleNameReview = async () => {
-    if (!activeRecord) return;
+  const handleToggleNameReview = async (record?: any) => {
+    const target = record || activeRecord;
+    if (!target) return;
     setIsSubmitting(true);
-    const newValue = !activeRecord.needs_name_review;
+    const newValue = !target.needs_name_review;
     try {
-      const { error } = await supabase.from('irene_responses').update({ needs_name_review: newValue }).eq('id', activeRecord.id);
+      const { error } = await supabase.from('irene_responses').update({ needs_name_review: newValue }).eq('id', target.id);
       if (error) throw error;
-      setRecords(prev => prev.map(r => r.id === activeRecord.id ? { ...r, needs_name_review: newValue } : r));
+      setRecords(prev => prev.map(r => r.id === target.id ? { ...r, needs_name_review: newValue } : r));
+    } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
+  };
+
+  // Deliberately does NOT block is_verified the way needs_name_review does — a response's
+  // class/grade can be flagged for a teacher/admin to double-check while it's still
+  // verified and votable, since the free-text answers (the thing needs_name_review guards)
+  // aren't affected by a grade mistake.
+  const handleToggleGradeReview = async (record?: any) => {
+    const target = record || activeRecord;
+    if (!target) return;
+    setIsSubmitting(true);
+    const newValue = !target.needs_grade_review;
+    try {
+      const { error } = await supabase.from('irene_responses').update({ needs_grade_review: newValue }).eq('id', target.id);
+      if (error) throw error;
+      setRecords(prev => prev.map(r => r.id === target.id ? { ...r, needs_grade_review: newValue } : r));
     } catch (err: any) { alert(err.message); } finally { setIsSubmitting(false); }
   };
 
@@ -456,7 +494,7 @@ export default function IreneResponseManager() {
   };
 
   const handleAddCub = () => {
-    setFormData(prev => ({ ...prev, cubs: [...prev.cubs, { cub_initial: '', grade: '', class_name: '' }] }));
+    setFormData(prev => ({ ...prev, cubs: [...prev.cubs, { cub_initial: '', grade: '', class_name: '', full_name: '' }] }));
   };
 
   const handleRemoveCub = (index: number) => {
@@ -486,19 +524,28 @@ export default function IreneResponseManager() {
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      const payload = { ...formData, q_shoes: formData.q_shoes ? parseInt(formData.q_shoes, 10) : null };
+      // cub_full_names is admin-only/private — split out of `cubs` (which the public
+      // voting page selects and renders in full) into its own column, index-aligned to cubs.
+      const payload = {
+        ...formData,
+        q_shoes: formData.q_shoes ? parseInt(formData.q_shoes, 10) : null,
+        cubs: formData.cubs.map(({ full_name, ...c }) => c),
+        cub_full_names: formData.cubs.map(c => c.full_name || null),
+      };
       if (mode === 'edit') {
-        const activeId = activeRecord.id;
+        const activeId = editingRecordId || activeRecord.id;
+        const originalRecord = records.find(r => r.id === activeId) || activeRecord;
         // Saving inside a grade review queue IS the review — clear the flag so this
         // record drops out of the filtered list and the next one takes its place.
         const isReviewing = !!reviewQueueGrade;
-        const finalNeedsReview = isReviewing ? false : activeRecord.needs_name_review;
+        const finalNeedsReview = isReviewing ? false : originalRecord.needs_name_review;
         const { error } = await supabase.from('irene_responses').update({ ...payload, ...(isReviewing ? { needs_name_review: false } : {}) }).eq('id', activeId);
         if (error) throw error;
-        setRecords(prev => prev.map(r => r.id === activeId ? { ...payload, id: activeId, is_verified: activeRecord.is_verified, is_flagged: activeRecord.is_flagged, needs_name_review: finalNeedsReview } : r));
+        setRecords(prev => prev.map(r => r.id === activeId ? { ...payload, id: activeId, is_verified: originalRecord.is_verified, verified_at: originalRecord.verified_at, is_flagged: originalRecord.is_flagged, needs_name_review: finalNeedsReview, needs_grade_review: originalRecord.needs_grade_review } : r));
+        setEditingRecordId(null);
         setMode('view');
       } else {
-        const { data, error } = await supabase.from('irene_responses').insert([{ ...payload, is_verified: false, is_flagged: false, needs_name_review: false }]).select();
+        const { data, error } = await supabase.from('irene_responses').insert([{ ...payload, is_verified: false, is_flagged: false, needs_name_review: false, needs_grade_review: false }]).select();
         if (error) throw error;
         if (data && data.length > 0) { setRecords(prev => [data[0], ...prev]); setViewFilter('pending'); setCurrentIndex(0); }
         setFormData(initialFormState);
@@ -550,9 +597,10 @@ export default function IreneResponseManager() {
         <button onClick={() => { setReviewQueueGrade(null); setMode('aliases'); }} title="Class Aliases" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${mode === 'aliases' ? 'bg-teal-600 text-white shadow-teal-600/30' : 'bg-white text-slate-500 hover:text-teal-600'}`}><Tags size={20} /></button>
         {mode === 'view' && displayedRecords.length > 0 && (
           <>
-            <button onClick={handleToggleFlag} disabled={isSubmitting} title={activeRecord?.is_flagged ? "Unflag" : "Flag Profiling"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.is_flagged ? 'bg-rose-500 text-white shadow-rose-500/30' : 'bg-white text-slate-500 hover:text-rose-500'}`}><Flag size={20} fill={activeRecord?.is_flagged ? "currentColor" : "none"} /></button>
-            <button onClick={handleToggleNameReview} disabled={isSubmitting} title={activeRecord?.needs_name_review ? "Clear Review" : "Flag Name Review"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.needs_name_review ? 'bg-amber-500 text-white shadow-amber-500/30' : 'bg-white text-slate-500 hover:text-amber-500'}`}><AlertTriangle size={20} fill={activeRecord?.needs_name_review ? "currentColor" : "none"} /></button>
-            <button onClick={handleToggleVerify} disabled={isSubmitting} title={activeRecord?.is_verified ? "Un-verify" : "Verify"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.is_verified ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 'bg-white text-slate-500 hover:text-emerald-500'}`}>{activeRecord?.is_verified ? <X size={24} /> : <Check size={24} />}</button>
+            <button onClick={() => handleToggleFlag()} disabled={isSubmitting} title={activeRecord?.is_flagged ? "Unflag" : "Flag Profiling"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.is_flagged ? 'bg-rose-500 text-white shadow-rose-500/30' : 'bg-white text-slate-500 hover:text-rose-500'}`}><Flag size={20} fill={activeRecord?.is_flagged ? "currentColor" : "none"} /></button>
+            <button onClick={() => handleToggleNameReview()} disabled={isSubmitting} title={activeRecord?.needs_name_review ? "Clear Review" : "Flag Name Review"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.needs_name_review ? 'bg-amber-500 text-white shadow-amber-500/30' : 'bg-white text-slate-500 hover:text-amber-500'}`}><AlertTriangle size={20} fill={activeRecord?.needs_name_review ? "currentColor" : "none"} /></button>
+            <button onClick={() => handleToggleGradeReview()} disabled={isSubmitting} title={activeRecord?.needs_grade_review ? "Clear Grade Review" : "Flag Grade/Class for Review"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.needs_grade_review ? 'bg-sky-500 text-white shadow-sky-500/30' : 'bg-white text-slate-500 hover:text-sky-500'}`}><GraduationCap size={20} /></button>
+            <button onClick={() => handleToggleVerify()} disabled={isSubmitting} title={activeRecord?.is_verified ? "Un-verify" : "Verify"} className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all disabled:opacity-50 ${activeRecord?.is_verified ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 'bg-white text-slate-500 hover:text-emerald-500'}`}>{activeRecord?.is_verified ? <X size={24} /> : <Check size={24} />}</button>
           </>
         )}
         <div className="w-12 h-px bg-slate-200 my-2" />
@@ -560,6 +608,7 @@ export default function IreneResponseManager() {
         <button onClick={() => { setReviewQueueGrade(null); setViewFilter('verified'); }} title="Verified" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'verified' ? 'bg-emerald-500 text-white shadow-emerald-500/30' : 'bg-white text-slate-400 hover:text-emerald-500'}`}><ListChecks size={20} /></button>
         <button onClick={() => { setReviewQueueGrade(null); setViewFilter('flagged'); }} title="Flagged" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'flagged' ? 'bg-rose-500 text-white shadow-rose-500/30' : 'bg-white text-slate-400 hover:text-rose-500'}`}><Flag size={20} /></button>
         <button onClick={() => { setReviewQueueGrade(null); setViewFilter('name_review'); }} title="Name Review" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'name_review' ? 'bg-amber-500 text-white shadow-amber-500/30' : 'bg-white text-slate-400 hover:text-amber-500'}`}><AlertTriangle size={20} /></button>
+        <button onClick={() => { setReviewQueueGrade(null); setViewFilter('grade_review'); }} title="Grade Review" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${viewFilter === 'grade_review' ? 'bg-sky-500 text-white shadow-sky-500/30' : 'bg-white text-slate-400 hover:text-sky-500'}`}><GraduationCap size={20} /></button>
         <div className="w-12 h-px bg-slate-200 my-2" />
         <button onClick={handleSwitchToCreate} title="Create" className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-all ${mode === 'create' ? 'bg-[#0066cc] text-white shadow-[#0066cc]/30' : 'bg-white text-slate-500 hover:text-[#0066cc]'}`}><Plus size={24} /></button>
       </div>
@@ -596,20 +645,22 @@ export default function IreneResponseManager() {
         {/* Top Control Bar */}
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 ml-16 md:ml-0">
           <div className="flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl 
-              ${viewFilter === 'verified' ? 'bg-emerald-500/10 text-emerald-500' : 
-                viewFilter === 'flagged' ? 'bg-rose-500/10 text-rose-500' : 
-                viewFilter === 'name_review' ? 'bg-amber-500/10 text-amber-500' : 
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl
+              ${viewFilter === 'verified' ? 'bg-emerald-500/10 text-emerald-500' :
+                viewFilter === 'flagged' ? 'bg-rose-500/10 text-rose-500' :
+                viewFilter === 'name_review' ? 'bg-amber-500/10 text-amber-500' :
+                viewFilter === 'grade_review' ? 'bg-sky-500/10 text-sky-500' :
                 'bg-slate-800/10 text-slate-800'}`}>
               <Hash size={24} />
             </div>
             <div>
               <h2 className="text-2xl font-black italic uppercase leading-none">{displayedRecords.length}</h2>
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                {classFilter ? `${classFilter} (${viewFilter})` : 
-                 viewFilter === 'pending' ? 'Pending QA' : 
-                 viewFilter === 'verified' ? 'Verified Responses' : 
-                 viewFilter === 'name_review' ? 'Needs Verification' : 
+                {classFilter ? `${classFilter} (${viewFilter})` :
+                 viewFilter === 'pending' ? 'Pending QA' :
+                 viewFilter === 'verified' ? 'Verified Responses' :
+                 viewFilter === 'name_review' ? 'Needs Verification' :
+                 viewFilter === 'grade_review' ? 'Needs Grade Review' :
                  'Flagged Profiles'}
               </p>
             </div>
@@ -908,8 +959,40 @@ export default function IreneResponseManager() {
                           <p className="text-[11px] text-slate-500 font-bold truncate">{(r.cubs || []).map((c: any) => `${c.cub_initial} · ${c.grade} (${c.class_name})`).join('   •   ')}</p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          {r.is_verified && <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-200">Verified</span>}
+                          {r.is_flagged && <span className="text-[9px] font-black uppercase text-rose-600 bg-rose-50 px-2 py-1 rounded-full border border-rose-200">Flagged</span>}
                           {r.needs_name_review && <span className="text-[9px] font-black uppercase text-amber-600 bg-amber-50 px-2 py-1 rounded-full border border-amber-200">Needs Review</span>}
+                          {r.needs_grade_review && <span className="text-[9px] font-black uppercase text-sky-600 bg-sky-50 px-2 py-1 rounded-full border border-sky-200">Grade Review</span>}
+                          {r.is_verified && (
+                            <span title={r.verified_at ? new Date(r.verified_at).toLocaleString('en-ZA') : undefined} className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full border border-emerald-200">
+                              Verified{r.verified_at ? ` · ${new Date(r.verified_at).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' })}` : ''}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleSwitchToEdit(r)}
+                            title="Edit / verify this record"
+                            className="p-2 bg-white text-slate-500 border border-slate-200 rounded-lg hover:border-amber-300 hover:text-amber-600 transition-colors"
+                          >
+                            <Edit2 size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSubmitting}
+                            onClick={() => handleToggleGradeReview(r)}
+                            title={r.needs_grade_review ? 'Clear grade review' : 'Flag grade/class for review'}
+                            className={`p-2 rounded-lg border transition-colors disabled:opacity-50 ${r.needs_grade_review ? 'bg-sky-500 border-sky-500 text-white hover:bg-sky-600' : 'bg-white border-slate-200 text-slate-500 hover:border-sky-300 hover:text-sky-600'}`}
+                          >
+                            <GraduationCap size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSubmitting}
+                            onClick={() => handleToggleVerify(r)}
+                            title={r.is_verified ? 'Un-verify' : 'Verify'}
+                            className={`p-2 rounded-lg border transition-colors disabled:opacity-50 ${r.is_verified ? 'bg-emerald-500 border-emerald-500 text-white hover:bg-emerald-600' : 'bg-white border-slate-200 text-slate-500 hover:border-emerald-300 hover:text-emerald-600'}`}
+                          >
+                            {r.is_verified ? <X size={13} /> : <Check size={13} />}
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1021,6 +1104,7 @@ export default function IreneResponseManager() {
                  viewFilter === 'pending' ? "Inbox Zero! No pending records." :
                  viewFilter === 'verified' ? "No verified records yet." :
                  viewFilter === 'name_review' ? "No names pending review." :
+                 viewFilter === 'grade_review' ? "No grades pending review." :
                  "No flagged profiles."}
               </div>
             ) : (
@@ -1028,7 +1112,7 @@ export default function IreneResponseManager() {
                 <div className="p-8 pb-0">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
                     <h3 className="text-lg font-black uppercase tracking-tighter text-slate-800">
-                      {reviewQueueGrade ? `Reviewing: ${reviewQueueGrade}` : viewFilter === 'pending' ? 'QA Viewer' : viewFilter === 'verified' ? 'Verified Archive' : viewFilter === 'name_review' ? 'Name Review' : 'Profile Inspector'}
+                      {reviewQueueGrade ? `Reviewing: ${reviewQueueGrade}` : viewFilter === 'pending' ? 'QA Viewer' : viewFilter === 'verified' ? 'Verified Archive' : viewFilter === 'name_review' ? 'Name Review' : viewFilter === 'grade_review' ? 'Grade Review' : 'Profile Inspector'}
                     </h3>
                     <div className="flex items-center gap-4">
                       <span className="text-xs font-bold text-slate-400">Record {safeIndex + 1} of {displayedRecords.length}</span>
@@ -1045,11 +1129,21 @@ export default function IreneResponseManager() {
                       <div className="absolute top-4 right-6 flex flex-col gap-2 items-end">
                         {activeRecord?.is_flagged && <div className="flex items-center gap-1.5 text-rose-500 bg-rose-50 px-3 py-1.5 rounded-full border border-rose-200"><Flag size={12} fill="currentColor" /><span className="text-[9px] font-black uppercase tracking-widest">Flagged</span></div>}
                         {activeRecord?.needs_name_review && <div className="flex items-center gap-1.5 text-amber-600 bg-amber-50 px-3 py-1.5 rounded-full border border-amber-200"><AlertTriangle size={12} fill="currentColor" /><span className="text-[9px] font-black uppercase tracking-widest">Verification</span></div>}
+                        {activeRecord?.needs_grade_review && <div className="flex items-center gap-1.5 text-sky-600 bg-sky-50 px-3 py-1.5 rounded-full border border-sky-200"><GraduationCap size={12} /><span className="text-[9px] font-black uppercase tracking-widest">Grade Review</span></div>}
+                        {activeRecord?.is_verified && <div className="flex items-center gap-1.5 text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200"><Check size={12} /><span className="text-[9px] font-black uppercase tracking-widest">Verified{activeRecord?.verified_at ? ` · ${new Date(activeRecord.verified_at).toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' })}` : ''}</span></div>}
                       </div>
                       <div className="w-16 h-16 mt-2 md:mt-0 bg-[#0066cc]/10 text-[#0066cc] rounded-full flex items-center justify-center font-black text-2xl shadow-inner shrink-0 uppercase overflow-hidden">{String(activeRecord?.cubs?.[0]?.cub_initial || '').charAt(0)}</div>
                       <div className="flex-1 min-w-0 pr-40">
                         <h4 className="text-2xl font-black italic uppercase tracking-tighter text-slate-900 truncate">{activeRecord?.parent_first_name}</h4>
-                        <div className="flex flex-wrap gap-2 mt-2">{activeRecord?.cubs?.map((cub: any, i: number) => (<span key={i} className="text-[9px] font-black text-slate-600 bg-slate-200 px-2 py-1 rounded uppercase tracking-widest">Parent of {cub.cub_initial} • {cub.grade} ({cub.class_name})</span>))}</div>
+                        <div className="flex flex-wrap gap-2 mt-2">{activeRecord?.cubs?.map((cub: any, i: number) => {
+                          const fullName = (activeRecord?.cub_full_names || [])[i];
+                          return (
+                            <span key={i} title={fullName ? `Private: ${fullName}` : undefined} className="text-[9px] font-black text-slate-600 bg-slate-200 px-2 py-1 rounded uppercase tracking-widest flex items-center gap-1">
+                              Parent of {cub.cub_initial} • {cub.grade} ({cub.class_name})
+                              {fullName && <EyeOff size={10} className="text-slate-400" />}
+                            </span>
+                          );
+                        })}</div>
                       </div>
                     </div>
 
@@ -1082,10 +1176,47 @@ export default function IreneResponseManager() {
           <form onSubmit={handleSubmit} className="bg-white p-8 rounded-3xl shadow-lg shadow-slate-200/50 border border-slate-200 space-y-8 relative overflow-hidden ml-16 md:ml-0">
             {showSuccess && <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500 animate-pulse" />}
             <div className="flex items-center justify-between border-b border-slate-100 pb-4"><h3 className="text-lg font-black uppercase tracking-tighter text-slate-800">{mode === 'edit' ? 'Edit Response' : 'Rapid Data Entry'}</h3><div className="flex items-center gap-3">{showSuccess && <span className="text-emerald-500 flex items-center gap-1 text-xs font-bold uppercase tracking-widest"><CheckCircle2 size={14}/> Saved</span>}<button type="button" onClick={handleSwitchToView} className="text-xs font-bold text-slate-400 hover:text-slate-600 uppercase tracking-widest">Cancel</button></div></div>
+
+            {mode === 'edit' && editingRecord && (
+              <div className="flex flex-wrap items-center justify-between gap-3 -mt-4 mb-2 bg-slate-50 border border-slate-100 rounded-2xl px-5 py-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {editingRecord.is_verified ? (
+                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 flex items-center gap-1.5">
+                      <Check size={12} /> Verified{editingRecord.verified_at ? ` · ${new Date(editingRecord.verified_at).toLocaleString('en-ZA', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 bg-white px-3 py-1.5 rounded-full border border-slate-200">Not verified</span>
+                  )}
+                  {editingRecord.is_flagged && <span className="text-[10px] font-black uppercase tracking-widest text-rose-600 bg-rose-50 px-3 py-1.5 rounded-full border border-rose-200">Flagged</span>}
+                  {editingRecord.needs_name_review && <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 bg-amber-50 px-3 py-1.5 rounded-full border border-amber-200">Needs Name Review</span>}
+                  {editingRecord.needs_grade_review && <span className="text-[10px] font-black uppercase tracking-widest text-sky-600 bg-sky-50 px-3 py-1.5 rounded-full border border-sky-200">Needs Grade Review</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button type="button" disabled={isSubmitting} onClick={() => handleToggleNameReview(editingRecord)} className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-colors disabled:opacity-50 ${editingRecord.needs_name_review ? 'bg-amber-500 border-amber-500 text-white hover:bg-amber-600' : 'bg-white border-slate-200 text-slate-500 hover:border-amber-300 hover:text-amber-600'}`}>{editingRecord.needs_name_review ? 'Clear Review' : 'Flag Review'}</button>
+                  <button type="button" disabled={isSubmitting} onClick={() => handleToggleGradeReview(editingRecord)} className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-colors disabled:opacity-50 ${editingRecord.needs_grade_review ? 'bg-sky-500 border-sky-500 text-white hover:bg-sky-600' : 'bg-white border-slate-200 text-slate-500 hover:border-sky-300 hover:text-sky-600'}`}>{editingRecord.needs_grade_review ? 'Clear Grade' : 'Flag Grade'}</button>
+                  <button type="button" disabled={isSubmitting} onClick={() => handleToggleFlag(editingRecord)} className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-colors disabled:opacity-50 ${editingRecord.is_flagged ? 'bg-rose-500 border-rose-500 text-white hover:bg-rose-600' : 'bg-white border-slate-200 text-slate-500 hover:border-rose-300 hover:text-rose-600'}`}>{editingRecord.is_flagged ? 'Unflag' : 'Flag'}</button>
+                  <button type="button" disabled={isSubmitting} onClick={() => handleToggleVerify(editingRecord)} className={`px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-colors disabled:opacity-50 ${editingRecord.is_verified ? 'bg-emerald-500 border-emerald-500 text-white hover:bg-emerald-600' : 'bg-white border-slate-200 text-slate-500 hover:border-emerald-300 hover:text-emerald-600'}`}>{editingRecord.is_verified ? 'Un-verify' : 'Verify'}</button>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-6">
               <div className="space-y-4 bg-slate-50 p-6 rounded-2xl border border-slate-100"><div className="flex items-center justify-between mb-2"><h4 className="text-[10px] font-black uppercase tracking-widest text-[#0066cc]">Part 1: Parent & Pioneer Details</h4><button type="button" onClick={handleAddCub} className="text-[9px] font-black uppercase tracking-widest text-[#0066cc] bg-[#0066cc]/10 hover:bg-[#0066cc]/20 px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"><UserPlus size={12}/> Add Sibling</button></div>
                 <div className="mb-4"><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Parent Name(s)</label><input ref={firstInputRef} required name="parent_first_name" value={formData.parent_first_name} onChange={handleInputChange} className="w-full max-w-sm bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div>
-                <div className="space-y-3 border-t border-slate-200 pt-4">{formData.cubs.map((cub, index) => (<div key={index} className="grid grid-cols-12 gap-3 items-end"><div className="col-span-4"><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Name/Initial</label><input required value={cub.cub_initial} onChange={(e) => handleCubChange(index, 'cub_initial', e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div><div className="col-span-4"><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Grade</label><input required value={cub.grade} onChange={(e) => handleCubChange(index, 'grade', e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div><div className="col-span-3"><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Class</label><input value={cub.class_name} onChange={(e) => handleCubChange(index, 'class_name', e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div>{formData.cubs.length > 1 && (<div className="col-span-1 pb-1"><button type="button" onClick={() => handleRemoveCub(index)} className="p-2 text-rose-400 hover:bg-rose-100 rounded-lg"><Trash2 size={16}/></button></div>)}</div>))}</div>
+                <div className="space-y-3 border-t border-slate-200 pt-4">{formData.cubs.map((cub, index) => (
+                  <div key={index} className="p-3 bg-white border border-slate-100 rounded-xl space-y-2">
+                    <div className="grid grid-cols-12 gap-3 items-end">
+                      <div className="col-span-4"><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Name/Initial</label><input required value={cub.cub_initial} onChange={(e) => handleCubChange(index, 'cub_initial', e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div>
+                      <div className="col-span-4"><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Grade</label><input required value={cub.grade} onChange={(e) => handleCubChange(index, 'grade', e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div>
+                      <div className="col-span-3"><label className="block text-[9px] font-bold text-slate-500 uppercase mb-1">Class</label><input value={cub.class_name} onChange={(e) => handleCubChange(index, 'class_name', e.target.value)} className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" /></div>
+                      {formData.cubs.length > 1 && (<div className="col-span-1 pb-1"><button type="button" onClick={() => handleRemoveCub(index)} className="p-2 text-rose-400 hover:bg-rose-100 rounded-lg"><Trash2 size={16}/></button></div>)}
+                    </div>
+                    <div>
+                      <label className="flex items-center gap-1 text-[9px] font-bold text-slate-400 uppercase mb-1"><EyeOff size={11} /> Full Name — private, admin-only, optional</label>
+                      <input value={cub.full_name} onChange={(e) => handleCubChange(index, 'full_name', e.target.value)} placeholder="Never shown on the public voting page" className="w-full max-w-sm bg-slate-50 border border-dashed border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-[#0066cc]" />
+                    </div>
+                  </div>
+                ))}</div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="relative"><h4 className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] flex items-center gap-1.5 mb-2"><Activity size={12}/> Activity Tags</h4><div className="bg-white border border-slate-200 rounded-lg p-2 min-h-[42px] flex flex-wrap gap-1.5 focus-within:border-[#0066cc]">{formData.activity_tags.map(tag => (<span key={tag} className="bg-blue-50 text-blue-600 border border-blue-200 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded-md flex items-center gap-1">{tag} <X size={10} className="cursor-pointer" onClick={() => removeTag('activity_tags', tag)} /></span>))}<input type="text" value={activityInput} onChange={(e) => setActivityInput(e.target.value)} onKeyDown={(e) => handleTagKeyDown(e, 'activity_tags', activityInput, setActivityInput)} placeholder="Type..." className="flex-1 min-w-[80px] text-xs outline-none bg-transparent" /></div>{suggestedActivities.length > 0 && (<div className="absolute top-full left-0 right-0 mt-1 bg-white border shadow-lg rounded-lg z-10 p-1 flex flex-wrap gap-1">{suggestedActivities.map(tag => (<button key={tag} type="button" onClick={() => handleAddTag('activity_tags', tag, setActivityInput)} className="text-[10px] font-bold uppercase bg-slate-50 hover:bg-blue-50 px-2 py-1 rounded-md">{tag}</button>))}</div>)}</div>
