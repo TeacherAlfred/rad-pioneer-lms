@@ -206,23 +206,36 @@ export default function NotificationSettingsPage() {
                       </button>
                     </div>
                     {preview.pending.map(p => (
-                      <div key={p.leadId} className="flex items-center justify-between gap-2 bg-slate-50 rounded-xl px-3 py-2.5">
-                        <div className="min-w-0">
-                          <div className="text-sm font-bold text-slate-800 truncate">{p.leadName || (p.leadPhone ? `+${p.leadPhone}` : 'Unknown lead')}</div>
-                          <div className="text-[11px] text-slate-400">
-                            {p.count} action{p.count === 1 ? '' : 's'} ·{' '}
-                            {preview.dndActive
-                              ? 'waiting for Do Not Disturb to end'
-                              : p.overdue ? 'due now - waiting for next check' : `sends in ${relativeFuture(p.willFlushAt)}`}
+                      <div key={p.leadId} className="bg-slate-50 rounded-xl px-3 py-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-slate-800 truncate">{p.leadName || (p.leadPhone ? `+${p.leadPhone}` : 'Unknown lead')}</div>
+                            <div className="text-[11px] text-slate-400">
+                              {p.count} action{p.count === 1 ? '' : 's'} ·{' '}
+                              {preview.dndActive
+                                ? 'waiting for Do Not Disturb to end'
+                                : p.overdue ? 'due now - waiting for next check' : `sends in ${relativeFuture(p.willFlushAt)}`}
+                            </div>
                           </div>
+                          <button
+                            onClick={() => releaseNow(p.leadId)}
+                            disabled={releasingId !== null}
+                            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50"
+                          >
+                            {releasingId === p.leadId ? 'Sending...' : 'Send Now'}
+                          </button>
                         </div>
-                        <button
-                          onClick={() => releaseNow(p.leadId)}
-                          disabled={releasingId !== null}
-                          className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50"
-                        >
-                          {releasingId === p.leadId ? 'Sending...' : 'Send Now'}
-                        </button>
+                        {/* What they actually did - the whole point of the buffer is
+                            batching, but that shouldn't mean flying blind on whether
+                            this is a hot lead worth releasing early or just noise. */}
+                        <div className="mt-2 pt-2 border-t border-slate-200/70 space-y-1">
+                          {p.events.map((event, i) => (
+                            <div key={i} className="text-[11px] text-slate-600 flex items-start gap-1.5">
+                              <span className="text-slate-300 shrink-0">•</span>
+                              <span className="min-w-0">{event}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ))}
                   </div>

@@ -159,7 +159,11 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
 // flow (e.g. btn_guide) falls back to if its keyword currently matches
 // nothing in bot_media, rather than going silent on the lead.
 async function handleGenericHandoff(supabase: any, senderPhone: string, lead: any, buttonTitle: string) {
-  await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
+  // Stamped here too, not just in the needs-human gate below - this
+  // acknowledgment already tells them a human's coming, so a message
+  // seconds later shouldn't immediately trigger a second, near-identical
+  // "someone will be in touch" nudge on top of it.
+  await supabase.from('leads').update({ needs_human: true, needs_human_nudged_at: new Date().toISOString() }).eq('id', lead.id);
   const ackResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
   await supabase.from('messages').insert([{
     lead_id: lead.id,
@@ -519,6 +523,7 @@ export async function POST(request: Request) {
                   awaiting_reply_confirmation: null,
                   awaiting_reply_completion_tag: null,
                   needs_human: true,
+                  needs_human_nudged_at: new Date().toISOString(),
                 };
                 // Reporting-only label (e.g. "webinar_registered") so admins can
                 // filter who actually completed this flow - doesn't affect
@@ -547,7 +552,7 @@ export async function POST(request: Request) {
               if (message.type === 'text') {
                 const textLower = messageText.toLowerCase();
                 if (textLower.includes('irene') && textLower.includes('voting')) {
-                  await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
+                  await supabase.from('leads').update({ needs_human: true, needs_human_nudged_at: new Date().toISOString() }).eq('id', lead.id);
                   const ireneAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } });
                   await supabase.from('messages').insert([{
                     lead_id: lead.id,
@@ -558,6 +563,36 @@ export async function POST(request: Request) {
                   await notifyAdmin(supabase, senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.", lead.id);
                   continue;
                 }
+              }
+
+              // --- ALREADY PASSED TO A HUMAN: stop looping them through bot
+              // menus ---
+              // Confirmed against a real conversation (+27688503165): a lead
+              // tapped "Talk to an Educator" twice, asked a direct question,
+              // and still got bounced through the generic welcome menu and
+              // an unrelated flow because nothing here checked needs_human
+              // before running STAGE 1/STAGE 2. Once flagged, every further
+              // action - free text or a button tap - gets a gentle reminder
+              // instead of a bot flow, at most once per cooldown window (the
+              // handoff acknowledgment that originally set needs_human
+              // already told them this once; no need to repeat it on every
+              // single tap). The admin still sees what they did/said, via
+              // the same buffered path everything else here uses.
+              if (lead.needs_human) {
+                const NUDGE_COOLDOWN_MS = 30 * 60 * 1000;
+                const lastNudge = lead.needs_human_nudged_at ? new Date(lead.needs_human_nudged_at).getTime() : 0;
+                if (Date.now() - lastNudge > NUDGE_COOLDOWN_MS) {
+                  const nudgeResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for the message! 🙏 You're already on our team's list - one of our educators will be in touch with you as soon as possible. No need to tap or type anything else in the meantime." } });
+                  await supabase.from('messages').insert([{
+                    lead_id: lead.id,
+                    direction: 'outbound',
+                    body: nudgeResult.ok ? '[Delivered needs-human nudge]' : `[FAILED to deliver needs-human nudge: ${nudgeResult.error}]`,
+                    wamid: nudgeResult.wamid || null,
+                  }]);
+                  await supabase.from('leads').update({ needs_human_nudged_at: new Date().toISOString() }).eq('id', lead.id);
+                }
+                await notifyAdmin(supabase, senderPhone, `💬 ${messageText} (already passed to educator)`, lead.id);
+                continue;
               }
 
               // --- STAGE 1: INBOUND TRIGGER & VALUE DELIVERY ---
@@ -599,6 +634,13 @@ export async function POST(request: Request) {
                     }
                   };
                   await sendWhatsAppMessage(senderPhone, welcomePayload);
+                  // Plain text with no keyword match previously generated no
+                  // buffered event at all - the bot replied with the generic
+                  // menu and the admin had no visibility into what was
+                  // actually said, buffered or otherwise. Surfacing it here
+                  // is what lets "just browsing" and "needs more info" read
+                  // differently in the Pending list.
+                  await notifyAdmin(supabase, senderPhone, `💬 Said: "${messageText}"`, lead.id);
                 }
               }
 

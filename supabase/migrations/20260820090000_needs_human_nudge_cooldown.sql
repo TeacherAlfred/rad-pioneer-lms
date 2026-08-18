@@ -1,0 +1,11 @@
+-- Once a lead has been flagged needs_human, every further message/button
+-- tap kept looping them through bot flows and the generic welcome menu -
+-- confirmed against a real conversation (+27688503165) where the lead
+-- tapped "Talk to an Educator" twice, asked a direct question, and still
+-- got bounced through the generic menu and an unrelated "Hold My Spot"
+-- flow before ever being told to just wait. needs_human_nudged_at tracks
+-- when they were last told "someone will be in touch" so the webhook can
+-- send that reminder once per cooldown window instead of either repeating
+-- it on every single tap (annoying) or never explaining why the bot's
+-- gone quiet (confusing) - see whatsapp-webhook/route.ts.
+alter table leads add column needs_human_nudged_at timestamptz;
