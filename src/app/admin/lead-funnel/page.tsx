@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
-  MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
-  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2, Pencil, Baby,
-  GraduationCap, StickyNote, Tag, BookOpen, Activity, Flame, Bell,
+  Loader2, Users, UserPlus, CalendarClock, PhoneOff,
+  MessageCircleWarning, Megaphone, Search, Home,
+  Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, Users2, Pencil, Baby,
+  GraduationCap, StickyNote, Tag, Activity, Flame,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -706,38 +706,6 @@ export default function LeadFunnelPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <Link href="/admin/dashboard" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-            <ArrowLeft size={14} /> Command Center
-          </Link>
-          <div className="flex items-center gap-4">
-            <Link href="/admin/lead-funnel/guide" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <BookOpen size={14} /> Guide
-            </Link>
-            <Link href="/admin/bot-flows" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <GitBranch size={14} /> Bot Flows
-            </Link>
-            <Link href="/admin/lead-funnel/stages" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <GitBranch size={14} /> Funnel Stages
-            </Link>
-            <Link href="/admin/lead-funnel/messages" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <MessageSquare size={14} /> Message Activity
-            </Link>
-            <Link href="/admin/lead-funnel/notifications" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <Bell size={14} /> Notifications
-            </Link>
-            <Link href="/admin/warm-list" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <ClipboardList size={14} /> Import / Review Leads (Warm List)
-            </Link>
-            <Link href="/admin/kids" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <Baby size={14} /> Kids
-            </Link>
-            <Link href="/admin/sessions" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
-              <CalendarClock size={14} /> Upcoming Sessions
-            </Link>
-          </div>
-        </div>
-
         <div className="mb-6">
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Lead Funnel</h1>
           <p className="text-sm text-slate-500 mt-1">Everyone in the `leads` table - WhatsApp bot, Irene voting consent, and warm-list imports. Not the registrations/profiles pipeline at /admin/leads.</p>
