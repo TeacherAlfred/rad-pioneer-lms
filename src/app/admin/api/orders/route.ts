@@ -12,11 +12,19 @@ const supabaseAdmin = createClient(
 // the order (a passes row, bundle_id here, or an enrolment's order_id),
 // not a separate "kind" field. No DELETE route - financial records
 // aren't removed, only cancelled/refunded via status.
-export async function GET() {
-  const { data, error } = await supabaseAdmin
+// ?guardianLeadId= scopes to one lead's orders (used by the Lead Funnel
+// quick-view drawer) - omitted, returns everyone (used by /admin/commerce).
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const guardianLeadId = searchParams.get('guardianLeadId');
+
+  let query = supabaseAdmin
     .from('orders')
     .select('*, leads(id, name, phone), bundles(id, name)')
     .order('created_at', { ascending: false });
+  if (guardianLeadId) query = query.eq('guardian_lead_id', guardianLeadId);
+
+  const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ rows: data || [] });
 }

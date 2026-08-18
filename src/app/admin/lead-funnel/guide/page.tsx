@@ -11,7 +11,7 @@ import {
 // does this actually work right now", not to restate the aspirational
 // spec (RAD_Lead_Stages_and_Followup_Spec.md) as if all of it were built.
 // Every "Not built yet" marker below was checked against the live code
-// on 2026-08-15, not assumed from the spec.
+// and live data on 2026-08-18, not assumed from the spec.
 
 function Section({ id, icon: Icon, title, blurb, defaultOpen, children }: {
   id: string; icon: any; title: string; blurb: string; defaultOpen?: boolean; children: ReactNode;
@@ -107,7 +107,7 @@ export default function LeadFunnelGuidePage() {
               <li><b>Customer status</b> - have they ever paid. <b>Never regresses</b>, even years later.</li>
               <li><b>Engagement recency</b> - how warm they are right now. Meant to be computed automatically.</li>
             </ul>
-            <Gap>Engagement recency isn't computed anywhere yet - there's no scheduled job turning "days since last inbound" into active/cooling/dormant/cold. Right now you'd judge warmth by eyeballing a lead's Created/Last Sent dates yourself.</Gap>
+            <Gap>The computation exists (a nightly cron at <code className="bg-slate-100 px-1 rounded">/api/lead-funnel/cron</code> turns "days since last inbound" into active/cooling/dormant/cold, plus per-stage health) but as of 2026-08-18 there's no confirmed evidence it's actually being triggered in production - most likely <code className="bg-slate-100 px-1 rounded">CRON_SECRET</code> isn't set in the real deploy environment yet, only locally. Both values are visible per-lead in the edit panel once this is wired up; until then they reflect whenever a migration last recomputed them, not "right now."</Gap>
           </Section>
 
           <Section id="entry" icon={Users2} title="How a lead enters the funnel"
@@ -133,22 +133,22 @@ export default function LeadFunnelGuidePage() {
               <Field name="opted_out" desc="POPIA withdrawal. Also flips leads.opted_out to true. Terminal - reactive replies only." />
             </div>
             <p>Every stage change writes a row to <code className="bg-slate-100 px-1 rounded">lead_stage_history</code> (who, when, from, to, why) - that's what the Funnel Stages dashboard's time-in-stage and messages-to-advance numbers are computed from.</p>
-            <Gap>Stall thresholds exist as constants (e.g. offered stalls after 48 hours, matching the seat-hold window) but nothing currently reads them to flag a lead as "stalled" anywhere in the UI. They're defined, not wired up.</Gap>
-            <Gap>Nothing auto-moves a qualified/offered lead to re_nurture the day after the session they were tracking passes unpaid - that requires checking session dates against interested_session_id, which isn't built.</Gap>
+            <Gap>Stall thresholds (e.g. offered stalls after 48 hours, matching the seat-hold window) are read by the nightly cron and surfaced as a stage-health badge in the edit panel - but see the roadmap section for why that cron isn't confirmed to actually be running in production yet.</Gap>
+            <Gap>Auto-moving a qualified/offered lead to re_nurture the day after their tracked session passes unpaid is built (checks <code className="bg-slate-100 px-1 rounded">interested_session_id</code> against the session's date and attendance) - same "is the cron actually running" caveat.</Gap>
           </Section>
 
           <Section id="activities" icon={MessageSquare} title="Contact outcomes (lead_activities)"
             blurb="Contacted / No Response / Follow-up Set - logged as attempts, never move lifecycle_stage.">
             <p>
-              Every WhatsApp pipeline alert you get (new lead, guide downloaded, button tapped, etc.) carries three buttons: <b>Contacted</b>, <b>No Response</b>, <b>Follow-up Set</b>. Tapping one writes a row to <code className="bg-slate-100 px-1 rounded">lead_activities</code> (channel, direction, outcome, who logged it) and clears <code className="bg-slate-100 px-1 rounded">needs_human</code> - it does <b>not</b> touch the lead's lifecycle stage. A lead can be "Contacted" five times while still sitting at <code className="bg-slate-100 px-1 rounded">qualified</code>, and that's correct - the outcome and the stage are different questions.
+              Every WhatsApp pipeline alert you get (new lead, guide downloaded, button tapped, etc.) carries three buttons: <b>Contacted</b>, <b>No Response</b>, <b>Follow-up Set</b>. Tapping one writes a row to <code className="bg-slate-100 px-1 rounded">lead_activities</code> (channel, direction, outcome, who logged it) and clears <code className="bg-slate-100 px-1 rounded">needs_human</code> - it does <b>not</b> touch the lead's lifecycle stage. A lead can be "Contacted" five times while still sitting at <code className="bg-slate-100 px-1 rounded">qualified</code>, and that's correct - the outcome and the stage are different questions. A bot_flow marked "expects a reply" (see Bot Flows below) also writes here once the reply is captured.
             </p>
-            <Gap>There's no dedicated page yet to browse a lead's contact-attempt history in the app - only the confirmation you get back on WhatsApp in the moment.</Gap>
+            <p>Visible per-lead as a chronological feed in the edit panel (pencil icon) on the Lead Funnel table, alongside lifecycle stage, customer status, and engagement recency - the closest thing to a consolidated "all four axes at once" view today. There's still no dedicated page to browse contact-attempt history <i>across</i> every lead at once.</p>
           </Section>
 
           <Section id="customer" icon={GraduationCap} title="Customer status"
             blurb="is_customer, first_purchase_at, last_purchase_at - set once at won, never regresses.">
             <p>
-              Moving a lead to <code className="bg-slate-100 px-1 rounded">won</code> sets <code className="bg-slate-100 px-1 rounded">is_customer = true</code> permanently, stamps <code className="bg-slate-100 px-1 rounded">first_purchase_at</code> (only the first time) and <code className="bg-slate-100 px-1 rounded">last_purchase_at</code> (every time). A two-year-old customer stays <code className="bg-slate-100 px-1 rounded">is_customer: true</code> forever, even after their lifecycle stage moves on to <code className="bg-slate-100 px-1 rounded">re_nurture</code> for the next thing. This is the field that makes "existing customer buying again" distinguishable from "brand new lead" - the exact diagnosis that started this whole redesign.
+              Moving a lead to <code className="bg-slate-100 px-1 rounded">won</code> sets <code className="bg-slate-100 px-1 rounded">is_customer = true</code> permanently, stamps <code className="bg-slate-100 px-1 rounded">first_purchase_at</code> (only the first time) and <code className="bg-slate-100 px-1 rounded">last_purchase_at</code> (every time). A two-year-old customer stays <code className="bg-slate-100 px-1 rounded">is_customer: true</code> forever, even after their lifecycle stage moves on to <code className="bg-slate-100 px-1 rounded">re_nurture</code> for the next thing. This is the field that makes "existing customer buying again" distinguishable from "brand new lead" - the exact diagnosis that started this whole redesign. Visible per-lead in the edit panel as "Customer since &lt;date&gt;".
             </p>
             <Gap>No lifetime_value tracking yet - is_customer is a yes/no, not a running total.</Gap>
           </Section>
@@ -216,7 +216,7 @@ export default function LeadFunnelGuidePage() {
               <li><b>Tags</b> - includes a Potential Student badge when relevant.</li>
               <li><b>Last Sent</b> - relative time since their most recent outbound message of any kind, amber if within the last 24 hours (a "you probably don't need to send again yet" signal), rose if that send failed. Hover for the exact template/flow name and timestamp.</li>
               <li>Checkbox selection persists across filter changes and pages - used for bulk <b>Send Template</b> (max 50 at once) and <b>Link as Household</b> (min 2).</li>
-              <li>The pencil icon next to a name opens the edit panel: contact details, Potential Student, Tags, Notes.</li>
+              <li>The pencil icon next to a name opens the edit panel: a read-only summary (lifecycle stage, stage health, engagement recency, customer status, contact-outcome history) at the top, then the editable fields below it - contact details, Potential Student, Tags, Notes.</li>
             </ul>
           </Section>
 
@@ -226,17 +226,16 @@ export default function LeadFunnelGuidePage() {
           </Section>
 
           <Section id="roadmap" icon={AlertTriangle} title="What's not built yet (full list)"
-            blurb="Everything below is designed in the spec but not implemented as of 2026-08-15.">
+            blurb="Everything below is designed in the spec but not implemented as of 2026-08-18.">
             <ul className="list-disc pl-5 space-y-1.5">
-              <li>Engagement recency computation (active/cooling/dormant/cold) - no scheduled job for it.</li>
-              <li>Stage health (stalled/dormant) - thresholds exist as constants, nothing reads them yet.</li>
-              <li>Auto-expiry to Lost after 180 days of no inbound and no purchase.</li>
-              <li>Session-date-based auto-move of qualified/offered leads to re_nurture the day after their session, tagged with which one they missed.</li>
+              <li>Engagement recency and stage health <i>computation</i> exists (nightly cron, plus the values are correct as of 2026-08-18 after a formula bug was fixed) - but there's no confirmed evidence the cron actually runs in production yet, most likely because <code className="bg-slate-100 px-1 rounded">CRON_SECRET</code> was only ever set locally, not in the real deploy environment.</li>
+              <li>Auto-expiry to Lost after 180 days of no inbound and no purchase - the logic exists in the same nightly cron, same caveat as above about whether it's actually firing.</li>
+              <li>Session-date-based auto-move of qualified/offered leads to re_nurture the day after their session, tagged with which one they missed - also built into the cron, same caveat.</li>
               <li>Follow-up scheduling and its three notifications (morning digest, 15-minute admin alert with deep link, 60-minute lead reminder template) - no <code className="bg-slate-100 px-1 rounded">follow_ups</code> table or UI yet.</li>
               <li>Batch/deferred-save stage editing - shift-click range select, a pending-changes bar, one-transaction commit. Today, each stage change on Funnel Stages saves immediately, one lead at a time.</li>
-              <li>A dedicated page to browse lead_activities (contact-attempt history) directly.</li>
+              <li>A page to browse lead_activities <i>across</i> every lead at once - per-lead it's now visible in the edit panel.</li>
               <li>Lifetime value tracking.</li>
-              <li>A separate stage-threshold set for B2B/school leads (their cycle is months, not days - today's thresholds would flag every one as stalled once stall-flagging exists).</li>
+              <li>A separate stage-threshold set for B2B/school leads (their cycle is months, not days - today's thresholds would flag every one as stalled once stall-flagging is confirmed running).</li>
             </ul>
           </Section>
         </div>

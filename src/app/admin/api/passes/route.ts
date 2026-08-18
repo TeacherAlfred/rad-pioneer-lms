@@ -11,11 +11,19 @@ const PASS_CREDIT_SELECT = 'id, status, enrolment_id, redeemed_at, enrolments(id
 // A Pass is a purchased entitlement to N sessions, redeemed over time -
 // see RAD_Programme_Model_and_Catalogue.md 2.5. No DELETE route -
 // financial records aren't removed.
-export async function GET() {
-  const { data, error } = await supabaseAdmin
+// ?guardianLeadId= scopes to one lead's passes (used by the Lead Funnel
+// quick-view drawer) - omitted, returns everyone (used by /admin/commerce).
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const guardianLeadId = searchParams.get('guardianLeadId');
+
+  let query = supabaseAdmin
     .from('passes')
     .select(`*, leads(id, name, phone), first_session:first_session_id(id, starts_at, programme_id, programs(id, code, name)), pass_credits(${PASS_CREDIT_SELECT})`)
     .order('purchased_at', { ascending: false });
+  if (guardianLeadId) query = query.eq('guardian_lead_id', guardianLeadId);
+
+  const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ rows: data || [] });
 }

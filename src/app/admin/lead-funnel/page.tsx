@@ -6,7 +6,7 @@ import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
   Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2, Pencil, Baby,
-  GraduationCap, StickyNote, Tag, BookOpen,
+  GraduationCap, StickyNote, Tag, BookOpen, Activity, Flame,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -17,8 +17,13 @@ type Lead = {
   email?: string | null;
   name?: string | null;
   lifecycle_stage: string | null;
+  stage_health?: string | null;
   needs_human?: boolean | null;
   awaiting_reply_label?: string | null;
+  is_customer?: boolean | null;
+  first_purchase_at?: string | null;
+  last_purchase_at?: string | null;
+  engagement_recency?: string | null;
   source?: string | null;
   tags?: string[] | null;
   ad_id?: string | null;
@@ -39,6 +44,15 @@ type Lead = {
 };
 
 type LeadNote = { id: string; note: string; created_at: string; created_by: string | null };
+type LeadActivity = { id: string; channel: string; direction: string; outcome: string; note: string | null; created_by: string | null; created_at: string };
+
+// Read-only shapes for the quick-view drawer - trimmed to what's actually
+// rendered, not the full API response (see kids/orders/passes routes for
+// the complete select).
+type KidEnrolment = { id: string; status: string; attended: boolean | null; sessions: { starts_at: string | null; programs: { name: string } | null } | null };
+type Kid = { id: string; name: string; age: number | null; grade: string | null; enrolments: KidEnrolment[] };
+type Order = { id: string; created_at: string; amount_total: number | null; currency: string; status: string; bundles: { name: string } | null };
+type Pass = { id: string; purchased_at: string; expires_at: string; credits_total: number; credits_used: number; first_session: { starts_at: string | null; programs: { name: string } | null } | null };
 
 const STATUS_STYLES: Record<string, string> = {
   new: 'bg-slate-100 text-slate-600',
@@ -49,6 +63,24 @@ const STATUS_STYLES: Record<string, string> = {
   re_nurture: 'bg-purple-50 text-purple-600',
   lost: 'bg-slate-100 text-slate-400',
   opted_out: 'bg-rose-50 text-rose-400',
+};
+
+// Per-stage staleness (time-in-stage vs. its expected window) - a
+// different axis from engagement recency below, see the Lead Funnel guide.
+const STAGE_HEALTH_STYLES: Record<string, string> = {
+  active: 'bg-emerald-50 text-emerald-600',
+  stalled: 'bg-amber-50 text-amber-600',
+  dormant: 'bg-rose-50 text-rose-500',
+  lost: 'bg-slate-100 text-slate-400',
+};
+
+// Global warmth from last_inbound_at, independent of stage - computed by
+// the nightly cron (src/app/api/lead-funnel/cron/route.ts).
+const RECENCY_STYLES: Record<string, string> = {
+  active: 'bg-emerald-50 text-emerald-600',
+  cooling: 'bg-amber-50 text-amber-600',
+  dormant: 'bg-orange-50 text-orange-600',
+  cold: 'bg-slate-100 text-slate-400',
 };
 
 function statusLabel(status: string | null) {
@@ -335,6 +367,7 @@ export default function LeadFunnelPage() {
   const [editError, setEditError] = useState<string | null>(null);
 
   function openEdit(lead: Lead) {
+    setViewingLead(null);
     setEditingLead(lead);
     setEditForm({
       name: lead.name || '',
@@ -353,6 +386,67 @@ export default function LeadFunnelPage() {
     setEditingLead(null);
     setEditError(null);
     setLeadNotes([]);
+  }
+
+  // --- Quick-view drawer: read-only, opened by clicking a lead's name.
+  // Pulls together everything about a lead - funnel axes, contact
+  // outcomes, notes, kids/enrolments, orders/passes - in one place.
+  // Editing (tags, notes, contact fields) stays exclusively behind the
+  // pencil icon / openEdit above. ---
+  const [viewingLead, setViewingLead] = useState<Lead | null>(null);
+  const [kids, setKids] = useState<Kid[]>([]);
+  const [kidsLoading, setKidsLoading] = useState(false);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [passes, setPasses] = useState<Pass[]>([]);
+  const [financeLoading, setFinanceLoading] = useState(false);
+
+  function openView(lead: Lead) {
+    setEditingLead(null);
+    setViewingLead(lead);
+    loadNotes(lead.id);
+    loadActivities(lead.id);
+    loadKids(lead.id);
+    loadFinance(lead.id);
+  }
+
+  function closeView() {
+    setViewingLead(null);
+    setLeadNotes([]);
+    setLeadActivities([]);
+    setKids([]);
+    setOrders([]);
+    setPasses([]);
+  }
+
+  function switchToEdit() {
+    if (!viewingLead) return;
+    openEdit(viewingLead);
+  }
+
+  async function loadKids(leadId: string) {
+    setKidsLoading(true);
+    try {
+      const res = await fetch(`/admin/api/kids?leadId=${encodeURIComponent(leadId)}`);
+      const data = await res.json();
+      setKids(data.rows || []);
+    } finally {
+      setKidsLoading(false);
+    }
+  }
+
+  async function loadFinance(leadId: string) {
+    setFinanceLoading(true);
+    try {
+      const [ordersRes, passesRes] = await Promise.all([
+        fetch(`/admin/api/orders?guardianLeadId=${encodeURIComponent(leadId)}`),
+        fetch(`/admin/api/passes?guardianLeadId=${encodeURIComponent(leadId)}`),
+      ]);
+      const [ordersData, passesData] = await Promise.all([ordersRes.json(), passesRes.json()]);
+      setOrders(ordersData.rows || []);
+      setPasses(passesData.rows || []);
+    } finally {
+      setFinanceLoading(false);
+    }
   }
 
   // --- Tags: general-purpose add/remove, saved immediately (same
@@ -439,6 +533,23 @@ export default function LeadFunnelPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
     });
+  }
+
+  // --- Contact outcomes: read-only feed of lead_activities (Contacted /
+  // No Response / Follow-up Set, and bot_flow reply captures). Written only
+  // by the webhook - nothing here writes to it. ---
+  const [leadActivities, setLeadActivities] = useState<LeadActivity[]>([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(false);
+
+  async function loadActivities(leadId: string) {
+    setActivitiesLoading(true);
+    try {
+      const res = await fetch(`/admin/api/lead-funnel/activities?leadId=${encodeURIComponent(leadId)}`);
+      const data = await res.json();
+      setLeadActivities(data.rows || []);
+    } finally {
+      setActivitiesLoading(false);
+    }
   }
 
   async function saveEdit() {
@@ -743,7 +854,9 @@ export default function LeadFunnelPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
-                            <div className="font-bold text-slate-800">{r.name || '(no name)'}</div>
+                            <button onClick={() => openView(r)} title="View lead details" className="font-bold text-slate-800 hover:underline text-left">
+                              {r.name || '(no name)'}
+                            </button>
                             <button onClick={() => openEdit(r)} title="Edit lead details" className="text-slate-300 hover:text-slate-600">
                               <Pencil size={11} />
                             </button>
@@ -1053,6 +1166,7 @@ export default function LeadFunnelPage() {
               <h3 className="font-black text-slate-800">Edit Lead</h3>
               <button onClick={closeEdit} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
             </div>
+
             <div className="space-y-3">
               <div>
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Name</label>
@@ -1177,6 +1291,203 @@ export default function LeadFunnelPage() {
                   {editSaving ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewingLead && (
+        <div className="fixed inset-0 bg-black/40 z-50" onClick={closeView}>
+          <div
+            className="fixed inset-y-0 right-0 h-full w-full max-w-xl bg-white shadow-2xl overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-slate-100 sticky top-0 bg-white z-10">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-xl font-black text-slate-900 truncate">{viewingLead.name || '(no name)'}</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">+{viewingLead.phone}{viewingLead.email ? ` · ${viewingLead.email}` : ''}</p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={switchToEdit} title="Edit this lead" className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 border border-slate-200 hover:border-slate-400">
+                    <Pencil size={12} /> Edit
+                  </button>
+                  <button onClick={closeView} className="text-slate-400 hover:text-slate-600 p-2"><X size={18} /></button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap mt-3">
+                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${STATUS_STYLES[viewingLead.lifecycle_stage || ''] || 'bg-slate-100 text-slate-500'}`}>
+                  {statusLabel(viewingLead.lifecycle_stage)}
+                </span>
+                {viewingLead.stage_health && viewingLead.stage_health !== 'active' && (
+                  <span title="Time in current stage vs. its expected window" className={`inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${STAGE_HEALTH_STYLES[viewingLead.stage_health] || 'bg-slate-100 text-slate-500'}`}>
+                    <Activity size={10} /> {viewingLead.stage_health}
+                  </span>
+                )}
+                {viewingLead.engagement_recency && (
+                  <span title="Warmth from last inbound message, independent of stage" className={`inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${RECENCY_STYLES[viewingLead.engagement_recency] || 'bg-slate-100 text-slate-500'}`}>
+                    <Flame size={10} /> {viewingLead.engagement_recency}
+                  </span>
+                )}
+                {viewingLead.needs_human && (
+                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-amber-50 text-amber-600">Needs Reply</span>
+                )}
+                {viewingLead.awaiting_reply_label && (
+                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-blue-50 text-blue-500">Awaiting: {viewingLead.awaiting_reply_label}</span>
+                )}
+                {viewingLead.opted_out && (
+                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-rose-50 text-rose-500">Opted Out</span>
+                )}
+              </div>
+            </div>
+
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Customer Status</div>
+                  {viewingLead.is_customer ? (
+                    <p className="text-slate-600 flex items-center gap-1"><GraduationCap size={13} className="text-emerald-600" /> Since {viewingLead.first_purchase_at ? new Date(viewingLead.first_purchase_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', year: 'numeric' }) : 'unknown'}</p>
+                  ) : (
+                    <p className="text-slate-400">Not yet a customer</p>
+                  )}
+                </div>
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Source</div>
+                  <p className="text-slate-600">{viewingLead.source || 'organic / direct'}</p>
+                  {viewingLead.ad_id && <p className="flex items-center gap-1 text-indigo-600 mt-0.5"><Megaphone size={11} /> {viewingLead.ad_headline || viewingLead.ad_id}</p>}
+                </div>
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">School / Class</div>
+                  <p className="text-slate-600">{viewingLead.school || '—'}{viewingLead.class ? ` · ${viewingLead.class}` : ''}</p>
+                </div>
+                <div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Household</div>
+                  <p className="text-slate-600">{viewingLead.household_name || '—'}</p>
+                </div>
+              </div>
+
+              {(viewingLead.tags || []).length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {viewingLead.is_potential_student && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">
+                      <GraduationCap size={10} /> Student
+                    </span>
+                  )}
+                  {(viewingLead.tags || []).map(t => (
+                    <span key={t} className="text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{t}</span>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1"><MessageSquare size={11} /> Contact Outcomes</label>
+                <div className="space-y-1.5">
+                  {activitiesLoading ? (
+                    <div className="flex items-center justify-center py-3 text-slate-300"><Loader2 className="animate-spin" size={14} /></div>
+                  ) : leadActivities.length === 0 ? (
+                    <p className="text-[11px] text-slate-300">No contact attempts logged yet.</p>
+                  ) : (
+                    leadActivities.map(a => (
+                      <div key={a.id} className="flex items-center justify-between gap-2 text-[11px] bg-slate-50 rounded-lg px-2.5 py-1.5">
+                        <span className="text-slate-600">
+                          <b className="capitalize">{a.outcome.replace(/_/g, ' ')}</b>
+                          <span className="text-slate-400"> · {a.channel} · {a.direction}{a.created_by ? ` · ${a.created_by}` : ''}</span>
+                        </span>
+                        <span className="text-slate-400 shrink-0">{new Date(a.created_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short' })}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1"><StickyNote size={11} /> Notes</label>
+                <div className="space-y-1.5">
+                  {notesLoading ? (
+                    <div className="flex items-center justify-center py-3 text-slate-300"><Loader2 className="animate-spin" size={14} /></div>
+                  ) : leadNotes.length === 0 ? (
+                    <p className="text-[11px] text-slate-300">No notes yet.</p>
+                  ) : (
+                    leadNotes.map(n => (
+                      <div key={n.id} className="bg-slate-50 rounded-lg px-2.5 py-1.5">
+                        <p className="text-[12px] text-slate-700">{n.note}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{new Date(n.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1"><Baby size={11} /> Children</label>
+                  <Link href={`/admin/kids?leadId=${viewingLead.id}`} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Manage →</Link>
+                </div>
+                <div className="space-y-1.5">
+                  {kidsLoading ? (
+                    <div className="flex items-center justify-center py-3 text-slate-300"><Loader2 className="animate-spin" size={14} /></div>
+                  ) : kids.length === 0 ? (
+                    <p className="text-[11px] text-slate-300">No linked children.</p>
+                  ) : (
+                    kids.map(k => (
+                      <div key={k.id} className="bg-slate-50 rounded-lg px-2.5 py-1.5">
+                        <p className="text-[12px] font-bold text-slate-700">{k.name}{k.age ? `, age ${k.age}` : ''}{k.grade ? ` · ${k.grade}` : ''}</p>
+                        {(k.enrolments || []).length > 0 ? (
+                          <div className="mt-1 space-y-0.5">
+                            {k.enrolments.map(e => (
+                              <p key={e.id} className="text-[11px] text-slate-500">
+                                {e.sessions?.programs?.name || 'Session'} — {e.sessions?.starts_at ? new Date(e.sessions.starts_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short' }) : 'unscheduled'}
+                                {' · '}{e.attended ? <span className="text-emerald-600 font-bold">Attended</span> : <span className="text-slate-400">{e.status}</span>}
+                              </p>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-300 mt-0.5">Not enrolled on any session yet.</p>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1"><Send size={11} /> Finance</label>
+                  <Link href="/admin/commerce" className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">Manage in Commerce →</Link>
+                </div>
+                <div className="space-y-1.5">
+                  {financeLoading ? (
+                    <div className="flex items-center justify-center py-3 text-slate-300"><Loader2 className="animate-spin" size={14} /></div>
+                  ) : orders.length === 0 && passes.length === 0 ? (
+                    <p className="text-[11px] text-slate-300">No orders or passes yet.</p>
+                  ) : (
+                    <>
+                      {orders.map(o => (
+                        <div key={o.id} className="flex items-center justify-between gap-2 text-[11px] bg-slate-50 rounded-lg px-2.5 py-1.5">
+                          <span className="text-slate-600">
+                            <b>{o.bundles?.name || 'Order'}</b>
+                            <span className="text-slate-400"> · {o.status}{o.amount_total != null ? ` · ${o.currency} ${o.amount_total}` : ''}</span>
+                          </span>
+                          <span className="text-slate-400 shrink-0">{new Date(o.created_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short' })}</span>
+                        </div>
+                      ))}
+                      {passes.map(p => (
+                        <div key={p.id} className="flex items-center justify-between gap-2 text-[11px] bg-slate-50 rounded-lg px-2.5 py-1.5">
+                          <span className="text-slate-600">
+                            <b>Pass</b>
+                            <span className="text-slate-400"> · {p.credits_used}/{p.credits_total} credits used · expires {new Date(p.expires_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <Link href="/admin/lead-funnel/messages" className="block text-center text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 pt-2 border-t border-slate-100">
+                View full message history →
+              </Link>
             </div>
           </div>
         </div>
