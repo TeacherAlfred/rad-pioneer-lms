@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Heart, X, Search, Sparkles, MessageCircle, Mail, Loader2,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Zap, Share2, Users, Laugh,
-  FlaskConical, Check, Medal, GraduationCap, KeyRound, ArrowUpCircle
+  FlaskConical, Check, Medal, GraduationCap, KeyRound, ArrowUpCircle, HelpCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -20,6 +20,16 @@ const CATEGORIES = [
   { key: 'weird', label: 'Mad Scientist', shortLabel: 'Weird', icon: FlaskConical, color: '#8b5cf6' },
 ] as const;
 type CategoryKey = typeof CATEGORIES[number]['key'];
+
+// Step-by-step guide (see GuideOverlay below) — each targetId must match an id
+// somewhere in the page. Covers what each major section is for, not just how to
+// click through it. Re-openable any time via the "How this works" button in the hero.
+const TOUR_STEPS = [
+  { targetId: 'tour-hero', title: 'Track the Race', description: "Every vote is worth 100m on the real Comrades route from Durban to Pietermaritzburg. Watch the bar fill up as the whole school votes!" },
+  { targetId: 'tour-podium', title: 'Class Leaderboards', description: 'See which grade and class is currently in the lead, updated live as votes come in.' },
+  { targetId: 'tour-top5', title: 'Top Stories', description: 'Browse the 5 most-voted stories in each category — Most Inspiring, Epic Oopsie, Mad Scientist. Swipe through and vote right from here.' },
+  { targetId: 'tour-roster', title: 'Find & Vote', description: "Search for your family below, or scroll the full list. Tap the upvote icon on any story to cast your vote — once per category, per family." },
+];
 
 const TIER_WEIGHTS: Record<string, number> = { anonymous: 1, email: 5, whatsapp: 15 };
 const TIER_RANK: Record<string, number> = { anonymous: 0, email: 1, whatsapp: 2 };
@@ -131,6 +141,11 @@ function TrackerContent() {
   // --- DEVICE / TIER STATE ---
   const [deviceId, setDeviceId] = useState('');
   const [myVoter, setMyVoter] = useState<any>(null);
+  // Distinguishes "haven't checked yet" from "checked and confirmed no voter row" —
+  // without this, the tappedKeys effect below can't tell the two apart (myVoter is
+  // falsy in both cases) and would never clear stale tapped state after an admin
+  // reset wipes irene_voters, leaving every button looking permanently already-voted.
+  const [myVoterChecked, setMyVoterChecked] = useState(false);
   const [dailyTapCount, setDailyTapCount] = useState(0);
   const [tappedKeys, setTappedKeys] = useState<Set<string>>(new Set());
   const [hasSeenUpsell, setHasSeenUpsell] = useState(false);
@@ -142,6 +157,9 @@ function TrackerContent() {
   const [staffCodeError, setStaffCodeError] = useState('');
   const [isCheckingCode, setIsCheckingCode] = useState(false);
   const [educatorViewAllGrades, setEducatorViewAllGrades] = useState(false);
+
+  // --- GUIDE TOUR STATE (see TOUR_STEPS + GuideOverlay) ---
+  const [tourStep, setTourStep] = useState<number | null>(null);
 
   // --- UI/FILTER STATE ---
   const [selectedPhaseFilter, setSelectedPhaseFilter] = useState<'All' | 'Foundation' | 'Senior'>('All');
@@ -242,20 +260,43 @@ function TrackerContent() {
   // (e.g. an admin reset) doesn't leave a permanently stale checkmark behind.
   const fetchMyVoter = async (forDeviceId: string) => {
     const { data } = await supabase.from('irene_voters').select('*').eq('device_id', forDeviceId).maybeSingle();
-    if (data) setMyVoter(data);
+    setMyVoter(data || null);
+    setMyVoterChecked(true);
   };
 
   // Source of truth for "have I voted for this" is the DB, not the local
   // cache - this re-derives tappedKeys every time votes or myVoter change,
   // so it self-heals after an admin reset instead of trusting localStorage
-  // forever. If myVoter hasn't loaded yet, the localStorage-seeded value from
-  // the init effect stands in to avoid a flash of un-ticked cards.
+  // forever. Gated on myVoterChecked (not just myVoter) so a confirmed "no
+  // voter row" — e.g. right after an admin reset wipes irene_voters — clears
+  // tappedKeys down to empty instead of leaving every button looking already
+  // voted; the localStorage-seeded value only stands in before that check
+  // completes, to avoid a flash of un-ticked cards.
   useEffect(() => {
-    if (!myVoter) return;
-    const mine = new Set(votes.filter(v => v.voter_id === myVoter.id).map(v => `${v.response_id}::${v.category}`));
+    if (!myVoterChecked) return;
+    const mine = myVoter
+      ? new Set(votes.filter(v => v.voter_id === myVoter.id).map(v => `${v.response_id}::${v.category}`))
+      : new Set<string>();
     setTappedKeys(mine);
     localStorage.setItem('irene_tapped_keys', JSON.stringify([...mine]));
-  }, [votes, myVoter]);
+  }, [votes, myVoter, myVoterChecked]);
+
+  // Auto-show the guide once, the first time the main content (the sections it points
+  // at) is actually on screen — not during loading or while a gate (educator code/grade
+  // picker) is still up, since its targets wouldn't exist yet.
+  useEffect(() => {
+    if (loading || loadError) return;
+    const mainContentVisible = phase === 'parents' || phase === 'closed' || (phase === 'educators' && educatorUnlocked && !!educatorGrade);
+    if (!mainContentVisible) return;
+    if (localStorage.getItem('irene_tour_seen') === 'true') return;
+    const t = setTimeout(() => setTourStep(0), 800);
+    return () => clearTimeout(t);
+  }, [loading, loadError, phase, educatorUnlocked, educatorGrade]);
+
+  const closeTour = () => {
+    setTourStep(null);
+    localStorage.setItem('irene_tour_seen', 'true');
+  };
 
   const fetchData = async () => {
     setLoadError(null);
@@ -703,7 +744,7 @@ function TrackerContent() {
         {/* z-30 (not z-10) so the milestone popups nested inside — which establish their
             own stacking context here and can't outrank siblings outside it — render above
             the educator "Viewing Grade" pill below (z-20), which otherwise blocked them. */}
-        <div className="relative z-30 max-w-2xl mx-auto">
+        <div id="tour-hero" className="relative z-30 max-w-2xl mx-auto">
           <h1 className="text-2xl md:text-3xl font-black tracking-tight mb-1">Irene Comrades Tracker</h1>
           <p className="text-slate-400 text-[10px] md:text-xs font-medium uppercase tracking-widest mb-6">1 Vote = 100m • Durban → Pietermaritzburg • 90km Up Run</p>
 
@@ -724,6 +765,14 @@ function TrackerContent() {
               {phaseEndsHint}
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={() => setTourStep(0)}
+            className="inline-flex items-center gap-1.5 mt-4 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest text-slate-300 transition-colors"
+          >
+            <HelpCircle size={12} /> How this works
+          </button>
         </div>
       </header>
 
@@ -850,7 +899,7 @@ function TrackerContent() {
           )}
 
           {/* --- ADAPTIVE PODIUM --- */}
-          <div className="max-w-5xl mx-auto px-4 mb-6">
+          <div id="tour-podium" className="max-w-5xl mx-auto px-4 mb-6">
             <div className="bg-white rounded-2xl p-4 md:p-6 shadow-xl border border-slate-100/60 ring-1 ring-black/5">
               <div className="flex items-center gap-3 mb-5 border-b border-slate-50 pb-4">
                 <div className="w-10 h-10 bg-gradient-to-br from-amber-100 to-amber-50 rounded-full flex items-center justify-center text-amber-500 shadow-inner shrink-0 ring-1 ring-amber-200/50"><Trophy size={18} /></div>
@@ -936,7 +985,7 @@ function TrackerContent() {
           )}
 
           {/* --- CATEGORY SHOWCASE / TOP 5 --- */}
-          <section className="px-4 max-w-5xl mx-auto mb-8">
+          <section id="tour-top5" className="px-4 max-w-5xl mx-auto mb-8">
             <div className="bg-white rounded-[32px] pt-5 pb-6 border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] relative overflow-hidden">
               <div className="grid grid-cols-3 gap-1.5 md:gap-2 mb-3 px-4">
                 {CATEGORIES.map(cat => (
@@ -983,7 +1032,7 @@ function TrackerContent() {
           </section>
 
           {/* --- FIND MY FAMILY + ROSTER --- */}
-          <section className="px-4 max-w-5xl mx-auto">
+          <section id="tour-roster" className="px-4 max-w-5xl mx-auto">
             <div className="flex items-center justify-between mb-6 px-2">
               <h2 className="text-xl font-black text-slate-800">Find & Vote</h2>
               <span className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] bg-[#0066cc]/10 px-3 py-1 rounded-full">{selectedGrade === 'All' ? 'All Grades' : selectedGrade}</span>
@@ -1115,6 +1164,82 @@ function TrackerContent() {
           </span>
         </a>
       </footer>
+
+      {tourStep !== null && (
+        <GuideOverlay
+          step={TOUR_STEPS[tourStep]}
+          current={tourStep}
+          total={TOUR_STEPS.length}
+          onNext={() => (tourStep === TOUR_STEPS.length - 1 ? closeTour() : setTourStep(s => (s ?? 0) + 1))}
+          onPrev={() => setTourStep(s => Math.max(0, (s ?? 0) - 1))}
+          onClose={closeTour}
+        />
+      )}
+    </div>
+  );
+}
+
+// Step-by-step page tour — scrolls each target section into view and spotlights it
+// (a giant box-shadow "hole" trick, simpler and more robust than real clip-path/portal
+// masking) with a bottom card explaining what it's for, not just how to use it.
+function GuideOverlay({ step, current, total, onNext, onPrev, onClose }: {
+  step: { targetId: string; title: string; description: string };
+  current: number;
+  total: number;
+  onNext: () => void;
+  onPrev: () => void;
+  onClose: () => void;
+}) {
+  const [rect, setRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    setRect(null);
+    const el = document.getElementById(step.targetId);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
+    };
+    const t = setTimeout(measure, 400); // let the smooth-scroll mostly settle first
+    window.addEventListener('resize', measure);
+    return () => { clearTimeout(t); window.removeEventListener('resize', measure); };
+  }, [step]);
+
+  return (
+    <div className="fixed inset-0 z-[70]">
+      {rect ? (
+        <div
+          className="fixed rounded-2xl pointer-events-none transition-all duration-300 border-2 border-[#0066cc]"
+          style={{ top: rect.top - 8, left: rect.left - 8, width: rect.width + 16, height: rect.height + 16, boxShadow: '0 0 0 9999px rgba(15,23,42,0.72)' }}
+        />
+      ) : (
+        <div className="fixed inset-0 bg-slate-900/72" />
+      )}
+
+      <div className="fixed bottom-4 left-4 right-4 z-[71] max-w-sm mx-auto bg-white rounded-2xl shadow-2xl p-5">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[9px] font-black uppercase tracking-widest text-[#0066cc]">Step {current + 1} of {total}</span>
+          <button type="button" onClick={onClose} className="text-slate-300 hover:text-slate-600 -m-1 p-1" aria-label="Close guide"><X size={16} /></button>
+        </div>
+        <h3 className="text-base font-black text-slate-900 mb-1">{step.title}</h3>
+        <p className="text-xs text-slate-600 leading-snug mb-4">{step.description}</p>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex gap-1">
+            {Array.from({ length: total }).map((_, i) => (
+              <span key={i} className={`h-1.5 rounded-full transition-all ${i === current ? 'w-4 bg-[#0066cc]' : 'w-1.5 bg-slate-200'}`} />
+            ))}
+          </div>
+          <div className="flex gap-2">
+            {current > 0 && (
+              <button type="button" onClick={onPrev} className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-700">Back</button>
+            )}
+            <button type="button" onClick={onNext} className="px-4 py-2 bg-[#0066cc] text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-colors">
+              {current === total - 1 ? 'Got it!' : 'Next'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
