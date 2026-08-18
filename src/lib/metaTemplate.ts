@@ -11,8 +11,11 @@
 // see sendMetaTemplate below). Returns whether Meta actually accepted the
 // send, plus its error detail if not - callers that log "[Delivered ...]"
 // or notify the admin need this, otherwise a rejected send still gets
-// recorded as if it succeeded.
-export async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string }> {
+// recorded as if it succeeded. Also returns the wamid (Meta's own message
+// id) so callers can store it on the messages row - that's what lets a
+// later status webhook (sent/delivered/read) get matched back to this
+// specific send, see whatsapp-webhook/route.ts's applyMessageStatus.
+export async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string; wamid?: string }> {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
 
@@ -37,7 +40,7 @@ export async function sendWhatsAppMessage(to: string, messagePayload: any): Prom
     return { ok: false, error: errorDetail };
   }
   console.log(`✅ Message successfully sent to ${to}`);
-  return { ok: true };
+  return { ok: true, wamid: data?.messages?.[0]?.id };
 }
 
 // Generic per-lead personalization: {{name}}, {{school}}, {{class}}, etc.
@@ -70,7 +73,7 @@ export async function sendMetaTemplate(
   // Meta assigns its own default payload and a tap won't match anything in
   // bot_flows even if the trigger_button_id looks right.
   buttonPayloads: string[] = []
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; wamid?: string }> {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
 
@@ -121,5 +124,5 @@ export async function sendMetaTemplate(
   if (!response.ok) {
     return { ok: false, error: data?.error?.message || JSON.stringify(data) };
   }
-  return { ok: true };
+  return { ok: true, wamid: data?.messages?.[0]?.id };
 }

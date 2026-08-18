@@ -18,7 +18,28 @@ type MessageRow = {
   lead_phone?: string | null;
   lead_name?: string | null;
   lead_tags?: string[] | null;
+  status?: string | null;
+  status_updated_at?: string | null;
+  conversation_category?: string | null;
+  conversation_expires_at?: string | null;
 };
+
+// WhatsApp's own check-mark convention - only meaningful for outbound rows
+// that actually got a status webhook (see whatsapp-webhook/route.ts's
+// applyMessageStatus). Rows sent before this feature existed have no
+// status at all and render with none of this, not a placeholder.
+const STATUS_DISPLAY: Record<string, { icon: string; label: string; className: string }> = {
+  sent: { icon: '✓', label: 'Sent', className: 'text-slate-400' },
+  delivered: { icon: '✓✓', label: 'Delivered', className: 'text-slate-400' },
+  played: { icon: '✓✓', label: 'Played', className: 'text-slate-400' },
+  read: { icon: '✓✓', label: 'Read', className: 'text-sky-500' },
+  failed: { icon: '⚠', label: 'Failed', className: 'text-rose-500' },
+};
+
+function formatStatusTime(iso: string | null | undefined) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit' });
+}
 
 const INHOUSE_TAG = 'Inhouse';
 function isInhouseRow(m: MessageRow) {
@@ -302,6 +323,14 @@ export default function MessageActivityPage() {
                           <span className="line-clamp-2">{r._label}</span>
                           {r._detail && (
                             <div className="text-[11px] text-slate-400 mt-0.5">{r._detail}</div>
+                          )}
+                          {r.status && STATUS_DISPLAY[r.status] && (
+                            <div className={`text-[11px] mt-0.5 flex items-center gap-1.5 ${STATUS_DISPLAY[r.status].className}`}>
+                              <span>{STATUS_DISPLAY[r.status].icon} {STATUS_DISPLAY[r.status].label}{r.status_updated_at ? ` · ${formatStatusTime(r.status_updated_at)}` : ''}</span>
+                              {r.conversation_category && (
+                                <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">{r.conversation_category}</span>
+                              )}
+                            </div>
                           )}
                         </td>
                         <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">

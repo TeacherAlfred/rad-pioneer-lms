@@ -24,6 +24,46 @@ function isValidMetaSignature(rawBody: string, signatureHeader: string | null): 
   return timingSafeEqual(expected, received);
 }
 
+// Meta's delivery/read status events (sent -> delivered -> read, or
+// failed) arrive as value.statuses[], separate from value.messages[],
+// keyed by the message's own wamid rather than the phone number. Matches
+// back to whichever `messages` row we stamped with that wamid when we sent
+// it (see sendWhatsAppMessage/sendMetaTemplate in metaTemplate.ts). Meta
+// explicitly does not guarantee delivery order (a `read` can arrive before
+// its `delivered`), so this only ever moves status forward, never back.
+const STATUS_RANK: Record<string, number> = { sent: 1, delivered: 2, played: 2, read: 3 };
+
+async function applyMessageStatus(supabase: any, status: any) {
+  if (!status?.id) return;
+
+  const { data: existing } = await supabase.from('messages').select('id, status').eq('wamid', status.id).maybeSingle();
+  if (!existing) return; // no matching row - a status for a message sent before this feature existed, or something we don't log.
+
+  // `failed` is a terminal error state, not a step in the sent->read
+  // progression, so it always applies regardless of what's already stored.
+  if (status.status !== 'failed') {
+    const currentRank = STATUS_RANK[existing.status] || 0;
+    const incomingRank = STATUS_RANK[status.status] || 0;
+    if (incomingRank < currentRank) return;
+  }
+
+  const update: Record<string, any> = {
+    status: status.status,
+    status_updated_at: new Date().toISOString(),
+  };
+  if (status.conversation) {
+    update.conversation_category = status.conversation.origin?.type ?? null;
+    // Only ever present on the 'sent' status - when this lead's 24hr free-
+    // reply window closes. Not an adjustable setting, just Meta telling us
+    // the fixed policy's actual close time for this specific conversation.
+    if (status.conversation.expiration_timestamp) {
+      update.conversation_expires_at = new Date(Number(status.conversation.expiration_timestamp) * 1000).toISOString();
+    }
+  }
+
+  await supabase.from('messages').update(update).eq('id', existing.id);
+}
+
 // 2. Core Helper: Admin Pipeline Tracker
 // Meta only allows free-form (non-template) sends to a number within 24hrs of
 // that number last messaging the WABA - the "customer service window". If the
@@ -104,7 +144,7 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
   };
   const sendResult = await sendWhatsAppMessage(senderPhone, mediaPayload);
   if (sendResult.ok) {
-    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]` }]);
+    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]`, wamid: sendResult.wamid || null }]);
     await notifyAdmin(supabase, senderPhone, `📥 Downloaded the ${matchedMedia.title}.`, lead.id);
   } else {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
@@ -125,6 +165,7 @@ async function handleGenericHandoff(supabase: any, senderPhone: string, lead: an
     lead_id: lead.id,
     direction: 'outbound',
     body: ackResult.ok ? '[Delivered human-handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${ackResult.error}]`,
+    wamid: ackResult.wamid || null,
   }]);
   await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`, lead.id);
 }
@@ -166,7 +207,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     return;
   }
 
-  let sendResult: { ok: boolean; error?: string };
+  let sendResult: { ok: boolean; error?: string; wamid?: string };
   if (flow.action_type === 'message') {
     const payload = (flow.message_buttons || []).length > 0
       ? {
@@ -183,6 +224,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
       lead_id: lead.id,
       direction: 'outbound',
       body: sendResult.ok ? `[Delivered flow: ${flow.label}]` : `[FAILED to deliver flow ${flow.label}: ${sendResult.error}]`,
+      wamid: sendResult.wamid || null,
     }]);
   } else {
     const bodyValues = (flow.template_variables || []).map((v: string) => resolveVariable(String(v), effectiveLead));
@@ -191,6 +233,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
       lead_id: lead.id,
       direction: 'outbound',
       body: sendResult.ok ? `[Delivered template: ${flow.template_name}]` : `[FAILED to deliver template ${flow.template_name}: ${sendResult.error}]`,
+      wamid: sendResult.wamid || null,
     }]);
   }
 
@@ -231,7 +274,16 @@ export async function POST(request: Request) {
         for (const change of entry.changes || []) {
           const value = change.value;
 
-          if (value.statuses) continue; 
+          if (value.statuses) {
+            const supabase = createClient(
+              process.env.NEXT_PUBLIC_SUPABASE_URL!,
+              process.env.SUPABASE_SERVICE_ROLE_KEY!
+            );
+            for (const status of value.statuses) {
+              await applyMessageStatus(supabase, status);
+            }
+            continue;
+          }
 
           if (value.messages) {
             for (const message of value.messages) {
@@ -441,6 +493,7 @@ export async function POST(request: Request) {
                     lead_id: lead.id,
                     direction: 'outbound',
                     body: optOutResult.ok ? '[Delivered opt-out confirmation]' : `[FAILED to deliver opt-out confirmation: ${optOutResult.error}]`,
+                    wamid: optOutResult.wamid || null,
                   }]);
                   await notifyAdmin(supabase, senderPhone, "🚫 Opted out of marketing.", lead.id, { immediate: true });
                   continue;
@@ -480,6 +533,7 @@ export async function POST(request: Request) {
                   lead_id: lead.id,
                   direction: 'outbound',
                   body: captureAckResult.ok ? '[Delivered reply-capture confirmation]' : `[FAILED to deliver reply-capture confirmation: ${captureAckResult.error}]`,
+                  wamid: captureAckResult.wamid || null,
                 }]);
                 await notifyAdmin(supabase, senderPhone, `📝 ${label}: ${messageText}`, lead.id);
                 continue;
@@ -499,6 +553,7 @@ export async function POST(request: Request) {
                     lead_id: lead.id,
                     direction: 'outbound',
                     body: ireneAckResult.ok ? '[Delivered Irene voting support acknowledgment]' : `[FAILED to deliver Irene voting support acknowledgment: ${ireneAckResult.error}]`,
+                    wamid: ireneAckResult.wamid || null,
                   }]);
                   await notifyAdmin(supabase, senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.", lead.id);
                   continue;
