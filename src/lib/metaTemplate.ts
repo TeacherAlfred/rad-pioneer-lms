@@ -2,6 +2,43 @@
 // bot_flows automation - both need to resolve {{column}} tokens against a
 // lead's own row and send a Meta template the same way, so this exists
 // once rather than drifting into two slightly-different copies.
+// sendWhatsAppMessage lives here too (not just template sends) because the
+// buffered-notification flush endpoint (src/app/api/lead-funnel/notify-flush)
+// needs to send freeform/interactive messages the same way the webhook does,
+// without importing from a route file.
+
+// Sends a freeform/interactive WhatsApp message (as opposed to a template -
+// see sendMetaTemplate below). Returns whether Meta actually accepted the
+// send, plus its error detail if not - callers that log "[Delivered ...]"
+// or notify the admin need this, otherwise a rejected send still gets
+// recorded as if it succeeded.
+export async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string }> {
+  const phoneId = process.env.PHONE_NUMBER_ID!;
+  const token = process.env.WHATSAPP_TOKEN!;
+
+  const response = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: to,
+      ...messagePayload
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    const errorDetail = data?.error?.message || JSON.stringify(data);
+    console.error(`❌ Meta API Error sending to ${to}:`, JSON.stringify(data, null, 2));
+    return { ok: false, error: errorDetail };
+  }
+  console.log(`✅ Message successfully sent to ${to}`);
+  return { ok: true };
+}
 
 // Generic per-lead personalization: {{name}}, {{school}}, {{class}}, etc.
 // resolve against that column on the lead's own row if it exists, rather

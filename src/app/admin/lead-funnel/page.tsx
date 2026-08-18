@@ -6,7 +6,7 @@ import {
   Loader2, ArrowLeft, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, ClipboardList, Home,
   Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, GitBranch, Users2, Pencil, Baby,
-  GraduationCap, StickyNote, Tag, BookOpen, Activity, Flame,
+  GraduationCap, StickyNote, Tag, BookOpen, Activity, Flame, Bell,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -722,6 +722,9 @@ export default function LeadFunnelPage() {
             </Link>
             <Link href="/admin/lead-funnel/messages" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <MessageSquare size={14} /> Message Activity
+            </Link>
+            <Link href="/admin/lead-funnel/notifications" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+              <Bell size={14} /> Notifications
             </Link>
             <Link href="/admin/warm-list" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
               <ClipboardList size={14} /> Import / Review Leads (Warm List)

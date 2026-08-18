@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { recordStageChange } from '@/lib/leadStageHistory';
-import { resolveVariable, sendMetaTemplate } from '@/lib/metaTemplate';
+import { resolveVariable, sendMetaTemplate, sendWhatsAppMessage } from '@/lib/metaTemplate';
+import { STATUS_BUTTONS } from '@/lib/adminPipelineButtons';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
 // signature Meta signs the raw body with, using the app secret.
@@ -22,48 +23,18 @@ function isValidMetaSignature(rawBody: string, signatureHeader: string | null): 
   return timingSafeEqual(expected, received);
 }
 
-// 1. Core Helper: Send WhatsApp Message
-// Returns whether Meta actually accepted the send, plus its error detail if
-// not - callers that log "[Delivered ...]" or notify the admin need this,
-// otherwise a rejected send still gets recorded as if it succeeded.
-async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string }> {
-  const phoneId = process.env.PHONE_NUMBER_ID!;
-  const token = process.env.WHATSAPP_TOKEN!;
-
-  const response = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to: to,
-      ...messagePayload
-    })
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    const errorDetail = data?.error?.message || JSON.stringify(data);
-    console.error(`❌ Meta API Error sending to ${to}:`, JSON.stringify(data, null, 2));
-    return { ok: false, error: errorDetail };
-  }
-  console.log(`✅ Message successfully sent to ${to}`);
-  return { ok: true };
+// Compares current Africa/Johannesburg local time-of-day against the
+// admin's configured quiet hours. dnd_end earlier than dnd_start means the
+// window crosses midnight (e.g. 21:00-07:00) - handled by treating "in
+// range" as an OR across the wrap instead of a plain between check.
+function isWithinDnd(settings: { dnd_enabled: boolean; dnd_start_time: string | null; dnd_end_time: string | null } | null): boolean {
+  if (!settings?.dnd_enabled || !settings.dnd_start_time || !settings.dnd_end_time) return false;
+  const now = new Date().toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit', hour12: false });
+  const start = settings.dnd_start_time.slice(0, 5);
+  const end = settings.dnd_end_time.slice(0, 5);
+  if (start <= end) return now >= start && now < end;
+  return now >= start || now < end; // wraps past midnight
 }
-
-// Contact-attempt outcomes the admin can log directly from a pipeline
-// alert's buttons. Button title max 20 chars (Meta error 131009); id
-// prefix + "_" + leadId is what STAGE 2's admin button handler matches
-// back to a lead_activities row. These log what happened on this attempt -
-// they never move lifecycle_stage (see RAD_Lead_Stages_and_Followup_Spec.md).
-const STATUS_BUTTONS: Record<string, { title: string; outcome: string; label: string }> = {
-  status_contacted: { title: 'Contacted', outcome: 'contacted', label: 'Contacted successfully' },
-  status_no_response: { title: 'No Response', outcome: 'no_response', label: 'Contacted, no response' },
-  status_followup: { title: 'Follow-up Set', outcome: 'followup_scheduled', label: 'Follow-up/call scheduled' },
-};
 
 // 2. Core Helper: Admin Pipeline Tracker
 // Meta only allows free-form (non-template) sends to a number within 24hrs of
@@ -71,9 +42,25 @@ const STATUS_BUTTONS: Record<string, { title: string; outcome: string; label: st
 // admin hasn't texted the bot recently, this send gets rejected by Meta. Queue
 // it instead of losing it silently; it surfaces as a catch-up summary the
 // moment the admin next messages the bot (see isFromAdmin below).
-async function notifyAdmin(supabase: any, senderPhone: string, stageText: string, leadId: string) {
+//
+// Most events don't send here at all anymore - see
+// RAD_Lead_Stages_and_Followup_Spec-adjacent buffering: everything except
+// { immediate: true } callers (new lead, opt-out, bot_media delivery
+// failure) gets queued into admin_notification_buffer and consolidated into
+// one message per lead by the notify-flush endpoint once that lead's
+// buffer window elapses. During DND, even immediate-tier events queue
+// instead of sending - "any lead notifications are not sent during that
+// time" applies across the board, not just the buffered ones.
+async function notifyAdmin(supabase: any, senderPhone: string, stageText: string, leadId: string, opts?: { immediate?: boolean }) {
   const adminPhone = process.env.ADMIN_PHONE_NUMBER;
   if (!adminPhone) return;
+
+  const { data: settings } = await supabase.from('admin_notification_settings').select('*').limit(1).maybeSingle();
+
+  if (isWithinDnd(settings) || !opts?.immediate) {
+    await supabase.from('admin_notification_buffer').insert([{ lead_id: leadId, event_text: stageText }]);
+    return;
+  }
 
   const adminAlertText = `🚦 *Pipeline Update*\n\nLead: +${senderPhone}\nStage: ${stageText}\n\nReach out instantly: https://wa.me/${senderPhone}`;
 
@@ -133,7 +120,7 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
     await notifyAdmin(supabase, senderPhone, `📥 Downloaded the ${matchedMedia.title}.`, lead.id);
   } else {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
-    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`, lead.id);
+    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`, lead.id, { immediate: true });
   }
   return sendResult;
 }
@@ -406,7 +393,7 @@ export async function POST(request: Request) {
               if (isNewLead) {
                 await recordStageChange(supabase, lead.id, { toStage: 'new' });
                 // Alert Admin of brand new lead
-                await notifyAdmin(supabase, senderPhone, "🆕 Brand New Lead entered the funnel.", lead.id);
+                await notifyAdmin(supabase, senderPhone, "🆕 Brand New Lead entered the funnel.", lead.id, { immediate: true });
               } else {
                 const { data: existingLead } = await supabase
                   .from('leads')
@@ -467,7 +454,7 @@ export async function POST(request: Request) {
                     direction: 'outbound',
                     body: optOutResult.ok ? '[Delivered opt-out confirmation]' : `[FAILED to deliver opt-out confirmation: ${optOutResult.error}]`,
                   }]);
-                  await notifyAdmin(supabase, senderPhone, "🚫 Opted out of marketing.", lead.id);
+                  await notifyAdmin(supabase, senderPhone, "🚫 Opted out of marketing.", lead.id, { immediate: true });
                   continue;
                 }
               }

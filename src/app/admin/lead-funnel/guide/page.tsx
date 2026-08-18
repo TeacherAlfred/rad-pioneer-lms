@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import {
   ArrowLeft, GitBranch, MessageSquare, ClipboardList, FileText, Send,
-  Users, Users2, Tag, StickyNote, GraduationCap, Megaphone, Layers, AlertTriangle,
+  Users, Users2, Tag, StickyNote, GraduationCap, Megaphone, Layers, AlertTriangle, BellOff,
 } from "lucide-react";
 
 // Reference/help content only - no data fetching. Written to answer "how
@@ -58,6 +58,7 @@ const CONTENTS = [
   { id: 'activities', label: 'Contact outcomes (lead_activities)' },
   { id: 'customer', label: 'Customer status' },
   { id: 'bot-flows', label: 'Bot Flows' },
+  { id: 'notifications', label: 'Notification buffering & Do Not Disturb' },
   { id: 'bot-media', label: 'Bot Media' },
   { id: 'templates', label: 'Meta templates & the 24hr window' },
   { id: 'households', label: 'Households' },
@@ -164,6 +165,20 @@ export default function LeadFunnelGuidePage() {
             </ul>
             <p>Any flow can also: stamp <code className="bg-slate-100 px-1 rounded">source</code> on the lead (attribution - which flow actually converts), add tags, notify you when it fires, choose whether it stays self-serve or still flags <code className="bg-slate-100 px-1 rounded">needs_human</code>, and mark that it <b>expects a reply</b> - the lead's next freeform message gets captured as a note instead of falling into the generic welcome, with a configurable confirmation and an optional tag once captured.</p>
             <p className="text-xs text-slate-400">Historical note: the "Get Free Guide" button used to be hardcoded directly in the webhook file. It's now just a regular Bot Media-type flow, same as anything else you'd configure.</p>
+          </Section>
+
+          <Section id="notifications" icon={BellOff} title="Notification buffering & Do Not Disturb"
+            blurb="/admin/lead-funnel/notifications - batch pipeline alerts into one message per lead, plus quiet hours.">
+            <p>
+              A brand-new lead, a POPIA opt-out, and a bot_media delivery failure still ping you immediately - those are the only three. Everything else a lead does (button taps, media downloads, bot_flow fires, reply captures) writes a row to <code className="bg-slate-100 px-1 rounded">admin_notification_buffer</code> instead of sending right away.
+            </p>
+            <p>
+              The window is <b>fixed per lead</b>: it starts on that lead's first buffered action and always flushes exactly <i>N</i> minutes later (set on the settings page), no matter how many more actions they take in between - it can't be pushed back indefinitely by someone tapping through a menu quickly. When it flushes, you get <b>one message for that lead</b> listing everything they did, with the same Contacted/No Response/Follow-up Set buttons a single-event alert has today. A different lead's actions never get mixed into the same message.
+            </p>
+            <p>
+              <b>Do Not Disturb</b> hours hold back <i>everything</i>, including the three immediate-tier alerts - nothing sends during the window, and whatever accumulated flushes the moment it ends.
+            </p>
+            <Gap>The flush is driven by an external scheduler hitting <code className="bg-slate-100 px-1 rounded">GET /api/lead-funnel/notify-flush</code> (authenticated via the <code className="bg-slate-100 px-1 rounded">WABA_API</code> env var as a bearer token) - specifically a cron-job.org job, not Vercel Cron, since Vercel's Hobby tier only allows daily cron jobs, too coarse for a 5-10 minute buffer. If that external job isn't configured or stops running, buffered messages accumulate in the database but never actually send - this page has no way to detect that from inside the app.</Gap>
           </Section>
 
           <Section id="bot-media" icon={FileText} title="Bot Media"
