@@ -24,12 +24,24 @@ type CategoryKey = typeof CATEGORIES[number]['key'];
 // Step-by-step guide (see GuideOverlay below) — each targetId must match an id
 // somewhere in the page. Covers what each major section is for, not just how to
 // click through it. Re-openable any time via the "How this works" button in the hero.
+// The last two steps point at a permanent practice card (see EXAMPLE_RESPONSE_ID)
+// instead of a real family, so the guide always has a stable target to demo the
+// expand button and voting on, regardless of search state or which families exist.
 const TOUR_STEPS = [
   { targetId: 'tour-hero', title: 'Track the Race', description: "Every vote is worth 100m on the real Comrades route from Durban to Pietermaritzburg. Watch the bar fill up as the whole school votes!" },
   { targetId: 'tour-podium', title: 'Class Leaderboards', description: 'See which grade and class is currently in the lead, updated live as votes come in.' },
   { targetId: 'tour-top5', title: 'Top Stories', description: 'Browse the 5 most-voted stories in each category — Most Inspiring, Epic Oopsie, Mad Scientist. Swipe through and vote right from here.' },
-  { targetId: 'tour-roster', title: 'Find & Vote', description: "Search for your family below, or scroll the full list. Tap the upvote icon on any story to cast your vote — once per category, per family." },
+  { targetId: 'tour-search', title: 'Find Your Family', description: 'Type your first name as the parent to filter the list below. Can’t find your name? Use the link just underneath the search box for another way to look.' },
+  { targetId: 'tour-private-search-link', title: "Searching By Your Child's Name", description: "Children's names are never displayed anywhere on this page — but if you know your child's first name and grade, you can use them privately to find your family." },
+  { targetId: 'tour-example-card', title: 'See the Full Story', description: 'Tap the glowing blue button on any family’s card to open their full stories.' },
+  { targetId: 'tour-example-card', title: 'Cast Your Vote', description: "Tap the icon in the corner of a story to vote for it — once per category, per family. This card is just a practice example, so your tap here won't actually count!", forceExpandExample: true },
 ];
+
+// A permanent, always-verified practice card the guide points at for the last two
+// steps — real parents/educators can't vote on it (see handleTap), and its seeded
+// votes are deliberately excluded from every real leaderboard/progress stat (see
+// realVotes below) so it can never distort actual standings.
+const EXAMPLE_RESPONSE_ID = 'c4dae9c1-dfeb-4ea7-9e7a-55899fddfc86';
 
 const TIER_WEIGHTS: Record<string, number> = { anonymous: 1, email: 5, whatsapp: 15 };
 const TIER_RANK: Record<string, number> = { anonymous: 0, email: 1, whatsapp: 2 };
@@ -351,10 +363,17 @@ function TrackerContent() {
   const responsesById: Record<string, any> = {};
   responses.forEach(r => { responsesById[r.id] = r; });
 
+  // The practice card's seeded votes count toward its OWN categoryTotals (so its card
+  // can show them), but never toward class standings, the km progress bar, or the
+  // "votes cast" counter — those are real-participation stats and must stay real.
+  const realVotes = votes.filter(v => v.response_id !== EXAMPLE_RESPONSE_ID);
+
   votes.forEach(v => {
     if (!categoryTotals[v.response_id]) categoryTotals[v.response_id] = { inspiring: 0, oopsie: 0, weird: 0 };
     categoryTotals[v.response_id][v.category as CategoryKey] = (categoryTotals[v.response_id][v.category as CategoryKey] || 0) + v.weight;
+  });
 
+  realVotes.forEach(v => {
     const response = responsesById[v.response_id];
     (response?.cubs || []).forEach((cub: any) => {
       const key = classKey(cub);
@@ -368,8 +387,8 @@ function TrackerContent() {
     return t ? t.inspiring + t.oopsie + t.weird : 0;
   };
 
-  const totalVotedWeightAllTime = votes.reduce((sum, v) => sum + v.weight, 0);
-  const familiesVotedCount = new Set(votes.map(v => v.voter_id)).size;
+  const totalVotedWeightAllTime = realVotes.reduce((sum, v) => sum + v.weight, 0);
+  const familiesVotedCount = new Set(realVotes.map(v => v.voter_id)).size;
 
   // --- DERIVED: FILTERING ---
   const gradeInScope = (grade: string) => {
@@ -382,6 +401,7 @@ function TrackerContent() {
   const filteredResponses = responses.filter(r => (r.cubs || []).some((c: any) => gradeInScope(c.grade)));
 
   const top5ForCategory = [...filteredResponses]
+    .filter(r => r.id !== EXAMPLE_RESPONSE_ID) // practice card never competes for a real Top 5 spot
     .sort((a, b) => (categoryTotals[b.id]?.[activeCategory] || 0) - (categoryTotals[a.id]?.[activeCategory] || 0))
     .filter(r => (categoryTotals[r.id]?.[activeCategory] || 0) > 0)
     .slice(0, 5);
@@ -494,6 +514,11 @@ function TrackerContent() {
   };
 
   const handleTap = async (response: any, category: CategoryKey, isEducatorTap = false) => {
+    if (response.id === EXAMPLE_RESPONSE_ID) {
+      alert("This is just a practice example for the guide — it's not a real family, so votes here don't count. Try it on a real family below!");
+      return;
+    }
+
     const key = `${response.id}::${category}`;
     if (tappedKeys.has(key)) return;
 
@@ -1037,7 +1062,7 @@ function TrackerContent() {
               <h2 className="text-xl font-black text-slate-800">Find & Vote</h2>
               <span className="text-[10px] font-black uppercase tracking-widest text-[#0066cc] bg-[#0066cc]/10 px-3 py-1 rounded-full">{selectedGrade === 'All' ? 'All Grades' : selectedGrade}</span>
             </div>
-            <div className="relative mb-2">
+            <div id="tour-search" className="relative mb-2">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
               <input type="text" placeholder="Find your family — parent's first name, or child's initial + grade + class" value={familySearch} onChange={(e) => { setFamilySearch(e.target.value); setNameSearchResults([]); }} className="w-full bg-white p-3 pl-11 rounded-2xl border border-slate-200 shadow-sm text-sm font-bold outline-none focus:border-[#0066cc]" />
             </div>
@@ -1051,7 +1076,7 @@ function TrackerContent() {
               </div>
             )}
 
-            <div className="mb-6 text-center">
+            <div id="tour-private-search-link" className="mb-6 text-center">
               <button type="button" onClick={() => setShowNameSearch(v => !v)} className="text-[10px] font-black text-[#0066cc] uppercase tracking-widest hover:underline">
                 {showNameSearch ? 'Hide' : "Can't find your response?"}
               </button>
@@ -1183,7 +1208,7 @@ function TrackerContent() {
 // (a giant box-shadow "hole" trick, simpler and more robust than real clip-path/portal
 // masking) with a bottom card explaining what it's for, not just how to use it.
 function GuideOverlay({ step, current, total, onNext, onPrev, onClose }: {
-  step: { targetId: string; title: string; description: string };
+  step: { targetId: string; title: string; description: string; forceExpandExample?: boolean };
   current: number;
   total: number;
   onNext: () => void;
@@ -1196,12 +1221,21 @@ function GuideOverlay({ step, current, total, onNext, onPrev, onClose }: {
     setRect(null);
     const el = document.getElementById(step.targetId);
     if (!el) return;
+
+    // The "how to vote" step needs the practice card's story sections (and upvote
+    // icons) actually in the DOM — expand it first if it's still collapsed. Scoped
+    // to the expand button specifically so this can't accidentally re-collapse it.
+    if (step.forceExpandExample) {
+      const expandBtn = el.querySelector('button[title="Expand full story"]') as HTMLButtonElement | null;
+      expandBtn?.click();
+    }
+
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     const measure = () => {
       const r = el.getBoundingClientRect();
       setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     };
-    const t = setTimeout(measure, 400); // let the smooth-scroll mostly settle first
+    const t = setTimeout(measure, 400); // let the smooth-scroll (and any expand) mostly settle first
     window.addEventListener('resize', measure);
     return () => { clearTimeout(t); window.removeEventListener('resize', measure); };
   }, [step]);
@@ -1447,14 +1481,16 @@ function RosterCard({ response, total, counts, isTop, tappedKeys, phase, educato
   // Collapsed by default so a long roster stays scannable — the glowing button opens
   // a card's full stories on demand rather than a plain "View Full Stories" link.
   const [expanded, setExpanded] = useState(false);
+  const isExample = response.id === EXAMPLE_RESPONSE_ID;
 
   return (
-    <div className={`p-4 transition-colors ${isTop ? 'bg-amber-50/50' : 'bg-white hover:bg-slate-50'}`}>
+    <div id={isExample ? 'tour-example-card' : undefined} className={`p-4 transition-colors ${isTop ? 'bg-amber-50/50' : isExample ? 'bg-indigo-50/40' : 'bg-white hover:bg-slate-50'}`}>
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="min-w-0 flex-1">
           <p className="font-bold text-sm text-slate-900 truncate flex items-center gap-1.5 leading-tight">
             {firstName(response)} - {(response.cubs || []).map((c: any) => childInitials(c)).join(', ')}
             {isTop && <Sparkles size={12} className="text-amber-500 fill-amber-500 shrink-0" />}
+            {isExample && <span className="text-[8px] font-black uppercase tracking-widest text-indigo-500 bg-indigo-100 px-1.5 py-0.5 rounded-full shrink-0">Example</span>}
           </p>
           <p className="text-xs font-normal text-slate-400 truncate mt-0.5">
             {(response.cubs || []).map((c: any) => `${c.grade}${c.class_name ? `-${c.class_name}` : ''}`).join(', ')}
