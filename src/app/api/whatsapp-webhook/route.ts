@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { recordStageChange } from '@/lib/leadStageHistory';
 import { resolveVariable, sendMetaTemplate, sendWhatsAppMessage } from '@/lib/metaTemplate';
 import { STATUS_BUTTONS } from '@/lib/adminPipelineButtons';
+import { isWithinDnd } from '@/lib/dndSchedule';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
 // signature Meta signs the raw body with, using the app secret.
@@ -21,19 +22,6 @@ function isValidMetaSignature(rawBody: string, signatureHeader: string | null): 
   if (expected.length !== received.length) return false;
 
   return timingSafeEqual(expected, received);
-}
-
-// Compares current Africa/Johannesburg local time-of-day against the
-// admin's configured quiet hours. dnd_end earlier than dnd_start means the
-// window crosses midnight (e.g. 21:00-07:00) - handled by treating "in
-// range" as an OR across the wrap instead of a plain between check.
-function isWithinDnd(settings: { dnd_enabled: boolean; dnd_start_time: string | null; dnd_end_time: string | null } | null): boolean {
-  if (!settings?.dnd_enabled || !settings.dnd_start_time || !settings.dnd_end_time) return false;
-  const now = new Date().toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit', hour12: false });
-  const start = settings.dnd_start_time.slice(0, 5);
-  const end = settings.dnd_end_time.slice(0, 5);
-  if (start <= end) return now >= start && now < end;
-  return now >= start || now < end; // wraps past midnight
 }
 
 // 2. Core Helper: Admin Pipeline Tracker
@@ -55,9 +43,9 @@ async function notifyAdmin(supabase: any, senderPhone: string, stageText: string
   const adminPhone = process.env.ADMIN_PHONE_NUMBER;
   if (!adminPhone) return;
 
-  const { data: settings } = await supabase.from('admin_notification_settings').select('*').limit(1).maybeSingle();
+  const { data: schedule } = await supabase.from('admin_dnd_schedule').select('*');
 
-  if (isWithinDnd(settings) || !opts?.immediate) {
+  if (isWithinDnd(schedule || []) || !opts?.immediate) {
     await supabase.from('admin_notification_buffer').insert([{ lead_id: leadId, event_text: stageText }]);
     return;
   }
