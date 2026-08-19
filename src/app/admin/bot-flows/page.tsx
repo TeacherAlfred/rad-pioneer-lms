@@ -16,6 +16,7 @@ type FlowRow = {
   action_type: 'message' | 'template' | 'bot_media';
   message_body: string | null;
   message_buttons: Button[];
+  featured_program_id: string | null;
   template_name: string | null;
   template_language: string | null;
   template_variables: string[];
@@ -49,12 +50,15 @@ type BotMediaItem = {
   archived: boolean;
 };
 
+type FeaturedProgramOption = { id: string; title: string; location: string | null };
+
 const emptyForm = {
   trigger_button_id: '',
   label: '',
   action_type: 'message' as 'message' | 'template' | 'bot_media',
   message_body: '',
   message_buttons: [] as Button[],
+  featured_program_id: '',
   template_key: '', // "name|language" combined key for the picker
   template_name: '',
   template_language: '',
@@ -92,6 +96,15 @@ export default function BotFlowsPage() {
   const [botMediaItems, setBotMediaItems] = useState<BotMediaItem[]>([]);
   const [botMediaError, setBotMediaError] = useState<string | null>(null);
   const [botMediaLoading, setBotMediaLoading] = useState(false);
+
+  // For linking a message flow to a landing-page program, so {{dates}}/
+  // {{location}}/{{title}} in message_body resolve against it (see
+  // 20260822120000_bot_flow_program_sync.sql) instead of the date being
+  // retyped by hand and drifting from what the website shows.
+  const [featuredPrograms, setFeaturedPrograms] = useState<FeaturedProgramOption[]>([]);
+  useEffect(() => {
+    fetch('/admin/api/featured-programs').then(res => res.json()).then(data => setFeaturedPrograms(data.rows || []));
+  }, []);
 
   // "btn_guide" is no longer hardcoded/reserved (see whatsapp-webhook's
   // 2026-08-15 change) - it's just whatever bot_flows rows happen to exist,
@@ -217,6 +230,7 @@ export default function BotFlowsPage() {
       action_type: row.action_type,
       message_body: row.message_body || '',
       message_buttons: row.message_buttons || [],
+      featured_program_id: row.featured_program_id || '',
       template_key: templateKey,
       template_name: row.template_name || '',
       template_language: row.template_language || '',
@@ -315,6 +329,7 @@ export default function BotFlowsPage() {
         action_type: form.action_type,
         message_body: form.action_type === 'message' ? form.message_body.trim() : null,
         message_buttons: form.action_type === 'message' ? form.message_buttons.filter(b => b.id.trim() && b.title.trim()) : [],
+        featured_program_id: form.action_type === 'message' ? (form.featured_program_id || null) : null,
         template_name: form.action_type === 'template' ? form.template_name.trim() : null,
         template_language: form.action_type === 'template' ? form.template_language.trim() : null,
         template_variables: form.action_type === 'template' ? form.template_variables : [],
@@ -404,6 +419,22 @@ export default function BotFlowsPage() {
 
             {form.action_type === 'message' ? (
               <>
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Link to Featured Program (optional)</label>
+                  <select
+                    value={form.featured_program_id}
+                    onChange={e => setForm(p => ({ ...p, featured_program_id: e.target.value }))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400"
+                  >
+                    <option value="">Not linked to a program</option>
+                    {featuredPrograms.map(p => (
+                      <option key={p.id} value={p.id}>{p.title}{p.location ? ` (${p.location})` : ''}</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    When linked, use <code className="bg-slate-100 px-1 rounded">{'{{dates}}'}</code>, <code className="bg-slate-100 px-1 rounded">{'{{location}}'}</code>, or <code className="bg-slate-100 px-1 rounded">{'{{title}}'}</code> in the message below - they'll pull live from that program's Featured Programs entry instead of needing to be retyped here whenever a date changes.
+                  </p>
+                </div>
                 <textarea placeholder="Message body sent when this fires" value={form.message_body} onChange={e => setForm(p => ({ ...p, message_body: e.target.value }))} rows={3} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-slate-400" />
                 <div>
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Buttons (max 3, optional)</label>

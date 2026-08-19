@@ -43,14 +43,36 @@ export async function POST(req: Request) {
 
     const { data: program } = await supabaseAdmin
       .from('featured_programs')
-      .select('id, title, location, date_options')
+      .select('id, title, location, date_options, draft, live_from, live_until, allow_multi_date')
       .eq('id', program_id)
       .maybeSingle();
     if (!program) return NextResponse.json({ error: 'That program could not be found.' }, { status: 404 });
+    // Service-role reads bypass the public RLS policy's draft/date-window
+    // check (20260822140000_featured_program_draft_switch.sql), so a stale
+    // link to a since-drafted or expired card must be rejected here too -
+    // "put into draft" should stop new registrations, not just hide the card.
+    const now = Date.now();
+    if (program.draft || now < new Date(program.live_from).getTime() || now > new Date(program.live_until).getTime()) {
+      return NextResponse.json({ error: 'That program is no longer accepting registrations.' }, { status: 410 });
+    }
 
-    const dateOption = date_option_id
-      ? (program.date_options || []).find((d: any) => d.id === date_option_id)
-      : null;
+    // date_option_id is normally one date_options.id, but when the program
+    // allows it (allow_multi_date) the client can also send a composite id
+    // - every option's id joined with "+" - for the synthesized "all dates"
+    // choice (see dateOptionsWithCombo in RegisterInterestModal.tsx). Split
+    // it back apart here rather than storing that combination anywhere.
+    const dateOptions = program.date_options || [];
+    let dateLabel: string | null = null;
+    if (date_option_id) {
+      const direct = dateOptions.find((d: any) => d.id === date_option_id);
+      if (direct) {
+        dateLabel = direct.label;
+      } else if (program.allow_multi_date && String(date_option_id).includes('+')) {
+        const parts = String(date_option_id).split('+');
+        const matched = parts.map((id: string) => dateOptions.find((d: any) => d.id === id)).filter(Boolean);
+        if (matched.length === parts.length) dateLabel = matched.map((d: any) => d.label).join(' + ');
+      }
+    }
 
     const normEmail = String(email).trim();
     const { data: existingLead } = await supabaseAdmin
@@ -78,7 +100,6 @@ export async function POST(req: Request) {
       resolvedChannel = 'email';
     }
 
-    const dateLabel = dateOption?.label || null;
     const nowIso = new Date().toISOString();
     const activityNote = `Register Interest: ${program.title}${dateLabel ? ` — ${dateLabel}` : ''} — ${nChildren} child${nChildren === 1 ? '' : 'ren'}` +
       (utm_source ? ` (utm_source=${utm_source}${utm_campaign ? `, utm_campaign=${utm_campaign}` : ''})` : '') +

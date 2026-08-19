@@ -24,6 +24,8 @@ type FeaturedProgram = {
   live_from: string;
   live_until: string;
   date_options: DateOption[];
+  draft: boolean;
+  allow_multi_date: boolean;
 };
 
 const LABEL_CLS = "block text-[13px] font-medium text-slate-700 mb-1.5";
@@ -39,7 +41,7 @@ const ACCENTS = [
 const emptyForm = {
   title: '', label: 'Program', location: '', details: '', duration: '', form_label: '',
   image_url: '', is_video: false, accent: 'bg-rad-blue', sort_order: '0',
-  live_from: '', live_until: '',
+  live_from: '', live_until: '', allow_multi_date: false,
 };
 
 // datetime-local inputs need "YYYY-MM-DDTHH:mm" in local time.
@@ -55,6 +57,10 @@ function fmtDate(iso: string) {
 }
 
 function statusOf(p: FeaturedProgram): { label: string; cls: string } {
+  // draft is a manual override, checked before the date window - forcing
+  // a card down right now shouldn't require touching (or losing) its
+  // scheduled dates underneath it.
+  if (p.draft) return { label: 'Draft', cls: 'bg-slate-200 text-slate-600' };
   const now = Date.now();
   const from = new Date(p.live_from).getTime();
   const until = new Date(p.live_until).getTime();
@@ -118,6 +124,7 @@ export default function FeaturedProgramsPage() {
       sort_order: String(p.sort_order),
       live_from: toDatetimeLocal(p.live_from),
       live_until: toDatetimeLocal(p.live_until),
+      allow_multi_date: p.allow_multi_date,
     });
     setDateOptions(p.date_options || []);
     setFormError(null);
@@ -160,6 +167,7 @@ export default function FeaturedProgramsPage() {
         live_from: form.live_from ? new Date(form.live_from).toISOString() : new Date().toISOString(),
         live_until: new Date(form.live_until).toISOString(),
         date_options: cleanedDateOptions,
+        allow_multi_date: form.allow_multi_date,
       };
       const res = await fetch('/admin/api/featured-programs', {
         method: editing ? 'PATCH' : 'POST',
@@ -185,6 +193,24 @@ export default function FeaturedProgramsPage() {
       body: JSON.stringify({ id: p.id }),
     });
     await load();
+  }
+
+  // Master switch: force a card into Draft (hidden immediately, dates left
+  // untouched) or back to following its Live From/Until window normally.
+  // Optimistic with rollback so the row flips instantly on click.
+  async function toggleDraft(p: FeaturedProgram) {
+    const next = !p.draft;
+    setRows(prev => prev.map(r => r.id === p.id ? { ...r, draft: next } : r));
+    try {
+      const res = await fetch('/admin/api/featured-programs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, draft: next }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setRows(prev => prev.map(r => r.id === p.id ? { ...r, draft: p.draft } : r));
+    }
   }
 
   return (
@@ -261,6 +287,15 @@ export default function FeaturedProgramsPage() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => toggleDraft(p)}
+                      title={p.draft
+                        ? 'Draft - hidden from the site regardless of its dates. Click to resume following its Live From/Until window.'
+                        : 'Following its Live From/Until dates. Click to force into Draft immediately, hiding it right now without changing those dates.'}
+                      className={p.draft ? 'text-amber-500 hover:text-amber-600' : 'text-slate-300 hover:text-slate-600'}
+                    >
+                      {p.draft ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
                     <button onClick={() => openEdit(p)} title="Edit" className="text-slate-300 hover:text-slate-600"><Pencil size={14} /></button>
                     <button onClick={() => remove(p)} title="Delete" className="text-slate-300 hover:text-rose-500"><Trash2 size={14} /></button>
                   </div>
@@ -364,6 +399,23 @@ export default function FeaturedProgramsPage() {
                       </div>
                     ))}
                   </div>
+                )}
+
+                {dateOptions.filter(d => d.label.trim()).length >= 2 && (
+                  <label className="flex items-start gap-2.5 mt-4 p-3 rounded-[10px] bg-slate-50 border border-slate-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.allow_multi_date}
+                      onChange={e => setForm(f => ({ ...f, allow_multi_date: e.target.checked }))}
+                      className="mt-0.5 w-4 h-4 shrink-0 accent-blue-600"
+                    />
+                    <span>
+                      <span className="block text-[13px] font-medium text-slate-700">Let visitors pick more than one date</span>
+                      <span className="block text-[12px] text-slate-400 mt-0.5">
+                        Adds a combined choice to the form's date dropdown - e.g. "{dateOptions.filter(d => d.label.trim()).map(d => d.label).join(' + ')}" alongside each individual date. Turn on for a multi-day event someone might attend all of (like a 2-day circuit); leave off if the dates are alternatives to pick just one of.
+                      </span>
+                    </span>
+                  </label>
                 )}
               </div>
 

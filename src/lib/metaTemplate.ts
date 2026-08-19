@@ -60,6 +60,35 @@ export function resolveVariable(value: string, lead: Record<string, any>): strin
   });
 }
 
+// Turns a featured_programs.date_options array into one readable phrase
+// ("Saturday, 3 October" / "Sat 29 Aug or Sun 6 Sep" / "A, B, or C"). Reuses
+// each entry's own admin-authored `label` verbatim rather than reformatting
+// starts_at - that label is already the exact text shown on the website's
+// card, so this is the one place both channels' wording comes from.
+export function formatProgramDates(dateOptions: { label?: string }[] | null | undefined): string {
+  const labels = (dateOptions || []).map(d => d?.label).filter((l): l is string => !!l);
+  if (labels.length === 0) return 'dates to be confirmed';
+  if (labels.length === 1) return labels[0];
+  if (labels.length === 2) return `${labels[0]} or ${labels[1]}`;
+  return `${labels.slice(0, -1).join(', ')}, or ${labels[labels.length - 1]}`;
+}
+
+// bot_flows.message_body can reference {{dates}}/{{location}}/{{title}} for
+// a linked featured_programs row (bot_flows.featured_program_id) - this is
+// the fix for the website and WhatsApp independently typing the same
+// event's dates and drifting apart (see 20260822120000_bot_flow_program_sync.sql).
+// A flow with no linked program is returned unchanged.
+export function resolveProgramTokens(
+  text: string,
+  program: { title?: string | null; location?: string | null; date_options?: any[] | null } | null | undefined
+): string {
+  if (!program) return text;
+  return text
+    .replace(/\{\{\s*dates\s*\}\}/gi, formatProgramDates(program.date_options))
+    .replace(/\{\{\s*location\s*\}\}/gi, program.location || '')
+    .replace(/\{\{\s*title\s*\}\}/gi, program.title || '');
+}
+
 export async function sendMetaTemplate(
   to: string,
   templateName: string,

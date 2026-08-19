@@ -64,6 +64,7 @@ export async function POST(req: Request) {
         action_type: body.action_type,
         message_body: body.message_body || null,
         message_buttons: body.message_buttons || [],
+        featured_program_id: body.featured_program_id || null,
         template_name: body.template_name || null,
         template_language: body.template_language || null,
         template_variables: body.template_variables || [],
@@ -114,7 +115,7 @@ export async function PATCH(req: Request) {
     }
 
     const allowed = [
-      'trigger_button_id', 'label', 'action_type', 'message_body', 'message_buttons',
+      'trigger_button_id', 'label', 'action_type', 'message_body', 'message_buttons', 'featured_program_id',
       'template_name', 'template_language', 'template_variables', 'template_variable_names', 'template_button_payloads',
       'bot_media_keyword', 'set_source', 'add_tags', 'notify_admin', 'notify_admin_immediate', 'skip_human_handoff', 'active',
       'expects_reply', 'reply_label', 'reply_confirmation', 'completion_tag',
@@ -123,6 +124,7 @@ export async function PATCH(req: Request) {
     for (const key of allowed) {
       if (key in fields) update[key] = fields[key];
     }
+    if ('featured_program_id' in update) update.featured_program_id = update.featured_program_id || null;
 
     const { data, error } = await supabaseAdmin
       .from('bot_flows')

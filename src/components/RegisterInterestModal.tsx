@@ -12,7 +12,25 @@ export type RegisterInterestProgram = {
   location: string | null;
   formLabel: string | null;
   date_options?: DateOption[];
+  allow_multi_date?: boolean;
 };
+
+// When a program allows it, offer one extra "all dates" choice alongside
+// the individual ones (e.g. Polokwane's Sat+Sun circuit) - synthesized
+// client-side by joining every date's id ("+") and label (" + "), rather
+// than a new relational structure. The submit route splits the composite
+// id back apart to resolve it (see /api/register-interest/submit).
+export function dateOptionsWithCombo(dateOptions: DateOption[], allowMultiDate: boolean | undefined): DateOption[] {
+  if (!allowMultiDate || dateOptions.length < 2) return dateOptions;
+  return [
+    ...dateOptions,
+    {
+      id: dateOptions.map(d => d.id).join('+'),
+      label: dateOptions.map(d => d.label).join(' + '),
+      starts_at: dateOptions[0].starts_at,
+    },
+  ];
+}
 
 type Step = 'email' | 'confirm' | 'details' | 'success';
 
@@ -52,7 +70,7 @@ export default function RegisterInterestModal({ program, onClose }: { program: R
     });
   }, []);
 
-  const dateOptions = program.date_options || [];
+  const dateOptions = dateOptionsWithCombo(program.date_options || [], program.allow_multi_date);
 
   async function submitEmail(e: React.FormEvent) {
     e.preventDefault();

@@ -50,7 +50,7 @@ export async function POST(req: Request) {
 
     const {
       title, label, location, details, duration, form_label,
-      image_url, is_video, accent, sort_order, live_from, live_until, date_options,
+      image_url, is_video, accent, sort_order, live_from, live_until, date_options, draft, allow_multi_date,
     } = body;
 
     const { data, error } = await supabaseAdmin
@@ -69,6 +69,8 @@ export async function POST(req: Request) {
         live_from: live_from || new Date().toISOString(),
         live_until,
         date_options: Array.isArray(date_options) ? date_options : [],
+        draft: !!draft,
+        allow_multi_date: !!allow_multi_date,
       }])
       .select()
       .single();
@@ -89,11 +91,13 @@ export async function PATCH(req: Request) {
 
     const {
       title, label, location, details, duration, form_label,
-      image_url, is_video, accent, sort_order, live_from, live_until, date_options,
+      image_url, is_video, accent, sort_order, live_from, live_until, date_options, draft, allow_multi_date,
     } = body;
 
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     if (date_options !== undefined) update.date_options = Array.isArray(date_options) ? date_options : [];
+    if (draft !== undefined) update.draft = !!draft;
+    if (allow_multi_date !== undefined) update.allow_multi_date = !!allow_multi_date;
     if (title !== undefined) update.title = String(title).trim();
     if (label !== undefined) update.label = label ? String(label).trim() : 'Program';
     if (location !== undefined) update.location = location || null;

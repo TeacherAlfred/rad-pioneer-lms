@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { recordStageChange } from '@/lib/leadStageHistory';
-import { resolveVariable, sendMetaTemplate, sendWhatsAppMessage } from '@/lib/metaTemplate';
+import { resolveVariable, resolveProgramTokens, sendMetaTemplate, sendWhatsAppMessage } from '@/lib/metaTemplate';
 import { STATUS_BUTTONS } from '@/lib/adminPipelineButtons';
 import { isWithinDnd } from '@/lib/dndSchedule';
 
@@ -227,16 +227,29 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
 
   let sendResult: { ok: boolean; error?: string; wamid?: string };
   if (flow.action_type === 'message') {
+    // {{dates}}/{{location}}/{{title}} resolve against the linked
+    // featured_programs row (admin/bot-flows) so this flow's copy always
+    // matches whatever's currently live on the website - see
+    // 20260822120000_bot_flow_program_sync.sql for why that used to drift.
+    let messageBody = flow.message_body;
+    if (flow.featured_program_id) {
+      const { data: program } = await supabase
+        .from('featured_programs')
+        .select('title, location, date_options')
+        .eq('id', flow.featured_program_id)
+        .maybeSingle();
+      messageBody = resolveProgramTokens(messageBody, program);
+    }
     const payload = (flow.message_buttons || []).length > 0
       ? {
           type: 'interactive',
           interactive: {
             type: 'button',
-            body: { text: flow.message_body },
+            body: { text: messageBody },
             action: { buttons: flow.message_buttons.map((b: any) => ({ type: 'reply', reply: { id: b.id, title: b.title } })) },
           },
         }
-      : { type: 'text', text: { body: flow.message_body } };
+      : { type: 'text', text: { body: messageBody } };
     sendResult = await sendWhatsAppMessage(senderPhone, payload);
     await supabase.from('messages').insert([{
       lead_id: lead.id,
