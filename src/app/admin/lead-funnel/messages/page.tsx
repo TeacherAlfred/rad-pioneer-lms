@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
-  Users2, Search, MessageSquare,
+  Users2, Search, MessageSquare, Reply, X,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -113,20 +113,57 @@ export default function MessageActivityPage() {
   const [search, setSearch] = useState('');
   const [showInhouse, setShowInhouse] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/admin/api/lead-funnel/messages');
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to load messages');
-        setRows(data.rows || []);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  async function loadMessages() {
+    try {
+      const res = await fetch('/admin/api/lead-funnel/messages');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load messages');
+      setRows(data.rows || []);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadMessages(); }, []);
+
+  // Free-form reply, sent from here since replying to a lead who just
+  // messaged in (24h customer-service window open) doesn't need an
+  // approved template - see /admin/api/lead-funnel/reply.
+  const [replyingTo, setReplyingTo] = useState<{ leadId: string; leadName: string | null; leadPhone: string | null } | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [replySending, setReplySending] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+
+  function openReply(r: MessageRow) {
+    setReplyingTo({ leadId: r.lead_id, leadName: r.lead_name || null, leadPhone: r.lead_phone || null });
+    setReplyText('');
+    setReplyError(null);
+  }
+
+  async function sendReply() {
+    if (!replyingTo || !replyText.trim()) return;
+    setReplySending(true);
+    setReplyError(null);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: replyingTo.leadId, body: replyText.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send.');
+      setReplyingTo(null);
+      setReplyText('');
+      setLoading(true);
+      await loadMessages();
+    } catch (err: any) {
+      setReplyError(err.message);
+    } finally {
+      setReplySending(false);
+    }
+  }
 
   const statsRows = useMemo(() => rows.filter(r => !isInhouseRow(r)), [rows]);
   const inhouseCount = rows.length - statsRows.length;
@@ -300,6 +337,7 @@ export default function MessageActivityPage() {
                       <SortableHeader label="Type" column="_kind" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <SortableHeader label="Detail" column="_label" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <SortableHeader label="When" column="created_at" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -336,10 +374,19 @@ export default function MessageActivityPage() {
                         <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
                           {r.created_at ? new Date(r.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
                         </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => openReply(r)}
+                            title="Send a free-form reply"
+                            className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
+                          >
+                            <Reply size={12} /> Reply
+                          </button>
+                        </td>
                       </tr>
                     ))}
                     {filteredRows.length === 0 && (
-                      <tr><td colSpan={5} className="px-4 py-16 text-center text-slate-400 text-sm">No messages match these filters.</td></tr>
+                      <tr><td colSpan={6} className="px-4 py-16 text-center text-slate-400 text-sm">No messages match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -381,6 +428,42 @@ export default function MessageActivityPage() {
           </>
         )}
       </div>
+
+      {replyingTo && (
+        <div className="fixed inset-0 bg-slate-900/25 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-black/5 w-full max-w-md">
+            <div className="flex items-start justify-between px-6 pt-6 pb-1">
+              <div>
+                <h3 className="text-[16px] font-semibold text-slate-900">Reply to {replyingTo.leadName || 'this lead'}</h3>
+                <p className="text-[13px] text-slate-400 mt-0.5">+{replyingTo.leadPhone} · sent as a free-form WhatsApp message</p>
+              </div>
+              <button onClick={() => setReplyingTo(null)} className="h-7 w-7 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"><X size={13} /></button>
+            </div>
+            <div className="px-6 py-5 space-y-3">
+              <textarea
+                autoFocus
+                rows={4}
+                value={replyText}
+                onChange={e => setReplyText(e.target.value)}
+                placeholder="Type your reply..."
+                className="w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 resize-none"
+              />
+              <p className="text-[12px] text-slate-400">Only deliverable while the 24h reply window is open (i.e. this lead has messaged recently) - Meta will reject it otherwise.</p>
+              {replyError && <div className="bg-rose-50 text-rose-600 text-[13px] rounded-xl px-4 py-2.5">{replyError}</div>}
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => setReplyingTo(null)} className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors duration-150">Cancel</button>
+                <button
+                  onClick={sendReply}
+                  disabled={replySending || !replyText.trim()}
+                  className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-1.5"
+                >
+                  {replySending ? <Loader2 size={14} className="animate-spin" /> : <><Send size={13} /> Send</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -11,53 +11,9 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
-import { supabase } from "@/lib/supabase"; 
+import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
-
-const INITIAL_PROGRAMS = [
-  {
-    id: "event-1",
-    label: "In-Person Event",
-    title: "Home Automation Bootcamp",
-    location: "Polokwane, South Africa",
-    details: "A hands-on intensive session where students build real-world smart home solutions using IoT sensors.",
-    duration: "Weekend Workshop",
-    folderPath: "bootcamps/polokwane_bootcamp",
-    image: "/events/polokwane-session.jpg", 
-    fallbackImage: "/events/polokwane-session.jpg", 
-    isVideo: false,
-    accent: "bg-rad-teal",
-    formLabel: "Home Automation Bootcamp (PLK)" 
-  },
-  {
-    id: "prog-1",
-    label: "Online Course",
-    title: "Game Creator Bootcamp",
-    location: "Virtual Classroom",
-    details: "From player to creator. Students master the fundamentals of logic and coordinates to publish their own game.",
-    duration: "6 Week Program",
-    folderPath: "short_programs/game_creator",
-    image: "/lesson_video_clips/click_green_flag.mp4", 
-    fallbackImage: "/lesson_video_clips/click_green_flag.mp4", 
-    isVideo: true, 
-    accent: "bg-rad-blue",
-    formLabel: "Game Creator Bootcamp (Online)"
-  },
-  {
-    id: "prog-2",
-    label: "Full Term Course",
-    title: "Smart Home Systems",
-    location: "Online / Virtual",
-    details: "An advanced 11-week dive into home automation, coding for smart environments, and the future of IoT.",
-    duration: "11 Week Program",
-    folderPath: "term_programs/term_2_2026",
-    image: "/logo/rad-logo_white_2.png", 
-    fallbackImage: "/logo/rad-logo_white_2.png", 
-    isVideo: false,
-    accent: "bg-rad-purple",
-    formLabel: "Term Program - Smart Home Systems"
-  }
-];
+import RegisterInterestModal, { RegisterInterestProgram } from "@/components/RegisterInterestModal";
 
 const EVENT_FOLDERS = [
   { id: "gallery-1", title: "Pretoria Lessons", location: "Menlyn, Pretoria", folderName: "pretoria-lessons" },
@@ -77,7 +33,8 @@ export default function LandingPage() {
   const [pastEvents, setPastEvents] = useState<any[]>(
     EVENT_FOLDERS.map(e => ({ ...e, thumbnail: '/logo/rad-logo_white_2.png', gallery: [] }))
   );
-  const [featuredPrograms, setFeaturedPrograms] = useState(INITIAL_PROGRAMS);
+  const [featuredPrograms, setFeaturedPrograms] = useState<any[]>([]);
+  const [registerProgram, setRegisterProgram] = useState<RegisterInterestProgram | null>(null);
 
   // --- FOMO LAUNCH TIMER ---
   useEffect(() => {
@@ -122,6 +79,7 @@ export default function LandingPage() {
   }, [timeLeft]);
 
   useEffect(() => {
+    if (featuredPrograms.length === 0) return;
     const timer = setInterval(() => { setIndex((prev) => (prev + 1) % featuredPrograms.length); }, 8000);
     return () => clearInterval(timer);
   }, [featuredPrograms.length]);
@@ -148,24 +106,29 @@ export default function LandingPage() {
       );
       setPastEvents(updatedEvents);
 
-      const updatedPrograms = await Promise.all(
-        INITIAL_PROGRAMS.map(async (prog) => {
-          try {
-            const { data, error } = await supabase.storage.from('programs').list(prog.folderPath);
-            if (data && data.length > 0) {
-              const validFiles = data.filter(f => f.name && !f.name.startsWith('.'));
-              if (validFiles.length > 0) {
-                const { data: urlData } = supabase.storage.from('programs').getPublicUrl(`${prog.folderPath}/${validFiles[0].name}`);
-                return { ...prog, image: urlData.publicUrl, isVideo: false };
-              }
-            }
-            return { ...prog, image: prog.fallbackImage };
-          } catch (err) {
-            return { ...prog, image: prog.fallbackImage };
-          }
-        })
-      );
-      setFeaturedPrograms(updatedPrograms);
+      // Admin-managed via /admin/featured-programs. RLS on featured_programs
+      // scopes this select to rows whose live_from/live_until window covers
+      // now(), so no client-side date filtering is needed here.
+      const { data: programRows, error: programError } = await supabase
+        .from('featured_programs')
+        .select('*')
+        .order('sort_order', { ascending: true });
+      if (!programError && programRows) {
+        setFeaturedPrograms(programRows.map((p: any) => ({
+          id: p.id,
+          label: p.label,
+          title: p.title,
+          location: p.location,
+          details: p.details,
+          duration: p.duration,
+          image: p.image_url,
+          fallbackImage: p.image_url,
+          isVideo: p.is_video,
+          accent: p.accent,
+          formLabel: p.form_label,
+          dateOptions: p.date_options || [],
+        })));
+      }
     }
     fetchSupabaseData();
   }, []);
@@ -407,6 +370,7 @@ export default function LandingPage() {
           </section>
 
           {/* PROGRAMS CAROUSEL */}
+          {featuredPrograms.length > 0 && (
           <section className="py-16 md:py-24 px-6 md:px-8 relative min-h-[100dvh] md:min-h-0 flex flex-col justify-center">
             <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: "easeOut" }} className="max-w-5xl mx-auto w-full">
               <div className="flex items-end justify-between mb-8 md:mb-12 px-2 md:px-4">
@@ -455,9 +419,18 @@ export default function LandingPage() {
                         </div>
                       </div>
                       
-                      <Link href="/request-access" className="flex items-center justify-center gap-3 md:gap-4 px-6 md:px-10 py-3.5 md:py-5 rounded-2xl md:rounded-3xl bg-white text-[#020617] font-black uppercase italic tracking-tighter hover:bg-slate-200 transition-all text-xs md:text-sm group/btn shadow-xl mt-2 md:mt-0">
+                      <button
+                        onClick={() => setRegisterProgram({
+                          id: featuredPrograms[index].id,
+                          title: featuredPrograms[index].title,
+                          location: featuredPrograms[index].location,
+                          formLabel: featuredPrograms[index].formLabel,
+                          date_options: featuredPrograms[index].dateOptions,
+                        })}
+                        className="flex items-center justify-center gap-3 md:gap-4 px-6 md:px-10 py-3.5 md:py-5 rounded-2xl md:rounded-3xl bg-white text-[#020617] font-black uppercase italic tracking-tighter hover:bg-slate-200 transition-all text-xs md:text-sm group/btn shadow-xl mt-2 md:mt-0"
+                      >
                         Register Interest <ArrowRight size={16} className="md:w-[18px] md:h-[18px] group-hover/btn:translate-x-1 transition-transform" />
-                      </Link>
+                      </button>
                     </div>
                   </motion.div>
                 </AnimatePresence>
@@ -472,6 +445,7 @@ export default function LandingPage() {
               </div>
             </motion.div>
           </section>
+          )}
 
           {/* GALLERIES & FOOTER */}
           <section className="hidden md:block py-24 px-8 max-w-7xl mx-auto border-t border-white/5">
@@ -672,6 +646,12 @@ export default function LandingPage() {
           </footer>
         </>
       )}
+
+      <AnimatePresence>
+        {registerProgram && (
+          <RegisterInterestModal program={registerProgram} onClose={() => setRegisterProgram(null)} />
+        )}
+      </AnimatePresence>
     </main>
   );
 }

@@ -126,6 +126,20 @@ async function matchBotMedia(supabase: any, searchText: string, lead: any) {
     || keywordMatches.find((m: any) => !m.tag_filter);
 }
 
+// Flyer/voucher channels (75HARD, running clubs, Irene fitness flyer) arrive
+// as a wa.me prefilled-message substring, not a button tap - matched
+// case-insensitively against the admin-editable voucher_codes lookup table,
+// not a hardcoded list, since this set is expected to grow. Longest-code-
+// first so a code that happens to be a substring of another never wins by
+// table order.
+async function matchVoucherCode(supabase: any, searchText: string) {
+  const { data: codes } = await supabase.from('voucher_codes').select('*').eq('active', true);
+  const lower = searchText.toLowerCase();
+  return (codes || [])
+    .filter((c: any) => lower.includes(c.code.toLowerCase()))
+    .sort((a: any, b: any) => b.code.length - a.code.length)[0] || null;
+}
+
 async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, matchedMedia: any) {
   const mediaPayload = {
     type: 'interactive',
@@ -245,7 +259,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
   }
   if (flow.notify_admin) {
-    await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — ${flow.label}`, lead.id);
+    await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — ${flow.label}`, lead.id, { immediate: !!flow.notify_admin_immediate });
   }
 }
 
@@ -562,6 +576,36 @@ export async function POST(request: Request) {
                   }]);
                   await notifyAdmin(supabase, senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.", lead.id);
                   continue;
+                }
+              }
+
+              // --- VOUCHER CODE DETECTION (flyer channels) ---
+              // First-touch only, same convention as ad_id/ctwa_clid above -
+              // once a lead is attributed to a flyer channel, a later message
+              // that happens to contain a different code shouldn't overwrite
+              // where they actually came from.
+              if (message.type === 'text' && !lead.voucher_code) {
+                const matchedVoucher = await matchVoucherCode(supabase, messageText);
+                if (matchedVoucher) {
+                  const voucherUpdate = { voucher_code: matchedVoucher.code, source: matchedVoucher.source_value };
+                  await supabase.from('leads').update(voucherUpdate).eq('id', lead.id);
+                  lead = { ...lead, ...voucherUpdate };
+
+                  // 75HARD carries no hold/reward logic - it's a pure routing
+                  // signal so the admin takes this first touch personally
+                  // instead of the automated flow taking it (spec §3.1).
+                  if (matchedVoucher.code === '75HARD') {
+                    await supabase.from('leads').update({ needs_human: true, needs_human_nudged_at: new Date().toISOString() }).eq('id', lead.id);
+                    const voucherAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out! 🙌 One of our team will be in touch with you personally shortly." } });
+                    await supabase.from('messages').insert([{
+                      lead_id: lead.id,
+                      direction: 'outbound',
+                      body: voucherAckResult.ok ? '[Delivered 75HARD handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${voucherAckResult.error}]`,
+                      wamid: voucherAckResult.wamid || null,
+                    }]);
+                    await notifyAdmin(supabase, senderPhone, `🏋️ 75HARD voucher - needs a human (personal reply, no automated flow).`, lead.id, { immediate: true });
+                    continue;
+                  }
                 }
               }
 

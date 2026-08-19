@@ -706,9 +706,14 @@ export default function LeadFunnelPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="max-w-6xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Lead Funnel</h1>
-          <p className="text-sm text-slate-500 mt-1">Everyone in the `leads` table - WhatsApp bot, Irene voting consent, and warm-list imports. Not the registrations/profiles pipeline at /admin/leads.</p>
+        <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Lead Funnel</h1>
+            <p className="text-sm text-slate-500 mt-1">Everyone in the `leads` table - WhatsApp bot, Irene voting consent, and warm-list imports. Not the registrations/profiles pipeline at /admin/leads.</p>
+          </div>
+          <Link href="/admin/lead-funnel/merge" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 shrink-0">
+            <Users2 size={14} /> Merge Duplicate Leads
+          </Link>
         </div>
 
         {error && (

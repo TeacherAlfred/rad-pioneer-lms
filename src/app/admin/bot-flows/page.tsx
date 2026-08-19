@@ -25,6 +25,7 @@ type FlowRow = {
   set_source: string | null;
   add_tags: string[];
   notify_admin: boolean;
+  notify_admin_immediate: boolean;
   skip_human_handoff: boolean;
   expects_reply: boolean;
   reply_label: string | null;
@@ -66,6 +67,7 @@ const emptyForm = {
   set_source: '',
   add_tags: '',
   notify_admin: false,
+  notify_admin_immediate: false,
   skip_human_handoff: true,
   expects_reply: false,
   reply_label: '',
@@ -227,6 +229,7 @@ export default function BotFlowsPage() {
       set_source: row.set_source || '',
       add_tags: (row.add_tags || []).join(', '),
       notify_admin: row.notify_admin,
+      notify_admin_immediate: row.notify_admin_immediate,
       skip_human_handoff: row.skip_human_handoff,
       expects_reply: row.expects_reply,
       reply_label: row.reply_label || '',
@@ -321,6 +324,7 @@ export default function BotFlowsPage() {
         set_source: form.set_source.trim() || null,
         add_tags: form.add_tags.split(',').map(t => t.trim()).filter(Boolean),
         notify_admin: form.notify_admin,
+        notify_admin_immediate: form.notify_admin_immediate,
         skip_human_handoff: form.skip_human_handoff,
         expects_reply: form.expects_reply,
         reply_label: form.expects_reply ? form.reply_label.trim() : null,
@@ -514,8 +518,13 @@ export default function BotFlowsPage() {
                 <input type="checkbox" checked={form.skip_human_handoff} onChange={e => setForm(p => ({ ...p, skip_human_handoff: e.target.checked }))} /> Self-serve (don't flag needs_human)
               </label>
               <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
-                <input type="checkbox" checked={form.notify_admin} onChange={e => setForm(p => ({ ...p, notify_admin: e.target.checked }))} /> Notify admin when this fires
+                <input type="checkbox" checked={form.notify_admin} onChange={e => setForm(p => ({ ...p, notify_admin: e.target.checked, notify_admin_immediate: e.target.checked ? p.notify_admin_immediate : false }))} /> Notify admin when this fires
               </label>
+              {form.notify_admin && (
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer">
+                  <input type="checkbox" checked={form.notify_admin_immediate} onChange={e => setForm(p => ({ ...p, notify_admin_immediate: e.target.checked }))} /> Instantly (skip buffering/DND)
+                </label>
+              )}
             </div>
 
             {form.action_type === 'message' && (

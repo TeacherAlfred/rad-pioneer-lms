@@ -1,0 +1,13 @@
+-- notifyAdmin's { immediate: true } tier is currently only ever passed by
+-- hardcoded call sites (new lead, opt-out, bot_media delivery failure) - a
+-- bot_flows row has no way to ask for it, so every flow tap always lands in
+-- the buffered/consolidated tier regardless of urgency.
+--
+-- The warm-list menu's "Talk to Us" button needs the opposite of the general
+-- "button tapped -> silent, logged" rule: an instant ping with an SLA clock,
+-- since with only three top-level buttons it's now the explicit human-ask
+-- (RAD_Academy_Dev_Spec_Warm-List_Menu_Voucher_Attribution.md §1.3). Adding
+-- this as a generic flag (not a btn_talk_human special case in route.ts)
+-- keeps the file's "nothing about a specific button is hardcoded" rule
+-- intact, and lets any future flow opt into the same behavior.
+alter table bot_flows add column notify_admin_immediate boolean not null default false;

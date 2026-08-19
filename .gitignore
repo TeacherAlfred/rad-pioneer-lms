@@ -42,3 +42,6 @@ next-env.d.ts
 .env.local
 
 src/app/student/lesson/[id]/OLD_content/
+
+# supabase CLI local cache (project ref, pooler url, version pins)
+supabase/.temp/

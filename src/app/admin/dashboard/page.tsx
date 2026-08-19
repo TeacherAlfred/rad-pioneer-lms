@@ -359,6 +359,7 @@ export default function AdminDashboard() {
         { label: 'Add a Guardian', icon: UserPlus, path: '/admin/intake', color: 'hover:border-blue-400' },
         { label: 'Outbound Invites', icon: Send, path: '/admin/invites', color: 'hover:border-purple-500' },
         { label: 'Events & Bootcamps', icon: CalendarDays, path: '/admin/events', color: 'hover:border-yellow-500' },
+        { label: 'Featured Programs', icon: Zap, path: '/admin/featured-programs', color: 'hover:border-blue-500' },
         { label: 'B2B Consulting', icon: Building2, path: '/admin/consulting', color: 'hover:border-indigo-500' },
       ]
     },

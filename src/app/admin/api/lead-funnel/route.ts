@@ -20,7 +20,7 @@ export async function GET() {
   // households(name) relies on the leads.household_id FK - Supabase embeds
   // the related row automatically once that constraint exists.
   const [{ data, error }, { data: outbound, error: outboundError }] = await Promise.all([
-    supabaseAdmin.from('leads').select('*, households(name)').order('created_at', { ascending: false }),
+    supabaseAdmin.from('leads').select('*, households(name)').is('merged_into_id', null).order('created_at', { ascending: false }),
     supabaseAdmin
       .from('messages')
       .select('lead_id, created_at, body')
