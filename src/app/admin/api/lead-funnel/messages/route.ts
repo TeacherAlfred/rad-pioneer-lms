@@ -13,7 +13,7 @@ const LIMIT = 2000;
 export async function GET() {
   const [{ data: messages, error: msgError }, { data: leads, error: leadError }] = await Promise.all([
     supabaseAdmin.from('messages').select('*').order('created_at', { ascending: false }).limit(LIMIT),
-    supabaseAdmin.from('leads').select('id, phone, name, tags'),
+    supabaseAdmin.from('leads').select('id, phone, name, tags, bot_paused'),
   ]);
 
   if (msgError) return NextResponse.json({ error: msgError.message }, { status: 500 });
@@ -27,6 +27,7 @@ export async function GET() {
       lead_phone: lead?.phone || null,
       lead_name: lead?.name || null,
       lead_tags: lead?.tags || [],
+      lead_bot_paused: !!lead?.bot_paused,
     };
   });
 

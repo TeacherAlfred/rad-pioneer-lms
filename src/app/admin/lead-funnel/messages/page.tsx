@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
-  Users2, Search, MessageSquare, Reply, X,
+  Users2, Search, MessageSquare, Reply, X, VolumeX, Plus, Sparkles,
+  ChevronDown, ChevronRight,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -18,10 +19,37 @@ type MessageRow = {
   lead_phone?: string | null;
   lead_name?: string | null;
   lead_tags?: string[] | null;
+  lead_bot_paused?: boolean;
   status?: string | null;
   status_updated_at?: string | null;
   conversation_category?: string | null;
   conversation_expires_at?: string | null;
+};
+
+type ButtonRef = { id: string; title: string };
+
+type LeadGroup = {
+  leadId: string;
+  leadName: string | null;
+  leadPhone: string | null;
+  leadBotPaused: boolean;
+  messages: MessageRow[];
+  inboundCount: number;
+  outboundCount: number;
+  total: number;
+  lastActivityAt: string | null;
+  lastLabel: string;
+  lastDirection: 'inbound' | 'outbound' | null;
+};
+
+type BotFlow = {
+  id: string;
+  trigger_button_id: string;
+  label: string;
+  action_type: 'message' | 'template' | 'bot_media';
+  message_body: string | null;
+  message_buttons: ButtonRef[] | null;
+  active: boolean;
 };
 
 // WhatsApp's own check-mark convention - only meaningful for outbound rows
@@ -126,20 +154,74 @@ export default function MessageActivityPage() {
     }
   }
 
-  useEffect(() => { loadMessages(); }, []);
+  const [botFlows, setBotFlows] = useState<BotFlow[]>([]);
+  useEffect(() => {
+    loadMessages();
+    fetch('/admin/api/bot-flows').then(res => res.json()).then(data => setBotFlows((data.rows || []).filter((f: BotFlow) => f.active)));
+  }, []);
 
   // Free-form reply, sent from here since replying to a lead who just
   // messaged in (24h customer-service window open) doesn't need an
-  // approved template - see /admin/api/lead-funnel/reply.
-  const [replyingTo, setReplyingTo] = useState<{ leadId: string; leadName: string | null; leadPhone: string | null } | null>(null);
+  // approved template - see /admin/api/lead-funnel/reply. Can optionally
+  // carry up to 3 buttons whose ids are existing bot_flows trigger words,
+  // and/or start from an existing bot-flow message as an editable draft.
+  const [replyingTo, setReplyingTo] = useState<{ leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean } | null>(null);
   const [replyText, setReplyText] = useState('');
+  const [replyButtons, setReplyButtons] = useState<ButtonRef[]>([]);
+  const [addButtonFlowId, setAddButtonFlowId] = useState('');
+  const [loadFlowId, setLoadFlowId] = useState('');
   const [replySending, setReplySending] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
+  const [pauseSaving, setPauseSaving] = useState(false);
 
-  function openReply(r: MessageRow) {
-    setReplyingTo({ leadId: r.lead_id, leadName: r.lead_name || null, leadPhone: r.lead_phone || null });
+  function openReply(info: { leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean }) {
+    setReplyingTo(info);
     setReplyText('');
+    setReplyButtons([]);
+    setAddButtonFlowId('');
+    setLoadFlowId('');
     setReplyError(null);
+  }
+
+  function loadFlowIntoComposer(flowId: string) {
+    setLoadFlowId(flowId);
+    const flow = botFlows.find(f => f.id === flowId);
+    if (!flow) return;
+    if (flow.action_type === 'message' && flow.message_body) setReplyText(flow.message_body);
+    setReplyButtons((flow.message_buttons || []).slice(0, 3));
+  }
+
+  function addButtonFromFlow(flowId: string) {
+    setAddButtonFlowId('');
+    const flow = botFlows.find(f => f.id === flowId);
+    if (!flow || replyButtons.length >= 3) return;
+    if (replyButtons.some(b => b.id === flow.trigger_button_id)) return;
+    setReplyButtons(prev => [...prev, { id: flow.trigger_button_id, title: flow.label.slice(0, 20) }]);
+  }
+
+  function removeButton(id: string) {
+    setReplyButtons(prev => prev.filter(b => b.id !== id));
+  }
+
+  async function togglePause() {
+    if (!replyingTo) return;
+    setPauseSaving(true);
+    try {
+      const nextValue = !replyingTo.botPaused;
+      const res = await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: replyingTo.leadId, bot_paused: nextValue }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update.');
+      setReplyingTo(prev => prev ? { ...prev, botPaused: nextValue } : prev);
+      setRows(prev => prev.map(r => r.lead_id === replyingTo.leadId ? { ...r, lead_bot_paused: nextValue } : r));
+    } catch (err: any) {
+      setReplyError(err.message);
+    } finally {
+      setPauseSaving(false);
+    }
   }
 
   async function sendReply() {
@@ -150,12 +232,13 @@ export default function MessageActivityPage() {
       const res = await fetch('/admin/api/lead-funnel/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: replyingTo.leadId, body: replyText.trim() }),
+        body: JSON.stringify({ leadId: replyingTo.leadId, body: replyText.trim(), buttons: replyButtons }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send.');
       setReplyingTo(null);
       setReplyText('');
+      setReplyButtons([]);
       setLoading(true);
       await loadMessages();
     } catch (err: any) {
@@ -172,6 +255,7 @@ export default function MessageActivityPage() {
 
   const stats = useMemo(() => {
     const outbound = parsedStatsRows.filter(p => p.row.direction === 'outbound');
+    const inbound = parsedStatsRows.filter(p => p.row.direction === 'inbound');
     const delivered = outbound.filter(p => 'status' in p.parsed && p.parsed.status === 'delivered').length;
     const failed = outbound.filter(p => 'status' in p.parsed && p.parsed.status === 'failed').length;
     const buttonTaps = parsedStatsRows.filter(p => p.parsed.kind === 'button_tap');
@@ -200,6 +284,7 @@ export default function MessageActivityPage() {
 
     return {
       totalOutbound: outbound.length,
+      totalInbound: inbound.length,
       delivered,
       failed,
       buttonTaps: buttonTaps.length,
@@ -209,36 +294,63 @@ export default function MessageActivityPage() {
     };
   }, [parsedStatsRows]);
 
-  // Parsed once here (kind/label/detail flattened onto the row) so sorting
-  // can reference the derived "Type"/"Detail" columns, not just raw fields -
-  // and the table below reuses this instead of re-parsing per render.
-  const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  // One row per contact rather than one per message - a lead who's texted
+  // 40 times shouldn't push everyone else off the first page. Grouped here
+  // rather than changing what /admin/api/lead-funnel/messages returns, so
+  // the flat `rows` still backs the stats/breakdown cards above untouched.
+  const groups = useMemo<LeadGroup[]>(() => {
     const source = showInhouse ? rows : statsRows;
-    return source
-      .filter(r => {
-        if (directionFilter !== 'all' && r.direction !== directionFilter) return false;
-        const parsed = parseMessage(r);
-        if (kindFilter !== 'all' && parsed.kind !== kindFilter) return false;
-        if (q) {
-          const haystack = `${r.lead_phone || ''} ${r.lead_name || ''} ${r.body}`.toLowerCase();
-          if (!haystack.includes(q)) return false;
-        }
-        return true;
-      })
-      .map(r => {
-        const parsed = parseMessage(r);
-        return {
-          ...r,
-          _kind: KIND_LABEL[parsed.kind] || parsed.kind,
-          _label: parsed.label,
-          _detail: 'detail' in parsed ? parsed.detail : undefined,
-          _ok: 'status' in parsed ? parsed.status === 'delivered' : true,
-        };
-      });
-  }, [rows, statsRows, showInhouse, directionFilter, kindFilter, search]);
+    const byLead = new Map<string, MessageRow[]>();
+    for (const r of source) {
+      if (!byLead.has(r.lead_id)) byLead.set(r.lead_id, []);
+      byLead.get(r.lead_id)!.push(r);
+    }
+    return Array.from(byLead.entries()).map(([leadId, msgs]) => {
+      const sorted = [...msgs].sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
+      const last = sorted[sorted.length - 1] || null;
+      return {
+        leadId,
+        leadName: sorted[0]?.lead_name || null,
+        leadPhone: sorted[0]?.lead_phone || null,
+        leadBotPaused: !!sorted[0]?.lead_bot_paused,
+        messages: sorted,
+        inboundCount: sorted.filter(m => m.direction === 'inbound').length,
+        outboundCount: sorted.filter(m => m.direction === 'outbound').length,
+        total: sorted.length,
+        lastActivityAt: last?.created_at || null,
+        lastLabel: last ? parseMessage(last).label : '',
+        lastDirection: last?.direction || null,
+      };
+    });
+  }, [rows, statsRows, showInhouse]);
 
-  const [sortColumn, setSortColumn] = useState<string | null>('created_at');
+  // Filters decide which conversations show up at all (any message in the
+  // thread matching is enough) - the expanded thread itself always shows
+  // every message for that lead, unfiltered, since a conversation with
+  // gaps cut out of it isn't a conversation anymore.
+  const filteredGroups = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return groups.filter(g => {
+      if (directionFilter !== 'all' && !g.messages.some(m => m.direction === directionFilter)) return false;
+      if (kindFilter !== 'all' && !g.messages.some(m => parseMessage(m).kind === kindFilter)) return false;
+      if (q) {
+        const haystack = `${g.leadPhone || ''} ${g.leadName || ''} ${g.messages.map(m => m.body).join(' ')}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [groups, directionFilter, kindFilter, search]);
+
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  function toggleExpanded(leadId: string) {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(leadId)) next.delete(leadId); else next.add(leadId);
+      return next;
+    });
+  }
+
+  const [sortColumn, setSortColumn] = useState<string | null>('lastActivityAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   function handleSort(column: string) {
     if (sortColumn === column) {
@@ -248,16 +360,16 @@ export default function MessageActivityPage() {
       setSortDirection('asc');
     }
   }
-  const sortedRows = useMemo(() => sortRows(filteredRows, sortColumn, sortDirection), [filteredRows, sortColumn, sortDirection]);
+  const sortedGroups = useMemo(() => sortRows(filteredGroups, sortColumn, sortDirection), [filteredGroups, sortColumn, sortDirection]);
 
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(25);
   useEffect(() => { setPage(0); }, [directionFilter, kindFilter, search, showInhouse]);
-  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(sortedGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
-  const pagedRows = useMemo(
-    () => sortedRows.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
-    [sortedRows, currentPage, pageSize]
+  const pagedGroups = useMemo(
+    () => sortedGroups.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
+    [sortedGroups, currentPage, pageSize]
   );
 
   return (
@@ -282,7 +394,8 @@ export default function MessageActivityPage() {
           <div className="py-24 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading...</div>
         ) : (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
+              <StatCard icon={MessageSquare} label="Total Inbound" value={stats.totalInbound} accent="text-blue-600" />
               <StatCard icon={Send} label="Total Sent" value={stats.totalOutbound} />
               <StatCard icon={CheckCircle2} label="Delivered" value={stats.delivered} accent="text-emerald-600" />
               <StatCard icon={XCircle} label="Failed" value={stats.failed} accent="text-rose-600" />
@@ -324,7 +437,7 @@ export default function MessageActivityPage() {
               <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
                 <input type="checkbox" checked={showInhouse} onChange={e => setShowInhouse(e.target.checked)} /> Show inhouse ({inhouseCount})
               </label>
-              <span className="text-xs text-slate-400 ml-auto">{filteredRows.length} of {showInhouse ? rows.length : statsRows.length}</span>
+              <span className="text-xs text-slate-400 ml-auto">{filteredGroups.length} contact{filteredGroups.length === 1 ? '' : 's'} (of {(showInhouse ? rows.length : statsRows.length)} messages)</span>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -332,70 +445,107 @@ export default function MessageActivityPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">
-                      <SortableHeader label="Lead" column="lead_name" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                      <SortableHeader label="Direction" column="direction" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                      <SortableHeader label="Type" column="_kind" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                      <SortableHeader label="Detail" column="_label" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                      <SortableHeader label="When" column="created_at" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <th className="px-4 py-3 w-6"></th>
+                      <SortableHeader label="Lead" column="leadName" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="In" column="inboundCount" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Out" column="outboundCount" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <SortableHeader label="Total" column="total" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <th className="px-4 py-3">Last Message</th>
+                      <SortableHeader label="Last Activity" column="lastActivityAt" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedRows.map(r => (
-                      <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
-                        <td className="px-4 py-3">
-                          <div className="font-bold text-slate-800">{r.lead_name || '(no name)'}</div>
-                          <div className="text-xs text-slate-400">+{r.lead_phone}</div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${r.direction === 'outbound' ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-600'}`}>
-                            {r.direction}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${r._ok ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                            {r._kind}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-slate-600">
-                          <span className="line-clamp-2">{r._label}</span>
-                          {r._detail && (
-                            <div className="text-[11px] text-slate-400 mt-0.5">{r._detail}</div>
-                          )}
-                          {r.status && STATUS_DISPLAY[r.status] && (
-                            <div className={`text-[11px] mt-0.5 flex items-center gap-1.5 ${STATUS_DISPLAY[r.status].className}`}>
-                              <span>{STATUS_DISPLAY[r.status].icon} {STATUS_DISPLAY[r.status].label}{r.status_updated_at ? ` · ${formatStatusTime(r.status_updated_at)}` : ''}</span>
-                              {r.conversation_category && (
-                                <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">{r.conversation_category}</span>
-                              )}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
-                          {r.created_at ? new Date(r.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => openReply(r)}
-                            title="Send a free-form reply"
-                            className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
+                    {pagedGroups.map(g => {
+                      const isOpen = expandedIds.has(g.leadId);
+                      return (
+                        <Fragment key={g.leadId}>
+                          <tr
+                            onClick={() => toggleExpanded(g.leadId)}
+                            className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 cursor-pointer"
                           >
-                            <Reply size={12} /> Reply
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredRows.length === 0 && (
-                      <tr><td colSpan={6} className="px-4 py-16 text-center text-slate-400 text-sm">No messages match these filters.</td></tr>
+                            <td className="px-4 py-3 text-slate-300">
+                              {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                                {g.leadName || '(no name)'}
+                                {g.leadBotPaused && (
+                                  <span title="Bot paused - manual replies only" className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600">
+                                    <VolumeX size={9} /> Paused
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-400">+{g.leadPhone}</div>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600 font-bold">{g.inboundCount}</td>
+                            <td className="px-4 py-3 text-slate-600 font-bold">{g.outboundCount}</td>
+                            <td className="px-4 py-3 text-slate-400">{g.total}</td>
+                            <td className="px-4 py-3 text-slate-600 max-w-xs">
+                              <span className="line-clamp-1">
+                                {g.lastDirection === 'outbound' && <span className="text-slate-400">↳ </span>}
+                                {g.lastLabel}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
+                              {g.lastActivityAt ? new Date(g.lastActivityAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
+                            </td>
+                            <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+                              <button
+                                onClick={() => openReply({ leadId: g.leadId, leadName: g.leadName, leadPhone: g.leadPhone, botPaused: g.leadBotPaused })}
+                                title="Send a free-form reply"
+                                className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
+                              >
+                                <Reply size={12} /> Reply
+                              </button>
+                            </td>
+                          </tr>
+                          {isOpen && (
+                            <tr className="border-b border-slate-50 last:border-0">
+                              <td colSpan={8} className="bg-slate-50/60 px-6 py-4">
+                                <div className="space-y-2 max-h-96 overflow-y-auto">
+                                  {g.messages.map(m => {
+                                    const parsed = parseMessage(m);
+                                    const isOut = m.direction === 'outbound';
+                                    const ok = 'status' in parsed ? parsed.status === 'delivered' : true;
+                                    return (
+                                      <div key={m.id} className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-[13px] ${isOut ? (ok ? 'bg-slate-900 text-white' : 'bg-rose-100 text-rose-700') : 'bg-white border border-slate-200 text-slate-800'}`}>
+                                          {parsed.kind !== 'text' && (
+                                            <div className={`text-[9px] font-black uppercase tracking-widest mb-1 ${isOut ? 'text-slate-300' : 'text-slate-400'}`}>{KIND_LABEL[parsed.kind] || parsed.kind}</div>
+                                          )}
+                                          <p className="whitespace-pre-wrap">{parsed.label}</p>
+                                          {'detail' in parsed && parsed.detail && (
+                                            <p className={`text-[11px] mt-0.5 ${isOut ? 'text-slate-300' : 'text-slate-400'}`}>{parsed.detail}</p>
+                                          )}
+                                          <div className={`flex items-center gap-1.5 text-[10px] mt-1 ${isOut ? 'text-slate-400' : 'text-slate-400'}`}>
+                                            <span>{m.created_at ? new Date(m.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : ''}</span>
+                                            {m.status && STATUS_DISPLAY[m.status] && (
+                                              <span className={STATUS_DISPLAY[m.status].className}>{STATUS_DISPLAY[m.status].icon}</span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                    {filteredGroups.length === 0 && (
+                      <tr><td colSpan={8} className="px-4 py-16 text-center text-slate-400 text-sm">No conversations match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>
               </div>
-              {filteredRows.length > 0 && (
+              {filteredGroups.length > 0 && (
                 <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-t border-slate-100">
                   <div className="flex items-center gap-2 text-xs text-slate-400">
                     <span>
-                      Showing {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, filteredRows.length)} of {filteredRows.length}
+                      Showing {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, filteredGroups.length)} of {filteredGroups.length} contacts
                     </span>
                     <select
                       value={pageSize}
@@ -431,15 +581,53 @@ export default function MessageActivityPage() {
 
       {replyingTo && (
         <div className="fixed inset-0 bg-slate-900/25 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-black/5 w-full max-w-md">
-            <div className="flex items-start justify-between px-6 pt-6 pb-1">
+          <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="flex items-start justify-between px-6 pt-6 pb-1 shrink-0">
               <div>
                 <h3 className="text-[16px] font-semibold text-slate-900">Reply to {replyingTo.leadName || 'this lead'}</h3>
                 <p className="text-[13px] text-slate-400 mt-0.5">+{replyingTo.leadPhone} · sent as a free-form WhatsApp message</p>
               </div>
               <button onClick={() => setReplyingTo(null)} className="h-7 w-7 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"><X size={13} /></button>
             </div>
-            <div className="px-6 py-5 space-y-3">
+
+            <div className="px-6 pt-4 shrink-0">
+              <button
+                onClick={togglePause}
+                disabled={pauseSaving}
+                className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl border text-left transition-colors duration-150 disabled:opacity-50 ${
+                  replyingTo.botPaused ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+                }`}
+              >
+                <span className="flex items-center gap-2 text-[13px] font-medium text-slate-700">
+                  <VolumeX size={15} className={replyingTo.botPaused ? 'text-amber-600' : 'text-slate-400'} />
+                  {replyingTo.botPaused ? 'Bot paused - only manual replies are sent to this lead' : 'Pause automated bot replies for this lead'}
+                </span>
+                {pauseSaving ? <Loader2 size={14} className="animate-spin text-slate-400" /> : (
+                  <span className={`shrink-0 relative h-5 w-9 rounded-full transition-colors duration-200 ${replyingTo.botPaused ? 'bg-amber-500' : 'bg-slate-300'}`}>
+                    <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 ${replyingTo.botPaused ? 'translate-x-4' : 'translate-x-0'}`} />
+                  </span>
+                )}
+              </button>
+            </div>
+
+            <div className="px-6 pt-4 pb-5 space-y-3 overflow-y-auto">
+              {botFlows.length > 0 && (
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1"><Sparkles size={11} /> Start from a bot-flow message (optional)</label>
+                  <select
+                    value={loadFlowId}
+                    onChange={e => loadFlowIntoComposer(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-700 outline-none focus:border-blue-400"
+                  >
+                    <option value="">Write from scratch...</option>
+                    {botFlows.filter(f => f.action_type === 'message').map(f => (
+                      <option key={f.id} value={f.id}>{f.label}</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-400 mt-1">Loads that flow's text and buttons here as a starting draft - edit or remove anything before sending, nothing about the original flow is changed.</p>
+                </div>
+              )}
+
               <textarea
                 autoFocus
                 rows={4}
@@ -448,9 +636,43 @@ export default function MessageActivityPage() {
                 placeholder="Type your reply..."
                 className="w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 resize-none"
               />
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Buttons ({replyButtons.length}/3)</label>
+                {replyButtons.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {replyButtons.map(b => (
+                      <span key={b.id} className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 text-[12px] font-medium px-2.5 py-1.5 rounded-lg">
+                        {b.title}
+                        <button onClick={() => removeButton(b.id)} className="text-blue-400 hover:text-blue-700"><X size={12} /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {replyButtons.length < 3 && botFlows.length > 0 && (
+                  <div className="relative">
+                    <select
+                      value={addButtonFlowId}
+                      onChange={e => addButtonFromFlow(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-[10px] pl-8 pr-3.5 py-2 text-[13px] text-slate-500 outline-none focus:border-blue-400 appearance-none cursor-pointer"
+                    >
+                      <option value="">Add a button (links to a trigger word)...</option>
+                      {botFlows.filter(f => !replyButtons.some(b => b.id === f.trigger_button_id)).map(f => (
+                        <option key={f.id} value={f.id}>{f.label} ({f.trigger_button_id})</option>
+                      ))}
+                    </select>
+                    <Plus size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-400 mt-1">Tapping a button re-enters that bot flow automatically, same as if the bot had sent it.</p>
+              </div>
+
               <p className="text-[12px] text-slate-400">Only deliverable while the 24h reply window is open (i.e. this lead has messaged recently) - Meta will reject it otherwise.</p>
               {replyError && <div className="bg-rose-50 text-rose-600 text-[13px] rounded-xl px-4 py-2.5">{replyError}</div>}
-              <div className="flex gap-2 pt-1">
+            </div>
+
+            <div className="shrink-0 border-t border-slate-100 px-6 py-4">
+              <div className="flex gap-2">
                 <button onClick={() => setReplyingTo(null)} className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors duration-150">Cancel</button>
                 <button
                   onClick={sendReply}

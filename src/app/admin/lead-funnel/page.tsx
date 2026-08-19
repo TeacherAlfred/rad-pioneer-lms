@@ -19,6 +19,7 @@ type Lead = {
   lifecycle_stage: string | null;
   stage_health?: string | null;
   needs_human?: boolean | null;
+  bot_paused?: boolean | null;
   awaiting_reply_label?: string | null;
   is_customer?: boolean | null;
   first_purchase_at?: string | null;
@@ -487,6 +488,23 @@ export default function LeadFunnelPage() {
     });
     const data = await res.json();
     if (res.ok) setRows(prev => prev.map(r => r.id === id ? { ...r, ...data.row } : r));
+  }
+
+  // Hard stop on all automated bot sends for this lead - see the
+  // bot_paused note in 20260822090000_bot_pause_and_button_replies.sql.
+  // Also toggleable from the reply composer in /admin/lead-funnel/messages;
+  // this is the same switch, just reachable from the lead's own profile.
+  const [pauseSaving, setPauseSaving] = useState(false);
+  async function toggleBotPause() {
+    if (!viewingLead) return;
+    const next = !viewingLead.bot_paused;
+    setPauseSaving(true);
+    try {
+      await patchLeadField(viewingLead.id, { bot_paused: next });
+      setViewingLead(l => l ? { ...l, bot_paused: next } : l);
+    } finally {
+      setPauseSaving(false);
+    }
   }
 
   // --- Notes: a running log per lead (location, feedback from calls/
@@ -1285,6 +1303,16 @@ export default function LeadFunnelPage() {
                   <p className="text-xs text-slate-400 mt-0.5">+{viewingLead.phone}{viewingLead.email ? ` · ${viewingLead.email}` : ''}</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={toggleBotPause}
+                    disabled={pauseSaving}
+                    title={viewingLead.bot_paused ? 'Resume automated bot replies' : 'Pause all automated bot replies - manual only'}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border disabled:opacity-50 ${
+                      viewingLead.bot_paused ? 'text-amber-600 border-amber-300 bg-amber-50' : 'text-slate-500 border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    {pauseSaving ? <Loader2 size={12} className="animate-spin" /> : <MessageCircleWarning size={12} />} {viewingLead.bot_paused ? 'Bot Paused' : 'Pause Bot'}
+                  </button>
                   <button onClick={switchToEdit} title="Edit this lead" className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 border border-slate-200 hover:border-slate-400">
                     <Pencil size={12} /> Edit
                   </button>
@@ -1308,6 +1336,9 @@ export default function LeadFunnelPage() {
                 )}
                 {viewingLead.needs_human && (
                   <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-amber-50 text-amber-600">Needs Reply</span>
+                )}
+                {viewingLead.bot_paused && (
+                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-amber-50 text-amber-600">Bot Paused</span>
                 )}
                 {viewingLead.awaiting_reply_label && (
                   <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-blue-50 text-blue-500">Awaiting: {viewingLead.awaiting_reply_label}</span>

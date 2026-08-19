@@ -495,6 +495,22 @@ export async function POST(request: Request) {
                 body: messageText
               }]);
 
+              // --- BOT PAUSED: admin has taken this conversation over manually ---
+              // Set from /admin/lead-funnel/messages (or the lead's edit drawer),
+              // this is a hard stop before every other automated branch below -
+              // opt-out detection, Irene/voucher routing, reply-capture,
+              // needs_human nudges, STAGE 1/2 - so nothing gets auto-sent, not
+              // even a STOP confirmation. Deliberately different from
+              // needs_human, which still sends one nudge and is meant to clear
+              // itself once handled; bot_paused sends nothing at all and stays
+              // set until an admin explicitly turns it back off. The message is
+              // still logged above and alerted immediately, so a human sees it
+              // and can act (including honoring an opt-out) manually.
+              if (lead.bot_paused) {
+                await notifyAdmin(supabase, senderPhone, `💬 ${messageText || '[non-text message]'} (bot paused - manual replies only)`, lead.id, { immediate: true });
+                continue;
+              }
+
               // --- OPT-OUT (POPIA) ---
               // Exact-message match only, not substring/keyword-in-sentence - "please
               // stop by our stand" must never be read as an opt-out. This only records
