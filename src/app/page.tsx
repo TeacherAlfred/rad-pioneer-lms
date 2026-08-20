@@ -382,7 +382,7 @@ export default function LandingPage() {
               <div className="flex items-end justify-between mb-8 md:mb-12 px-2 md:px-4">
                 <div className="space-y-1">
                   <h2 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-600 leading-none mb-2">Available Now</h2>
-                  <p className="text-2xl md:text-3xl font-black uppercase italic tracking-tight text-white">Current Programs</p>
+                  <p className="text-2xl md:text-3xl font-black uppercase italic tracking-tight text-white">Featured Events</p>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={prev} className="p-3 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-all hidden md:block"><ChevronLeft size={20} /></button>

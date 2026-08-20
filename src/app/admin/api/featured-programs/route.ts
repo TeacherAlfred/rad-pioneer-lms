@@ -8,7 +8,7 @@ const supabaseAdmin = createClient(
 
 const ACCENTS = ['bg-rad-teal', 'bg-rad-blue', 'bg-rad-purple'];
 
-// Landing page carousel cards (src/app/page.tsx "Current Programs").
+// Landing page carousel cards (src/app/page.tsx "Featured Events").
 // Reads here use the service role so the admin list always shows every
 // row regardless of its live window - the public/anon read on the
 // landing page is the one scoped to live_from/live_until (see migration

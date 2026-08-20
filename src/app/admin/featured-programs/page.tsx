@@ -261,7 +261,7 @@ export default function FeaturedProgramsPage() {
               <Sparkles size={20} className="text-blue-500" /> Featured Programs
             </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Every program you&apos;re running - controls both the homepage &quot;Current Programs&quot; carousel and the <Link href="/events" target="_blank" className="underline hover:text-slate-700">/events</Link> page. A card is only visible between its Live From and Live Until dates, and only on the surface(s) you tick below.
+              Every program you&apos;re running - controls both the homepage &quot;Featured Events&quot; carousel and the <Link href="/events" target="_blank" className="underline hover:text-slate-700">/events</Link> page. A card is only visible between its Live From and Live Until dates, and only on the surface(s) you tick below.
             </p>
           </div>
           <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800">
@@ -334,7 +334,7 @@ export default function FeaturedProgramsPage() {
                     </button>
                     <button
                       onClick={() => toggleVisibility(p, 'show_on_homepage')}
-                      title={p.show_on_homepage ? 'Shown on the homepage carousel. Click to remove from Current Programs.' : 'Not shown on the homepage carousel. Click to add it there.'}
+                      title={p.show_on_homepage ? 'Shown on the homepage carousel. Click to remove from Featured Events.' : 'Not shown on the homepage carousel. Click to add it there.'}
                       className={p.show_on_homepage ? 'text-slate-300 hover:text-slate-600' : 'text-amber-500 hover:text-amber-600'}
                     >
                       <Home size={14} />
@@ -375,7 +375,7 @@ export default function FeaturedProgramsPage() {
                   <h3 className="text-[18px] font-semibold text-slate-900 tracking-tight leading-tight">
                     {editing ? 'Edit Card' : 'New Card'}
                   </h3>
-                  <p className="text-[13px] text-slate-400 mt-0.5">Landing page "Current Programs" carousel</p>
+                  <p className="text-[13px] text-slate-400 mt-0.5">Landing page &quot;Featured Events&quot; carousel</p>
                 </div>
               </div>
               <button onClick={() => setShowModal(false)} className="h-8 w-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors duration-150 shrink-0">
@@ -487,7 +487,7 @@ export default function FeaturedProgramsPage() {
                     <input type="checkbox" checked={form.show_on_homepage} onChange={e => setForm(f => ({ ...f, show_on_homepage: e.target.checked }))} className="mt-0.5 w-4 h-4 shrink-0 accent-blue-600" />
                     <span>
                       <span className="block text-[13px] font-medium text-slate-700">List on the homepage</span>
-                      <span className="block text-[12px] text-slate-400 mt-0.5">The &quot;Current Programs&quot; carousel.</span>
+                      <span className="block text-[12px] text-slate-400 mt-0.5">The &quot;Featured Events&quot; carousel.</span>
                     </span>
                   </label>
                 </div>
