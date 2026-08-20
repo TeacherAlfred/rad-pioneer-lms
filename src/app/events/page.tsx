@@ -153,17 +153,8 @@ export default function EventsDirectoryPage() {
                   </div>
                 </div>
 
-                {/* Urgency / Progress Bar (Simple phrasing) */}
                 <div className="mb-8">
-                  <div className="flex justify-between items-end mb-2">
-                    <span className="text-xs font-black uppercase text-blue-600 tracking-widest flex items-center gap-1.5"><Users size={14}/> Spaces Filling Fast</span>
-                    <span className="text-[10px] font-bold text-slate-500">Limited Group Size</span>
-                  </div>
-                  <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-600 w-[75%] rounded-full relative">
-                       <div className="absolute inset-0 bg-white/20 w-full animate-[shimmer_2s_infinite]" />
-                    </div>
-                  </div>
+                  <span className="text-xs font-black uppercase text-blue-600 tracking-widest flex items-center gap-1.5"><Users size={14}/> Limited Group Size</span>
                 </div>
 
                 {/* The Conversion CTA */}
