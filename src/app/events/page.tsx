@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { CalendarDays, MapPin, Loader2, ArrowRight, Star, Users, Rocket, ChevronRight } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import RegisterInterestModal, { RegisterInterestProgram } from "@/components/RegisterInterestModal";
+import { motion } from "framer-motion";
+import Link from "next/link";
 
 type FeaturedProgram = {
   id: string;
@@ -12,9 +12,7 @@ type FeaturedProgram = {
   location: string | null;
   details: string | null;
   image_url: string;
-  form_label: string | null;
   date_options: { id: string; label: string; starts_at: string }[];
-  allow_multi_date: boolean;
   sort_order: number;
 };
 
@@ -28,7 +26,6 @@ type FeaturedProgram = {
 export default function EventsDirectoryPage() {
   const [events, setEvents] = useState<FeaturedProgram[]>([]);
   const [loading, setLoading] = useState(true);
-  const [registerProgram, setRegisterProgram] = useState<RegisterInterestProgram | null>(null);
 
   useEffect(() => {
     async function loadEvents() {
@@ -37,7 +34,7 @@ export default function EventsDirectoryPage() {
       // additional surface filter specific to this page.
       const { data, error } = await supabase
         .from('featured_programs')
-        .select('id, title, location, details, image_url, form_label, date_options, allow_multi_date, sort_order')
+        .select('id, title, location, details, image_url, date_options, sort_order')
         .eq('show_on_events_page', true)
         .order('sort_order', { ascending: true });
       if (!error && data) setEvents(data);
@@ -45,17 +42,6 @@ export default function EventsDirectoryPage() {
     }
     loadEvents();
   }, []);
-
-  function openRegister(event: FeaturedProgram) {
-    setRegisterProgram({
-      id: event.id,
-      title: event.title,
-      location: event.location,
-      formLabel: event.form_label,
-      date_options: event.date_options || [],
-      allow_multi_date: event.allow_multi_date,
-    });
-  }
 
   function nextDate(event: FeaturedProgram): string | null {
     const upcoming = (event.date_options || [])
@@ -157,15 +143,16 @@ export default function EventsDirectoryPage() {
                   <span className="text-xs font-black uppercase text-blue-600 tracking-widest flex items-center gap-1.5"><Users size={14}/> Limited Group Size</span>
                 </div>
 
-                {/* The Conversion CTA */}
-                <button
-                  onClick={() => openRegister(featuredEvent)}
+                {/* View details first - registering is a separate decision made
+                    on that page, not forced here. */}
+                <Link
+                  href={`/events/${featuredEvent.id}`}
                   className="group/btn relative w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-sm transition-all overflow-hidden shadow-lg shadow-blue-600/20"
                 >
                   <span className="relative z-10 flex items-center gap-2">
-                    View Details & Book a Spot <ChevronRight size={18} className="group-hover/btn:translate-x-1 transition-transform" />
+                    View Details <ChevronRight size={18} className="group-hover/btn:translate-x-1 transition-transform" />
                   </span>
-                </button>
+                </Link>
               </div>
             </div>
           </div>
@@ -189,8 +176,8 @@ export default function EventsDirectoryPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {secondaryEvents.map((event, i) => (
               <motion.div key={event.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
-                <button
-                  onClick={() => openRegister(event)}
+                <Link
+                  href={`/events/${event.id}`}
                   className="group block w-full text-left bg-white border border-slate-200 hover:border-blue-300 rounded-3xl overflow-hidden transition-all hover:-translate-y-1 hover:shadow-xl hover:shadow-blue-900/5"
                 >
                   <div className="p-6">
@@ -215,18 +202,12 @@ export default function EventsDirectoryPage() {
                       Learn More <ArrowRight size={12} />
                     </div>
                   </div>
-                </button>
+                </Link>
               </motion.div>
             ))}
           </div>
         </section>
       )}
-
-      <AnimatePresence>
-        {registerProgram && (
-          <RegisterInterestModal program={registerProgram} onClose={() => setRegisterProgram(null)} />
-        )}
-      </AnimatePresence>
 
     </div>
   );
