@@ -19,6 +19,7 @@ type FeaturedProgram = {
   form_label: string | null;
   date_options: { id: string; label: string; starts_at: string }[];
   allow_multi_date: boolean;
+  counts_general_attendees: boolean;
 };
 
 // Route folder is still named [slug] (the id-holding value is passed as
@@ -47,7 +48,7 @@ export default function EventDetailPage() {
       if (!id) return;
       const { data, error } = await supabase
         .from('featured_programs')
-        .select('id, title, location, details, duration, image_url, is_video, form_label, date_options, allow_multi_date')
+        .select('id, title, location, details, duration, image_url, is_video, form_label, date_options, allow_multi_date, counts_general_attendees')
         .eq('id', id)
         .maybeSingle();
       if (!error && data) setProgram(data);
@@ -63,6 +64,7 @@ export default function EventDetailPage() {
     formLabel: program.form_label,
     date_options: program.date_options || [],
     allow_multi_date: program.allow_multi_date,
+    countsGeneralAttendees: program.counts_general_attendees,
   } : null;
 
   if (loading) {

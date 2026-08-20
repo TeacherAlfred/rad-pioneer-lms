@@ -13,6 +13,12 @@ export type RegisterInterestProgram = {
   formLabel: string | null;
   date_options?: DateOption[];
   allow_multi_date?: boolean;
+  // Admin-set per program (featured_programs.counts_general_attendees) -
+  // some programs (e.g. an online webinar) might be attended by a parent
+  // alone, a parent and kids, or just kids, so "number of children" isn't
+  // always the right question. Swaps the headcount label, consent wording,
+  // and validation message to attendee-neutral phrasing when true.
+  countsGeneralAttendees?: boolean;
 };
 
 // When a program allows it, offer one extra "all dates" choice alongside
@@ -201,7 +207,7 @@ export default function RegisterInterestModal({ program, onClose }: { program: R
     setError(null);
 
     const n = parseInt(numberOfChildren, 10);
-    if (!n || n < 1) return setError('Please enter at least 1 child.');
+    if (!n || n < 1) return setError(program.countsGeneralAttendees ? 'Please enter at least 1 attendee.' : 'Please enter at least 1 child.');
     if (!confirmToken && !fullName.trim()) return setError('Please enter your name.');
     if (!consent) return setError('Please confirm the consent checkbox to continue.');
 
@@ -351,7 +357,7 @@ export default function RegisterInterestModal({ program, onClose }: { program: R
                 )}
 
                 <div className="space-y-1.5">
-                  <label className={LABEL_CLS}>Number of Children</label>
+                  <label className={LABEL_CLS}>{program.countsGeneralAttendees ? 'Number of Attendees' : 'Number of Children'}</label>
                   <input required type="number" min={1} value={numberOfChildren} onChange={e => setNumberOfChildren(e.target.value)} className={INPUT_CLS} />
                 </div>
 
@@ -382,7 +388,7 @@ export default function RegisterInterestModal({ program, onClose }: { program: R
                 <label className="flex items-start gap-3 pt-1 cursor-pointer">
                   <input type="checkbox" required checked={consent} onChange={e => setConsent(e.target.checked)} className="mt-0.5 w-4 h-4 shrink-0 accent-rad-blue" />
                   <span className="text-[11px] text-slate-400 leading-relaxed">
-                    By submitting, you consent to RAD Academy contacting you, and to your child's information being used to prepare a quotation, in line with our privacy policy.
+                    By submitting, you consent to RAD Academy contacting you, and to {program.countsGeneralAttendees ? 'this information' : "your child's information"} being used to prepare a quotation, in line with our privacy policy.
                   </span>
                 </label>
 

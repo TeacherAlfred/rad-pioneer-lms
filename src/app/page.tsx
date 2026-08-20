@@ -133,6 +133,7 @@ export default function LandingPage() {
           formLabel: p.form_label,
           dateOptions: p.date_options || [],
           allowMultiDate: !!p.allow_multi_date,
+          countsGeneralAttendees: !!p.counts_general_attendees,
         })));
       }
     }
@@ -433,6 +434,7 @@ export default function LandingPage() {
                           formLabel: featuredPrograms[index].formLabel,
                           date_options: featuredPrograms[index].dateOptions,
                           allow_multi_date: featuredPrograms[index].allowMultiDate,
+                          countsGeneralAttendees: featuredPrograms[index].countsGeneralAttendees,
                         })}
                         className="flex items-center justify-center gap-3 md:gap-4 px-6 md:px-10 py-3.5 md:py-5 rounded-2xl md:rounded-3xl bg-white text-[#020617] font-black uppercase italic tracking-tighter hover:bg-slate-200 transition-all text-xs md:text-sm group/btn shadow-xl mt-2 md:mt-0"
                       >

@@ -29,6 +29,7 @@ type FeaturedProgram = {
   allow_multi_date: boolean;
   show_on_events_page: boolean;
   show_on_homepage: boolean;
+  counts_general_attendees: boolean;
 };
 
 const LABEL_CLS = "block text-[13px] font-medium text-slate-700 mb-1.5";
@@ -46,6 +47,7 @@ const emptyForm = {
   image_url: '', is_video: false, accent: 'bg-rad-blue', sort_order: '0',
   live_from: '', live_until: '', allow_multi_date: false,
   show_on_events_page: true, show_on_homepage: true,
+  counts_general_attendees: false,
 };
 
 // datetime-local inputs need "YYYY-MM-DDTHH:mm" in local time.
@@ -139,6 +141,7 @@ export default function FeaturedProgramsPage() {
       allow_multi_date: p.allow_multi_date,
       show_on_events_page: p.show_on_events_page,
       show_on_homepage: p.show_on_homepage,
+      counts_general_attendees: p.counts_general_attendees,
     });
     setDateOptions(p.date_options || []);
     setFormError(null);
@@ -184,6 +187,7 @@ export default function FeaturedProgramsPage() {
         allow_multi_date: form.allow_multi_date,
         show_on_events_page: form.show_on_events_page,
         show_on_homepage: form.show_on_homepage,
+        counts_general_attendees: form.counts_general_attendees,
       };
       const res = await fetch('/admin/api/featured-programs', {
         method: editing ? 'PATCH' : 'POST',
@@ -416,6 +420,16 @@ export default function FeaturedProgramsPage() {
                 <input placeholder="e.g. Game Creator Bootcamp (Online)" value={form.form_label} onChange={e => setForm(f => ({ ...f, form_label: e.target.value }))} className={INPUT_CLS} />
                 <p className={HINT_CLS}>Sent as context when a visitor clicks "Register Interest" on this card.</p>
               </div>
+
+              <label className="flex items-start gap-2.5 p-3 rounded-[10px] bg-slate-50 border border-slate-200 cursor-pointer">
+                <input type="checkbox" checked={form.counts_general_attendees} onChange={e => setForm(f => ({ ...f, counts_general_attendees: e.target.checked }))} className="mt-0.5 w-4 h-4 shrink-0 accent-blue-600" />
+                <span>
+                  <span className="block text-[13px] font-medium text-slate-700">This is attended by more than just kids</span>
+                  <span className="block text-[12px] text-slate-400 mt-0.5">
+                    Register Interest asks &quot;Number of Attendees&quot; instead of &quot;Number of Children&quot;, and consent wording drops the &quot;your child&apos;s information&quot; phrasing - for things like a webinar a parent might attend alone, with kids, or both. Leave off for in-person kids&apos; workshops.
+                  </span>
+                </span>
+              </label>
 
               <div className="pt-1 border-t border-slate-100" />
 

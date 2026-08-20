@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     }
     const nChildren = Number(number_of_children);
     if (!Number.isInteger(nChildren) || nChildren < 1) {
-      return NextResponse.json({ error: 'Number of children must be at least 1.' }, { status: 400 });
+      return NextResponse.json({ error: 'Number of attendees must be at least 1.' }, { status: 400 });
     }
     if (consent !== true) {
       return NextResponse.json({ error: 'Consent is required to submit this form.' }, { status: 400 });
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
 
     const { data: program } = await supabaseAdmin
       .from('featured_programs')
-      .select('id, title, location, date_options, draft, live_from, live_until, allow_multi_date')
+      .select('id, title, location, date_options, draft, live_from, live_until, allow_multi_date, counts_general_attendees')
       .eq('id', program_id)
       .maybeSingle();
     if (!program) return NextResponse.json({ error: 'That program could not be found.' }, { status: 404 });
@@ -100,8 +100,15 @@ export async function POST(req: Request) {
       resolvedChannel = 'email';
     }
 
+    // "Children: 3" would misread as three kids for a webinar where it's
+    // actually e.g. two parents and a kid - swap the noun for anything
+    // admin-flagged as attended by more than just kids.
+    const headcountNoun = program.counts_general_attendees
+      ? `attendee${nChildren === 1 ? '' : 's'}`
+      : `child${nChildren === 1 ? '' : 'ren'}`;
+
     const nowIso = new Date().toISOString();
-    const activityNote = `Register Interest: ${program.title}${dateLabel ? ` — ${dateLabel}` : ''} — ${nChildren} child${nChildren === 1 ? '' : 'ren'}` +
+    const activityNote = `Register Interest: ${program.title}${dateLabel ? ` — ${dateLabel}` : ''} — ${nChildren} ${headcountNoun}` +
       (utm_source ? ` (utm_source=${utm_source}${utm_campaign ? `, utm_campaign=${utm_campaign}` : ''})` : '') +
       (referrer ? ` [ref: ${referrer}]` : '');
 
@@ -154,7 +161,7 @@ export async function POST(req: Request) {
     await notifyAdminOfRegistration(
       supabaseAdmin,
       leadId,
-      `${existingLead ? '🔁 Returning' : '🆕 New'} lead registered interest.\nProgram: ${program.title}${dateLabel ? ` (${dateLabel})` : ''}\nLocation: ${program.location || 'n/a'}\nChildren: ${nChildren}\nContact: ${resolvedChannel === 'whatsapp' ? `+${normalizePhone(resolvedPhone)}` : normEmail}`
+      `${existingLead ? '🔁 Returning' : '🆕 New'} lead registered interest.\nProgram: ${program.title}${dateLabel ? ` (${dateLabel})` : ''}\nLocation: ${program.location || 'n/a'}\n${program.counts_general_attendees ? 'Attendees' : 'Children'}: ${nChildren}\nContact: ${resolvedChannel === 'whatsapp' ? `+${normalizePhone(resolvedPhone)}` : normEmail}`
     );
 
     return NextResponse.json({ ok: true });
