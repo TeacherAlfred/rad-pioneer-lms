@@ -109,9 +109,14 @@ export default function LandingPage() {
       // Admin-managed via /admin/featured-programs. RLS on featured_programs
       // scopes this select to rows whose live_from/live_until window covers
       // now(), so no client-side date filtering is needed here.
+      // show_on_homepage is a plain column, not RLS-enforced (this table is
+      // public marketing content already; the flag is display-routing, not
+      // access control) - same program set the /events page reads, filtered
+      // to a different surface flag.
       const { data: programRows, error: programError } = await supabase
         .from('featured_programs')
         .select('*')
+        .eq('show_on_homepage', true)
         .order('sort_order', { ascending: true });
       if (!programError && programRows) {
         setFeaturedPrograms(programRows.map((p: any) => ({

@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Sparkles, Plus, X, Pencil, Trash2, GripVertical,
   Image as ImageIcon, Clock, MapPin, Eye, EyeOff, Calendar, CalendarDays,
+  Lock, CalendarClock, Home,
 } from "lucide-react";
 
 type DateOption = { id: string; label: string; starts_at: string };
@@ -26,6 +27,8 @@ type FeaturedProgram = {
   date_options: DateOption[];
   draft: boolean;
   allow_multi_date: boolean;
+  show_on_events_page: boolean;
+  show_on_homepage: boolean;
 };
 
 const LABEL_CLS = "block text-[13px] font-medium text-slate-700 mb-1.5";
@@ -42,6 +45,7 @@ const emptyForm = {
   title: '', label: 'Program', location: '', details: '', duration: '', form_label: '',
   image_url: '', is_video: false, accent: 'bg-rad-blue', sort_order: '0',
   live_from: '', live_until: '', allow_multi_date: false,
+  show_on_events_page: true, show_on_homepage: true,
 };
 
 // datetime-local inputs need "YYYY-MM-DDTHH:mm" in local time.
@@ -67,6 +71,14 @@ function statusOf(p: FeaturedProgram): { label: string; cls: string } {
   if (now < from) return { label: 'Scheduled', cls: 'bg-amber-50 text-amber-600' };
   if (now > until) return { label: 'Hidden', cls: 'bg-slate-100 text-slate-400' };
   return { label: 'Live', cls: 'bg-emerald-50 text-emerald-600' };
+}
+
+// A card can be Live (per statusOf above) but still not listed anywhere
+// public if both surface flags are off - e.g. a pre-registration-only offer
+// shared via a direct link. Distinct from Draft/Hidden: the card still
+// exists and is reachable, it's just not surfaced on either public listing.
+function isLocked(p: FeaturedProgram): boolean {
+  return !p.show_on_events_page && !p.show_on_homepage;
 }
 
 export default function FeaturedProgramsPage() {
@@ -125,6 +137,8 @@ export default function FeaturedProgramsPage() {
       live_from: toDatetimeLocal(p.live_from),
       live_until: toDatetimeLocal(p.live_until),
       allow_multi_date: p.allow_multi_date,
+      show_on_events_page: p.show_on_events_page,
+      show_on_homepage: p.show_on_homepage,
     });
     setDateOptions(p.date_options || []);
     setFormError(null);
@@ -168,6 +182,8 @@ export default function FeaturedProgramsPage() {
         live_until: new Date(form.live_until).toISOString(),
         date_options: cleanedDateOptions,
         allow_multi_date: form.allow_multi_date,
+        show_on_events_page: form.show_on_events_page,
+        show_on_homepage: form.show_on_homepage,
       };
       const res = await fetch('/admin/api/featured-programs', {
         method: editing ? 'PATCH' : 'POST',
@@ -213,6 +229,23 @@ export default function FeaturedProgramsPage() {
     }
   }
 
+  // Same optimistic-with-rollback pattern as toggleDraft, for either
+  // surface flag.
+  async function toggleVisibility(p: FeaturedProgram, field: 'show_on_events_page' | 'show_on_homepage') {
+    const next = !p[field];
+    setRows(prev => prev.map(r => r.id === p.id ? { ...r, [field]: next } : r));
+    try {
+      const res = await fetch('/admin/api/featured-programs', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, [field]: next }),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setRows(prev => prev.map(r => r.id === p.id ? { ...r, [field]: p[field] } : r));
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="max-w-5xl mx-auto">
@@ -228,7 +261,7 @@ export default function FeaturedProgramsPage() {
               <Sparkles size={20} className="text-blue-500" /> Featured Programs
             </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Controls the "Current Programs" carousel on the landing page. A card is only visible between its Live From and Live Until dates.
+              Every program you&apos;re running - controls both the homepage &quot;Current Programs&quot; carousel and the <Link href="/events" target="_blank" className="underline hover:text-slate-700">/events</Link> page. A card is only visible between its Live From and Live Until dates, and only on the surface(s) you tick below.
             </p>
           </div>
           <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800">
@@ -271,6 +304,11 @@ export default function FeaturedProgramsPage() {
                       <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full flex items-center gap-1 ${status.cls}`}>
                         {status.label === 'Hidden' ? <EyeOff size={10} /> : <Eye size={10} />} {status.label}
                       </span>
+                      {status.label === 'Live' && isLocked(p) && (
+                        <span title="Live, but not listed on the events page or homepage carousel - not currently visible anywhere on the public site." className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 flex items-center gap-1">
+                          <Lock size={10} /> Locked
+                        </span>
+                      )}
                     </div>
                     {p.location && (
                       <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-1">
@@ -287,6 +325,20 @@ export default function FeaturedProgramsPage() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => toggleVisibility(p, 'show_on_events_page')}
+                      title={p.show_on_events_page ? 'Shown on /events. Click to remove from the events page listing.' : 'Not shown on /events. Click to list it there.'}
+                      className={p.show_on_events_page ? 'text-slate-300 hover:text-slate-600' : 'text-amber-500 hover:text-amber-600'}
+                    >
+                      <CalendarClock size={14} />
+                    </button>
+                    <button
+                      onClick={() => toggleVisibility(p, 'show_on_homepage')}
+                      title={p.show_on_homepage ? 'Shown on the homepage carousel. Click to remove from Current Programs.' : 'Not shown on the homepage carousel. Click to add it there.'}
+                      className={p.show_on_homepage ? 'text-slate-300 hover:text-slate-600' : 'text-amber-500 hover:text-amber-600'}
+                    >
+                      <Home size={14} />
+                    </button>
                     <button
                       onClick={() => toggleDraft(p)}
                       title={p.draft
@@ -417,6 +469,29 @@ export default function FeaturedProgramsPage() {
                     </span>
                   </label>
                 )}
+              </div>
+
+              <div className="pt-1 border-t border-slate-100" />
+
+              <div>
+                <label className={LABEL_CLS.replace('mb-1.5', 'mb-2')}>Where this shows up</label>
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2.5 p-3 rounded-[10px] bg-slate-50 border border-slate-200 cursor-pointer">
+                    <input type="checkbox" checked={form.show_on_events_page} onChange={e => setForm(f => ({ ...f, show_on_events_page: e.target.checked }))} className="mt-0.5 w-4 h-4 shrink-0 accent-blue-600" />
+                    <span>
+                      <span className="block text-[13px] font-medium text-slate-700">List on /events</span>
+                      <span className="block text-[12px] text-slate-400 mt-0.5">The public events directory page.</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2.5 p-3 rounded-[10px] bg-slate-50 border border-slate-200 cursor-pointer">
+                    <input type="checkbox" checked={form.show_on_homepage} onChange={e => setForm(f => ({ ...f, show_on_homepage: e.target.checked }))} className="mt-0.5 w-4 h-4 shrink-0 accent-blue-600" />
+                    <span>
+                      <span className="block text-[13px] font-medium text-slate-700">List on the homepage</span>
+                      <span className="block text-[12px] text-slate-400 mt-0.5">The &quot;Current Programs&quot; carousel.</span>
+                    </span>
+                  </label>
+                </div>
+                <p className={HINT_CLS}>Turn both off to keep this card live but unlisted on either public surface - for something not ready to announce yet. There&apos;s no direct-link detail page for a single card today, so &quot;unlisted&quot; currently means &quot;not visible anywhere&quot; rather than &quot;visible only via a private link&quot; - ask if you need that.</p>
               </div>
 
               <div className="pt-1 border-t border-slate-100" />
