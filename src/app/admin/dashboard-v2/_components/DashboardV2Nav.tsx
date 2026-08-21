@@ -14,7 +14,7 @@ const TABS = [
   { label: "Landmines & Risk", path: "/admin/dashboard-v2/landmines", icon: AlertTriangle },
   { label: "Systems Status", path: "/admin/dashboard-v2/systems-status", icon: LayoutList },
   { label: "Money & Admin", path: "/admin/dashboard-v2/money-admin", icon: Wallet },
-  { label: "Lead Funnel", path: "/admin/lead-funnel", icon: Users },
+  { label: "Leads", path: "/admin/lead-funnel/overview", icon: Users },
 ];
 
 export function DashboardV2Nav() {

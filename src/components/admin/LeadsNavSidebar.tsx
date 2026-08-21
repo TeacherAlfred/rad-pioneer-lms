@@ -47,7 +47,7 @@ const GROUPS: NavGroup[] = [
   {
     id: 'leads', label: 'Leads', icon: Users, colorKey: 'blue',
     items: [
-      { href: '/admin/lead-funnel', label: 'Lead Funnel', icon: Users },
+      { href: '/admin/lead-funnel/list', label: 'Lead Funnel', icon: Users },
       { href: '/admin/lead-funnel/stages', label: 'Funnel Stages', icon: GitBranch },
       { href: '/admin/warm-list', label: 'Warm List', icon: ClipboardList },
     ],

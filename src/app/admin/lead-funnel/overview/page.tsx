@@ -151,7 +151,7 @@ export default function LeadsOverviewPage() {
             )}
 
             <GroupCard
-              title="Leads" icon={Users} href="/admin/lead-funnel" linkLabel="View Lead Funnel"
+              title="Leads" icon={Users} href="/admin/lead-funnel/list" linkLabel="View Lead Funnel"
               tiles={[
                 { icon: Users, label: 'Total Leads', value: nonInhouseLeads.length, items: nonInhouseLeads, renderRow: leadRow },
                 { icon: UserPlus, label: 'New Today', value: newTodayLeads.length, items: newTodayLeads, renderRow: leadRow },
