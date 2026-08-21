@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Phone, ChevronDown } from "lucide-react";
+import { Loader2, Phone, ChevronDown, CheckCircle2, XCircle } from "lucide-react";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
 import { LIFECYCLE_STAGES, LIFECYCLE_STAGE_LABELS, VALID_STAGE_TRANSITIONS } from "@/lib/funnelStages";
 import { getSourceLane, SourceLane } from "@/lib/leadSourceLane";
+import { QUALIFICATION_STAGES, isLeadQualified, nextStageToCheck } from "@/lib/leadQualification";
 
 const LANE_OPTIONS: (SourceLane | "All")[] = ["All", "Meta", "Irene", "Warm List", "Organic", "Unknown"];
 const HEALTH_OPTIONS = ["All", "active", "stalled", "dormant"];
@@ -26,6 +27,7 @@ export default function LeadJourneyPage() {
   const [healthFilter, setHealthFilter] = useState("All");
   const [movingId, setMovingId] = useState<string | null>(null);
   const [openMoveMenu, setOpenMoveMenu] = useState<string | null>(null);
+  const [qualifyingId, setQualifyingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadLeads();
@@ -57,6 +59,26 @@ export default function LeadJourneyPage() {
       alert(err.message);
     } finally {
       setMovingId(null);
+    }
+  }
+
+  async function handleQualify(leadId: string, stageKey: string, passed: boolean) {
+    setQualifyingId(leadId);
+    try {
+      const res = await fetch(`/admin/api/dashboard-v2/leads/${leadId}/qualify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage_key: stageKey, passed }),
+      });
+      if (!res.ok) {
+        const json = await res.json();
+        throw new Error(json.error || "Failed to save qualification check");
+      }
+      await loadLeads();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setQualifyingId(null);
     }
   }
 
@@ -126,6 +148,47 @@ export default function LeadJourneyPage() {
                             <Phone size={11} /> {lead.phone}
                           </a>
                         )}
+
+                        {(() => {
+                          const checks = lead.qualification_checks || [];
+                          const qualified = isLeadQualified(checks);
+                          const pending = nextStageToCheck(checks);
+                          const failedStage = QUALIFICATION_STAGES.find((s) => checks.some((c: any) => c.stage_key === s.key && !c.passed));
+                          return (
+                            <div className="mb-3">
+                              {qualified ? (
+                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-600">
+                                  <CheckCircle2 size={12} /> Qualified
+                                </div>
+                              ) : failedStage ? (
+                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-rose-500">
+                                  <XCircle size={12} /> Not qualified: {failedStage.label}
+                                </div>
+                              ) : pending ? (
+                                <div className="p-2 bg-stone-50 rounded-lg border border-stone-100">
+                                  <p className="text-[10px] font-bold text-stone-500 mb-1.5">{QUALIFICATION_STAGES.find((s) => s.key === pending)?.question}</p>
+                                  <div className="flex gap-1.5">
+                                    <button
+                                      disabled={qualifyingId === lead.id}
+                                      onClick={() => handleQualify(lead.id, pending, true)}
+                                      className="flex-1 py-1.5 bg-emerald-100 text-emerald-700 rounded-md text-[9px] font-black uppercase tracking-widest hover:bg-emerald-200 transition-colors disabled:opacity-50"
+                                    >
+                                      Yes
+                                    </button>
+                                    <button
+                                      disabled={qualifyingId === lead.id}
+                                      onClick={() => handleQualify(lead.id, pending, false)}
+                                      className="flex-1 py-1.5 bg-rose-100 text-rose-700 rounded-md text-[9px] font-black uppercase tracking-widest hover:bg-rose-200 transition-colors disabled:opacity-50"
+                                    >
+                                      No
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
+
                         {validNext.length > 0 && (
                           <div className="relative">
                             <button

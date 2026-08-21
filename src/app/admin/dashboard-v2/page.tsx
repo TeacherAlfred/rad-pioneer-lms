@@ -25,17 +25,32 @@ const FORWARD_PATH = ["new", "engaged", "qualified", "offered", "won"];
 export default function DashboardV2Home() {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<any>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      const res = await fetch("/admin/api/dashboard-v2/summary");
-      const data = await res.json();
-      setSummary(data);
-      setLoading(false);
+      try {
+        const res = await fetch("/admin/api/dashboard-v2/summary");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load summary");
+        setSummary(data);
+      } catch (err: any) {
+        setLoadError(err.message);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, []);
 
-  if (loading || !summary) {
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-[#faf9f7] flex items-center justify-center p-6">
+        <p className="text-rose-600 text-sm font-bold text-center">Couldn't load the constraint summary: {loadError}</p>
+      </div>
+    );
+  }
+
+  if (loading || !summary || !summary.qualification) {
     return (
       <div className="min-h-screen bg-[#faf9f7] flex items-center justify-center">
         <p className="text-stone-400 font-black uppercase tracking-widest text-[10px]">Loading…</p>
@@ -71,11 +86,25 @@ export default function DashboardV2Home() {
           </p>
         </section>
 
+        {/* QUALIFICATION TRANSPARENCY NOTE */}
+        {summary.qualification.checkedCount < summary.qualification.totalLeads && (
+          <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 flex items-start gap-3">
+            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0 text-blue-600 text-xs font-black">i</div>
+            <p className="text-xs text-blue-800">
+              Only <strong>{summary.qualification.checkedCount} of {summary.qualification.totalLeads}</strong> leads have been qualification-checked so far
+              (v1.2's qualification model — see Lead Journey to check more). The numbers above only ever count qualified leads, so they'll look low
+              until checking catches up — that's expected, not a sign of a quiet pipeline. Unqualified/raw comparison:{" "}
+              <strong>{summary.raw.fourteenDayAvg.toFixed(1)}/day</strong> raw vs. <strong>{summary.constraint.fourteenDayAvg.toFixed(1)}/day</strong> qualified,{" "}
+              <strong>{summary.raw.activePipelineCount}</strong> raw active pipeline vs. <strong>{summary.constraint.activePipelineCount}</strong> qualified.
+            </p>
+          </section>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* SPARKLINE */}
           <div className="lg:col-span-2 bg-white border border-stone-200 rounded-[24px] p-6 md:p-8 shadow-sm">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xs font-black uppercase tracking-widest text-stone-400">14-Day New Leads</h3>
+              <h3 className="text-xs font-black uppercase tracking-widest text-stone-400">14-Day Qualified Leads</h3>
               <span className="text-[10px] font-bold text-stone-400">Line = {summary.thresholds.leadVolumeThreshold}/day threshold</span>
             </div>
             <div className="flex items-end gap-1.5 h-32 relative">
@@ -89,12 +118,12 @@ export default function DashboardV2Home() {
                   <div
                     className={`w-full rounded-t-md ${d.count >= summary.thresholds.leadVolumeThreshold ? "bg-emerald-400" : "bg-stone-300"}`}
                     style={{ height: `${Math.max(4, (d.count / maxDaily) * 100)}%` }}
-                    title={`${d.date}: ${d.count}`}
+                    title={`${d.date}: ${d.count} qualified (${d.rawCount} raw)`}
                   />
                 </div>
               ))}
             </div>
-            <p className="text-[10px] text-stone-400 mt-3">{summary.constraint.fourteenDayAvg.toFixed(1)} avg/day over the last 14 days · {summary.totalLeads} total leads</p>
+            <p className="text-[10px] text-stone-400 mt-3">{summary.constraint.fourteenDayAvg.toFixed(1)} qualified avg/day over the last 14 days · {summary.totalLeads} total leads · {summary.qualification.checkedCount} checked</p>
           </div>
 
           {/* STALLED FLAG */}

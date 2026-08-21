@@ -6,10 +6,22 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin';
 // full lead detail/notes/finance).
 export async function GET() {
   const supabase = supabaseAdmin();
-  const { data, error } = await supabase
-    .from('leads')
-    .select('id, name, phone, source, lifecycle_stage, stage_entered_at, stage_health, last_inbound_at, needs_human')
-    .order('stage_entered_at', { ascending: false });
+  const [{ data: leads, error }, { data: checks, error: checksError }] = await Promise.all([
+    supabase
+      .from('leads')
+      .select('id, name, phone, source, lifecycle_stage, stage_entered_at, stage_health, last_inbound_at, needs_human')
+      .order('stage_entered_at', { ascending: false }),
+    supabase.from('lead_qualification_checks').select('lead_id, stage_key, passed'),
+  ]);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ leads: data || [] });
+  if (checksError) return NextResponse.json({ error: checksError.message }, { status: 500 });
+
+  const checksByLead: Record<string, { stage_key: string; passed: boolean }[]> = {};
+  (checks || []).forEach((c) => {
+    if (!checksByLead[c.lead_id]) checksByLead[c.lead_id] = [];
+    checksByLead[c.lead_id].push({ stage_key: c.stage_key, passed: c.passed });
+  });
+
+  const enriched = (leads || []).map((l) => ({ ...l, qualification_checks: checksByLead[l.id] || [] }));
+  return NextResponse.json({ leads: enriched });
 }
