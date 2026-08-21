@@ -422,7 +422,7 @@ function IreneFitnessPageInner() {
               className="mt-1 w-5 h-5 accent-[#0066cc] shrink-0"
             />
             <span className="text-sm leading-relaxed text-slate-600">
-              I&apos;d like to receive information about RAD Academy&apos;s coding and robotics programmes.
+              Also send me RAD Academy&apos;s free guide on turning screen time into a coding skill.
             </span>
           </label>
 
@@ -674,8 +674,7 @@ function IreneFitnessPageInner() {
                 className="mt-1 w-5 h-5 accent-[#0066cc] shrink-0"
               />
               <span className="text-sm leading-relaxed text-slate-600">
-                Actually, I&apos;d like to receive information about RAD Academy&apos;s coding &amp; robotics
-                programmes.
+                Actually, send me RAD Academy&apos;s free guide on turning screen time into a coding skill.
               </span>
             </label>
           )}
