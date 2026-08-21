@@ -49,7 +49,7 @@ export async function POST(req: Request) {
     if (err) return NextResponse.json({ error: err }, { status: 400 });
 
     const {
-      title, label, location, details, duration, form_label,
+      title, label, location, details, duration, form_label, series,
       image_url, is_video, accent, sort_order, live_from, live_until, date_options, draft, allow_multi_date,
       show_on_events_page, show_on_homepage, counts_general_attendees,
     } = body;
@@ -63,6 +63,7 @@ export async function POST(req: Request) {
         details: details || null,
         duration: duration || null,
         form_label: form_label || null,
+        series: series ? String(series).trim() : null,
         image_url: String(image_url).trim(),
         is_video: !!is_video,
         accent: accent || 'bg-rad-blue',
@@ -94,7 +95,7 @@ export async function PATCH(req: Request) {
     if (err) return NextResponse.json({ error: err }, { status: 400 });
 
     const {
-      title, label, location, details, duration, form_label,
+      title, label, location, details, duration, form_label, series,
       image_url, is_video, accent, sort_order, live_from, live_until, date_options, draft, allow_multi_date,
       show_on_events_page, show_on_homepage, counts_general_attendees,
     } = body;
@@ -112,6 +113,7 @@ export async function PATCH(req: Request) {
     if (details !== undefined) update.details = details || null;
     if (duration !== undefined) update.duration = duration || null;
     if (form_label !== undefined) update.form_label = form_label || null;
+    if (series !== undefined) update.series = series ? String(series).trim() : null;
     if (image_url !== undefined) update.image_url = String(image_url).trim();
     if (is_video !== undefined) update.is_video = !!is_video;
     if (accent !== undefined) update.accent = accent || 'bg-rad-blue';

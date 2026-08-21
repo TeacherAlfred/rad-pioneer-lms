@@ -43,7 +43,7 @@ export async function POST(req: Request) {
 
     const { data: program } = await supabaseAdmin
       .from('featured_programs')
-      .select('id, title, location, date_options, draft, live_from, live_until, allow_multi_date, counts_general_attendees')
+      .select('id, title, location, series, date_options, draft, live_from, live_until, allow_multi_date, counts_general_attendees')
       .eq('id', program_id)
       .maybeSingle();
     if (!program) return NextResponse.json({ error: 'That program could not be found.' }, { status: 404 });
@@ -113,9 +113,11 @@ export async function POST(req: Request) {
       (referrer ? ` [ref: ${referrer}]` : '');
 
     let leadId: string;
+    let registrationSource: string | null;
 
     if (existingLead) {
       leadId = existingLead.id;
+      registrationSource = existingLead.source ?? null;
       const update: Record<string, any> = {
         preferred_channel: resolvedChannel,
         number_of_children: nChildren,
@@ -127,6 +129,7 @@ export async function POST(req: Request) {
       if (resolvedPhone) update.phone = resolvedPhone;
       await supabaseAdmin.from('leads').update(update).eq('id', leadId);
     } else {
+      registrationSource = utm_source ? `website_${utm_source}` : 'website_register_interest';
       const { data: newLead, error: insertErr } = await supabaseAdmin
         .from('leads')
         .insert([{
@@ -135,7 +138,7 @@ export async function POST(req: Request) {
           phone: resolvedPhone || '', // leads.phone is NOT NULL; WhatsApp number is optional on this form
           status: 'new_lead',
           lifecycle_stage: 'new',
-          source: utm_source ? `website_${utm_source}` : 'website_register_interest',
+          source: registrationSource,
           preferred_channel: resolvedChannel,
           number_of_children: nChildren,
           interested_program_id: program.id,
@@ -156,6 +159,24 @@ export async function POST(req: Request) {
       outcome: 'register_interest',
       note: activityNote,
       created_by: 'register_interest_form',
+    }]);
+
+    // Structured, append-only counterpart to the activity note above - see
+    // 20260826120000_event_registrations_tracking.sql for why this exists
+    // separately from leads.interested_program_id (that field only holds
+    // this lead's latest registration, so it can't answer "how many people
+    // registered for last month's instance of this recurring event").
+    await supabaseAdmin.from('event_registrations').insert([{
+      lead_id: leadId,
+      program_id: program.id,
+      program_title: program.title,
+      series: program.series,
+      location: program.location,
+      date_option_id: date_option_id || null,
+      date_label: dateLabel,
+      number_of_children: nChildren,
+      preferred_channel: resolvedChannel,
+      source: registrationSource,
     }]);
 
     await notifyAdminOfRegistration(

@@ -18,6 +18,7 @@ type FeaturedProgram = {
   details: string | null;
   duration: string | null;
   form_label: string | null;
+  series: string | null;
   image_url: string;
   is_video: boolean;
   accent: string;
@@ -43,7 +44,7 @@ const ACCENTS = [
 ];
 
 const emptyForm = {
-  title: '', label: 'Program', location: '', details: '', duration: '', form_label: '',
+  title: '', label: 'Program', location: '', details: '', duration: '', form_label: '', series: '',
   image_url: '', is_video: false, accent: 'bg-rad-blue', sort_order: '0',
   live_from: '', live_until: '', allow_multi_date: false,
   show_on_events_page: true, show_on_homepage: true,
@@ -106,6 +107,10 @@ export default function FeaturedProgramsPage() {
   useEffect(() => { load(); }, []);
 
   const sorted = useMemo(() => [...rows].sort((a, b) => a.sort_order - b.sort_order), [rows]);
+  const seriesOptions = useMemo(
+    () => Array.from(new Set(rows.map(r => r.series).filter(Boolean))) as string[],
+    [rows]
+  );
 
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<FeaturedProgram | null>(null);
@@ -132,6 +137,7 @@ export default function FeaturedProgramsPage() {
       details: p.details || '',
       duration: p.duration || '',
       form_label: p.form_label || '',
+      series: p.series || '',
       image_url: p.image_url,
       is_video: p.is_video,
       accent: p.accent,
@@ -177,6 +183,7 @@ export default function FeaturedProgramsPage() {
         details: form.details.trim() || null,
         duration: form.duration.trim() || null,
         form_label: form.form_label.trim() || null,
+        series: form.series.trim() || null,
         image_url: form.image_url.trim(),
         is_video: form.is_video,
         accent: form.accent,
@@ -268,9 +275,14 @@ export default function FeaturedProgramsPage() {
               Every program you&apos;re running - controls both the homepage &quot;Featured Events&quot; carousel and the <Link href="/events" target="_blank" className="underline hover:text-slate-700">/events</Link> page. A card is only visible between its Live From and Live Until dates, and only on the surface(s) you tick below.
             </p>
           </div>
-          <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800">
-            <Plus size={14} /> Add Card
-          </button>
+          <div className="flex items-center gap-2">
+            <Link href="/admin/registrations" className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-50">
+              <CalendarDays size={14} /> Registrations
+            </Link>
+            <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800">
+              <Plus size={14} /> Add Card
+            </button>
+          </div>
         </div>
 
         {error && <div className="mb-6 bg-rose-50 border border-rose-200 text-rose-600 text-sm rounded-xl p-4">{error}</div>}
@@ -302,6 +314,9 @@ export default function FeaturedProgramsPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-bold text-slate-800">{p.title}</h3>
                       <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-100">{p.label}</span>
+                      {p.series && (
+                        <span title="Series - grouped with other instances on the Registrations page" className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">{p.series}</span>
+                      )}
                       {accentMeta && (
                         <span className="w-3 h-3 rounded-full border border-black/10" style={{ backgroundColor: accentMeta.swatch }} title={accentMeta.label} />
                       )}
@@ -408,6 +423,20 @@ export default function FeaturedProgramsPage() {
                   <label className={LABEL_CLS}>Duration</label>
                   <input placeholder="e.g. 6 Week Program" value={form.duration} onChange={e => setForm(f => ({ ...f, duration: e.target.value }))} className={INPUT_CLS} />
                 </div>
+              </div>
+
+              <div>
+                <label className={LABEL_CLS}>Series</label>
+                <input
+                  list="series-options" placeholder="e.g. Robotics Webinar"
+                  value={form.series} onChange={e => setForm(f => ({ ...f, series: e.target.value }))} className={INPUT_CLS}
+                />
+                <datalist id="series-options">
+                  {seriesOptions.map(s => <option key={s} value={s} />)}
+                </datalist>
+                <p className="text-[12px] text-slate-400 mt-1.5 leading-relaxed">
+                  Tag recurring instances of the same event (different topic each time) with the same name so <Link href="/admin/registrations" className="underline hover:text-slate-600">Registrations</Link> can compare them month to month. Leave blank for a one-off.
+                </p>
               </div>
 
               <div>
