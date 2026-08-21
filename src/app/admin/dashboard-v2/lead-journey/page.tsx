@@ -41,6 +41,13 @@ export default function LeadJourneyPage() {
     setLoading(false);
   }
 
+  // Both actions merge the server's response straight into local state
+  // instead of refetching the whole board - a full refetch calls loadLeads(),
+  // which sets loading=true and replaces the entire Kanban board with the
+  // full-page spinner on every single click, which is the "screen locks"
+  // behaviour being fixed here. The server response is still the source of
+  // truth for what changed (e.g. whether a failed check also moved the lead
+  // to lost) - the client isn't guessing at business logic, just applying it.
   async function handleMove(leadId: string, toStage: string) {
     setMovingId(leadId);
     setOpenMoveMenu(null);
@@ -50,11 +57,11 @@ export default function LeadJourneyPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ toStage }),
       });
-      if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error || "Failed to move lead");
-      }
-      await loadLeads();
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to move lead");
+      setLeads((prev) =>
+        prev.map((l) => (l.id === leadId ? { ...l, lifecycle_stage: json.lifecycle_stage, stage_entered_at: json.stage_entered_at } : l))
+      );
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -70,11 +77,19 @@ export default function LeadJourneyPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stage_key: stageKey, passed }),
       });
-      if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error || "Failed to save qualification check");
-      }
-      await loadLeads();
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to save qualification check");
+      setLeads((prev) =>
+        prev.map((l) => {
+          if (l.id !== leadId) return l;
+          const otherChecks = (l.qualification_checks || []).filter((c: any) => c.stage_key !== stageKey);
+          return {
+            ...l,
+            qualification_checks: [...otherChecks, json.check],
+            ...(json.movedToLost ? { lifecycle_stage: "lost", stage_entered_at: json.stage_entered_at } : {}),
+          };
+        })
+      );
     } catch (err: any) {
       alert(err.message);
     } finally {

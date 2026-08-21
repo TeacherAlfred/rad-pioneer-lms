@@ -37,12 +37,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // the lead already reached a terminal stage - a won sale or a prior
   // deliberate lost/opted_out shouldn't be overwritten by a qualification
   // check made after the fact.
+  // Echo back the check that was just set plus any resulting stage change so
+  // the client can merge this directly into local state instead of
+  // refetching the whole board (which flashes the full-page loading state
+  // on every single click).
+  const result: { ok: true; check: { stage_key: string; passed: boolean }; movedToLost?: boolean; stage_entered_at?: string } = {
+    ok: true,
+    check: { stage_key, passed },
+  };
+
   if (!passed) {
     const { data: lead } = await supabase.from('leads').select('lifecycle_stage').eq('id', id).single();
     if (lead && !TERMINAL_STAGES.includes(lead.lifecycle_stage)) {
+      const now = new Date().toISOString();
       const { error: updateError } = await supabase
         .from('leads')
-        .update({ lifecycle_stage: 'lost', lost_reason: `disqualified:${stage_key}`, stage_entered_at: new Date().toISOString() })
+        .update({ lifecycle_stage: 'lost', lost_reason: `disqualified:${stage_key}`, stage_entered_at: now })
         .eq('id', id);
       if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
 
@@ -52,8 +62,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         changedBy: 'admin',
         reason: `Disqualified: ${stage.label}`,
       });
+
+      result.movedToLost = true;
+      result.stage_entered_at = now;
     }
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(result);
 }

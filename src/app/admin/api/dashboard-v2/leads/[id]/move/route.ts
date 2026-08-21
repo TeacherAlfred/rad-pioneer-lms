@@ -40,5 +40,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     reason: reason || 'Manual move via Lead Journey board',
   });
 
-  return NextResponse.json({ ok: true });
+  // Echo back what actually changed so the client can merge it into local
+  // state directly instead of refetching the whole board (which flashes the
+  // full-page loading state on every single action).
+  return NextResponse.json({ ok: true, lifecycle_stage: toStage, stage_entered_at: now });
 }
