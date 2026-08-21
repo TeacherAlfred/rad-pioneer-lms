@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Clock, ArrowRight } from "lucide-react";
+import { AlertTriangle, Clock, ArrowRight, Plus, X, Target } from "lucide-react";
 import { DashboardV2Nav } from "./_components/DashboardV2Nav";
 import { LIFECYCLE_STAGE_LABELS } from "@/lib/funnelStages";
 
@@ -27,6 +27,13 @@ export default function DashboardV2Home() {
   const [summary, setSummary] = useState<any>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [actions, setActions] = useState<any[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const [newTarget, setNewTarget] = useState("");
+  const [newUnit, setNewUnit] = useState("");
+  const [savingActionId, setSavingActionId] = useState<string | null>(null);
+
   useEffect(() => {
     (async () => {
       try {
@@ -34,6 +41,7 @@ export default function DashboardV2Home() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to load summary");
         setSummary(data);
+        setActions(data.constraintActions || []);
       } catch (err: any) {
         setLoadError(err.message);
       } finally {
@@ -41,6 +49,61 @@ export default function DashboardV2Home() {
       }
     })();
   }, []);
+
+  async function handleAddAction() {
+    if (!newLabel.trim() || !summary) return;
+    try {
+      const res = await fetch("/admin/api/dashboard-v2/constraint-actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          constraint_state: summary.constraint.state,
+          label: newLabel.trim(),
+          target: newTarget ? Number(newTarget) : undefined,
+          unit: newUnit.trim() || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to add action");
+      setActions((prev) => [...prev, json.action]);
+      setNewLabel("");
+      setNewTarget("");
+      setNewUnit("");
+      setShowAddForm(false);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
+
+  async function handleUpdateAction(id: string, patch: { actual?: number; target?: number | null }) {
+    setSavingActionId(id);
+    setActions((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+    try {
+      const res = await fetch(`/admin/api/dashboard-v2/constraint-actions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const json = await res.json();
+        throw new Error(json.error || "Failed to save");
+      }
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSavingActionId(null);
+    }
+  }
+
+  async function handleDeleteAction(id: string) {
+    setActions((prev) => prev.filter((a) => a.id !== id));
+    try {
+      const res = await fetch(`/admin/api/dashboard-v2/constraint-actions/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete");
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
 
   if (loadError) {
     return (
@@ -84,6 +147,116 @@ export default function DashboardV2Home() {
             Fulfilment Capacity and Recurring Revenue Quality tiers aren't shown — no waitlist/room-concurrency or MRR-vs-hire-cost
             data is tracked yet to compute them honestly.
           </p>
+        </section>
+
+        {/* CONSTRAINT ACTIONS MODULE (§3.1a) - generic, points at whichever
+            system is the current constraint; redefine the rows when the
+            constraint moves, don't rebuild the module. */}
+        <section className="bg-white border border-stone-200 rounded-[24px] p-6 md:p-8 shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-black uppercase tracking-widest text-stone-400 flex items-center gap-2">
+              <Target size={14} /> Constraint Actions — {constraintCopy.label}
+            </h3>
+            <button
+              onClick={() => setShowAddForm((v) => !v)}
+              className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-700"
+            >
+              <Plus size={12} /> Add Action
+            </button>
+          </div>
+          <p className="text-[10px] text-stone-400 mb-5">
+            Actions are controllable; results are what actually matter — action volume alone can look perfect while the underlying
+            conversion is broken, so both are tracked side by side.
+          </p>
+
+          {/* Result/ratio pairing - the lagging numbers proving the actions below are converting */}
+          <div className="grid grid-cols-2 gap-4 mb-6 pb-6 border-b border-stone-100">
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-widest text-stone-400">Raw Leads/Day</p>
+              <p className="text-xl font-black tracking-tight">{summary.raw.fourteenDayAvg.toFixed(1)}</p>
+            </div>
+            <div>
+              <p className="text-[9px] font-black uppercase tracking-widest text-stone-400">Qualified-Lead Rate</p>
+              <p className="text-xl font-black tracking-tight">
+                {summary.qualification.qualifiedRate === null ? "—" : `${summary.qualification.qualifiedRate.toFixed(0)}%`}
+              </p>
+            </div>
+          </div>
+
+          {showAddForm && (
+            <div className="p-4 bg-stone-50 rounded-xl border border-stone-100 mb-4 space-y-2">
+              <input
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                placeholder="Action label, e.g. Warm-list touches made"
+                className="w-full bg-white border border-stone-200 rounded-lg px-3 py-2 text-xs"
+              />
+              <div className="flex gap-2">
+                <input
+                  value={newTarget}
+                  onChange={(e) => setNewTarget(e.target.value)}
+                  placeholder="Target (optional)"
+                  type="number"
+                  className="flex-1 bg-white border border-stone-200 rounded-lg px-3 py-2 text-xs"
+                />
+                <input
+                  value={newUnit}
+                  onChange={(e) => setNewUnit(e.target.value)}
+                  placeholder="Unit, e.g. touches (optional)"
+                  className="flex-1 bg-white border border-stone-200 rounded-lg px-3 py-2 text-xs"
+                />
+              </div>
+              <button onClick={handleAddAction} className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                Save Action
+              </button>
+            </div>
+          )}
+
+          {actions.length === 0 ? (
+            <p className="text-xs text-stone-400 italic">
+              No actions set for this constraint yet — add the specific, controllable actions for {constraintCopy.label.toLowerCase()}'s channels this period.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {actions.map((action) => {
+                const pct = action.target ? Math.min(100, (Number(action.actual) / Number(action.target)) * 100) : null;
+                return (
+                  <div key={action.id} className="p-3 bg-stone-50 rounded-xl border border-stone-100">
+                    <div className="flex items-center justify-between mb-2 gap-2">
+                      <p className="text-xs font-bold text-stone-800 truncate">{action.label}</p>
+                      <button onClick={() => handleDeleteAction(action.id)} className="text-stone-300 hover:text-rose-500 shrink-0">
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        value={action.actual}
+                        disabled={savingActionId === action.id}
+                        onChange={(e) => handleUpdateAction(action.id, { actual: Number(e.target.value) })}
+                        className="w-16 bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs font-black text-center"
+                      />
+                      <span className="text-stone-300 text-xs">/</span>
+                      <input
+                        type="number"
+                        value={action.target ?? ""}
+                        placeholder="target"
+                        disabled={savingActionId === action.id}
+                        onChange={(e) => handleUpdateAction(action.id, { target: e.target.value ? Number(e.target.value) : null })}
+                        className="w-16 bg-white border border-stone-200 rounded-lg px-2 py-1 text-xs font-black text-center"
+                      />
+                      {action.unit && <span className="text-[10px] text-stone-400">{action.unit}</span>}
+                      {pct !== null && (
+                        <div className="flex-1 h-1.5 bg-stone-200 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${pct >= 100 ? "bg-emerald-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         {/* QUALIFICATION TRANSPARENCY NOTE */}

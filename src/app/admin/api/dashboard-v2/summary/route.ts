@@ -27,6 +27,8 @@ export async function GET() {
       .order('changed_at', { ascending: false })
       .limit(20),
   ]);
+  // constraint_actions fetched after constraintState is known below (needs
+  // it to filter to the current constraint's action list).
 
   const checksByLead: Record<string, QualificationCheck[]> = {};
   (qualChecks || []).forEach((c) => {
@@ -89,6 +91,17 @@ export async function GET() {
   }
 
   const checkedCount = allLeads.filter((l) => l.isChecked).length;
+  // Doc §3.1a's "quality-adjusted rate" - the % of CHECKED leads that
+  // actually pass, so a raw volume number never stands alone. Undefined
+  // (not 0) when nothing's been checked yet - a real "no data" state, not
+  // a 0% pass rate that would look like every lead so far failed.
+  const qualifiedRate = checkedCount > 0 ? (qualifiedLeads.length / checkedCount) * 100 : null;
+
+  const { data: constraintActions } = await supabase
+    .from('constraint_actions')
+    .select('*')
+    .eq('constraint_state', constraintState)
+    .order('sort_order');
 
   const stageCounts = LIFECYCLE_STAGES.map((stage) => ({
     stage,
@@ -110,7 +123,8 @@ export async function GET() {
     // decide constraintState. Kept close to the qualified numbers so the gap
     // between them is visible rather than silently discarded.
     raw: { fourteenDayAvg: rawFourteenDayAvg, activePipelineCount: rawActivePipelineCount },
-    qualification: { checkedCount, totalLeads: allLeads.length, qualifiedCount: qualifiedLeads.length },
+    qualification: { checkedCount, totalLeads: allLeads.length, qualifiedCount: qualifiedLeads.length, qualifiedRate },
+    constraintActions: constraintActions || [],
     dailyCounts,
     stageCounts,
     stalledCount,
