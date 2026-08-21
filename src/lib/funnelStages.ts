@@ -25,3 +25,20 @@ export const STAGE_STALL_HOURS: Record<string, number> = {
   offered: 48,
   re_nurture: 90 * 24,
 };
+
+// Which moves a quick-action button should offer from each stage - not a
+// hard DB constraint, just what's sane for the dashboard-v2 Lead Journey
+// board's manual override buttons. `lost`/`opted_out` are recoverable (the
+// cron's auto-lost is explicitly reversible on any new inbound), `won`
+// loops back into re_nurture for the next purchase cycle rather than being
+// a dead end.
+export const VALID_STAGE_TRANSITIONS: Record<string, string[]> = {
+  new: ['engaged', 'opted_out', 'lost'],
+  engaged: ['qualified', 're_nurture', 'opted_out', 'lost'],
+  qualified: ['offered', 're_nurture', 'lost'],
+  offered: ['won', 're_nurture', 'lost'],
+  re_nurture: ['engaged', 'qualified', 'offered', 'lost', 'opted_out'],
+  won: ['re_nurture'],
+  lost: ['re_nurture'],
+  opted_out: [],
+};
