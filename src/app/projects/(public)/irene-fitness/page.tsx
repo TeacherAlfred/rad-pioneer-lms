@@ -186,11 +186,12 @@ function IreneFitnessPageInner() {
     }
   }
 
-  // "Tell Your Story" is entirely optional flavor content (spec §7.5) — best
-  // effort, never blocks the flow. Used by both "Skip for now" (whatever's
-  // filled so far) and the preview screen's final Submit (everything).
-  async function persistStory(next: Step) {
-    setStorySaving(true);
+  // "Tell Your Story" is entirely optional flavor content — best effort,
+  // never blocks navigation. Autosaved on every group transition (Back,
+  // Continue, Skip) so nothing's lost if a parent abandons partway through,
+  // not just when they reach the final preview Submit.
+  async function saveStory() {
+    if (!responseId) return;
     try {
       await fetch('/api/irene-fitness/story', {
         method: 'POST',
@@ -209,11 +210,25 @@ function IreneFitnessPageInner() {
         }),
       });
     } catch {
-      // Optional content — don't block Confirmation on a failed save.
-    } finally {
-      setStorySaving(false);
-      setStep(next);
+      // Best-effort autosave — never blocks navigation on a failed save.
     }
+  }
+
+  function goToStoryGroup(g: 1 | 2 | 3 | 4) {
+    saveStory();
+    setStoryGroup(g);
+  }
+
+  function goToStoryPreview() {
+    saveStory();
+    setStep('story_preview');
+  }
+
+  async function submitStory() {
+    setStorySaving(true);
+    await saveStory();
+    setStorySaving(false);
+    setStep('confirmation');
   }
 
   if (step === 'loading') {
@@ -578,22 +593,22 @@ function IreneFitnessPageInner() {
           <div className="flex items-center gap-3 mt-6">
             {storyGroup > 1 && (
               <button
-                onClick={() => setStoryGroup((g) => (g - 1) as 1 | 2 | 3 | 4)}
+                onClick={() => goToStoryGroup((storyGroup - 1) as 1 | 2 | 3 | 4)}
                 className="px-5 py-4 rounded-2xl font-black uppercase tracking-widest text-xs bg-slate-100 text-slate-500"
               >
                 Back
               </button>
             )}
             <button
-              disabled={(storyGroup === 1 && !story.motivation.trim()) || storySaving}
-              onClick={() => (storyGroup === 4 ? setStep('story_preview') : setStoryGroup((g) => (g + 1) as 1 | 2 | 3 | 4))}
+              disabled={storyGroup === 1 && !story.motivation.trim()}
+              onClick={() => (storyGroup === 4 ? goToStoryPreview() : goToStoryGroup((storyGroup + 1) as 1 | 2 | 3 | 4))}
               className="flex-1 py-4 rounded-2xl font-black uppercase tracking-widest text-xs bg-[#0066cc] text-white disabled:bg-slate-200 disabled:text-slate-400 transition-colors"
             >
               {storyGroup === 4 ? 'Review' : 'Continue'}
             </button>
           </div>
           <button
-            onClick={() => (storyGroup === 4 ? setStep('story_preview') : setStoryGroup((g) => (g + 1) as 1 | 2 | 3 | 4))}
+            onClick={() => (storyGroup === 4 ? goToStoryPreview() : goToStoryGroup((storyGroup + 1) as 1 | 2 | 3 | 4))}
             className="w-full mt-3 py-3 text-xs font-bold text-slate-400 hover:text-slate-600"
           >
             Skip for now
@@ -632,7 +647,7 @@ function IreneFitnessPageInner() {
 
           <button
             disabled={storySaving}
-            onClick={() => persistStory('confirmation')}
+            onClick={submitStory}
             className="w-full py-4 rounded-2xl font-black uppercase tracking-widest text-xs bg-[#0066cc] text-white disabled:bg-slate-200 transition-colors"
           >
             {storySaving ? 'Saving…' : 'Looks good, submit'}
