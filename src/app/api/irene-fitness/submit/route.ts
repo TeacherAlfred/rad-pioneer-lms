@@ -28,6 +28,7 @@ export async function POST(request: Request) {
       whatsapp,
       email,
       children,
+      consent_updates,
       consent_marketing,
     } = body;
 
@@ -78,6 +79,8 @@ export async function POST(request: Request) {
       consent_public_display_timestamp: now,
       consent_wording_version: CONSENT_WORDING_VERSION,
       consent_source,
+      consent_updates: consent_updates === true,
+      consent_updates_timestamp: consent_updates === true ? now : null,
       consent_marketing: consent_marketing === true,
       consent_marketing_timestamp: consent_marketing === true ? now : null,
     };
