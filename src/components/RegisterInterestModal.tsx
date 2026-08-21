@@ -365,8 +365,8 @@ export default function RegisterInterestModal({ program, onClose }: { program: R
                   <div className="space-y-1.5">
                     <label className={LABEL_CLS}>Preferred Date</label>
                     <select required value={dateOptionId} onChange={e => setDateOptionId(e.target.value)} className={`${INPUT_CLS} appearance-none cursor-pointer`}>
-                      <option value="" disabled>Select a date...</option>
-                      {dateOptions.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+                      <option value="" disabled className="bg-[#0f172a] text-white">Select a date...</option>
+                      {dateOptions.map(d => <option key={d.id} value={d.id} className="bg-[#0f172a] text-white">{d.label}</option>)}
                     </select>
                   </div>
                 )}
