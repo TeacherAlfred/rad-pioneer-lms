@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+import { SidePanelDrawer } from "@/components/admin/SidePanelDrawer";
 
 const formatWhatsAppNumber = (phone: string) => {
   if (!phone) return "";
@@ -489,147 +490,128 @@ export default function PipelineDashboard() {
       {/* --- QUOTE INSPECTOR DRAWER (SIDE PANEL) --- */}
       <AnimatePresence>
         {isDrawerOpen && activeQuote && (
-          <div className="fixed inset-0 z-[100] flex justify-end">
-             {/* Backdrop */}
-             <motion.div 
-               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
-               onClick={() => setIsDrawerOpen(false)}
-               className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-             />
-             
-             {/* Drawer Content */}
-             <motion.div 
-               initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
-               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-               className="relative w-full max-w-2xl bg-[#0f172a] border-l border-white/10 h-full flex flex-col shadow-2xl z-10"
-             >
-                {/* Header */}
-                <div className="p-6 md:p-8 border-b border-white/5 bg-black/20 flex justify-between items-start shrink-0">
-                   <div>
-                     <div className="flex items-center gap-3 mb-2">
-                       <span className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest border ${
-                            activeQuote.status === 'invoiced' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' :
-                            activeQuote.status === 'accepted' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                            activeQuote.status === 'declined' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
-                            activeQuote.isExpired ? 'bg-rose-500/20 text-rose-400 border-rose-500/30 animate-pulse' :
-                            'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                          }`}>
-                            {activeQuote.status === 'invoiced' ? 'Accepted & Invoiced' : activeQuote.isExpired ? 'Expired (Review)' : activeQuote.status}
-                       </span>
-                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 font-mono">QT-{activeQuote.invoice_number}</span>
-                     </div>
-                     <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white">
-                       {activeQuote.profiles?.display_name || activeQuote.metadata?.prospect_name || "Unknown Lead"}
-                     </h2>
-                     <p className="text-[10px] font-bold text-slate-400 mt-1 flex items-center gap-3">
-                       <span>{activeQuote.metadata?.prospect_email || "No Email"}</span>
-                       <span>{activeQuote.metadata?.prospect_phone || activeQuote.metadata?.phone || "No Phone"}</span>
-                     </p>
-                   </div>
-                   <button onClick={() => setIsDrawerOpen(false)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors">
-                     <X size={20} />
-                   </button>
+          <SidePanelDrawer
+            onClose={() => setIsDrawerOpen(false)}
+            header={
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <span className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest border ${
+                       activeQuote.status === 'invoiced' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]' :
+                       activeQuote.status === 'accepted' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                       activeQuote.status === 'declined' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                       activeQuote.isExpired ? 'bg-rose-500/20 text-rose-400 border-rose-500/30 animate-pulse' :
+                       'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                     }`}>
+                       {activeQuote.status === 'invoiced' ? 'Accepted & Invoiced' : activeQuote.isExpired ? 'Expired (Review)' : activeQuote.status}
+                  </span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-500 font-mono">QT-{activeQuote.invoice_number}</span>
                 </div>
+                <h2 className="text-2xl font-black uppercase italic tracking-tighter text-white">
+                  {activeQuote.profiles?.display_name || activeQuote.metadata?.prospect_name || "Unknown Lead"}
+                </h2>
+                <p className="text-[10px] font-bold text-slate-400 mt-1 flex items-center gap-3">
+                  <span>{activeQuote.metadata?.prospect_email || "No Email"}</span>
+                  <span>{activeQuote.metadata?.prospect_phone || activeQuote.metadata?.phone || "No Phone"}</span>
+                </p>
+              </div>
+            }
+            footer={
+              <>
+                <a
+                  href={`/quote/${activeQuote.id}`}
+                  target="_blank"
+                  className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-colors border border-white/10"
+                >
+                  <FileText size={14}/> Web Quote
+                </a>
+                {activeQuote.status === 'pending' && (
+                  <>
+                    <button
+                      onClick={handleMarkExpired}
+                      className="px-4 py-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center transition-all border border-rose-500/20"
+                      title="Mark as Expired (Remove from active Pipeline)"
+                    >
+                      <XCircle size={16}/>
+                    </button>
+                    <button
+                      onClick={() => openWhatsAppComposer(activeQuote)}
+                      className="flex-[2] py-3.5 bg-green-600 hover:bg-green-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-green-900/20"
+                    >
+                      <MessageCircle size={14}/> WhatsApp Follow-up
+                    </button>
+                  </>
+                )}
+              </>
+            }
+            subheader={
+              <div className="grid grid-cols-3 divide-x divide-white/5 border-b border-white/5 bg-[#020617]">
+                 <div className="p-4 md:p-6 text-center">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1 flex items-center justify-center gap-1"><Coins size={12}/> Revenue</p>
+                    <p className="text-xl font-black text-white tracking-tighter">R {Number(activeQuote.total_amount).toLocaleString()}</p>
+                 </div>
+                 <div className="p-4 md:p-6 text-center">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500/70 mb-1 flex items-center justify-center gap-1"><TrendingUp size={12}/> Est. Profit</p>
+                    <p className="text-xl font-black text-emerald-400 tracking-tighter">R {Math.round(activeQuote.profit).toLocaleString()}</p>
+                 </div>
+                 <div className="p-4 md:p-6 text-center">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-purple-400/70 mb-1 flex items-center justify-center gap-1"><Percent size={12}/> Margin</p>
+                    <p className="text-xl font-black text-purple-400 tracking-tighter">{activeQuote.marginPct.toFixed(1)}%</p>
+                 </div>
+              </div>
+            }
+          >
+            {/* Line Items Detail */}
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2"><Tag size={16}/> Line Item Economics</h3>
+            <div className="space-y-4">
+              {activeQuote.line_items?.map((li: any, idx: number) => {
+                 const rawDesc = li.desc || li.description || "";
+                 const searchKey = rawDesc.toLowerCase().trim();
 
-                {/* Economics Summary */}
-                <div className="grid grid-cols-3 divide-x divide-white/5 border-b border-white/5 bg-[#020617] shrink-0">
-                   <div className="p-4 md:p-6 text-center">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-1 flex items-center justify-center gap-1"><Coins size={12}/> Revenue</p>
-                      <p className="text-xl font-black text-white tracking-tighter">R {Number(activeQuote.total_amount).toLocaleString()}</p>
-                   </div>
-                   <div className="p-4 md:p-6 text-center">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500/70 mb-1 flex items-center justify-center gap-1"><TrendingUp size={12}/> Est. Profit</p>
-                      <p className="text-xl font-black text-emerald-400 tracking-tighter">R {Math.round(activeQuote.profit).toLocaleString()}</p>
-                   </div>
-                   <div className="p-4 md:p-6 text-center">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-purple-400/70 mb-1 flex items-center justify-center gap-1"><Percent size={12}/> Margin</p>
-                      <p className="text-xl font-black text-purple-400 tracking-tighter">{activeQuote.marginPct.toFixed(1)}%</p>
-                   </div>
-                </div>
+                 const cost = itemCostMap[searchKey] || 0;
+                 const price = Number(li.price) || 0;
+                 const qty = Number(li.qty) || 0;
+                 const disc = Math.max(0, Number(li.disc || 0));
+                 const netPrice = price * (1 - disc / 100);
 
-                {/* Line Items Detail */}
-                <div className="flex-1 overflow-y-auto p-6 md:p-8 custom-scrollbar">
-                   <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4 flex items-center gap-2"><Tag size={16}/> Line Item Economics</h3>
-                   <div className="space-y-4">
-                     {activeQuote.line_items?.map((li: any, idx: number) => {
-                        const rawDesc = li.desc || li.description || "";
-                        const searchKey = rawDesc.toLowerCase().trim();
-                        
-                        const cost = itemCostMap[searchKey] || 0;
-                        const price = Number(li.price) || 0;
-                        const qty = Number(li.qty) || 0;
-                        const disc = Math.max(0, Number(li.disc || 0));
-                        const netPrice = price * (1 - disc / 100);
-                        
-                        const itemProfit = (netPrice - cost) * qty;
-                        const itemMargin = netPrice > 0 ? ((netPrice - cost) / netPrice) * 100 : 0;
+                 const itemProfit = (netPrice - cost) * qty;
+                 const itemMargin = netPrice > 0 ? ((netPrice - cost) / netPrice) * 100 : 0;
 
-                        return (
-                          <div key={idx} className="bg-[#020617] border border-white/5 rounded-2xl p-5 shadow-inner">
-                             <div className="flex justify-between items-start mb-4">
-                               <p className="font-bold text-sm text-white pr-4">{rawDesc}</p>
-                               <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-slate-400 px-2 py-1 rounded">Qty {qty}</span>
-                             </div>
-                             
-                             <div className="grid grid-cols-2 gap-4 text-xs">
-                                <div>
-                                   <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-0.5">Unit Economics</p>
-                                   <div className="flex justify-between items-center text-slate-400"><span className="font-medium">Cost:</span> <span>R {cost.toLocaleString()}</span></div>
-                                   <div className="flex justify-between items-center text-slate-300"><span className="font-medium">Selling (Net):</span> <span>R {netPrice.toLocaleString()}</span></div>
-                                   {disc > 0 && <div className="flex justify-between items-center text-amber-500/70"><span className="font-medium">Discount Applied:</span> <span>{disc}%</span></div>}
-                                </div>
-                                <div className="text-right border-l border-white/5 pl-4 flex flex-col justify-end">
-                                   <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500/70 mb-0.5">Line Profit</p>
-                                   <p className="text-lg font-black text-emerald-400 tracking-tighter leading-none">R {Math.round(itemProfit).toLocaleString()}</p>
-                                   <p className="text-[9px] font-bold text-emerald-500/50 mt-1">{itemMargin.toFixed(1)}% Margin</p>
-                                </div>
-                             </div>
-                          </div>
-                        )
-                     })}
+                 return (
+                   <div key={idx} className="bg-[#020617] border border-white/5 rounded-2xl p-5 shadow-inner">
+                      <div className="flex justify-between items-start mb-4">
+                        <p className="font-bold text-sm text-white pr-4">{rawDesc}</p>
+                        <span className="text-[10px] font-black uppercase tracking-widest bg-white/5 text-slate-400 px-2 py-1 rounded">Qty {qty}</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 text-xs">
+                         <div>
+                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-0.5">Unit Economics</p>
+                            <div className="flex justify-between items-center text-slate-400"><span className="font-medium">Cost:</span> <span>R {cost.toLocaleString()}</span></div>
+                            <div className="flex justify-between items-center text-slate-300"><span className="font-medium">Selling (Net):</span> <span>R {netPrice.toLocaleString()}</span></div>
+                            {disc > 0 && <div className="flex justify-between items-center text-amber-500/70"><span className="font-medium">Discount Applied:</span> <span>{disc}%</span></div>}
+                         </div>
+                         <div className="text-right border-l border-white/5 pl-4 flex flex-col justify-end">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500/70 mb-0.5">Line Profit</p>
+                            <p className="text-lg font-black text-emerald-400 tracking-tighter leading-none">R {Math.round(itemProfit).toLocaleString()}</p>
+                            <p className="text-[9px] font-bold text-emerald-500/50 mt-1">{itemMargin.toFixed(1)}% Margin</p>
+                         </div>
+                      </div>
                    </div>
+                 )
+              })}
+            </div>
 
-                   {/* Contextual Info */}
-                   <div className="mt-8 bg-purple-500/10 border border-purple-500/20 rounded-2xl p-5">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-2 flex items-center gap-2"><Crown size={14}/> Top 20% Analysis</p>
-                      <p className="text-xs font-medium text-purple-300/80 leading-relaxed">
-                        {pipelineStats.paretoIds.has(activeQuote.id) 
-                          ? "This quote is part of your top 20% highest-margin deals. Following up and securing this lead directly impacts your primary bottom line."
-                          : "This quote falls outside the top 20% of your potential profit pool. It is valuable revenue, but prioritize higher-margin deals first."
-                        }
-                      </p>
-                   </div>
-                </div>
-
-                {/* Footer Actions */}
-                <div className="p-6 border-t border-white/5 bg-black/40 flex flex-wrap gap-3 shrink-0">
-                   <a 
-                     href={`/quote/${activeQuote.id}`} 
-                     target="_blank" 
-                     className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-colors border border-white/10"
-                   >
-                     <FileText size={14}/> Web Quote
-                   </a>
-                   {activeQuote.status === 'pending' && (
-                     <>
-                       <button 
-                         onClick={handleMarkExpired}
-                         className="px-4 py-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center transition-all border border-rose-500/20"
-                         title="Mark as Expired (Remove from active Pipeline)"
-                       >
-                         <XCircle size={16}/>
-                       </button>
-                       <button 
-                         onClick={() => openWhatsAppComposer(activeQuote)}
-                         className="flex-[2] py-3.5 bg-green-600 hover:bg-green-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-green-900/20"
-                       >
-                         <MessageCircle size={14}/> WhatsApp Follow-up
-                       </button>
-                     </>
-                   )}
-                </div>
-             </motion.div>
-          </div>
+            {/* Contextual Info */}
+            <div className="mt-8 bg-purple-500/10 border border-purple-500/20 rounded-2xl p-5">
+               <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-2 flex items-center gap-2"><Crown size={14}/> Top 20% Analysis</p>
+               <p className="text-xs font-medium text-purple-300/80 leading-relaxed">
+                 {pipelineStats.paretoIds.has(activeQuote.id)
+                   ? "This quote is part of your top 20% highest-margin deals. Following up and securing this lead directly impacts your primary bottom line."
+                   : "This quote falls outside the top 20% of your potential profit pool. It is valuable revenue, but prioritize higher-margin deals first."
+                 }
+               </p>
+            </div>
+          </SidePanelDrawer>
         )}
       </AnimatePresence>
 

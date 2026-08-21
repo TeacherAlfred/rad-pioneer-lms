@@ -8,7 +8,7 @@ import {
   ShieldCheck, LayoutDashboard, Zap, Briefcase, ArrowRight, LogOut,
   GraduationCap, Eye, Bell, CalendarDays, Building2, Send, 
   Inbox, Calculator, Key, Brain, Cpu, Trophy, ExternalLink, FileText,
-  BarChart3, Globe, ImagePlus, UserCog, Terminal, Database, Server
+  BarChart3, Globe, ImagePlus, UserCog, Terminal, Database, Server, Rocket
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -360,6 +360,7 @@ export default function AdminDashboard() {
         { label: 'Outbound Invites', icon: Send, path: '/admin/invites', color: 'hover:border-purple-500' },
         { label: 'Events & Bootcamps', icon: CalendarDays, path: '/admin/events', color: 'hover:border-yellow-500' },
         { label: 'Featured Programs', icon: Zap, path: '/admin/featured-programs', color: 'hover:border-blue-500' },
+        { label: 'Registrations', icon: Users, path: '/admin/registrations', color: 'hover:border-blue-500' },
         { label: 'B2B Consulting', icon: Building2, path: '/admin/consulting', color: 'hover:border-indigo-500' },
       ]
     },
@@ -382,6 +383,7 @@ export default function AdminDashboard() {
       title: "Admin & Infrastructure",
       desc: "Financials, high-level agreements, and system configuration.",
       items: [
+        { label: 'Open New Dashboard (v2)', icon: Rocket, path: '/admin/dashboard-v2', color: 'hover:border-cyan-500' },
         { label: 'Finance Hub', icon: CreditCard, path: '/admin/finance', color: 'hover:border-emerald-500' },
         { label: 'Core Agreements', icon: ShieldCheck, path: '/admin/agreements', color: 'hover:border-rose-500' },
         { label: 'Comms Center', icon: Activity, path: '/admin/communications', color: 'hover:border-orange-500' },
