@@ -1,83 +1,151 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createHash } from 'node:crypto';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! 
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// PayFast's documented ITN signature scheme: concatenate every field EXCEPT
+// `signature`, in the exact order PayFast sent them (not re-sorted), each
+// value trimmed + URL-encoded with spaces as '+', joined with '&', then an
+// optional passphrase appended the same way, then MD5. This was entirely
+// absent before - the only "verification" was echoing the payload back to
+// PayFast's own validate endpoint, which confirms the payload's shape but
+// not that PayFast itself sent it (nothing stops a forged POST to this
+// route with a payload that also happens to validate).
+function verifyPayfastSignature(data: Record<string, string>, receivedSignature: string): boolean {
+  const passphrase = process.env.PAYFAST_PASSPHRASE;
+  let pfOutput = '';
+  for (const key of Object.keys(data)) {
+    if (key === 'signature') continue;
+    const value = (data[key] ?? '').toString().trim();
+    pfOutput += `${key}=${encodeURIComponent(value).replace(/%20/g, '+')}&`;
+  }
+  let getString = pfOutput.slice(0, -1);
+  if (passphrase) {
+    getString += `&passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, '+')}`;
+  }
+  const expected = createHash('md5').update(getString).digest('hex');
+  return expected === receivedSignature;
+}
 
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
-    const data = Object.fromEntries(formData.entries());
+    const data = Object.fromEntries(formData.entries()) as Record<string, string>;
 
-    const pfParamString = new URLSearchParams(data as Record<string, string>).toString();
-    
-    // LIVE PayFast Validation URL
+    const signatureOk = verifyPayfastSignature(data, data.signature);
+    if (!signatureOk) {
+      console.error('❌ PayFast ITN signature mismatch - rejecting.');
+      return new NextResponse('Invalid signature', { status: 400 });
+    }
+
+    const pfParamString = new URLSearchParams(data).toString();
     const validationUrl = 'https://www.payfast.co.za/eng/query/validate';
-
     const pfValidResponse = await fetch(validationUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: pfParamString,
     });
-
     const pfValidResult = await pfValidResponse.text();
 
-    if (pfValidResult === 'VALID' && data.payment_status === 'COMPLETE') {
-      
-      const guardianId = data.custom_str1 as string;
-      let amountPaid = Number(data.amount_gross); // The total lump sum paid by parent
+    if (pfValidResult !== 'VALID' || data.payment_status !== 'COMPLETE') {
+      console.warn('⚠️ PayFast ITN validation failed or status not COMPLETE');
+      return new NextResponse('OK', { status: 200 });
+    }
 
-      if (guardianId && amountPaid > 0) {
-        
-        // 1. Fetch all unpaid invoices for this parent, oldest first
-        const { data: openInvoices, error: fetchErr } = await supabaseAdmin
-          .from('billing_records')
-          .select('*')
-          .eq('guardian_id', guardianId)
-          .eq('doc_type', 'invoice')
-          .in('status', ['pending', 'overdue', 'partially_paid', 'itn_received'])
-          .order('created_at', { ascending: true });
+    const correlationId = data.custom_str1;
+    const amountPaid = Number(data.amount_gross);
+    const pfPaymentId = data.pf_payment_id;
 
-        if (fetchErr) throw fetchErr;
+    if (!correlationId || amountPaid <= 0) {
+      return new NextResponse('OK', { status: 200 });
+    }
 
-        // 2. Waterfall Allocation Logic
-        if (openInvoices && openInvoices.length > 0) {
-          for (const inv of openInvoices) {
-            if (amountPaid <= 0) break; // Payment is fully allocated
+    // custom_str1 now carries an invoices.id directly (new pipeline) instead
+    // of a guardian id resolved against a guessed outstanding-invoice list -
+    // try that first; anything that doesn't resolve is an old in-flight
+    // billing_records document, handled exactly as before (frozen system,
+    // still needs to keep working for documents already out in the wild).
+    const { data: newInvoice } = await supabaseAdmin
+      .from('invoices')
+      .select('id, amount, amount_paid')
+      .eq('id', correlationId)
+      .maybeSingle();
 
-            const invTotal = Number(inv.total_amount) || 0;
-            const alreadyPaid = Number(inv.amount_paid) || 0;
-            const outstanding = invTotal - alreadyPaid;
+    if (newInvoice) {
+      // Idempotency: invoice_payments.payfast_payment_id is the guard here -
+      // a replayed ITN for a payment already recorded is a no-op, not a
+      // double-credit. (No equivalent guard existed before this rewrite.)
+      const { data: existingPayment } = await supabaseAdmin
+        .from('invoice_payments')
+        .select('id')
+        .eq('payfast_payment_id', pfPaymentId)
+        .maybeSingle();
 
-            if (outstanding > 0) {
-              // Determine how much of the payment goes to THIS specific invoice
-              const allocation = Math.min(outstanding, amountPaid);
-              const newPaidTotal = alreadyPaid + allocation;
-              
-              await supabaseAdmin
-                .from('billing_records')
-                .update({ 
-                  amount_paid: newPaidTotal,
-                  status: 'itn_received',
-                  paid_at: new Date().toISOString()
-                })
-                .eq('id', inv.id);
+      if (existingPayment) {
+        console.log(`ℹ️ PayFast ITN ${pfPaymentId} already processed - skipping.`);
+        return new NextResponse('OK', { status: 200 });
+      }
 
-              // Deduct allocated amount from the running total
-              amountPaid -= allocation;
-            }
-          }
-          console.log(`✅ ITN Waterfall Processed for Guardian: ${guardianId}`);
+      const { error: payError } = await supabaseAdmin.from('invoice_payments').insert([{
+        invoice_id: newInvoice.id,
+        amount: amountPaid,
+        method: 'payfast',
+        payfast_payment_id: pfPaymentId,
+        payfast_raw_payload: data,
+        received_at: new Date().toISOString(),
+        created_by: 'payfast_webhook',
+      }]);
+      if (payError) throw payError;
+
+      const newPaidTotal = Number(newInvoice.amount_paid || 0) + amountPaid;
+      const isFullyPaid = newPaidTotal >= Number(newInvoice.amount);
+      await supabaseAdmin
+        .from('invoices')
+        .update({ amount_paid: newPaidTotal, status: isFullyPaid ? 'paid' : 'partially_paid', paid_at: isFullyPaid ? new Date().toISOString() : null })
+        .eq('id', newInvoice.id);
+
+      console.log(`✅ PayFast ITN processed for invoice ${newInvoice.id}`);
+      return new NextResponse('OK', { status: 200 });
+    }
+
+    // --- OLD PATH (unchanged): billing_records via guardian_id waterfall ---
+    const guardianId = correlationId;
+    let remaining = amountPaid;
+
+    const { data: openInvoices, error: fetchErr } = await supabaseAdmin
+      .from('billing_records')
+      .select('*')
+      .eq('guardian_id', guardianId)
+      .eq('doc_type', 'invoice')
+      .in('status', ['pending', 'overdue', 'partially_paid', 'itn_received'])
+      .order('created_at', { ascending: true });
+
+    if (fetchErr) throw fetchErr;
+
+    if (openInvoices && openInvoices.length > 0) {
+      for (const inv of openInvoices) {
+        if (remaining <= 0) break;
+        const invTotal = Number(inv.total_amount) || 0;
+        const alreadyPaid = Number(inv.amount_paid) || 0;
+        const outstanding = invTotal - alreadyPaid;
+        if (outstanding > 0) {
+          const allocation = Math.min(outstanding, remaining);
+          const newPaidTotal = alreadyPaid + allocation;
+          await supabaseAdmin
+            .from('billing_records')
+            .update({ amount_paid: newPaidTotal, status: 'itn_received', paid_at: new Date().toISOString() })
+            .eq('id', inv.id);
+          remaining -= allocation;
         }
       }
-    } else {
-      console.warn("⚠️ PayFast ITN Validation Failed or Status not COMPLETE");
+      console.log(`✅ ITN Waterfall Processed for Guardian: ${guardianId}`);
     }
 
     return new NextResponse('OK', { status: 200 });
-
   } catch (error: any) {
     console.error('Critical ITN Webhook Error:', error);
     return new NextResponse('Webhook Error', { status: 500 });
