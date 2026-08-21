@@ -499,7 +499,7 @@ function IreneFitnessPageInner() {
                     maxLength={100}
                     value={story.clubNames}
                     onChange={(e) => setStory((s) => ({ ...s, clubNames: e.target.value }))}
-                    placeholder="e.g. Irene Athletics Club"
+                    placeholder="e.g. Team Vitality, Planet Fitness"
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#0066cc]/40"
                   />
                 </div>
@@ -534,9 +534,9 @@ function IreneFitnessPageInner() {
             <div>
               <h2 className="text-2xl font-black tracking-tight mb-6">Your story</h2>
               {[
-                { key: 'bossLevel' as const, label: "What's your ultimate \"Boss Level\" race or challenge for 2026?", placeholder: 'e.g. Finishing my first Comrades' },
-                { key: 'toughest' as const, label: "What's the toughest fitness challenge you've ever done?", placeholder: 'e.g. Two Oceans in the rain, 2023' },
-                { key: 'proudest' as const, label: "What's your proudest moment during a workout or race?", placeholder: "e.g. Crossing the line when I'd almost quit at 30km" },
+                { key: 'bossLevel' as const, label: "What's your ultimate \"Boss Level\" race or health goal for 2026?", placeholder: 'e.g. Finishing my first Comrades / Losing 15kg' },
+                { key: 'toughest' as const, label: "What's the toughest health or fitness challenge you've ever done?", placeholder: 'e.g. Hiking for 5km / Two Oceans in the rain, 2023' },
+                { key: 'proudest' as const, label: "What's your proudest moment during your health and fitness journey?", placeholder: "e.g. Crossing the line when I wanted to quit" },
               ].map((f) => (
                 <div key={f.key} className="mb-4">
                   <label className="block text-xs font-bold text-slate-700 mb-1">{f.label}</label>
@@ -557,8 +557,8 @@ function IreneFitnessPageInner() {
             <div>
               <h2 className="text-2xl font-black tracking-tight mb-6">Just for fun</h2>
               {[
-                { key: 'weirdestFuel' as const, label: "What's the weirdest thing you eat or drink while training/racing?", placeholder: "e.g. Pickle juice, don't ask" },
-                { key: 'funniestFail' as const, label: "What's the funniest or most embarrassing fitness fail?", placeholder: 'e.g. Ran 5km before realising my shoes were on the wrong feet' },
+                { key: 'weirdestFuel' as const, label: "What's the weirdest thing you eat or drink while training/racing or for your diet?", placeholder: "e.g. Pickle juice, don't ask" },
+                { key: 'funniestFail' as const, label: "What's the funniest or most embarrassing health and fitness fail?", placeholder: 'e.g. Ran 5km before realising my shoes were on the wrong feet' },
               ].map((f) => (
                 <div key={f.key} className="mb-4">
                   <label className="block text-xs font-bold text-slate-700 mb-1">{f.label}</label>
@@ -593,11 +593,10 @@ function IreneFitnessPageInner() {
             </button>
           </div>
           <button
-            disabled={storySaving}
-            onClick={() => persistStory('confirmation')}
+            onClick={() => (storyGroup === 4 ? setStep('story_preview') : setStoryGroup((g) => (g + 1) as 1 | 2 | 3 | 4))}
             className="w-full mt-3 py-3 text-xs font-bold text-slate-400 hover:text-slate-600"
           >
-            {storySaving ? 'Saving…' : 'Skip for now'}
+            Skip for now
           </button>
         </div>
       )}
