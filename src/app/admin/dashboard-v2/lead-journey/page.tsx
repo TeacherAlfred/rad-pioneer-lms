@@ -131,6 +131,20 @@ export default function LeadJourneyPage() {
                 <div className="space-y-3 min-h-[200px]">
                   {col.leads.map((lead) => {
                     const validNext = VALID_STAGE_TRANSITIONS[lead.lifecycle_stage] || [];
+
+                    // Opted-out is a POPIA-respect exit, not just another
+                    // stage - no contact link, no qualification prompts, no
+                    // move menu, nothing that invites further action. Name
+                    // only, so the column is still an accurate count without
+                    // surfacing detail about someone who asked to be left alone.
+                    if (lead.lifecycle_stage === "opted_out") {
+                      return (
+                        <div key={lead.id} className="bg-stone-50 border border-stone-100 rounded-2xl p-4">
+                          <p className="font-bold text-sm text-stone-500 leading-tight">{lead.name || "Unnamed"}</p>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div key={lead.id} className="bg-white border border-stone-200 rounded-2xl p-4 shadow-sm relative">
                         <div className="flex items-start justify-between mb-2">
