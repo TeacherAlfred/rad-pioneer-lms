@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { recordStageChange } from '@/lib/leadStageHistory';
+import { notifyAdminOfRegistration } from '@/lib/registerInterest';
 
 // Bump whenever the consent copy on Step 1 of the Irene Fitness page changes,
 // so a stored consent record always reflects exactly what was agreed to.
@@ -174,6 +175,14 @@ export async function POST(request: Request) {
 
       if (newLead) {
         await recordStageChange(supabase, newLead.id, { toStage: 'new' });
+        // So the RAD Academy coding/robotics guide actually gets sent instead
+        // of the lead sitting unnoticed in the funnel - same alert path
+        // (DND-aware, buffers if quiet hours) as every other lead-intake form.
+        await notifyAdminOfRegistration(
+          supabase,
+          newLead.id,
+          `🏃 Irene Fitness Challenge — *${name}* opted in for the RAD Academy coding & robotics guide. WhatsApp: ${waDigits}`
+        );
       }
     }
 
