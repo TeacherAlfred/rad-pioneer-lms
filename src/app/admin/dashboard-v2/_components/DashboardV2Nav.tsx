@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Gauge, Kanban, AlertTriangle, Wallet, LayoutList } from "lucide-react";
+import { ArrowLeft, Gauge, Kanban, AlertTriangle, Wallet, LayoutList, Users } from "lucide-react";
 
 // Light theme is deliberate for dashboard-v2 specifically (design doc §4):
 // status-colour scanning (red/amber/green) reads faster on light than dark.
@@ -14,6 +14,7 @@ const TABS = [
   { label: "Landmines & Risk", path: "/admin/dashboard-v2/landmines", icon: AlertTriangle },
   { label: "Systems Status", path: "/admin/dashboard-v2/systems-status", icon: LayoutList },
   { label: "Money & Admin", path: "/admin/dashboard-v2/money-admin", icon: Wallet },
+  { label: "Lead Funnel", path: "/admin/lead-funnel", icon: Users },
 ];
 
 export function DashboardV2Nav() {
@@ -21,7 +22,7 @@ export function DashboardV2Nav() {
 
   return (
     <div className="mb-8">
-      <Link href="/admin/dashboard" className="group inline-flex items-center gap-2 bg-white border border-stone-200 hover:border-blue-300 px-4 py-2 rounded-xl transition-all mb-6 shadow-sm">
+      <Link href="/admin/dashboard-v2" className="group inline-flex items-center gap-2 bg-white border border-stone-200 hover:border-blue-300 px-4 py-2 rounded-xl transition-all mb-6 shadow-sm">
         <ArrowLeft size={16} className="text-stone-400 group-hover:text-blue-600" />
         <span className="text-[10px] font-black uppercase tracking-widest text-stone-500 group-hover:text-stone-900">Command Center</span>
       </Link>

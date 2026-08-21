@@ -191,7 +191,7 @@ export default function LeadsNavSidebar() {
 
       <div className="border-t border-slate-100 pt-3 w-full flex justify-center">
         <Link
-          href="/admin/dashboard"
+          href="/admin/dashboard-v2"
           title="Command Center"
           className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
         >
