@@ -173,14 +173,25 @@ export async function POST(request: Request) {
         .select()
         .single();
 
+      let lead = newLead;
       if (newLead) {
         await recordStageChange(supabase, newLead.id, { toStage: 'new' });
+      } else {
+        // Phone already has a lead (e.g. from a different channel entirely) -
+        // don't touch its funnel status/history, but the guide still needs
+        // to go out, so fall through to the notify below on the existing row.
+        const { data: existingLead } = await supabase.from('leads').select('id').eq('phone', waDigits).single();
+        lead = existingLead;
+      }
+
+      if (lead) {
         // So the RAD Academy coding/robotics guide actually gets sent instead
-        // of the lead sitting unnoticed in the funnel - same alert path
-        // (DND-aware, buffers if quiet hours) as every other lead-intake form.
+        // of the lead sitting unnoticed - same alert path (DND-aware, buffers
+        // if quiet hours) as every other lead-intake form. Fires whether this
+        // is a brand-new lead or one that already existed from elsewhere.
         await notifyAdminOfRegistration(
           supabase,
-          newLead.id,
+          lead.id,
           `🏃 Irene Fitness Challenge — *${name}* opted in for the RAD Academy coding & robotics guide. WhatsApp: ${waDigits}`
         );
       }
