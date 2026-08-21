@@ -153,38 +153,60 @@ export default function LeadJourneyPage() {
                           const checks = lead.qualification_checks || [];
                           const qualified = isLeadQualified(checks);
                           const pending = nextStageToCheck(checks);
-                          const failedStage = QUALIFICATION_STAGES.find((s) => checks.some((c: any) => c.stage_key === s.key && !c.passed));
+                          const sequenceBroken = !qualified && !pending;
+
                           return (
-                            <div className="mb-3">
-                              {qualified ? (
-                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-600">
+                            <div className="mb-3 space-y-1.5">
+                              {QUALIFICATION_STAGES.map((stage) => {
+                                const check = checks.find((c: any) => c.stage_key === stage.key);
+                                // Only render a stage row once it's been answered, or once it's
+                                // the very next one due - stages after a broken sequence never show.
+                                if (!check && stage.key !== pending) return null;
+                                const answered = !!check;
+                                return (
+                                  <div key={stage.key} className="p-2 bg-stone-50 rounded-lg border border-stone-100">
+                                    <p className="text-[9px] font-bold text-stone-500 mb-1.5">{stage.question}</p>
+                                    <div className="flex gap-1.5">
+                                      <button
+                                        disabled={qualifyingId === lead.id}
+                                        onClick={() => handleQualify(lead.id, stage.key, true)}
+                                        className={`flex-1 py-1.5 rounded-md text-[9px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                                          answered && check.passed
+                                            ? "bg-emerald-500 text-white"
+                                            : answered
+                                            ? "bg-stone-100 text-stone-300"
+                                            : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                                        }`}
+                                      >
+                                        {stage.passLabel}
+                                      </button>
+                                      <button
+                                        disabled={qualifyingId === lead.id}
+                                        onClick={() => handleQualify(lead.id, stage.key, false)}
+                                        className={`flex-1 py-1.5 rounded-md text-[9px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                                          answered && !check.passed
+                                            ? "bg-rose-500 text-white"
+                                            : answered
+                                            ? "bg-stone-100 text-stone-300"
+                                            : "bg-rose-100 text-rose-700 hover:bg-rose-200"
+                                        }`}
+                                      >
+                                        {stage.failLabel}
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {qualified && (
+                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-600 pt-0.5">
                                   <CheckCircle2 size={12} /> Qualified
                                 </div>
-                              ) : failedStage ? (
-                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-rose-500">
-                                  <XCircle size={12} /> Not qualified: {failedStage.label}
+                              )}
+                              {sequenceBroken && (
+                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-rose-500 pt-0.5">
+                                  <XCircle size={12} /> Not qualified
                                 </div>
-                              ) : pending ? (
-                                <div className="p-2 bg-stone-50 rounded-lg border border-stone-100">
-                                  <p className="text-[10px] font-bold text-stone-500 mb-1.5">{QUALIFICATION_STAGES.find((s) => s.key === pending)?.question}</p>
-                                  <div className="flex gap-1.5">
-                                    <button
-                                      disabled={qualifyingId === lead.id}
-                                      onClick={() => handleQualify(lead.id, pending, true)}
-                                      className="flex-1 py-1.5 bg-emerald-100 text-emerald-700 rounded-md text-[9px] font-black uppercase tracking-widest hover:bg-emerald-200 transition-colors disabled:opacity-50"
-                                    >
-                                      Yes
-                                    </button>
-                                    <button
-                                      disabled={qualifyingId === lead.id}
-                                      onClick={() => handleQualify(lead.id, pending, false)}
-                                      className="flex-1 py-1.5 bg-rose-100 text-rose-700 rounded-md text-[9px] font-black uppercase tracking-widest hover:bg-rose-200 transition-colors disabled:opacity-50"
-                                    >
-                                      No
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : null}
+                              )}
                             </div>
                           );
                         })()}

@@ -59,7 +59,7 @@ export default function DashboardV2Home() {
   }
 
   const constraintCopy = CONSTRAINT_COPY[summary.constraint.state];
-  const maxDaily = Math.max(...summary.dailyCounts.map((d: any) => d.count), summary.thresholds.leadVolumeThreshold);
+  const maxDaily = Math.max(...summary.dailyCounts.map((d: any) => Math.max(d.count, d.rawCount)), summary.thresholds.leadVolumeThreshold);
 
   const stageByKey = Object.fromEntries(summary.stageCounts.map((s: any) => [s.stage, s.count]));
   const forwardCounts = FORWARD_PATH.map((stage) => stageByKey[stage] || 0);
@@ -104,14 +104,37 @@ export default function DashboardV2Home() {
           {/* SPARKLINE */}
           <div className="lg:col-span-2 bg-white border border-stone-200 rounded-[24px] p-6 md:p-8 shadow-sm">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xs font-black uppercase tracking-widest text-stone-400">14-Day Qualified Leads</h3>
-              <span className="text-[10px] font-bold text-stone-400">Line = {summary.thresholds.leadVolumeThreshold}/day threshold</span>
+              <h3 className="text-xs font-black uppercase tracking-widest text-stone-400">14-Day Leads</h3>
+              <div className="flex items-center gap-4">
+                <span className="flex items-center gap-1.5 text-[10px] font-bold text-stone-400"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-400 inline-block" /> Qualified (bars)</span>
+                <span className="flex items-center gap-1.5 text-[10px] font-bold text-stone-400"><span className="w-2.5 h-0.5 rounded-full bg-blue-500 inline-block" /> Raw (line)</span>
+              </div>
             </div>
             <div className="flex items-end gap-1.5 h-32 relative">
               <div
-                className="absolute left-0 right-0 border-t-2 border-dashed border-rose-300"
+                className="absolute left-0 right-0 border-t-2 border-dashed border-rose-300 z-20"
                 style={{ bottom: `${(summary.thresholds.leadVolumeThreshold / maxDaily) * 100}%` }}
               />
+              <svg className="absolute inset-0 w-full h-full z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polyline
+                  fill="none"
+                  stroke="#3b82f6"
+                  strokeWidth="1.5"
+                  vectorEffect="non-scaling-stroke"
+                  points={summary.dailyCounts
+                    .map((d: any, i: number) => {
+                      const x = (i / (summary.dailyCounts.length - 1)) * 100;
+                      const y = 100 - (d.rawCount / maxDaily) * 100;
+                      return `${x},${y}`;
+                    })
+                    .join(" ")}
+                />
+                {summary.dailyCounts.map((d: any, i: number) => {
+                  const x = (i / (summary.dailyCounts.length - 1)) * 100;
+                  const y = 100 - (d.rawCount / maxDaily) * 100;
+                  return <circle key={d.date} cx={x} cy={y} r="1.2" fill="#3b82f6" vectorEffect="non-scaling-stroke" />;
+                })}
+              </svg>
               {summary.dailyCounts.map((d: any) => (
                 <div key={d.date} className="flex-1 h-full flex flex-col items-center justify-end gap-1 relative z-10">
                   <span className="text-[9px] font-bold text-stone-500">{d.count}</span>
@@ -123,7 +146,7 @@ export default function DashboardV2Home() {
                 </div>
               ))}
             </div>
-            <p className="text-[10px] text-stone-400 mt-3">{summary.constraint.fourteenDayAvg.toFixed(1)} qualified avg/day over the last 14 days · {summary.totalLeads} total leads · {summary.qualification.checkedCount} checked</p>
+            <p className="text-[10px] text-stone-400 mt-3">{summary.constraint.fourteenDayAvg.toFixed(1)} qualified avg/day · {summary.raw.fourteenDayAvg.toFixed(1)} raw avg/day over the last 14 days · {summary.totalLeads} total leads · {summary.qualification.checkedCount} checked</p>
           </div>
 
           {/* STALLED FLAG */}

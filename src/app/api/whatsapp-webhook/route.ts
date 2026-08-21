@@ -451,6 +451,12 @@ export async function POST(request: Request) {
                     ad_id: referral.source_id || null,
                     ad_headline: referral.headline || null,
                     ctwa_clid: referral.ctwa_clid || null,
+                    // Was never set here at all - a CTWA-attributed lead's
+                    // ad fields were captured correctly but nothing marked
+                    // it as a Meta lead, so it fell through as source=null.
+                    // getSourceLane() already groups any 'meta_*' prefix
+                    // into the Meta lane - no separate mapping table needed.
+                    source: 'meta_ctwa',
                   } : {}),
                 }])
                 .select()

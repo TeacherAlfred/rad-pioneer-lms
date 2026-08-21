@@ -4,9 +4,9 @@
 // stage_key directly and past checks need to keep meaning what they meant
 // when they were made. Each stage after the first only makes sense to check
 // once the prior stage has passed (sequential, not independent booleans).
-export const QUALIFICATION_STAGES: { key: string; label: string; question: string }[] = [
-  { key: 'respondent_is_parent', label: 'Respondent is parent', question: 'Is the respondent the parent, or the child?' },
-  { key: 'child_age_fits_program', label: 'Child age fits program', question: "Does the child's age realistically fit the program?" },
+export const QUALIFICATION_STAGES: { key: string; label: string; question: string; passLabel: string; failLabel: string }[] = [
+  { key: 'respondent_is_parent', label: 'Respondent is parent', question: 'Who is the respondent?', passLabel: 'Parent', failLabel: 'Child' },
+  { key: 'child_age_fits_program', label: 'Child age fits program', question: "Does the child's age realistically fit the program?", passLabel: 'Yes', failLabel: 'No' },
 ];
 
 export type QualificationCheck = { stage_key: string; passed: boolean };
