@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Phone, ChevronDown, CheckCircle2, XCircle } from "lucide-react";
+import { Loader2, Phone, ChevronDown, CheckCircle2, XCircle, X, ClipboardCheck } from "lucide-react";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
 import { LIFECYCLE_STAGES, LIFECYCLE_STAGE_LABELS, VALID_STAGE_TRANSITIONS } from "@/lib/funnelStages";
 import { getSourceLane, SourceLane } from "@/lib/leadSourceLane";
@@ -28,6 +28,7 @@ export default function LeadJourneyPage() {
   const [movingId, setMovingId] = useState<string | null>(null);
   const [openMoveMenu, setOpenMoveMenu] = useState<string | null>(null);
   const [qualifyingId, setQualifyingId] = useState<string | null>(null);
+  const [viewingLeadId, setViewingLeadId] = useState<string | null>(null);
 
   useEffect(() => {
     loadLeads();
@@ -183,60 +184,34 @@ export default function LeadJourneyPage() {
                           const qualified = isLeadQualified(checks);
                           const pending = nextStageToCheck(checks);
                           const sequenceBroken = !qualified && !pending;
+                          const pendingStage = pending ? QUALIFICATION_STAGES.find((s) => s.key === pending) : null;
 
+                          // Answered stages no longer render their buttons inline once
+                          // decided - they just take up card space with no further
+                          // purpose. One compact row opens the full breakdown (and, if
+                          // still applicable, the next question to answer) in a modal.
                           return (
-                            <div className="mb-3 space-y-1.5">
-                              {QUALIFICATION_STAGES.map((stage) => {
-                                const check = checks.find((c: any) => c.stage_key === stage.key);
-                                // Only render a stage row once it's been answered, or once it's
-                                // the very next one due - stages after a broken sequence never show.
-                                if (!check && stage.key !== pending) return null;
-                                const answered = !!check;
-                                return (
-                                  <div key={stage.key} className="p-2 bg-stone-50 rounded-lg border border-stone-100">
-                                    <p className="text-[9px] font-bold text-stone-500 mb-1.5">{stage.question}</p>
-                                    <div className="flex gap-1.5">
-                                      <button
-                                        disabled={qualifyingId === lead.id}
-                                        onClick={() => handleQualify(lead.id, stage.key, true)}
-                                        className={`flex-1 py-1.5 rounded-md text-[9px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-                                          answered && check.passed
-                                            ? "bg-emerald-500 text-white"
-                                            : answered
-                                            ? "bg-stone-100 text-stone-300"
-                                            : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
-                                        }`}
-                                      >
-                                        {stage.passLabel}
-                                      </button>
-                                      <button
-                                        disabled={qualifyingId === lead.id}
-                                        onClick={() => handleQualify(lead.id, stage.key, false)}
-                                        className={`flex-1 py-1.5 rounded-md text-[9px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-                                          answered && !check.passed
-                                            ? "bg-rose-500 text-white"
-                                            : answered
-                                            ? "bg-stone-100 text-stone-300"
-                                            : "bg-rose-100 text-rose-700 hover:bg-rose-200"
-                                        }`}
-                                      >
-                                        {stage.failLabel}
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                              {qualified && (
-                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-emerald-600 pt-0.5">
-                                  <CheckCircle2 size={12} /> Qualified
-                                </div>
-                              )}
-                              {sequenceBroken && (
-                                <div className="flex items-center gap-1.5 text-[10px] font-black uppercase text-rose-500 pt-0.5">
-                                  <XCircle size={12} /> Not qualified
-                                </div>
-                              )}
-                            </div>
+                            <button
+                              onClick={() => setViewingLeadId(lead.id)}
+                              className="w-full flex items-center justify-between gap-2 mb-3 px-2.5 py-2 bg-stone-50 hover:bg-stone-100 border border-stone-100 rounded-lg transition-colors text-left"
+                            >
+                              <span
+                                className={`flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest truncate ${
+                                  qualified ? "text-emerald-600" : sequenceBroken ? "text-rose-500" : "text-stone-500"
+                                }`}
+                              >
+                                {qualified ? (
+                                  <><CheckCircle2 size={12} className="shrink-0" /> Qualified</>
+                                ) : sequenceBroken ? (
+                                  <><XCircle size={12} className="shrink-0" /> Not qualified</>
+                                ) : pendingStage ? (
+                                  <><ClipboardCheck size={12} className="shrink-0" /> <span className="truncate">{pendingStage.question}</span></>
+                                ) : (
+                                  <><ClipboardCheck size={12} className="shrink-0" /> Not checked</>
+                                )}
+                              </span>
+                              <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest shrink-0">View</span>
+                            </button>
                           );
                         })()}
 
@@ -275,6 +250,87 @@ export default function LeadJourneyPage() {
           </div>
         )}
       </div>
+
+      {viewingLeadId && (() => {
+        const lead = leads.find((l) => l.id === viewingLeadId);
+        if (!lead) return null;
+        const checks = lead.qualification_checks || [];
+        const qualified = isLeadQualified(checks);
+        const pending = nextStageToCheck(checks);
+        const sequenceBroken = !qualified && !pending;
+
+        return (
+          <div className="fixed inset-0 bg-stone-900/25 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-black/5 w-full max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+              <div className="flex items-start justify-between px-6 pt-6 pb-1 shrink-0">
+                <div>
+                  <h3 className="text-[16px] font-semibold text-stone-900">{lead.name || "Unnamed"}</h3>
+                  <p className="text-[13px] text-stone-400 mt-0.5">
+                    {lead.phone ? `+${lead.phone} · ` : ""}{getSourceLane(lead.source)} · {daysAgo(lead.stage_entered_at)}d in stage
+                  </p>
+                </div>
+                <button onClick={() => setViewingLeadId(null)} className="h-7 w-7 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center text-stone-500 shrink-0"><X size={13} /></button>
+              </div>
+
+              <div className="px-6 pt-4 pb-5 space-y-2 overflow-y-auto">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">Qualification</label>
+                {QUALIFICATION_STAGES.map((stage) => {
+                  const check = checks.find((c: any) => c.stage_key === stage.key);
+                  if (!check && stage.key !== pending) return null;
+                  const answered = !!check;
+                  return (
+                    <div key={stage.key} className="p-2.5 bg-stone-50 rounded-lg border border-stone-100">
+                      <p className="text-[10px] font-bold text-stone-500 mb-1.5">{stage.question}</p>
+                      <div className="flex gap-1.5">
+                        <button
+                          disabled={qualifyingId === lead.id}
+                          onClick={() => handleQualify(lead.id, stage.key, true)}
+                          className={`flex-1 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                            answered && check.passed
+                              ? "bg-emerald-500 text-white"
+                              : answered
+                              ? "bg-stone-100 text-stone-300"
+                              : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                          }`}
+                        >
+                          {stage.passLabel}
+                        </button>
+                        <button
+                          disabled={qualifyingId === lead.id}
+                          onClick={() => handleQualify(lead.id, stage.key, false)}
+                          className={`flex-1 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                            answered && !check.passed
+                              ? "bg-rose-500 text-white"
+                              : answered
+                              ? "bg-stone-100 text-stone-300"
+                              : "bg-rose-100 text-rose-700 hover:bg-rose-200"
+                          }`}
+                        >
+                          {stage.failLabel}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {qualified && (
+                  <div className="flex items-center gap-1.5 text-[11px] font-black uppercase text-emerald-600 pt-1">
+                    <CheckCircle2 size={13} /> Qualified
+                  </div>
+                )}
+                {sequenceBroken && (
+                  <div className="flex items-center gap-1.5 text-[11px] font-black uppercase text-rose-500 pt-1">
+                    <XCircle size={13} /> Not qualified
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 border-t border-stone-100 px-6 py-4">
+                <button onClick={() => setViewingLeadId(null)} className="w-full py-2.5 rounded-xl text-[14px] font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 transition-colors duration-150">Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
