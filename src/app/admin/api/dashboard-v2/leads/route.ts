@@ -13,15 +13,15 @@ export async function GET() {
       .from('leads')
       .select('id, name, phone, source, lifecycle_stage, stage_entered_at, stage_health, last_inbound_at, needs_human, tags')
       .order('stage_entered_at', { ascending: false }),
-    supabase.from('lead_qualification_checks').select('lead_id, stage_key, passed'),
+    supabase.from('lead_qualification_checks').select('lead_id, stage_key, passed, detail'),
   ]);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (checksError) return NextResponse.json({ error: checksError.message }, { status: 500 });
 
-  const checksByLead: Record<string, { stage_key: string; passed: boolean }[]> = {};
+  const checksByLead: Record<string, { stage_key: string; passed: boolean; detail: string | null }[]> = {};
   (checks || []).forEach((c) => {
     if (!checksByLead[c.lead_id]) checksByLead[c.lead_id] = [];
-    checksByLead[c.lead_id].push({ stage_key: c.stage_key, passed: c.passed });
+    checksByLead[c.lead_id].push({ stage_key: c.stage_key, passed: c.passed, detail: c.detail });
   });
 
   // Same "Inhouse" tag convention as /admin/lead-funnel and its Overview/Stages/

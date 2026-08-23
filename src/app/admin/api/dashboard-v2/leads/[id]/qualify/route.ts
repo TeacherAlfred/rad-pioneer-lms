@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { QUALIFICATION_STAGES } from '@/lib/leadQualification';
+import { QUALIFICATION_STAGES, YOUNG_ADULT_TRACK_TAG } from '@/lib/leadQualification';
 import { recordStageChange } from '@/lib/leadStageHistory';
 
 // Stages a disqualified lead should never be auto-moved out of - it's
@@ -11,7 +11,7 @@ const TERMINAL_STAGES = ['won', 'lost', 'opted_out'];
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await request.json();
-  const { stage_key, passed, notes } = body as { stage_key: string; passed: boolean; notes?: string };
+  const { stage_key, passed, notes, detail } = body as { stage_key: string; passed: boolean; notes?: string; detail?: string };
 
   const stage = QUALIFICATION_STAGES.find((s) => s.key === stage_key);
   if (!stage) {
@@ -25,7 +25,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { error } = await supabase
     .from('lead_qualification_checks')
     .upsert(
-      { lead_id: id, stage_key, passed, checked_at: new Date().toISOString(), checked_by: 'admin', notes: notes || null },
+      { lead_id: id, stage_key, passed, detail: detail || null, checked_at: new Date().toISOString(), checked_by: 'admin', notes: notes || null },
       { onConflict: 'lead_id,stage_key' }
     );
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -41,12 +41,33 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // the client can merge this directly into local state instead of
   // refetching the whole board (which flashes the full-page loading state
   // on every single click).
-  const result: { ok: true; check: { stage_key: string; passed: boolean }; movedToLost?: boolean; stage_entered_at?: string } = {
+  const result: {
+    ok: true;
+    check: { stage_key: string; passed: boolean; detail?: string | null };
+    movedToLost?: boolean;
+    stage_entered_at?: string;
+    taggedYoungAdult?: boolean;
+  } = {
     ok: true,
-    check: { stage_key, passed },
+    check: { stage_key, passed, detail: detail || null },
   };
 
-  if (!passed) {
+  // "Too old" isn't a disqualification the way every other failed check is -
+  // there's a real future offer for this lead (a young-adults program), so
+  // it skips the auto-lost move entirely and tags the lead instead, so they
+  // can be found later by the quarterly nurture cron.
+  if (!passed && detail === 'too_old') {
+    const { data: lead } = await supabase.from('leads').select('tags').eq('id', id).single();
+    const currentTags: string[] = lead?.tags || [];
+    if (!currentTags.some((t) => t.toLowerCase() === YOUNG_ADULT_TRACK_TAG.toLowerCase())) {
+      const { error: tagError } = await supabase
+        .from('leads')
+        .update({ tags: [...currentTags, YOUNG_ADULT_TRACK_TAG] })
+        .eq('id', id);
+      if (tagError) return NextResponse.json({ error: tagError.message }, { status: 500 });
+    }
+    result.taggedYoungAdult = true;
+  } else if (!passed) {
     const { data: lead } = await supabase.from('leads').select('lifecycle_stage').eq('id', id).single();
     if (lead && !TERMINAL_STAGES.includes(lead.lifecycle_stage)) {
       const now = new Date().toISOString();

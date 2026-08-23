@@ -70,13 +70,13 @@ export default function LeadJourneyPage() {
     }
   }
 
-  async function handleQualify(leadId: string, stageKey: string, passed: boolean) {
+  async function handleQualify(leadId: string, stageKey: string, passed: boolean, detail?: string) {
     setQualifyingId(leadId);
     try {
       const res = await fetch(`/admin/api/dashboard-v2/leads/${leadId}/qualify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage_key: stageKey, passed }),
+        body: JSON.stringify({ stage_key: stageKey, passed, detail }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to save qualification check");
@@ -84,9 +84,13 @@ export default function LeadJourneyPage() {
         prev.map((l) => {
           if (l.id !== leadId) return l;
           const otherChecks = (l.qualification_checks || []).filter((c: any) => c.stage_key !== stageKey);
+          const nextTags = json.taggedYoungAdult && !(l.tags || []).some((t: string) => t.toLowerCase() === "young adult track")
+            ? [...(l.tags || []), "Young Adult Track"]
+            : l.tags;
           return {
             ...l,
             qualification_checks: [...otherChecks, json.check],
+            tags: nextTags,
             ...(json.movedToLost ? { lifecycle_stage: "lost", stage_entered_at: json.stage_entered_at } : {}),
           };
         })
@@ -185,6 +189,8 @@ export default function LeadJourneyPage() {
                           const pending = nextStageToCheck(checks);
                           const sequenceBroken = !qualified && !pending;
                           const pendingStage = pending ? QUALIFICATION_STAGES.find((s) => s.key === pending) : null;
+                          const failedCheck = sequenceBroken ? checks.find((c: any) => !c.passed) : null;
+                          const isTooOld = failedCheck?.detail === "too_old";
 
                           // Answered stages no longer render their buttons inline once
                           // decided - they just take up card space with no further
@@ -197,11 +203,13 @@ export default function LeadJourneyPage() {
                             >
                               <span
                                 className={`flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest truncate ${
-                                  qualified ? "text-emerald-600" : sequenceBroken ? "text-rose-500" : "text-stone-500"
+                                  qualified ? "text-emerald-600" : isTooOld ? "text-amber-600" : sequenceBroken ? "text-rose-500" : "text-stone-500"
                                 }`}
                               >
                                 {qualified ? (
                                   <><CheckCircle2 size={12} className="shrink-0" /> Qualified</>
+                                ) : isTooOld ? (
+                                  <><ClipboardCheck size={12} className="shrink-0" /> Too Old · Young Adult Track</>
                                 ) : sequenceBroken ? (
                                   <><XCircle size={12} className="shrink-0" /> Not qualified</>
                                 ) : pendingStage ? (
@@ -278,36 +286,38 @@ export default function LeadJourneyPage() {
                   const check = checks.find((c: any) => c.stage_key === stage.key);
                   if (!check && stage.key !== pending) return null;
                   const answered = !!check;
+                  // Uniform list of choices for this stage: pass, the standard
+                  // fail, and (child_age_fits_program only) any extra fail-like
+                  // options such as Too Old - each still records passed:false,
+                  // just with its own detail so the specific reason survives.
+                  const options = [
+                    { label: stage.passLabel, passed: true, detail: undefined as string | undefined, tone: "emerald" as const },
+                    { label: stage.failLabel, passed: false, detail: stage.failDetail, tone: "rose" as const },
+                    ...(stage.extraFailOptions || []).map((o) => ({ label: o.label, passed: false, detail: o.detail as string | undefined, tone: "amber" as const })),
+                  ];
                   return (
                     <div key={stage.key} className="p-2.5 bg-stone-50 rounded-lg border border-stone-100">
                       <p className="text-[10px] font-bold text-stone-500 mb-1.5">{stage.question}</p>
                       <div className="flex gap-1.5">
-                        <button
-                          disabled={qualifyingId === lead.id}
-                          onClick={() => handleQualify(lead.id, stage.key, true)}
-                          className={`flex-1 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-                            answered && check.passed
-                              ? "bg-emerald-500 text-white"
-                              : answered
-                              ? "bg-stone-100 text-stone-300"
-                              : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
-                          }`}
-                        >
-                          {stage.passLabel}
-                        </button>
-                        <button
-                          disabled={qualifyingId === lead.id}
-                          onClick={() => handleQualify(lead.id, stage.key, false)}
-                          className={`flex-1 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-                            answered && !check.passed
-                              ? "bg-rose-500 text-white"
-                              : answered
-                              ? "bg-stone-100 text-stone-300"
-                              : "bg-rose-100 text-rose-700 hover:bg-rose-200"
-                          }`}
-                        >
-                          {stage.failLabel}
-                        </button>
+                        {options.map((opt) => {
+                          const isMatch = answered && check.passed === opt.passed && (check.detail || undefined) === opt.detail;
+                          const toneClasses = opt.tone === "emerald" ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"
+                            : opt.tone === "amber" ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                            : "bg-rose-100 text-rose-700 hover:bg-rose-200";
+                          const matchClasses = opt.tone === "emerald" ? "bg-emerald-500 text-white" : opt.tone === "amber" ? "bg-amber-500 text-white" : "bg-rose-500 text-white";
+                          return (
+                            <button
+                              key={opt.label}
+                              disabled={qualifyingId === lead.id}
+                              onClick={() => handleQualify(lead.id, stage.key, opt.passed, opt.detail)}
+                              className={`flex-1 py-1.5 rounded-md text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                                isMatch ? matchClasses : answered ? "bg-stone-100 text-stone-300" : toneClasses
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -317,11 +327,21 @@ export default function LeadJourneyPage() {
                     <CheckCircle2 size={13} /> Qualified
                   </div>
                 )}
-                {sequenceBroken && (
-                  <div className="flex items-center gap-1.5 text-[11px] font-black uppercase text-rose-500 pt-1">
-                    <XCircle size={13} /> Not qualified
-                  </div>
-                )}
+                {sequenceBroken && (() => {
+                  const failedCheck = checks.find((c: any) => !c.passed);
+                  if (failedCheck?.detail === "too_old") {
+                    return (
+                      <div className="flex items-center gap-1.5 text-[11px] font-black uppercase text-amber-600 pt-1">
+                        <ClipboardCheck size={13} /> Too Old · Young Adult Track
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="flex items-center gap-1.5 text-[11px] font-black uppercase text-rose-500 pt-1">
+                      <XCircle size={13} /> Not qualified
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="shrink-0 border-t border-stone-100 px-6 py-4">
