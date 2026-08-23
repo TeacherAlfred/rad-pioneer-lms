@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
   Users2, Search, MessageSquare, Reply, X, VolumeX, Plus, Sparkles,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, Pencil,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -18,8 +18,11 @@ type MessageRow = {
   created_at?: string | null;
   lead_phone?: string | null;
   lead_name?: string | null;
+  lead_email?: string | null;
+  lead_school?: string | null;
   lead_tags?: string[] | null;
   lead_bot_paused?: boolean;
+  lead_respondent_is_parent?: boolean | null;
   status?: string | null;
   status_updated_at?: string | null;
   conversation_category?: string | null;
@@ -32,7 +35,10 @@ type LeadGroup = {
   leadId: string;
   leadName: string | null;
   leadPhone: string | null;
+  leadEmail: string | null;
+  leadSchool: string | null;
   leadBotPaused: boolean;
+  respondentIsParent: boolean | null;
   messages: MessageRow[];
   inboundCount: number;
   outboundCount: number;
@@ -248,6 +254,85 @@ export default function MessageActivityPage() {
     }
   }
 
+  // Lead-detail editing, opened from this page since a message thread is
+  // often exactly where a name/email/parent-or-child detail first surfaces -
+  // no need to jump to the full lead-funnel list just to record it.
+  const [editingLead, setEditingLead] = useState<{
+    leadId: string; name: string; email: string; phone: string; school: string; respondentIsParent: boolean | null;
+  } | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [respondentSaving, setRespondentSaving] = useState(false);
+
+  function openEditLead(group: LeadGroup) {
+    setEditingLead({
+      leadId: group.leadId,
+      name: group.leadName || '',
+      email: group.leadEmail || '',
+      phone: group.leadPhone || '',
+      school: group.leadSchool || '',
+      respondentIsParent: group.respondentIsParent,
+    });
+    setEditError(null);
+  }
+
+  async function saveLeadInfo() {
+    if (!editingLead) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const res = await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingLead.leadId,
+          name: editingLead.name.trim(),
+          email: editingLead.email.trim(),
+          phone: editingLead.phone.trim(),
+          school: editingLead.school.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save.');
+      const updated = data.row;
+      setRows(prev => prev.map(r => r.lead_id === editingLead.leadId
+        ? { ...r, lead_name: updated.name, lead_email: updated.email, lead_phone: updated.phone, lead_school: updated.school }
+        : r));
+      setEditingLead(null);
+    } catch (err: any) {
+      setEditError(err.message);
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  // Same qualify endpoint Lead Journey uses for the respondent_is_parent
+  // check - marking "Child" can auto-move the lead to lost (disqualified),
+  // exactly as it would from that screen, since this is the same check.
+  async function setRespondent(passed: boolean) {
+    if (!editingLead) return;
+    setRespondentSaving(true);
+    setEditError(null);
+    try {
+      const res = await fetch(`/admin/api/dashboard-v2/leads/${editingLead.leadId}/qualify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage_key: 'respondent_is_parent', passed }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save.');
+      setEditingLead(prev => prev ? { ...prev, respondentIsParent: passed } : prev);
+      setRows(prev => prev.map(r => r.lead_id === editingLead.leadId ? { ...r, lead_respondent_is_parent: passed } : r));
+      if (data.movedToLost) {
+        setEditError('Marked as Child - this lead was automatically moved to Lost (not the parent).');
+      }
+    } catch (err: any) {
+      setEditError(err.message);
+    } finally {
+      setRespondentSaving(false);
+    }
+  }
+
   const statsRows = useMemo(() => rows.filter(r => !isInhouseRow(r)), [rows]);
   const inhouseCount = rows.length - statsRows.length;
 
@@ -312,7 +397,10 @@ export default function MessageActivityPage() {
         leadId,
         leadName: sorted[0]?.lead_name || null,
         leadPhone: sorted[0]?.lead_phone || null,
+        leadEmail: sorted[0]?.lead_email || null,
+        leadSchool: sorted[0]?.lead_school || null,
         leadBotPaused: !!sorted[0]?.lead_bot_paused,
+        respondentIsParent: sorted[0]?.lead_respondent_is_parent ?? null,
         messages: sorted,
         inboundCount: sorted.filter(m => m.direction === 'inbound').length,
         outboundCount: sorted.filter(m => m.direction === 'outbound').length,
@@ -470,6 +558,11 @@ export default function MessageActivityPage() {
                             <td className="px-4 py-3">
                               <div className="font-bold text-slate-800 flex items-center gap-1.5">
                                 {g.leadName || '(no name)'}
+                                {g.respondentIsParent !== null && (
+                                  <span className={`inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full ${g.respondentIsParent ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                                    {g.respondentIsParent ? 'Parent' : 'Child'}
+                                  </span>
+                                )}
                                 {g.leadBotPaused && (
                                   <span title="Bot paused - manual replies only" className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600">
                                     <VolumeX size={9} /> Paused
@@ -491,13 +584,22 @@ export default function MessageActivityPage() {
                               {g.lastActivityAt ? new Date(g.lastActivityAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
                             </td>
                             <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
-                              <button
-                                onClick={() => openReply({ leadId: g.leadId, leadName: g.leadName, leadPhone: g.leadPhone, botPaused: g.leadBotPaused })}
-                                title="Send a free-form reply"
-                                className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
-                              >
-                                <Reply size={12} /> Reply
-                              </button>
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  onClick={() => openEditLead(g)}
+                                  title="Edit lead details"
+                                  className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
+                                >
+                                  <Pencil size={12} /> Edit
+                                </button>
+                                <button
+                                  onClick={() => openReply({ leadId: g.leadId, leadName: g.leadName, leadPhone: g.leadPhone, botPaused: g.leadBotPaused })}
+                                  title="Send a free-form reply"
+                                  className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
+                                >
+                                  <Reply size={12} /> Reply
+                                </button>
+                              </div>
                             </td>
                           </tr>
                           {isOpen && (
@@ -680,6 +782,92 @@ export default function MessageActivityPage() {
                   className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-1.5"
                 >
                   {replySending ? <Loader2 size={14} className="animate-spin" /> : <><Send size={13} /> Send</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingLead && (
+        <div className="fixed inset-0 bg-slate-900/25 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-black/5 w-full max-w-md overflow-hidden">
+            <div className="flex items-start justify-between px-6 pt-6 pb-1">
+              <h3 className="text-[16px] font-semibold text-slate-900">Edit Lead Details</h3>
+              <button onClick={() => setEditingLead(null)} className="h-7 w-7 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"><X size={13} /></button>
+            </div>
+
+            <div className="px-6 pt-4 pb-5 space-y-3">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Who is the respondent?</label>
+                <div className="flex gap-1.5">
+                  <button
+                    disabled={respondentSaving}
+                    onClick={() => setRespondent(true)}
+                    className={`flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                      editingLead.respondentIsParent === true ? 'bg-emerald-500 text-white' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    }`}
+                  >
+                    Parent
+                  </button>
+                  <button
+                    disabled={respondentSaving}
+                    onClick={() => setRespondent(false)}
+                    className={`flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                      editingLead.respondentIsParent === false ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    Child
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Same qualification check used on Lead Journey - marking Child may auto-move this lead to Lost.</p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Name</label>
+                <input
+                  value={editingLead.name}
+                  onChange={e => setEditingLead(prev => prev ? { ...prev, name: e.target.value } : prev)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 outline-none focus:border-blue-400"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Email</label>
+                <input
+                  value={editingLead.email}
+                  onChange={e => setEditingLead(prev => prev ? { ...prev, email: e.target.value } : prev)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 outline-none focus:border-blue-400"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Phone</label>
+                <input
+                  value={editingLead.phone}
+                  onChange={e => setEditingLead(prev => prev ? { ...prev, phone: e.target.value } : prev)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 outline-none focus:border-blue-400"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">School</label>
+                <input
+                  value={editingLead.school}
+                  onChange={e => setEditingLead(prev => prev ? { ...prev, school: e.target.value } : prev)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 outline-none focus:border-blue-400"
+                />
+              </div>
+
+              {editError && <div className="bg-rose-50 text-rose-600 text-[13px] rounded-xl px-4 py-2.5">{editError}</div>}
+            </div>
+
+            <div className="shrink-0 border-t border-slate-100 px-6 py-4">
+              <div className="flex gap-2">
+                <button onClick={() => setEditingLead(null)} className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors duration-150">Cancel</button>
+                <button
+                  onClick={saveLeadInfo}
+                  disabled={editSaving}
+                  className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-1.5"
+                >
+                  {editSaving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
                 </button>
               </div>
             </div>
