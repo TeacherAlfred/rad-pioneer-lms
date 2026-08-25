@@ -178,6 +178,25 @@ export default function PublicQuoteV2View() {
           </div>
         )}
 
+        {/* Print-only CTA: the PDF has no interactive Accept/Request-a-change
+            bar (that's suppressed below for printMode), so a downloaded copy
+            needs its own way back to the live quote. This sits in normal
+            document flow - not absolutely positioned over the document like
+            the old jsPDF overlay was - so it can never clip or overlap the
+            payment details above it, and it pushes onto a second PDF page
+            on its own if the document above already fills page one. */}
+        {printMode && effectiveStatus === "sent" && (
+          <div className="max-w-4xl mx-auto px-6 md:px-12 pb-16">
+            <a
+              href={`/quote-v2/${quote.id}`}
+              className="block bg-purple-600 text-white rounded-2xl px-6 py-5 text-center no-underline"
+            >
+              <p className="font-black uppercase tracking-widest text-sm">Click here to review &amp; accept quote</p>
+              <p className="text-xs opacity-80 mt-1 break-all">{typeof window !== "undefined" ? window.location.origin : ""}/quote-v2/{quote.id}</p>
+            </a>
+          </div>
+        )}
+
         {!printMode && (
           <div className="max-w-4xl mx-auto px-6 md:px-12 pb-24 flex justify-end">
             <a

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Plus, Trash2, Send, User, Search, ArrowLeft, ChevronDown, Eye, X,
   Loader2, Calendar, FileText, Download, CheckCircle2, CreditCard,
+  Link2 as LinkIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -180,7 +181,7 @@ export default function ComposerV2Page() {
     }
   }
 
-  async function handleFinalize(action: "email" | "pdf") {
+  async function handleFinalize(action: "email" | "pdf" | "link") {
     if (!selectedLead || !primaryProgramId || grandTotal <= 0 || isProcessing) return;
     setIsProcessing(true);
     try {
@@ -224,30 +225,30 @@ export default function ComposerV2Page() {
         });
         if (!res.ok) throw new Error("Quote saved, but email transmission failed.");
         setSuccessMessage("Quote saved and emailed.");
-      } else {
-        const htmlToImage = await import("html-to-image");
-        // @ts-ignore
-        const jsPDFModule = await import("jspdf/dist/jspdf.umd.min.js");
-        const jsPDF = jsPDFModule.jsPDF || jsPDFModule.default;
-        const element = document.getElementById("hidden-document-capture-v2");
-        if (!element) throw new Error("Document element not found for PDF capture.");
-        const dataUrl = await htmlToImage.toPng(element, { pixelRatio: 2, backgroundColor: "#020617" });
-        const pdf = new jsPDF("p", "mm", "a4");
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (element.offsetHeight * pdfWidth) / element.offsetWidth;
-        pdf.setFillColor("#020617");
-        pdf.rect(0, 0, pdfWidth, pdf.internal.pageSize.getHeight(), "F");
-        pdf.addImage(dataUrl, "PNG", 0, 0, pdfWidth, pdfHeight);
-        const acceptUrl = `${window.location.origin}/quote-v2/${newQuote.id}`;
-        const buttonY = pdf.internal.pageSize.getHeight() - 25;
-        pdf.setFillColor(147, 51, 234);
-        pdf.rect(pdfWidth / 4, buttonY, pdfWidth / 2, 12, "F");
-        pdf.setTextColor(255, 255, 255);
-        pdf.setFontSize(11);
-        pdf.setFont("helvetica", "bold");
-        pdf.textWithLink("CLICK HERE TO REVIEW & ACCEPT QUOTE", pdfWidth / 2, buttonY + 7.5, { url: acceptUrl, align: "center" });
-        pdf.save(`QT-${newQuote.quote_number}_${(selectedLead.name || "Lead").split(" ")[0]}_RAD-Academy.pdf`);
+      } else if (action === "pdf") {
+        // Same server-rendered PDF as the live /quote-v2/[id] page (real
+        // headless Chrome via /api/quote-v2/[id]/pdf) - not a second,
+        // hand-rolled document. The old jsPDF/html-to-image path here built
+        // its own image + manually overlaid a purple link button at a fixed
+        // distance from the bottom of the page, which is what was covering
+        // the payment details on longer documents. This can't drift from the
+        // live page and can't overlap anything, since the page just flows.
+        const pdfRes = await fetch(`/api/quote-v2/${newQuote.id}/pdf`);
+        if (!pdfRes.ok) throw new Error("Quote saved, but PDF generation failed.");
+        const blob = await pdfRes.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `QT-${newQuote.quote_number}_${(selectedLead.name || "Lead").split(" ")[0]}_RAD-Academy.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
         setSuccessMessage("Quote saved and downloaded as PDF.");
+      } else {
+        const quoteUrl = `${window.location.origin}/quote-v2/${newQuote.id}`;
+        await navigator.clipboard.writeText(quoteUrl);
+        setSuccessMessage("Quote saved. Link copied to clipboard.");
       }
 
       setTimeout(() => router.push("/admin/dashboard-v2"), 2000);
@@ -549,6 +550,9 @@ export default function ComposerV2Page() {
                 <button onClick={() => handleFinalize("pdf")} disabled={!selectedLead || !primaryProgramId || grandTotal <= 0 || isProcessing} className="w-full py-4 bg-white/5 border border-white/10 text-white rounded-[24px] font-black uppercase italic tracking-widest hover:bg-white/10 transition-all flex items-center justify-center gap-2 disabled:opacity-30">
                   {isProcessing ? <Loader2 className="animate-spin" /> : <><Download size={18} /> Save &amp; Download PDF</>}
                 </button>
+                <button onClick={() => handleFinalize("link")} disabled={!selectedLead || !primaryProgramId || grandTotal <= 0 || isProcessing} className="w-full py-4 bg-white/5 border border-white/10 text-white rounded-[24px] font-black uppercase italic tracking-widest hover:bg-white/10 transition-all flex items-center justify-center gap-2 disabled:opacity-30">
+                  {isProcessing ? <Loader2 className="animate-spin" /> : <><LinkIcon size={18} /> Save &amp; Copy Link</>}
+                </button>
               </div>
             </div>
           </div>
@@ -578,22 +582,6 @@ export default function ComposerV2Page() {
           </div>
         )}
       </AnimatePresence>
-
-      <div className="absolute top-[-9999px] left-[-9999px] opacity-0 pointer-events-none">
-        <div id="hidden-document-capture-v2" className="w-[800px] p-8 bg-[#020617]">
-          {selectedLead && (
-            <RADBillingDocument
-              type="quote"
-              docNumber={`QT-${nextQuoteNumber}`}
-              recipient={{ name: selectedLead.name || "Lead", email: selectedLead.email || "", phone: selectedLead.phone || "" }}
-              items={documentItems}
-              date={new Date().toLocaleDateString("en-ZA")}
-              dueDate={expiryDate}
-              globalNote={notes}
-            />
-          )}
-        </div>
-      </div>
 
       <AnimatePresence>
         {successMessage && (
