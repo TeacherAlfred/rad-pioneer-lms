@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
+import { ConstraintPill } from "../_components/ConstraintPill";
+import { TodayBanner } from "../_components/TodayBanner";
 import { LightStatTile } from "../_components/LightStatTile";
 
 function parseLineItems(raw: any): any[] {
@@ -165,6 +167,8 @@ export default function MoneyAdminPage() {
     <div className="min-h-screen bg-[#faf9f7] text-stone-900 p-6 lg:p-12 font-sans">
       <div className="max-w-7xl mx-auto space-y-10">
         <DashboardV2Nav />
+        <ConstraintPill />
+        <TodayBanner />
 
         <header>
           <h1 className="text-3xl md:text-4xl font-black tracking-tight">Money &amp; Admin</h1>

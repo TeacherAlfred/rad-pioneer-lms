@@ -1,34 +1,14 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { createHash } from 'node:crypto';
+import { computePayfastSignature, payfastValidateUrl } from '@/lib/payfast';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// PayFast's documented ITN signature scheme: concatenate every field EXCEPT
-// `signature`, in the exact order PayFast sent them (not re-sorted), each
-// value trimmed + URL-encoded with spaces as '+', joined with '&', then an
-// optional passphrase appended the same way, then MD5. This was entirely
-// absent before - the only "verification" was echoing the payload back to
-// PayFast's own validate endpoint, which confirms the payload's shape but
-// not that PayFast itself sent it (nothing stops a forged POST to this
-// route with a payload that also happens to validate).
 function verifyPayfastSignature(data: Record<string, string>, receivedSignature: string): boolean {
-  const passphrase = process.env.PAYFAST_PASSPHRASE;
-  let pfOutput = '';
-  for (const key of Object.keys(data)) {
-    if (key === 'signature') continue;
-    const value = (data[key] ?? '').toString().trim();
-    pfOutput += `${key}=${encodeURIComponent(value).replace(/%20/g, '+')}&`;
-  }
-  let getString = pfOutput.slice(0, -1);
-  if (passphrase) {
-    getString += `&passphrase=${encodeURIComponent(passphrase.trim()).replace(/%20/g, '+')}`;
-  }
-  const expected = createHash('md5').update(getString).digest('hex');
-  return expected === receivedSignature;
+  return computePayfastSignature(data, process.env.PAYFAST_PASSPHRASE) === receivedSignature;
 }
 
 export async function POST(req: Request) {
@@ -43,7 +23,11 @@ export async function POST(req: Request) {
     }
 
     const pfParamString = new URLSearchParams(data).toString();
-    const validationUrl = 'https://www.payfast.co.za/eng/query/validate';
+    // Was hardcoded to the live validate endpoint regardless of PAYFAST_URL -
+    // every sandbox ITN would fail validation here even with a correct
+    // signature, since PayFast's live validator doesn't recognize sandbox
+    // transactions.
+    const validationUrl = payfastValidateUrl(process.env.PAYFAST_URL);
     const pfValidResponse = await fetch(validationUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

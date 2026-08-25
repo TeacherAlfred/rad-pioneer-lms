@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, CheckCircle2, CircleDashed, MinusCircle } from "lucide-react";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
+import { ConstraintPill } from "../_components/ConstraintPill";
+import { TodayBanner } from "../_components/TodayBanner";
 
 const TIER_COLOR: Record<string, string> = {
   now: "bg-rose-100 text-rose-700",
@@ -77,6 +79,8 @@ export default function SystemsStatusPage() {
     <div className="min-h-screen bg-[#faf9f7] text-stone-900 p-6 lg:p-12 font-sans">
       <div className="max-w-6xl mx-auto space-y-8">
         <DashboardV2Nav />
+        <ConstraintPill />
+        <TodayBanner />
 
         <header>
           <h1 className="text-3xl md:text-4xl font-black tracking-tight">Systems Status</h1>

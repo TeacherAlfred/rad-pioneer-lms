@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Phone, ChevronDown, CheckCircle2, XCircle, X, ClipboardCheck } from "lucide-react";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
+import { ConstraintPill } from "../_components/ConstraintPill";
+import { TodayBanner } from "../_components/TodayBanner";
 import { LIFECYCLE_STAGES, LIFECYCLE_STAGE_LABELS, VALID_STAGE_TRANSITIONS } from "@/lib/funnelStages";
 import { getSourceLane, SourceLane } from "@/lib/leadSourceLane";
 import { QUALIFICATION_STAGES, isLeadQualified, nextStageToCheck } from "@/lib/leadQualification";
@@ -122,6 +124,8 @@ export default function LeadJourneyPage() {
     <div className="min-h-screen bg-[#faf9f7] text-stone-900 p-6 lg:p-12 font-sans">
       <div className="max-w-[1600px] mx-auto space-y-8">
         <DashboardV2Nav />
+        <ConstraintPill />
+        <TodayBanner />
 
         <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
