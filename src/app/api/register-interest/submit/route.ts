@@ -10,11 +10,12 @@ const supabaseAdmin = createClient(
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// SOP §1/§3/§4/§7/§9 final submit. Does NOT implement §5 (auto-quote) or
-// §6 (quote/accept/pay/invoice) - those are blocked on real prerequisites
-// the SOP itself flags in §10 (pricing not yet encoded as queryable data,
-// Payfast programmatic-link support unconfirmed), not a scope choice made
-// here. This ends with a "we'll follow up" confirmation instead.
+// SOP §1/§3/§4/§7/§9 final submit. Pricing is now queryable data (Quote &
+// Pricing Engine spec) - the modal's package-picker step calls
+// /api/register-interest/packages then /api/register-interest/select-package
+// with the leadId this route now returns, rather than this route doing the
+// quoting itself. A program with no published packages still just falls
+// through to the "we'll follow up" confirmation, unchanged.
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -185,7 +186,7 @@ export async function POST(req: Request) {
       `${existingLead ? '🔁 Returning' : '🆕 New'} lead registered interest.\nProgram: ${program.title}${dateLabel ? ` (${dateLabel})` : ''}\nLocation: ${program.location || 'n/a'}\n${program.counts_general_attendees ? 'Attendees' : 'Children'}: ${nChildren}\nContact: ${resolvedChannel === 'whatsapp' ? `+${normalizePhone(resolvedPhone)}` : normEmail}`
     );
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, leadId, numberOfChildren: nChildren });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
