@@ -42,6 +42,26 @@ function validatePayload(body: any, { partial }: { partial: boolean }) {
   return null;
 }
 
+// Publish gate (Quote & Pricing Engine spec §3): a program can't go live
+// (draft -> false) without at least one published, priced package attached
+// and a quote email template chosen - both compulsory per the founder's
+// explicit requirement, not just encouraged. Only checked when draft is
+// actually being turned off; editing a program that's already live, or
+// staying in draft, is unaffected.
+async function checkPublishGate(supabase: any, featuredProgramId: string) {
+  const [{ data: publishedPackages }, { data: program }] = await Promise.all([
+    supabase.from('event_packages').select('id').eq('featured_program_id', featuredProgramId).eq('published', true).limit(1),
+    supabase.from('featured_programs').select('quote_email_template_id').eq('id', featuredProgramId).single(),
+  ]);
+  if (!publishedPackages || publishedPackages.length === 0) {
+    return 'This program needs at least one published, priced package attached (Packages & Quote Email section) before it can go live.';
+  }
+  if (!program?.quote_email_template_id) {
+    return 'This program needs a quote email template selected (Packages & Quote Email section) before it can go live.';
+  }
+  return null;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -52,8 +72,13 @@ export async function POST(req: Request) {
       title, label, location, details, duration, form_label, series,
       image_url, is_video, accent, sort_order, live_from, live_until, date_options, draft, allow_multi_date,
       show_on_events_page, show_on_homepage, counts_general_attendees,
+      programs_id, default_session_id, expected_attendee_count, quote_email_template_id,
     } = body;
 
+    // A brand-new program can never satisfy the publish gate yet (packages
+    // can only be attached once the row - and its id - exists), so it's
+    // always created as draft regardless of what's sent; going live happens
+    // via a later PATCH once the compulsory step is done.
     const { data, error } = await supabaseAdmin
       .from('featured_programs')
       .insert([{
@@ -71,11 +96,15 @@ export async function POST(req: Request) {
         live_from: live_from || new Date().toISOString(),
         live_until,
         date_options: Array.isArray(date_options) ? date_options : [],
-        draft: !!draft,
+        draft: true,
         allow_multi_date: !!allow_multi_date,
         show_on_events_page: show_on_events_page === undefined ? true : !!show_on_events_page,
         show_on_homepage: show_on_homepage === undefined ? true : !!show_on_homepage,
         counts_general_attendees: !!counts_general_attendees,
+        programs_id: programs_id || null,
+        default_session_id: default_session_id || null,
+        expected_attendee_count: expected_attendee_count === '' || expected_attendee_count === undefined ? null : Number(expected_attendee_count),
+        quote_email_template_id: quote_email_template_id || null,
       }])
       .select()
       .single();
@@ -98,7 +127,16 @@ export async function PATCH(req: Request) {
       title, label, location, details, duration, form_label, series,
       image_url, is_video, accent, sort_order, live_from, live_until, date_options, draft, allow_multi_date,
       show_on_events_page, show_on_homepage, counts_general_attendees,
+      programs_id, default_session_id, expected_attendee_count, quote_email_template_id, quote_email_template_needs_review,
     } = body;
+
+    // Publish gate: only checked when this PATCH is actually the moment
+    // draft flips to false - editing an already-live program, or staying in
+    // draft, never hits it.
+    if (draft === false) {
+      const gateErr = await checkPublishGate(supabaseAdmin, id);
+      if (gateErr) return NextResponse.json({ error: gateErr }, { status: 400 });
+    }
 
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     if (date_options !== undefined) update.date_options = Array.isArray(date_options) ? date_options : [];
@@ -120,6 +158,18 @@ export async function PATCH(req: Request) {
     if (sort_order !== undefined) update.sort_order = sort_order === '' ? 0 : Number(sort_order);
     if (live_from !== undefined) update.live_from = live_from;
     if (live_until !== undefined) update.live_until = live_until;
+    if (programs_id !== undefined) update.programs_id = programs_id || null;
+    if (default_session_id !== undefined) update.default_session_id = default_session_id || null;
+    if (expected_attendee_count !== undefined) update.expected_attendee_count = expected_attendee_count === '' ? null : Number(expected_attendee_count);
+    if (quote_email_template_id !== undefined) {
+      update.quote_email_template_id = quote_email_template_id || null;
+      // Picking a template explicitly clears the "needs review" backfill
+      // flag - this IS the founder reviewing it, unless they're clearing the
+      // template entirely (needs_review stays true in that edge case, since
+      // an empty selection needs re-review just as much as the placeholder did).
+      if (quote_email_template_id) update.quote_email_template_needs_review = false;
+    }
+    if (quote_email_template_needs_review !== undefined) update.quote_email_template_needs_review = !!quote_email_template_needs_review;
 
     const { data, error } = await supabaseAdmin
       .from('featured_programs')
