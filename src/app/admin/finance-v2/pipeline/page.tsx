@@ -46,6 +46,7 @@ export default function QuotePipelineV2Page() {
   const [isActing, setIsActing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [convertingId, setConvertingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchQuotes();
@@ -177,6 +178,36 @@ export default function QuotePipelineV2Page() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // Row-level shortcut next to the status badge - skips opening the Manage
+  // modal entirely for the common case (a single-payment quote has nothing
+  // to choose). A quote with a monthly plan still needs the Full Term vs
+  // Monthly choice from the modal, so this just opens that instead of
+  // guessing which one the admin meant.
+  async function quickConvertToInvoice(quote: any) {
+    if (quote.installment_count > 1 && quote.monthly_installment_amount) {
+      openManage(quote);
+      return;
+    }
+    if (!window.confirm(`Mark QT-${quote.quote_number} as accepted and generate its invoice?`)) return;
+    setConvertingId(quote.id);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/quotes/${quote.id}/accept-offline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planChoice: "full_term" }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to accept quote");
+      await fetchQuotes();
+      const firstInvoice = json.invoices?.[0];
+      setToast(`QT-${quote.quote_number} accepted.${firstInvoice ? ` INV-${firstInvoice.invoice_number} created.` : ""}`);
+    } catch (err: any) {
+      setToast(`Failed: ${err.message}`);
+    } finally {
+      setConvertingId(null);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -262,6 +293,16 @@ export default function QuotePipelineV2Page() {
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${style.className}`}>
                         <StatusIcon size={11} /> {style.label}
                       </span>
+                      {status === "sent" && (
+                        <button
+                          onClick={() => quickConvertToInvoice(quote)}
+                          disabled={convertingId === quote.id}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20 transition-all disabled:opacity-50"
+                          title="Mark accepted and generate the invoice"
+                        >
+                          {convertingId === quote.id ? <Loader2 className="animate-spin" size={11} /> : <Receipt size={11} />} Convert to Invoice
+                        </button>
+                      )}
                       {quote.source === "self_serve" && (
                         <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
                           Self-Serve
