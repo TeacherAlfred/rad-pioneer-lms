@@ -27,7 +27,7 @@ export async function GET() {
       ? supabase.from('programs').select('id, name').in('id', programIds)
       : Promise.resolve({ data: [] as any[] }),
     quoteIds.length
-      ? supabase.from('invoices').select('id, quote_id, status, amount, amount_paid').in('quote_id', quoteIds)
+      ? supabase.from('invoices').select('id, quote_id, invoice_number, sequence_number, status, amount, amount_paid, due_at').in('quote_id', quoteIds).order('sequence_number')
       : Promise.resolve({ data: [] as any[] }),
   ]);
 

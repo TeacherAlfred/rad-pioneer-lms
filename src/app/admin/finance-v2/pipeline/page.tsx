@@ -267,6 +267,13 @@ export default function QuotePipelineV2Page() {
                           Self-Serve
                         </span>
                       )}
+                      {status === "accepted" && (
+                        <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest bg-white/5 text-slate-300 border border-white/10">
+                          {quote.accepted_plan_type === "monthly"
+                            ? `Split — ${quote.invoices?.length || quote.installment_count} payments`
+                            : "One Payment"}
+                        </span>
+                      )}
                     </div>
                     <p className="font-bold text-sm mt-2 truncate">{quote.lead?.name || "Unknown Lead"}</p>
                     <p className="text-[11px] text-slate-500 truncate">{quote.program?.name || "—"} · {quote.lead?.phone || quote.lead?.email || "No contact"}</p>
@@ -376,6 +383,40 @@ export default function QuotePipelineV2Page() {
                 </div>
               )}
             </div>
+
+            {manageQuote.status === "accepted" && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Payment Plan</p>
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+                  <p className="text-xs font-bold text-white">
+                    {manageQuote.accepted_plan_type === "monthly"
+                      ? `Split into ${manageQuote.invoices?.length || manageQuote.installment_count} payments`
+                      : "Accepted as one payment"}
+                    <span className="text-slate-500 font-normal"> — accepted {manageQuote.accepted_by === "admin" ? "offline, by admin" : "online, by customer"}{manageQuote.accepted_at ? ` on ${new Date(manageQuote.accepted_at).toLocaleDateString("en-ZA")}` : ""}</span>
+                  </p>
+                  {manageQuote.invoices?.length > 0 && (
+                    <div className="space-y-1.5">
+                      {manageQuote.invoices.map((inv: any) => {
+                        const isPaid = inv.status === "paid";
+                        return (
+                          <Link
+                            key={inv.id}
+                            href={`/invoice-v2/${inv.id}`}
+                            target="_blank"
+                            className="flex items-center justify-between text-[11px] px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all"
+                          >
+                            <span className="text-slate-300">INV-{inv.invoice_number}{manageQuote.accepted_plan_type === "monthly" ? ` (${inv.sequence_number}/${manageQuote.installment_count})` : ""}</span>
+                            <span className={`font-bold ${isPaid ? "text-emerald-400" : "text-amber-400"}`}>
+                              {rand(Number(inv.amount) || 0)} {isPaid ? "· Paid" : "· Unpaid"}
+                            </span>
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <button
