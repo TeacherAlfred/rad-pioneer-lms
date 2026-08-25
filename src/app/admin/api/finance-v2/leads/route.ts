@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const supabase = supabaseAdmin();
   const { data, error } = await supabase
     .from('leads')
-    .select('id, name, phone, email')
+    .select('id, name, phone, email, number_of_children')
     .or(`name.ilike.%${q}%,phone.ilike.%${q}%`)
     .limit(10);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

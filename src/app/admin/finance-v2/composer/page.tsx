@@ -10,23 +10,53 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import RADBillingDocument from "@/components/finance/RADBillingDocument";
 
+type LineSource = "freeform" | "program" | "package";
+
+type DiscountMode = "pct" | "amount";
+
 type LineItem = {
+  source: LineSource;
   description: string;
   program_id: string | null;
   session_id: string | null;
+  event_package_id: string | null;
   quantity: number;
   unit_price: number;
+  // discount_pct is the single value actually saved/used everywhere
+  // downstream (totals, RADBillingDocument preview, the quote POST payload)
+  // - unchanged schema-wise. discount_mode/discount_input are UI-only state
+  // for typing a Rand amount instead of a percentage; resolveDiscountPct
+  // converts whichever was typed into the equivalent discount_pct on every
+  // relevant change, so nothing downstream needs to know amount-mode exists.
   discount_pct: number;
+  discount_mode: DiscountMode;
+  discount_input: string;
 };
 
 function emptyLine(): LineItem {
-  return { description: "", program_id: null, session_id: null, quantity: 1, unit_price: 0, discount_pct: 0 };
+  return {
+    source: "freeform", description: "", program_id: null, session_id: null, event_package_id: null,
+    quantity: 1, unit_price: 0, discount_pct: 0, discount_mode: "pct", discount_input: "",
+  };
+}
+
+// Converts whatever's currently typed (percent or a flat Rand amount) into
+// the discount_pct that actually drives the line total - amount mode solves
+// for what percentage of this line's subtotal that Rand figure represents.
+function resolveDiscountPct(quantity: number, unitPrice: number, mode: DiscountMode, input: string): number {
+  const value = Math.max(0, Number(input) || 0);
+  if (mode === "pct") return Math.min(100, value);
+  const subtotal = quantity * unitPrice;
+  if (subtotal <= 0) return 0;
+  return Math.min(100, (value / subtotal) * 100);
 }
 
 export default function ComposerV2Page() {
   const router = useRouter();
 
   const [programs, setPrograms] = useState<any[]>([]);
+  const [featuredPrograms, setFeaturedPrograms] = useState<any[]>([]);
+  const [eventPackages, setEventPackages] = useState<any[]>([]);
   const [sessionsByProgram, setSessionsByProgram] = useState<Record<string, any[]>>({});
   const [nextQuoteNumber, setNextQuoteNumber] = useState(1);
 
@@ -68,6 +98,18 @@ export default function ComposerV2Page() {
       const numRes = await fetch("/admin/api/finance-v2/quotes");
       const { nextQuoteNumber: n } = await numRes.json();
       setNextQuoteNumber(n || 1);
+
+      // Featured Programs cards (for the top-right Programme picker, grouped
+      // ahead of the raw curriculum list) and every priced package
+      // attachment system-wide (for the per-line "Pricing Package" source -
+      // deliberately not scoped to the chosen Programme, so a quote can mix
+      // and match packages tied to other programs).
+      const fpRes = await fetch("/admin/api/featured-programs");
+      const { rows: fp } = await fpRes.json();
+      if (fp) setFeaturedPrograms(fp);
+      const epRes = await fetch("/admin/api/pricing/event-packages");
+      const { rows: ep } = await epRes.json();
+      if (ep) setEventPackages((ep as any[]).filter((row) => row.final_fee !== null && row.package?.active !== false));
     })();
   }, []);
 
@@ -92,7 +134,18 @@ export default function ComposerV2Page() {
   }
 
   function updateLine(idx: number, patch: Partial<LineItem>) {
-    setLineItems((prev) => prev.map((li, i) => (i === idx ? { ...li, ...patch } : li)));
+    setLineItems((prev) => prev.map((li, i) => {
+      if (i !== idx) return li;
+      const merged = { ...li, ...patch };
+      // Keep discount_pct resolved any time an input that affects it
+      // changes - quantity/unit_price matter too, since amount-mode's
+      // percentage depends on the line's own subtotal.
+      const touchesDiscount = "quantity" in patch || "unit_price" in patch || "discount_mode" in patch || "discount_input" in patch;
+      if (touchesDiscount) {
+        merged.discount_pct = resolveDiscountPct(merged.quantity, merged.unit_price, merged.discount_mode, merged.discount_input);
+      }
+      return merged;
+    }));
   }
 
   function addLine() {
@@ -244,48 +297,93 @@ export default function ComposerV2Page() {
               <div className="space-y-4">
                 {lineItems.map((item, idx) => (
                   <div key={idx} className="bg-white/5 p-6 rounded-3xl border border-white/5 relative">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                      <div>
-                        <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Program (optional)</label>
-                        <select
-                          value={item.program_id || ""}
-                          onChange={(e) => {
-                            const pid = e.target.value || null;
-                            updateLine(idx, { program_id: pid, session_id: null });
-                            if (pid) loadSessionsFor(pid);
-                          }}
-                          className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 mt-1"
+                    <div className="flex items-center gap-2 mb-4">
+                      {(["freeform", "program", "package"] as LineSource[]).map((src) => (
+                        <button
+                          key={src}
+                          type="button"
+                          onClick={() => updateLine(idx, { source: src, program_id: null, session_id: null, event_package_id: null })}
+                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${item.source === src ? "bg-emerald-500 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
                         >
-                          <option value="">— Freeform line —</option>
-                          {programs.map((p) => (
-                            <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      {item.program_id && (
+                          {src === "freeform" ? "Freeform" : src === "program" ? "Curriculum Programme" : "Pricing Package"}
+                        </button>
+                      ))}
+                    </div>
+
+                    {item.source === "program" && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                         <div>
-                          <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Session</label>
+                          <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Programme</label>
                           <select
-                            value={item.session_id || ""}
+                            value={item.program_id || ""}
                             onChange={(e) => {
-                              const sid = e.target.value || null;
-                              const session = (sessionsByProgram[item.program_id!] || []).find((s) => s.id === sid);
-                              updateLine(idx, {
-                                session_id: sid,
-                                unit_price: session ? Number(session.price) : item.unit_price,
-                                description: item.description || (session ? `${programs.find((p) => p.id === item.program_id)?.name} — ${new Date(session.starts_at).toLocaleDateString("en-ZA")}` : item.description),
-                              });
+                              const pid = e.target.value || null;
+                              updateLine(idx, { program_id: pid, session_id: null });
+                              if (pid) loadSessionsFor(pid);
                             }}
                             className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 mt-1"
                           >
-                            <option value="">— No specific session —</option>
-                            {(sessionsByProgram[item.program_id] || []).map((s) => (
-                              <option key={s.id} value={s.id}>{new Date(s.starts_at).toLocaleDateString("en-ZA")} (R{s.price})</option>
+                            <option value="">— choose a programme —</option>
+                            {programs.map((p) => (
+                              <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
                             ))}
                           </select>
                         </div>
-                      )}
-                    </div>
+                        {item.program_id && (
+                          <div>
+                            <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Session</label>
+                            <select
+                              value={item.session_id || ""}
+                              onChange={(e) => {
+                                const sid = e.target.value || null;
+                                const session = (sessionsByProgram[item.program_id!] || []).find((s) => s.id === sid);
+                                updateLine(idx, {
+                                  session_id: sid,
+                                  unit_price: session ? Number(session.price) : item.unit_price,
+                                  description: item.description || (session ? `${programs.find((p) => p.id === item.program_id)?.name} — ${new Date(session.starts_at).toLocaleDateString("en-ZA")}` : item.description),
+                                });
+                              }}
+                              className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 mt-1"
+                            >
+                              <option value="">— No specific session —</option>
+                              {(sessionsByProgram[item.program_id] || []).map((s) => (
+                                <option key={s.id} value={s.id}>{new Date(s.starts_at).toLocaleDateString("en-ZA")} (R{s.price})</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {item.source === "package" && (
+                      <div className="mb-4">
+                        <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Pricing Package</label>
+                        <select
+                          value={item.event_package_id || ""}
+                          onChange={(e) => {
+                            const ep = eventPackages.find((row) => row.id === e.target.value);
+                            if (!ep) { updateLine(idx, { event_package_id: null }); return; }
+                            updateLine(idx, {
+                              event_package_id: ep.id,
+                              description: item.description || (ep.display_name || ep.package.name),
+                              unit_price: Number(ep.final_fee),
+                              quantity: selectedLead?.number_of_children || item.quantity || 1,
+                            });
+                          }}
+                          className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 mt-1"
+                        >
+                          <option value="">— choose a priced package —</option>
+                          {eventPackages.map((ep) => (
+                            <option key={ep.id} value={ep.id}>
+                              {ep.display_name || ep.package.name} — {ep.featured_program?.title || "Global"} — R {Number(ep.final_fee).toLocaleString("en-ZA")}
+                            </option>
+                          ))}
+                        </select>
+                        {item.event_package_id && (
+                          <p className="text-[9px] text-slate-500 mt-1.5">Price and description pulled from the Pricing Library — still editable below. Quantity defaulted from the lead's number of children.</p>
+                        )}
+                      </div>
+                    )}
 
                     <input
                       value={item.description}
@@ -303,9 +401,30 @@ export default function ComposerV2Page() {
                         <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Unit Price (R)</label>
                         <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateLine(idx, { unit_price: Number(e.target.value) || 0 })} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" />
                       </div>
-                      <div className="w-20">
-                        <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Disc (%)</label>
-                        <input type="number" step="0.01" value={item.discount_pct} onChange={(e) => updateLine(idx, { discount_pct: Math.max(0, Number(e.target.value) || 0) })} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-emerald-400 text-center outline-none focus:border-emerald-500" />
+                      <div className="w-32">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[9px] font-black uppercase text-slate-500">Discount</label>
+                          <div className="flex rounded-md overflow-hidden border border-white/10">
+                            {(["pct", "amount"] as DiscountMode[]).map((m) => (
+                              <button
+                                key={m} type="button"
+                                onClick={() => updateLine(idx, { discount_mode: m, discount_input: item.discount_mode === m ? item.discount_input : "" })}
+                                className={`px-1.5 text-[9px] font-black ${item.discount_mode === m ? "bg-emerald-500 text-[#0a0f1d]" : "bg-white/5 text-slate-500"}`}
+                              >
+                                {m === "pct" ? "%" : "R"}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <input
+                          type="number" step="0.01" value={item.discount_input}
+                          onChange={(e) => updateLine(idx, { discount_input: e.target.value })}
+                          placeholder={item.discount_mode === "pct" ? "0" : "0.00"}
+                          className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-emerald-400 text-center outline-none focus:border-emerald-500 mt-1"
+                        />
+                        {item.discount_mode === "amount" && item.discount_pct > 0 && (
+                          <p className="text-[8px] text-slate-500 text-center mt-1">≈ {item.discount_pct.toFixed(1)}%</p>
+                        )}
                       </div>
                       {lineItems.length > 1 && (
                         <button onClick={() => removeLine(idx)} className="ml-auto self-end mb-2 text-slate-600 hover:text-rose-500 transition-colors">
@@ -351,11 +470,20 @@ export default function ComposerV2Page() {
                 className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500"
               >
                 <option value="" disabled>— Select the programme this quote is for —</option>
-                {programs.map((p) => (
-                  <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
-                ))}
+                {featuredPrograms.filter((fp) => fp.programs_id).length > 0 && (
+                  <optgroup label="Featured Programs">
+                    {featuredPrograms.filter((fp) => fp.programs_id).map((fp) => (
+                      <option key={fp.id} value={fp.programs_id}>{fp.title}</option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label="All Programmes (no Featured Programs card)">
+                  {programs.map((p) => (
+                    <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
+                  ))}
+                </optgroup>
               </select>
-              <p className="text-[9px] text-slate-500">Required — every quote belongs to one primary programme, even if extra freeform lines are added below.</p>
+              <p className="text-[9px] text-slate-500">Required — every quote belongs to one primary programme, even if extra freeform or package lines are added below. Prefer the Featured Programs group where a card exists.</p>
             </div>
 
             <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-6">
