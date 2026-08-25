@@ -34,6 +34,7 @@ const NAV_TILES = [
 ];
 
 const LEGACY_NAV_TILES = [
+  { label: "Payment Capture (Legacy)", desc: "Record a payment against a guardian's old-system invoice", icon: Receipt, path: "/admin/finance/capture" },
   { label: "Client Ledger (AR)", desc: "Old-system accounts receivable", icon: Wallet, path: "/admin/finance/ledger" },
   { label: "Revenue Insights", desc: "Old-system margin analytics", icon: TrendingUp, path: "/admin/finance/insights" },
   { label: "Quote Pipeline (Legacy)", desc: "Old-system quotes, filterable", icon: Send, path: "/admin/finance/pipeline" },
