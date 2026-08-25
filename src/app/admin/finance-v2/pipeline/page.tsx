@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Search, Loader2, ExternalLink, Copy, Download, Send,
-  CheckCircle2, XCircle, AlertCircle, Layers, Coins,
+  CheckCircle2, XCircle, AlertCircle, Layers, Coins, X, CopyPlus,
+  ArrowRightLeft, Receipt, Settings2,
 } from "lucide-react";
 
 type EffectiveStatus = "sent" | "expired" | "accepted" | "declined" | "superseded";
@@ -32,11 +34,18 @@ const TABS: { key: "all" | EffectiveStatus; label: string }[] = [
 ];
 
 export default function QuotePipelineV2Page() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [quotes, setQuotes] = useState<any[]>([]);
   const [tab, setTab] = useState<"all" | EffectiveStatus>("all");
   const [search, setSearch] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const [manageQuote, setManageQuote] = useState<any>(null);
+  const [statusDraft, setStatusDraft] = useState("sent");
+  const [isActing, setIsActing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     fetchQuotes();
@@ -103,6 +112,70 @@ export default function QuotePipelineV2Page() {
     setCopiedId(quoteId);
     setTimeout(() => setCopiedId((id) => (id === quoteId ? null : id)), 1500);
   }
+
+  function openManage(quote: any) {
+    setManageQuote(quote);
+    setStatusDraft(quote.status);
+    setActionError(null);
+  }
+
+  function closeManage() {
+    setManageQuote(null);
+    setActionError(null);
+  }
+
+  async function submitStatusChange() {
+    if (!manageQuote) return;
+    setIsActing(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/quotes/${manageQuote.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: statusDraft }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to update status");
+      await fetchQuotes();
+      setToast(`QT-${manageQuote.quote_number} marked ${statusDraft}.`);
+      closeManage();
+    } catch (err: any) {
+      setActionError(err.message);
+    } finally {
+      setIsActing(false);
+    }
+  }
+
+  async function acceptOffline(planChoice: "full_term" | "monthly") {
+    if (!manageQuote) return;
+    setIsActing(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/quotes/${manageQuote.id}/accept-offline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planChoice }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to accept quote");
+      await fetchQuotes();
+      const firstInvoice = json.invoices?.[0];
+      setToast(
+        `QT-${manageQuote.quote_number} accepted.${firstInvoice ? ` INV-${firstInvoice.invoice_number} created.` : ""}`
+      );
+      closeManage();
+    } catch (err: any) {
+      setActionError(err.message);
+    } finally {
+      setIsActing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans">
@@ -232,6 +305,13 @@ export default function QuotePipelineV2Page() {
                       >
                         <Download size={14} />
                       </a>
+                      <button
+                        onClick={() => openManage(quote)}
+                        className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/30 transition-all"
+                        title="Manage: status, duplicate, supersede, convert to invoice"
+                      >
+                        <Settings2 size={14} />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -240,6 +320,118 @@ export default function QuotePipelineV2Page() {
           </div>
         )}
       </div>
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-emerald-600 text-white text-xs font-bold px-5 py-3 rounded-2xl shadow-2xl">
+          {toast}
+        </div>
+      )}
+
+      {manageQuote && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/70 backdrop-blur-sm" onClick={closeManage}>
+          <div
+            className="bg-[#0b1220] border border-white/10 rounded-[32px] w-full max-w-lg p-8 space-y-6 max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Manage</p>
+                <h3 className="text-xl font-black tracking-tight">QT-{manageQuote.quote_number} · {manageQuote.lead?.name || "Unknown Lead"}</h3>
+              </div>
+              <button onClick={closeManage} className="p-2 text-slate-500 hover:text-white transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            {actionError && (
+              <p className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3">{actionError}</p>
+            )}
+
+            <div className="space-y-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Status</p>
+              {manageQuote.status === "accepted" || manageQuote.status === "superseded" ? (
+                <p className="text-xs text-slate-400 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                  {manageQuote.status === "accepted"
+                    ? "This quote has been accepted and invoiced — status can't be changed here."
+                    : "This quote has already been superseded."}
+                </p>
+              ) : (
+                <div className="flex gap-2">
+                  <select
+                    value={statusDraft}
+                    onChange={(e) => setStatusDraft(e.target.value)}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-xs outline-none [color-scheme:dark]"
+                  >
+                    <option value="sent">Sent (Open)</option>
+                    <option value="declined">Declined</option>
+                    <option value="expired">Expired</option>
+                  </select>
+                  <button
+                    onClick={submitStatusChange}
+                    disabled={isActing || statusDraft === manageQuote.status}
+                    className="px-4 py-2.5 rounded-xl bg-white text-[#020617] text-[10px] font-black uppercase disabled:opacity-30"
+                  >
+                    {isActing ? <Loader2 className="animate-spin" size={14} /> : "Update"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => router.push(`/admin/finance-v2/composer?duplicate=${manageQuote.id}`)}
+                className="p-4 rounded-2xl bg-white/5 border border-white/10 hover:border-white/30 text-left transition-all"
+              >
+                <CopyPlus className="text-cyan-400 mb-2" size={18} />
+                <p className="text-xs font-black uppercase">Duplicate</p>
+                <p className="text-[10px] text-slate-500 mt-1">New, unlinked quote using this as a base.</p>
+              </button>
+              <button
+                onClick={() => router.push(`/admin/finance-v2/composer?supersede=${manageQuote.id}`)}
+                disabled={manageQuote.status === "superseded"}
+                className="p-4 rounded-2xl bg-white/5 border border-white/10 hover:border-white/30 text-left transition-all disabled:opacity-30"
+              >
+                <ArrowRightLeft className="text-amber-400 mb-2" size={18} />
+                <p className="text-xs font-black uppercase">Supersede</p>
+                <p className="text-[10px] text-slate-500 mt-1">Replace with updated pricing/items — this one gets marked superseded.</p>
+              </button>
+            </div>
+
+            {manageQuote.status === "sent" && (
+              <div className="border-t border-white/5 pt-6 space-y-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Convert to Invoice</p>
+                <p className="text-[11px] text-slate-500">Client agreed offline (phone/WhatsApp)? Mark this quote accepted and generate the invoice(s) directly — same effect as them clicking Accept on the live quote.</p>
+                {manageQuote.installment_count > 1 && manageQuote.monthly_installment_amount ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => acceptOffline("full_term")}
+                      disabled={isActing}
+                      className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase disabled:opacity-40"
+                    >
+                      Full Term
+                    </button>
+                    <button
+                      onClick={() => acceptOffline("monthly")}
+                      disabled={isActing}
+                      className="flex-1 py-3 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-black uppercase disabled:opacity-40"
+                    >
+                      Monthly ×{manageQuote.installment_count}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => acceptOffline("full_term")}
+                    disabled={isActing}
+                    className="w-full py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black uppercase flex items-center justify-center gap-2 disabled:opacity-40"
+                  >
+                    {isActing ? <Loader2 className="animate-spin" size={14} /> : <><Receipt size={14} /> Mark Accepted &amp; Generate Invoice</>}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

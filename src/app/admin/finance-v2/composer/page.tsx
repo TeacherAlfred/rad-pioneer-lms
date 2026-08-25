@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import {
   Plus, Trash2, Send, User, Search, ArrowLeft, ChevronDown, Eye, X,
   Loader2, Calendar, FileText, Download, CheckCircle2, CreditCard,
   Link2 as LinkIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import RADBillingDocument from "@/components/finance/RADBillingDocument";
 
@@ -53,7 +53,24 @@ function resolveDiscountPct(quantity: number, unitPrice: number, mode: DiscountM
 }
 
 export default function ComposerV2Page() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#020617]" />}>
+      <ComposerV2Inner />
+    </Suspense>
+  );
+}
+
+function ComposerV2Inner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // ?duplicate=<id> starts a brand new, unlinked quote pre-filled from an
+  // existing one. ?supersede=<id> does the same pre-fill, but on save also
+  // marks the source quote superseded and points it at the new one - see
+  // the supersede call inside handleFinalize.
+  const duplicateFromId = searchParams.get("duplicate");
+  const supersedeFromId = searchParams.get("supersede");
+  const prefillSourceId = duplicateFromId || supersedeFromId;
+  const [prefillSourceLabel, setPrefillSourceLabel] = useState<string | null>(null);
 
   const [programs, setPrograms] = useState<any[]>([]);
   const [featuredPrograms, setFeaturedPrograms] = useState<any[]>([]);
@@ -113,6 +130,49 @@ export default function ComposerV2Page() {
       if (ep) setEventPackages((ep as any[]).filter((row) => row.final_fee !== null && row.package?.active !== false));
     })();
   }, []);
+
+  useEffect(() => {
+    if (!prefillSourceId) return;
+    (async () => {
+      // Reuses the same public read the live quote page uses (quotes/
+      // quote_line_items/leads have zero anon RLS policies either way, so
+      // this endpoint already has to run server-side and return everything
+      // needed to render a full document) - no separate admin-only fetch
+      // route needed just to re-read a quote admin already has full access to.
+      const res = await fetch(`/api/finance-v2/quotes/${prefillSourceId}`);
+      if (!res.ok) return;
+      const { quote, lineItems: srcLines, lead } = await res.json();
+      if (lead) setSelectedLead(lead);
+      if (quote.program_id) {
+        setPrimaryProgramId(quote.program_id);
+        loadSessionsFor(quote.program_id);
+      }
+      if (Array.isArray(srcLines) && srcLines.length > 0) {
+        setLineItems(
+          srcLines.map((li: any) => {
+            if (li.program_id) loadSessionsFor(li.program_id);
+            return {
+              source: "freeform" as LineSource,
+              description: li.description,
+              program_id: li.program_id || null,
+              session_id: li.session_id || null,
+              event_package_id: li.event_package_id || null,
+              quantity: li.quantity,
+              unit_price: li.unit_price,
+              discount_pct: li.discount_pct || 0,
+              discount_mode: "pct" as DiscountMode,
+              discount_input: String(li.discount_pct || 0),
+            };
+          })
+        );
+      }
+      setNotes(quote.notes || "");
+      setIsTermEnrolment(quote.installment_count > 1);
+      if (quote.installment_count > 1) setInstallmentCount(quote.installment_count);
+      setPrefillSourceLabel(`QT-${quote.quote_number}`);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillSourceId]);
 
   useEffect(() => {
     if (leadSearch.length > 2) {
@@ -203,6 +263,15 @@ export default function ComposerV2Page() {
       if (!quoteRes.ok) throw new Error(quoteJson.error || "Failed to save quote");
       const newQuote = quoteJson.quote;
 
+      if (supersedeFromId) {
+        const supersedeRes = await fetch(`/admin/api/finance-v2/quotes/${supersedeFromId}/supersede`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newQuoteId: newQuote.id }),
+        });
+        if (!supersedeRes.ok) throw new Error("New quote saved, but marking the original as superseded failed - do that manually from the Pipeline.");
+      }
+
       if (action === "email") {
         const templateRes = await fetch("/admin/api/finance-v2/email-templates?slug=billing_quote");
         const { body_content } = await templateRes.json();
@@ -251,7 +320,7 @@ export default function ComposerV2Page() {
         setSuccessMessage("Quote saved. Link copied to clipboard.");
       }
 
-      setTimeout(() => router.push("/admin/dashboard-v2"), 2000);
+      setTimeout(() => router.push("/admin/finance-v2/pipeline"), 2000);
     } catch (err: any) {
       alert("Operational Failure: " + err.message);
     } finally {
@@ -270,9 +339,15 @@ export default function ComposerV2Page() {
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans">
       <div className="max-w-6xl mx-auto space-y-10">
+        {prefillSourceId && (
+          <div className="max-w-3xl mx-auto md:mx-0 px-5 py-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-bold flex items-center gap-2">
+            {supersedeFromId ? "Superseding" : "Duplicating"} {prefillSourceLabel || `QT-${prefillSourceId}`}
+            {supersedeFromId && " — saving here will mark the original as superseded and link it to this new quote."}
+          </div>
+        )}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
           <div className="space-y-4">
-            <Link href="/admin/dashboard-v2" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2 transition-colors">
+            <Link href="/admin/finance-v2/pipeline" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2 transition-colors">
               <ArrowLeft size={14} /> Back
             </Link>
             <h1 className="text-4xl md:text-5xl font-black tracking-tighter italic uppercase leading-none">
