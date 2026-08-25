@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
+import { ConstraintPill } from "../_components/ConstraintPill";
+import { TodayBanner } from "../_components/TodayBanner";
 
 const STATE_OPTIONS = ["ok", "watch", "critical"];
 const STATE_COLOR: Record<string, string> = {
@@ -66,6 +68,8 @@ export default function LandminesPage() {
     <div className="min-h-screen bg-[#faf9f7] text-stone-900 p-6 lg:p-12 font-sans">
       <div className="max-w-5xl mx-auto space-y-8">
         <DashboardV2Nav />
+        <ConstraintPill />
+        <TodayBanner />
 
         <header>
           <h1 className="text-3xl md:text-4xl font-black tracking-tight">Landmines &amp; Risk</h1>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Clock, ArrowRight, Plus, X, Target } from "lucide-react";
 import { DashboardV2Nav } from "./_components/DashboardV2Nav";
+import { TodayBanner } from "./_components/TodayBanner";
 import { LIFECYCLE_STAGE_LABELS } from "@/lib/funnelStages";
 
 const CONSTRAINT_COPY: Record<string, { label: string; color: string; bg: string; border: string }> = {
@@ -148,6 +149,10 @@ export default function DashboardV2Home() {
             data is tracked yet to compute them honestly.
           </p>
         </section>
+
+        {/* TODAY PANEL BANNER (Addendum A1) - directly below the Constraint
+            Indicator, per A1.2's placement spec. */}
+        <TodayBanner />
 
         {/* CONSTRAINT ACTIONS MODULE (§3.1a) - generic, points at whichever
             system is the current constraint; redefine the rows when the
