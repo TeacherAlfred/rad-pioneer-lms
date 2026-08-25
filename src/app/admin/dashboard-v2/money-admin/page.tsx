@@ -29,6 +29,7 @@ function netLineValue(li: any): number {
 
 const NAV_TILES = [
   { label: "Quote Composer", desc: "Build a new quote against a lead", icon: FileText, path: "/admin/finance-v2/composer" },
+  { label: "Quote Pipeline", desc: "View every quote sent, self-serve or manual", icon: Send, path: "/admin/finance-v2/pipeline" },
   { label: "Capture Payment", desc: "Manual (non-PayFast) payment entry", icon: Receipt, path: "/admin/finance-v2/capture" },
 ];
 
@@ -44,6 +45,11 @@ export default function MoneyAdminPage() {
   const [loading, setLoading] = useState(true);
   const [records, setRecords] = useState<any[]>([]);
   const [billingItems, setBillingItems] = useState<any[]>([]);
+  // Real finance-v2 quotes (composer + self-serve package selection) - the
+  // old billing_records table has no idea these exist, which is why this
+  // dashboard's "Inventory" tiles were stuck showing only pre-migration
+  // pipeline and never moved when a new quote went out. See quotes/list.
+  const [v2Quotes, setV2Quotes] = useState<any[]>([]);
   const [consentByLane, setConsentByLane] = useState<Record<string, any>>({});
   const [securityAudit, setSecurityAudit] = useState<{ last_security_audit_at: string | null; last_security_audit_note: string | null } | null>(null);
 
@@ -51,11 +57,12 @@ export default function MoneyAdminPage() {
     (async () => {
       setLoading(true);
       try {
-        const [{ data: recordsData }, { data: itemsData }, consentRes, settingsRes] = await Promise.all([
+        const [{ data: recordsData }, { data: itemsData }, consentRes, settingsRes, v2QuotesRes] = await Promise.all([
           supabase.from("billing_records").select("*"),
           supabase.from("billing_items").select("name, category, aliases"),
           fetch("/admin/api/dashboard-v2/consent-summary"),
           fetch("/admin/api/dashboard-v2/settings"),
+          fetch("/admin/api/finance-v2/quotes/list"),
         ]);
         if (recordsData) setRecords(recordsData);
         if (itemsData) setBillingItems(itemsData);
@@ -63,6 +70,8 @@ export default function MoneyAdminPage() {
         setConsentByLane(byLane || {});
         const { settings } = await settingsRes.json();
         setSecurityAudit(settings || null);
+        const { quotes: v2QuotesData } = await v2QuotesRes.json();
+        setV2Quotes(v2QuotesData || []);
       } catch (err) {
         console.error("Failed to fetch money-admin data:", err);
       } finally {
@@ -92,7 +101,11 @@ export default function MoneyAdminPage() {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const last90 = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
 
-    const quotes = records.filter((r) => r.doc_type === "quote");
+    // Revenue below is still legacy-only (paid billing_records) - a v2
+    // invoice paid via the PayFast webhook lands in the real `invoices`
+    // table, which this figure doesn't see yet. Flagged rather than silently
+    // wrong: the Inventory section below it is what actually needed fixing
+    // for "quotes not showing up," so that's what's wired to v2 here.
     const invoices = records.filter((r) => r.doc_type === "invoice");
     const paidInvoices = invoices.filter((r) => r.status === "paid" || r.status === "settled");
 
@@ -115,12 +128,17 @@ export default function MoneyAdminPage() {
     });
     const topCategories = Object.entries(revenueByCategory).sort((a, b) => b[1] - a[1]);
 
-    const openPipelineQuotes = quotes.filter(
-      (q) => q.status === "pending" && (!q.expires_at || new Date(q.expires_at) >= now)
+    // v2's accept flow creates the invoice(s) in the same step a quote
+    // becomes "accepted" (see /api/finance-v2/quotes/[id]/accept) - there's
+    // no separate "accepted, not yet invoiced" state to track here like the
+    // old billing_records pipeline had, so this tile now reads as "accepted
+    // quotes, and what's still owed on their invoices" instead.
+    const openPipelineQuotes = v2Quotes.filter(
+      (q) => q.status === "sent" && (!q.expires_at || new Date(q.expires_at) >= now)
     );
     const openPipelineValue = openPipelineQuotes.reduce((sum, q) => sum + (Number(q.total_amount) || 0), 0);
 
-    const acceptedQuotes = quotes.filter((q) => q.status === "accepted");
+    const acceptedQuotes = v2Quotes.filter((q) => q.status === "accepted");
     const acceptedValue = acceptedQuotes.reduce((sum, q) => sum + (Number(q.total_amount) || 0), 0);
     const avgAcceptedAgeDays =
       acceptedQuotes.length > 0
@@ -128,15 +146,16 @@ export default function MoneyAdminPage() {
           acceptedQuotes.length
         : 0;
 
-    const outstandingInvoices = invoices.filter((r) => r.status !== "paid" && r.status !== "settled");
+    const v2Invoices = v2Quotes.flatMap((q) => q.invoices || []);
+    const outstandingInvoices = v2Invoices.filter((inv) => inv.status !== "paid");
     const arBuckets = { notYetDue: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90plus: 0 };
     let arTotal = 0;
     outstandingInvoices.forEach((inv) => {
-      const outstanding = Math.max(0, (Number(inv.total_amount) || 0) - (Number(inv.amount_paid) || 0));
+      const outstanding = Math.max(0, (Number(inv.amount) || 0) - (Number(inv.amount_paid) || 0));
       arTotal += outstanding;
-      const dueDate = inv.expires_at
-        ? new Date(inv.expires_at)
-        : new Date(new Date(inv.created_at).getTime() + 7 * 24 * 60 * 60 * 1000);
+      const dueDate = inv.due_at
+        ? new Date(inv.due_at)
+        : new Date(new Date(inv.created_at || now).getTime() + 7 * 24 * 60 * 60 * 1000);
       const daysOverdue = (now.getTime() - dueDate.getTime()) / 86400000;
       if (daysOverdue < 0) arBuckets.notYetDue += outstanding;
       else if (daysOverdue <= 30) arBuckets.d1_30 += outstanding;
@@ -151,7 +170,7 @@ export default function MoneyAdminPage() {
       acceptedValue, acceptedCount: acceptedQuotes.length, avgAcceptedAgeDays,
       arTotal, arBuckets, outstandingCount: outstandingInvoices.length,
     };
-  }, [records, categoryMap]);
+  }, [records, categoryMap, v2Quotes]);
 
   if (loading) {
     return (
@@ -208,15 +227,21 @@ export default function MoneyAdminPage() {
         <section>
           <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-purple-600 mb-4">Inventory (Not Yet Realized)</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            <LightStatTile label="Open Pipeline (Pending)" value={rand(metrics.openPipelineValue)} icon={Send} color="text-purple-600" trend={`${metrics.openPipelineCount} quotes`} />
-            <LightStatTile label="Accepted, Awaiting Invoice" value={rand(metrics.acceptedValue)} icon={Clock} color="text-amber-600" trend={`${Math.round(metrics.avgAcceptedAgeDays)}d avg age`} />
+            <LightStatTile
+              label="Open Pipeline (Sent)"
+              value={rand(metrics.openPipelineValue)}
+              icon={Send}
+              color="text-purple-600"
+              trend={`${metrics.openPipelineCount} quotes`}
+              onClick={() => (window.location.href = "/admin/finance-v2/pipeline")}
+            />
+            <LightStatTile label="Accepted" value={rand(metrics.acceptedValue)} icon={Clock} color="text-amber-600" trend={`${metrics.acceptedCount} quotes, ${Math.round(metrics.avgAcceptedAgeDays)}d avg age`} onClick={() => (window.location.href = "/admin/finance-v2/pipeline")} />
             <LightStatTile
               label="Outstanding (AR Total)"
               value={rand(metrics.arTotal)}
               icon={CreditCard}
               color="text-rose-600"
               trend={`${metrics.outstandingCount} invoices`}
-              onClick={() => (window.location.href = "/admin/finance/ledger")}
             />
           </div>
           <div className="bg-white border border-stone-200 rounded-[24px] p-6 md:p-8 shadow-sm">
