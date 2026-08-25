@@ -69,13 +69,18 @@ export async function acceptQuote(
   const { data: lead } = await supabase.from('leads').select('*').eq('id', quote.lead_id).single();
   if (lead) {
     const wasCustomer = lead.is_customer;
+    // lifecycle_stage only moves on first conversion - is_customer already
+    // carries "are they currently a customer" on its own, and unconditionally
+    // rewriting the stage on every repeat purchase would silently overwrite
+    // wherever their funnel stage actually is (e.g. 'won') with no history
+    // row to explain it, since recordStageChange is skipped for repeats.
     await supabase
       .from('leads')
       .update({
         is_customer: true,
         first_purchase_at: lead.first_purchase_at || now.toISOString(),
         last_purchase_at: now.toISOString(),
-        lifecycle_stage: 'customer',
+        ...(wasCustomer ? {} : { lifecycle_stage: 'customer' }),
       })
       .eq('id', lead.id);
     if (!wasCustomer) {
