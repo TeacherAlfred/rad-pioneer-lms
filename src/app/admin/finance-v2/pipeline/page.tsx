@@ -47,6 +47,7 @@ export default function QuotePipelineV2Page() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [convertingId, setConvertingId] = useState<string | null>(null);
+  const [savingInvoiceId, setSavingInvoiceId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchQuotes();
@@ -177,6 +178,33 @@ export default function QuotePipelineV2Page() {
     const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // A returning parent with a track record doesn't need to be held to the
+  // auto-calculated schedule (accepted_at, +1 month, +2 months...) - this is
+  // the one field on an invoice admin actually needs to hand-correct case by
+  // case, so it's editable right where the invoice already shows.
+  async function updateInvoiceDueDate(invoiceId: string, dateStr: string) {
+    if (!dateStr) return;
+    setSavingInvoiceId(invoiceId);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/invoices/${invoiceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ due_at: new Date(dateStr).toISOString() }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to update due date");
+      const patchInvoices = (invs: any[]) =>
+        invs.map((i) => (i.id === invoiceId ? { ...i, due_at: json.invoice.due_at } : i));
+      setQuotes((prev) => prev.map((q) => (q.invoices?.some((i: any) => i.id === invoiceId) ? { ...q, invoices: patchInvoices(q.invoices) } : q)));
+      setManageQuote((prev: any) => (prev ? { ...prev, invoices: patchInvoices(prev.invoices) } : prev));
+      setToast("Due date updated.");
+    } catch (err: any) {
+      setToast(`Failed: ${err.message}`);
+    } finally {
+      setSavingInvoiceId(null);
+    }
+  }
 
   // Row-level shortcut next to the status badge - skips opening the Manage
   // modal entirely for the common case (a single-payment quote has nothing
@@ -440,17 +468,24 @@ export default function QuotePipelineV2Page() {
                       {manageQuote.invoices.map((inv: any) => {
                         const isPaid = inv.status === "paid";
                         return (
-                          <Link
-                            key={inv.id}
-                            href={`/invoice-v2/${inv.id}`}
-                            target="_blank"
-                            className="flex items-center justify-between text-[11px] px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all"
-                          >
-                            <span className="text-slate-300">INV-{inv.invoice_number}{manageQuote.accepted_plan_type === "monthly" ? ` (${inv.sequence_number}/${manageQuote.installment_count})` : ""}</span>
-                            <span className={`font-bold ${isPaid ? "text-emerald-400" : "text-amber-400"}`}>
+                          <div key={inv.id} className="flex items-center justify-between gap-2 text-[11px] px-3 py-2 rounded-lg bg-white/5">
+                            <Link href={`/invoice-v2/${inv.id}`} target="_blank" className="text-slate-300 hover:text-white shrink-0">
+                              INV-{inv.invoice_number}{manageQuote.accepted_plan_type === "monthly" ? ` (${inv.sequence_number}/${manageQuote.installment_count})` : ""}
+                            </Link>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-slate-500 text-[9px] uppercase tracking-widest">Due</span>
+                              <input
+                                type="date"
+                                value={inv.due_at ? inv.due_at.slice(0, 10) : ""}
+                                onChange={(e) => updateInvoiceDueDate(inv.id, e.target.value)}
+                                disabled={savingInvoiceId === inv.id}
+                                className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-[10px] outline-none [color-scheme:dark] disabled:opacity-50"
+                              />
+                            </div>
+                            <span className={`font-bold shrink-0 ${isPaid ? "text-emerald-400" : "text-amber-400"}`}>
                               {rand(Number(inv.amount) || 0)} {isPaid ? "· Paid" : "· Unpaid"}
                             </span>
-                          </Link>
+                          </div>
                         );
                       })}
                     </div>
