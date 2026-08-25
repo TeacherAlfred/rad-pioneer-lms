@@ -259,7 +259,13 @@ export default function ComposerV2Page() {
     }
   }
 
-  const documentItems = lineItems.map((li) => ({ desc: li.description, qty: li.quantity, price: li.unit_price, disc: li.discount_pct }));
+  // lineTotal computed the exact same way the quotes POST route computes the
+  // line_total it actually saves, so the preview the admin approves here is
+  // guaranteed to match the figure the lead later sees on the live document.
+  const documentItems = lineItems.map((li) => ({
+    desc: li.description, qty: li.quantity, price: li.unit_price, disc: li.discount_pct,
+    lineTotal: li.quantity * li.unit_price * (1 - Math.max(0, li.discount_pct) / 100),
+  }));
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans">

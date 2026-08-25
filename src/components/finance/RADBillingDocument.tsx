@@ -10,21 +10,34 @@ interface DocumentProps {
     email?: string;
     phone?: string;
   };
-  items: Array<{ desc: string; qty: number | string; price: number | string; disc?: number | string; note?: string }>;
+  items: Array<{ desc: string; qty: number | string; price: number | string; disc?: number | string; lineTotal?: number | string; note?: string }>;
   date: string;
   dueDate: string;
   globalNote?: string;
 }
 
+// discount_pct is stored rounded (e.g. 23.0769...% -> 23.08%), so
+// recomputing qty * price * (1 - disc/100) from it drifts from the amount
+// that was actually agreed at creation time (a few cents per line, which
+// then compounds into the grand total not matching what the quote/invoice
+// row itself says it's for). lineTotal is the authoritative, full-precision
+// figure computed once at save time - use it whenever it's provided, and
+// only fall back to recomputing for callers that haven't saved a row yet
+// (e.g. a live in-browser preview before the first save).
+function resolveLineTotal(item: { qty: number | string; price: number | string; disc?: number | string; lineTotal?: number | string }): number {
+  if (item.lineTotal !== undefined && item.lineTotal !== null) return Number(item.lineTotal);
+  const validDisc = Math.max(0, Number(item.disc || 0));
+  return Number(item.qty) * Number(item.price) * (1 - validDisc / 100);
+}
+
 export default function RADBillingDocument({ type, docNumber, recipient, items, date, dueDate, globalNote }: DocumentProps) {
   const subTotal = items.reduce((acc, item) => acc + (Number(item.qty) * Number(item.price)), 0);
 
-  const totalDiscount = items.reduce((acc, item) => {
-      const validDisc = Math.max(0, Number(item.disc || 0));
-      return acc + (Number(item.qty) * Number(item.price) * validDisc / 100);
-  }, 0);
-
-  const grandTotal = subTotal - totalDiscount;
+  // Derived as subTotal minus the authoritative grand total, rather than
+  // summed independently from each line's disc% - so "Subtotal - Discount"
+  // always equals "Total Due" exactly, with no second rounding path to drift.
+  const grandTotal = items.reduce((acc, item) => acc + resolveLineTotal(item), 0);
+  const totalDiscount = subTotal - grandTotal;
 
   // Helper for consistent currency formatting
   const formatZAR = (amount: number) => {
@@ -98,8 +111,8 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
                const qty = Number(item.qty);
                const price = Number(item.price);
                const disc = Math.max(0, Number(item.disc || 0));
-               const discountedPrice = price * (1 - disc / 100);
-               const lineTotal = qty * discountedPrice;
+               const rowTotal = resolveLineTotal(item);
+               const discountedPrice = qty > 0 ? rowTotal / qty : price;
 
                return (
                   <tr key={i} className="text-sm">
@@ -122,7 +135,7 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
                         <span className="text-slate-700">R {formatZAR(price)}</span>
                       )}
                     </td>
-                    <td className="py-6 text-right font-black text-slate-900">R {formatZAR(lineTotal)}</td>
+                    <td className="py-6 text-right font-black text-slate-900">R {formatZAR(rowTotal)}</td>
                   </tr>
                );
             })}
@@ -137,8 +150,8 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
            const qty = Number(item.qty);
            const price = Number(item.price);
            const disc = Math.max(0, Number(item.disc || 0));
-           const discountedPrice = price * (1 - disc / 100);
-           const lineTotal = qty * discountedPrice;
+           const rowTotal = resolveLineTotal(item);
+           const discountedPrice = qty > 0 ? rowTotal / qty : price;
 
            return (
              <div key={i} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
@@ -162,7 +175,7 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
 
                 <div className="flex justify-between items-end pt-2">
                   <span className="text-[10px] font-black uppercase text-emerald-600">Line Total</span>
-                  <span className="font-black text-lg text-slate-900">R {formatZAR(lineTotal)}</span>
+                  <span className="font-black text-lg text-slate-900">R {formatZAR(rowTotal)}</span>
                 </div>
              </div>
            );

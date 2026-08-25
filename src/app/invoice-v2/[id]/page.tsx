@@ -65,7 +65,7 @@ export default function PublicInvoiceV2View() {
   // single line for the invoice amount (e.g. an installment invoice has no
   // line items of its own - it's a slice of the quote's total).
   const documentItems = quoteLineItems.length > 0
-    ? quoteLineItems.map((li) => ({ desc: li.description, qty: li.quantity, price: li.unit_price, disc: li.discount_pct }))
+    ? quoteLineItems.map((li) => ({ desc: li.description, qty: li.quantity, price: li.unit_price, disc: li.discount_pct, lineTotal: li.line_total }))
     : [{ desc: `Instalment #${invoice.sequence_number}`, qty: 1, price: invoice.amount, disc: 0 }];
 
   return (
