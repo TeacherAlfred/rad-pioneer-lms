@@ -609,9 +609,7 @@ function PackageItemEditRow({ item, onUpdate, onRemove }: {
 
 type EventPackageOption = {
   id: string;
-  computed_cost: number | null;
-  display_name: string | null;
-  unit_multiplier: number | null;
+  perUnitCost: number;
   package: { name: string } | null;
   featured_program: { title: string } | null;
 };
@@ -656,7 +654,27 @@ function CostLinkingTab() {
     const epData = await epRes.json();
     setRows(lData.lineItems || []);
     setInventory(iData.rows || []);
-    setEventPackages((epData.rows || []).filter((r: any) => r.computed_cost != null));
+    // Multiple event_packages rows can be the same real package attached at
+    // different unit_multiplier values (e.g. "x1" and "x3" of the same
+    // Pretoria Workshop day) - the picker should list the package once, by
+    // its real name, and let the quantity field do the scaling instead of
+    // making the admin pick between confusingly-labeled variants. Collapse
+    // by (package, program), keeping one representative row's id (any of
+    // them resolves to the same per-unit cost) alongside the per-unit rate.
+    const priced = (epData.rows || []).filter((r: any) => r.computed_cost != null);
+    const grouped = new Map<string, EventPackageOption>();
+    for (const r of priced) {
+      const key = `${r.package_id}::${r.featured_program_id || 'global'}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          id: r.id,
+          perUnitCost: Number(r.computed_cost) / Number(r.unit_multiplier || 1),
+          package: r.package ? { name: r.package.name } : null,
+          featured_program: r.featured_program || null,
+        });
+      }
+    }
+    setEventPackages(Array.from(grouped.values()).sort((a, b) => (a.package?.name || '').localeCompare(b.package?.name || '')));
     setLoading(false);
   }
   useEffect(() => { load(); }, []);
@@ -694,30 +712,28 @@ function CostLinkingTab() {
   );
 }
 
-// The picker needs to name the real package first - an admin recognizes
-// "Old_Pretoria Workshop - Per Day," not necessarily the parent-facing
-// display_name override a specific attachment got for the public tier
-// picker (e.g. "Single Workshop"). Showing only the override was the actual
-// bug: it made two attachments of the same package look like unrelated,
-// undiscoverable packages. unit_multiplier is what actually distinguishes
-// them (×1 vs ×3), so it's shown explicitly rather than left implicit.
+// Real package name only, as on the Packages tab - parent-facing
+// display_name overrides (e.g. "Single Workshop" for a specific tailored
+// offer) are per-attachment marketing labels for the public tier picker,
+// not a second identity for the same underlying package, and showing them
+// here just made one package look like several unrelated, undiscoverable
+// ones. Cost shown is the true per-unit rate - the quantity field (default
+// 1, editable) is what scales it, not which variant an admin happens to pick.
 function eventPackageLabel(ep: EventPackageOption): string {
   const packageName = ep.package?.name || 'Package';
   const program = ep.featured_program?.title || 'Global';
-  const multiplier = ep.unit_multiplier && Number(ep.unit_multiplier) !== 1 ? ` ×${ep.unit_multiplier}` : '';
-  const asLabel = ep.display_name && ep.display_name !== packageName ? ` ("${ep.display_name}")` : '';
-  return `${packageName}${asLabel}${multiplier} — ${program} (cost R ${Number(ep.computed_cost || 0).toFixed(2)})`;
+  return `${packageName} — ${program} (R ${ep.perUnitCost.toFixed(2)}/unit)`;
 }
 
 function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineItemRow; inventory: InventoryItem[]; eventPackages: EventPackageOption[]; onChanged: () => void }) {
   const [addItemId, setAddItemId] = useState('');
   const [addQty, setAddQty] = useState('1');
   const [linkPackageId, setLinkPackageId] = useState('');
-  // Defaults to the line's own billed quantity - correct for the common
-  // case (a line billed "x2" really is 2 units of the package). Only needs
-  // changing when a bundled/discounted line's billed qty doesn't match how
-  // many package units it actually represents.
-  const [linkPackageQty, setLinkPackageQty] = useState(String(row.quantity));
+  // Defaults to 1, not the line's own billed quantity - the picker no
+  // longer implies a specific bundle size (that was the whole point of
+  // collapsing x1/x3 variants into one real-package listing), so 1 is the
+  // honest default and the admin sets the real count explicitly.
+  const [linkPackageQty, setLinkPackageQty] = useState('1');
   const [saving, setSaving] = useState(false);
   const [linkingPackage, setLinkingPackage] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -793,9 +809,8 @@ function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineIt
             <h3 className="font-bold text-slate-800 text-sm">{row.description}</h3>
             {row.costSource === 'package' && (
               <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
-                {row.event_package_quantity != null && Number(row.event_package_quantity) !== Number(row.quantity) ? `${row.event_package_quantity}× ` : ''}
+                {row.event_package_quantity != null ? `${row.event_package_quantity}× ` : ''}
                 {row.eventPackage?.package?.name || 'Pricing Package'}
-                {row.eventPackage?.display_name && row.eventPackage.display_name !== row.eventPackage?.package?.name ? ` ("${row.eventPackage.display_name}")` : ''}
               </span>
             )}
             {row.costSource === 'manual' && (

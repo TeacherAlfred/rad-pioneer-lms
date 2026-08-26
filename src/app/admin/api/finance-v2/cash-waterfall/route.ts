@@ -23,11 +23,21 @@ function inRange(iso: string | null, start: string, end: string) {
 function lineCostBasis(line: any, eventPackageById: Map<string, any>, costLinksByLine: Map<string, any[]>): number | null {
   const eventPackage = line.event_package_id ? eventPackageById.get(line.event_package_id) : null;
   if (eventPackage && eventPackage.computed_cost != null) {
-    // How many units of the package this line represents isn't always the
-    // line's own billed quantity - e.g. one bundled/discounted line could
-    // cover 2x Pretoria Workshop. event_package_quantity overrides when set.
-    const packageQty = line.event_package_quantity !== null && line.event_package_quantity !== undefined ? line.event_package_quantity : line.quantity;
-    return Number(eventPackage.computed_cost) * Number(packageQty);
+    // Two different semantics depending on how event_package_id got set.
+    // The Composer's Pricing Package line source sets it at quote-creation
+    // time with quantity meaning "how many of this exact priced row" (its
+    // computed_cost already has that row's own unit_multiplier baked in) -
+    // that path is untouched: computed_cost * line.quantity.
+    // The Cost Linking tab (retroactive) instead lets an admin pick a
+    // package by its real name and set a genuine base-unit count via
+    // event_package_quantity - the picked row is just a representative
+    // price reference there, so its own unit_multiplier has to be divided
+    // back out first to get a true per-unit rate before multiplying.
+    if (line.event_package_quantity !== null && line.event_package_quantity !== undefined) {
+      const perUnitCost = Number(eventPackage.computed_cost) / Number(eventPackage.unit_multiplier || 1);
+      return perUnitCost * Number(line.event_package_quantity);
+    }
+    return Number(eventPackage.computed_cost) * Number(line.quantity);
   }
   const links = costLinksByLine.get(line.id) || [];
   if (links.length > 0) {
@@ -87,7 +97,7 @@ export async function GET(request: Request) {
   const eventPackageIds = [...new Set((linesForDueQuotes || []).map((l: any) => l.event_package_id).filter(Boolean))];
   const lineIds = (linesForDueQuotes || []).map((l: any) => l.id);
   const [{ data: eventPackages }, { data: costLinks }] = await Promise.all([
-    eventPackageIds.length ? supabase.from('event_packages').select('id, computed_cost').in('id', eventPackageIds) : Promise.resolve({ data: [] as any[] }),
+    eventPackageIds.length ? supabase.from('event_packages').select('id, computed_cost, unit_multiplier').in('id', eventPackageIds) : Promise.resolve({ data: [] as any[] }),
     lineIds.length
       ? supabase.from('quote_line_item_costs').select('*, inventory_item:inventory_items(id, name, unit_cost)').in('quote_line_item_id', lineIds)
       : Promise.resolve({ data: [] as any[] }),

@@ -24,7 +24,7 @@ export async function GET() {
       ? supabase.from('quote_line_item_costs').select('*, inventory_item:inventory_items(id, name, unit_cost, unit_label)').in('quote_line_item_id', lineIds)
       : Promise.resolve({ data: [] as any[] }),
     eventPackageIds.length
-      ? supabase.from('event_packages').select('id, computed_cost, display_name, package:packages(name)').in('id', eventPackageIds)
+      ? supabase.from('event_packages').select('id, computed_cost, unit_multiplier, display_name, package:packages(name)').in('id', eventPackageIds)
       : Promise.resolve({ data: [] as any[] }),
   ]);
 
@@ -48,10 +48,13 @@ export async function GET() {
     const eventPackage = line.event_package_id ? eventPackageById.get(line.event_package_id) : null;
     const isPackageCosted = !!eventPackage && eventPackage.computed_cost != null;
     const manualCost = links.reduce((sum: number, l: any) => sum + Number(l.quantity) * Number(l.inventory_item?.unit_cost || 0), 0);
-    // See cash-waterfall/route.ts lineCostBasis - same override rule.
-    const packageQty = line.event_package_quantity !== null && line.event_package_quantity !== undefined ? line.event_package_quantity : line.quantity;
+    // See cash-waterfall/route.ts lineCostBasis - same two-semantics rule.
+    const hasQuantityOverride = line.event_package_quantity !== null && line.event_package_quantity !== undefined;
+    const packageCost = hasQuantityOverride
+      ? (Number(eventPackage?.computed_cost || 0) / Number(eventPackage?.unit_multiplier || 1)) * Number(line.event_package_quantity)
+      : Number(eventPackage?.computed_cost || 0) * Number(line.quantity);
     const costBasis = isPackageCosted
-      ? Number(eventPackage!.computed_cost) * Number(packageQty)
+      ? packageCost
       : links.length > 0
       ? manualCost
       : null; // null = uncosted, distinct from a legitimately-R0 cost
