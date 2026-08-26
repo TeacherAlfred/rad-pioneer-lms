@@ -72,7 +72,7 @@ function blendedCost(items: PackageItem[], minAttendance: number | null): number
 
 const CATEGORIES = ['venue', 'catering', 'materials', 'staffing', 'licensing', 'mentorship', 'other'];
 const COST_TYPES = ['flat', 'per_unit', 'per_session'];
-const EVENT_TYPES = ['workshop', 'term_lessons', 'priority_coaching', 'webinar'];
+const EVENT_TYPES = ['workshop', 'term_lessons', 'priority_coaching', 'webinar', 'personalized_lessons'];
 
 const LABEL_CLS = "block text-[13px] font-medium text-slate-700 mb-1.5";
 const INPUT_CLS = "w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none transition-all duration-150 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10";

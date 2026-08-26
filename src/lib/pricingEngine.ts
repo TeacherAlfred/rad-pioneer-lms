@@ -79,6 +79,11 @@ export const DEFAULT_MARGIN_BAND: Record<string, { min: number; max: number }> =
   term_lessons: { min: 55, max: 65 },
   priority_coaching: { min: 60, max: 75 },
   webinar: { min: 0, max: 0 },
+  // Same reasoning as priority_coaching - scarce 1-on-1 educator time, not
+  // a price-sensitive volume play. Confirmed with the founder rather than
+  // assumed (spec §16.1 explicitly flags not to reuse term_lessons's
+  // cohort-sharing-assumption band for this product).
+  personalized_lessons: { min: 60, max: 75 },
 };
 
 export function defaultTargetMarginPct(eventType: string): number | null {
