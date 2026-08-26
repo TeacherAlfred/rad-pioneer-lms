@@ -6,6 +6,7 @@ import {
   Coins, CalendarDays, TrendingUp, Wallet, Clock,
   FileText, CreditCard, Receipt, Send, Package, Building2, ShieldCheck,
   ArrowRight, AlertTriangle, RefreshCw, Waves, GripVertical, RotateCcw,
+  ChevronLeft, ChevronRight, X, CheckCircle2, Loader2,
 } from "lucide-react";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 import { supabase } from "@/lib/supabase";
@@ -68,12 +69,27 @@ export default function MoneyAdminPage() {
   // they're both computed server-side against the one underlying list.
   const [priorityOrder, setPriorityOrder] = useState<any[]>([]);
   const [savingOrder, setSavingOrder] = useState(false);
+  // null = current month (server default). Set once the admin navigates,
+  // so standing expenses due in a future/past month (e.g. added ahead of
+  // time, like next month's rent) are actually reachable - there was
+  // previously no way to view any month but the current one.
+  const [waterfallMonth, setWaterfallMonth] = useState<string | null>(null);
+  const [invoicePopupId, setInvoicePopupId] = useState<string | null>(null);
 
-  async function fetchWaterfall() {
-    const res = await fetch("/admin/api/finance-v2/cash-waterfall");
+  async function fetchWaterfall(month?: string | null) {
+    const targetMonth = month !== undefined ? month : waterfallMonth;
+    const res = await fetch(targetMonth ? `/admin/api/finance-v2/cash-waterfall?month=${targetMonth}` : "/admin/api/finance-v2/cash-waterfall");
     const data = await res.json();
     setWaterfallData(data);
     setPriorityOrder(data.priorityOrder || []);
+  }
+
+  function shiftWaterfallMonth(delta: number) {
+    const base = waterfallData?.month ? new Date(waterfallData.month + "-01T00:00:00Z") : new Date();
+    base.setUTCMonth(base.getUTCMonth() + delta);
+    const next = `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, "0")}`;
+    setWaterfallMonth(next);
+    fetchWaterfall(next);
   }
 
   useEffect(() => {
@@ -320,7 +336,18 @@ export default function MoneyAdminPage() {
 
         {waterfallData && (
           <section>
-            <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-600 mb-4">Cash Waterfall — {waterfallData.month}</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-600">Cash Waterfall</h2>
+              <div className="flex items-center gap-2">
+                <button onClick={() => shiftWaterfallMonth(-1)} className="p-1.5 rounded-lg bg-white border border-stone-200 text-stone-500 hover:text-stone-800 hover:border-stone-300">
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="text-xs font-black text-stone-700 tabular-nums w-20 text-center">{waterfallData.month}</span>
+                <button onClick={() => shiftWaterfallMonth(1)} className="p-1.5 rounded-lg bg-white border border-stone-200 text-stone-500 hover:text-stone-800 hover:border-stone-300">
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
 
             {waterfallData.needsConfirmation?.length > 0 && (
               <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4">
@@ -407,7 +434,13 @@ export default function MoneyAdminPage() {
                                 <span {...dragProvided.dragHandleProps} className="text-stone-300 hover:text-stone-500 cursor-grab active:cursor-grabbing shrink-0">
                                   <GripVertical size={14} />
                                 </span>
-                                <span className="text-stone-600 truncate flex-1">{item.label} <span className="text-stone-400">({new Date(item.due_date).toLocaleDateString("en-ZA")})</span></span>
+                                {item.type === "delivery" && item.invoiceId ? (
+                                  <button onClick={() => setInvoicePopupId(item.invoiceId)} className="text-stone-600 hover:text-cyan-700 hover:underline truncate flex-1 text-left">
+                                    {item.label} <span className="text-stone-400">({new Date(item.due_date).toLocaleDateString("en-ZA")})</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-stone-600 truncate flex-1">{item.label} <span className="text-stone-400">({new Date(item.due_date).toLocaleDateString("en-ZA")})</span></span>
+                                )}
                                 <span className="font-bold text-stone-900 shrink-0">{rand(item.amount)}</span>
                               </div>
                             )}
@@ -440,7 +473,13 @@ export default function MoneyAdminPage() {
                       <div className="space-y-1.5">
                         {scenario.items.map((item: any) => (
                           <div key={item.id} className="flex items-center justify-between text-[12px] px-3 py-2 rounded-lg bg-stone-50">
-                            <span className="text-stone-600 truncate">{item.label} <span className="text-stone-400">({new Date(item.due_date).toLocaleDateString("en-ZA")})</span></span>
+                            {item.type === "delivery" && item.invoiceId ? (
+                              <button onClick={() => setInvoicePopupId(item.invoiceId)} className="text-stone-600 hover:text-cyan-700 hover:underline truncate text-left">
+                                {item.label} <span className="text-stone-400">({new Date(item.due_date).toLocaleDateString("en-ZA")})</span>
+                              </button>
+                            ) : (
+                              <span className="text-stone-600 truncate">{item.label} <span className="text-stone-400">({new Date(item.due_date).toLocaleDateString("en-ZA")})</span></span>
+                            )}
                             <span className={`font-bold shrink-0 ml-2 ${item.status === "covered" ? "text-emerald-600" : item.status === "partial" ? "text-amber-600" : "text-rose-600"}`}>
                               {rand(item.amount)} · {item.status}
                             </span>
@@ -453,6 +492,14 @@ export default function MoneyAdminPage() {
               })}
             </div>
           </section>
+        )}
+
+        {invoicePopupId && (
+          <InvoicePopup
+            invoiceId={invoicePopupId}
+            onClose={() => setInvoicePopupId(null)}
+            onMarkedPaid={() => fetchWaterfall()}
+          />
         )}
 
         <section>
@@ -527,6 +574,120 @@ export default function MoneyAdminPage() {
             ))}
           </div>
         </section>
+      </div>
+    </div>
+  );
+}
+
+// Read-only view of what an invoice actually is - "INV-8" on its own means
+// nothing, and the admin edit form is the wrong tool for a quick "what was
+// this" glance. Reuses the same public read the invoice-v2 page already
+// uses (invoices/quote_line_items/leads have no anon RLS either way, so
+// that endpoint already has to run server-side and return everything
+// needed). Mark as Paid is a reconciliation action, not payment capture -
+// see the mark-paid route for why it deliberately doesn't touch
+// invoice_payments.
+function InvoicePopup({ invoiceId, onClose, onMarkedPaid }: { invoiceId: string; onClose: () => void; onMarkedPaid: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<any | null>(null);
+  const [marking, setMarking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const res = await fetch(`/api/finance-v2/invoices/${invoiceId}`);
+      const json = await res.json();
+      setData(res.ok ? json : null);
+      setLoading(false);
+    })();
+  }, [invoiceId]);
+
+  async function markPaid() {
+    setMarking(true);
+    setError(null);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/invoices/${invoiceId}/mark-paid`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setData((prev: any) => (prev ? { ...prev, invoice: json.invoice } : prev));
+      onMarkedPaid();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setMarking(false);
+    }
+  }
+
+  const rand = (n: number) => `R ${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-stone-900/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        {loading ? (
+          <div className="py-24 flex items-center justify-center text-stone-400"><Loader2 className="animate-spin" /></div>
+        ) : !data ? (
+          <div className="py-24 text-center text-stone-400 text-sm">Invoice not found.</div>
+        ) : (
+          <div className="p-7 space-y-5">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Invoice</p>
+                <h3 className="text-xl font-black text-stone-900">INV-{data.invoice.invoice_number}</h3>
+              </div>
+              <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+            </div>
+
+            <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4">
+              <p className="text-sm font-bold text-stone-900">{data.lead?.name || "Unknown lead"}</p>
+              <p className="text-xs text-stone-500">{data.lead?.phone || data.lead?.email || ""}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">What this was for</p>
+              {data.lineItems.length === 0 ? (
+                <p className="text-xs text-stone-400 italic">No line items on record — likely an instalment slice of a larger quote.</p>
+              ) : (
+                data.lineItems.map((li: any) => (
+                  <div key={li.id} className="flex items-center justify-between text-xs px-3 py-2 rounded-lg bg-stone-50">
+                    <span className="text-stone-700">{li.description} {li.quantity > 1 && <span className="text-stone-400">× {li.quantity}</span>}</span>
+                    <span className="font-bold text-stone-900">{rand(li.line_total)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-stone-100">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Status</p>
+                <p className={`text-sm font-black ${data.invoice.status === "paid" ? "text-emerald-600" : "text-rose-500"}`}>{data.invoice.status}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Amount</p>
+                <p className="text-lg font-black text-stone-900">{rand(data.invoice.amount)}</p>
+              </div>
+            </div>
+
+            {error && <p className="text-xs text-rose-600">{error}</p>}
+
+            {data.invoice.status === "paid" ? (
+              <p className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
+                <CheckCircle2 size={14} /> Already paid — not part of this cycle's cash to collect.
+              </p>
+            ) : (
+              <button
+                onClick={markPaid}
+                disabled={marking}
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {marking ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Mark as Paid
+              </button>
+            )}
+            <p className="text-[10px] text-stone-400 text-center">
+              For settling an invoice that was already paid through another channel — this won't show up as new cash received this month. For a real new payment, use Capture Payment instead.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

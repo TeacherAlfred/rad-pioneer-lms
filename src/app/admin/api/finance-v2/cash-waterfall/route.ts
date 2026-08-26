@@ -152,7 +152,16 @@ export async function GET(request: Request) {
       const leadName = quote ? leadNameById.get(quote.lead_id) : null;
       const programName = quote ? programNameById.get(quote.program_id) : null;
       const label = [leadName, programName].filter(Boolean).join(' — ') || 'Delivery cost (lead/programme unavailable)';
-      return { id: `inv-${inv.id}`, label: `${label} (INV-${inv.invoice_number})`, due_date: inv.due_at, amount: total, type: 'delivery' as const };
+      return {
+        id: `inv-${inv.id}`,
+        label: `${label} (INV-${inv.invoice_number})`,
+        due_date: inv.due_at,
+        amount: total,
+        type: 'delivery' as const,
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoice_number,
+        invoiceStatus: inv.status,
+      };
     })
     .filter((e) => e.amount > 0);
 
@@ -232,7 +241,9 @@ export async function GET(request: Request) {
     // source of truth for "what order" that the drag-to-reorder UI edits.
     // Both scenarios below are guaranteed to share this exact order, since
     // they're both run against the same orderedList.
-    priorityOrder: orderedList.map(({ id, label, due_date, amount, type }) => ({ id, label, due_date, amount, type })),
+    priorityOrder: orderedList.map(({ id, label, due_date, amount, type, invoiceId, invoiceNumber, invoiceStatus }: any) => ({
+      id, label, due_date, amount, type, invoiceId, invoiceNumber, invoiceStatus,
+    })),
     orderIsOverridden,
     waterfall: { cashInHand, fullyCollected },
     uncostedLines,
