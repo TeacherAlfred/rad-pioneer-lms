@@ -475,18 +475,22 @@ function PackagesTab() {
                 const { perChild, flat } = splitCost(editingLive.items);
                 const marginPct = form.recommended_margin_pct === '' ? null : Number(form.recommended_margin_pct);
                 const minAttendance = form.recommended_min_attendance === '' ? null : Number(form.recommended_min_attendance);
-                const displayCost = minAttendance ? blendedCost(editingLive.items, minAttendance) : perChild;
-                const referenceFee = marginPct !== null ? computeRecommendedFee(displayCost, marginPct) : null;
+                // With no flat costs at all, per-child IS the complete cost -
+                // no attendee count needed to know it. Otherwise a real
+                // total needs Recommended Min. Attendance to blend against.
+                const blended = minAttendance ? blendedCost(editingLive.items, minAttendance) : flat === 0 ? perChild : null;
+                const referenceFee = marginPct !== null && blended !== null ? computeRecommendedFee(blended, marginPct) : null;
                 return editingLive.items.length > 0 && (
-                  <div className="bg-blue-50/60 border border-blue-100 rounded-xl px-4 py-3 text-[13px] text-slate-700 space-y-1">
-                    <p>
-                      <strong>Cost:</strong>{' '}
-                      {minAttendance
-                        ? `R ${displayCost.toFixed(2)}/child (blended, at ${minAttendance} attendees)`
-                        : `R ${perChild.toFixed(2)}/child${flat > 0 ? ` + R ${flat.toFixed(2)} flat (set Recommended Min. Attendance above to blend this in)` : ''}`}
-                    </p>
+                  <div className="bg-blue-50/60 border border-blue-100 rounded-xl px-4 py-3 text-[13px] text-slate-700 space-y-1.5">
+                    <p><strong>Per Child Cost:</strong> R {perChild.toFixed(2)}/child{flat > 0 ? ' (items charged per child only — excludes shared costs below)' : ''}</p>
+                    {flat > 0 && (
+                      <p><strong>Blended Cost:</strong> {minAttendance ? `R ${blended!.toFixed(2)}/child (per child + R ${flat.toFixed(2)} flat ÷ ${minAttendance} attendees)` : `set Recommended Min. Attendance above to blend the R ${flat.toFixed(2)} flat cost in`}</p>
+                    )}
+                    {minAttendance && (
+                      <p><strong>Total Cost at {minAttendance} attendees:</strong> R {((blended ?? perChild) * minAttendance).toFixed(2)}</p>
+                    )}
                     {referenceFee !== null && (
-                      <p><strong>At {marginPct}% margin:</strong> ≈ R {referenceFee.toFixed(2)}/child{!minAttendance && flat > 0 ? ' (per-child portion only)' : ''}</p>
+                      <p><strong>At {marginPct}% margin:</strong> ≈ R {referenceFee.toFixed(2)}/child</p>
                     )}
                   </div>
                 );
