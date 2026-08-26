@@ -75,13 +75,23 @@ export default function MoneyAdminPage() {
   // previously no way to view any month but the current one.
   const [waterfallMonth, setWaterfallMonth] = useState<string | null>(null);
   const [invoicePopupId, setInvoicePopupId] = useState<string | null>(null);
+  // Cumulative bank position (opening balance + every month's paid minus
+  // obligations since) - deliberately separate from the monthly scenarios
+  // above, which reset each month on purpose (month-to-month profitability
+  // tracking). Reordering priority within a month can't change this figure.
+  const [runningBalanceData, setRunningBalanceData] = useState<any | null>(null);
+  const [showBalanceSettings, setShowBalanceSettings] = useState(false);
 
   async function fetchWaterfall(month?: string | null) {
     const targetMonth = month !== undefined ? month : waterfallMonth;
-    const res = await fetch(targetMonth ? `/admin/api/finance-v2/cash-waterfall?month=${targetMonth}` : "/admin/api/finance-v2/cash-waterfall");
+    const [res, balanceRes] = await Promise.all([
+      fetch(targetMonth ? `/admin/api/finance-v2/cash-waterfall?month=${targetMonth}` : "/admin/api/finance-v2/cash-waterfall"),
+      fetch(targetMonth ? `/admin/api/finance-v2/cash-waterfall/running-balance?month=${targetMonth}` : "/admin/api/finance-v2/cash-waterfall/running-balance"),
+    ]);
     const data = await res.json();
     setWaterfallData(data);
     setPriorityOrder(data.priorityOrder || []);
+    setRunningBalanceData(balanceRes.ok ? await balanceRes.json() : null);
   }
 
   function shiftWaterfallMonth(delta: number) {
@@ -353,6 +363,23 @@ export default function MoneyAdminPage() {
               </div>
             </div>
 
+            {runningBalanceData && (
+              <div className="mb-4 bg-stone-900 rounded-[24px] p-5 md:p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Running Cash Balance — as of {runningBalanceData.asOfMonth}</p>
+                  <p className={`text-2xl md:text-3xl font-black tracking-tight ${runningBalanceData.runningBalance < 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                    {rand(runningBalanceData.runningBalance)}
+                  </p>
+                  <p className="text-[10px] text-stone-500 mt-1">
+                    Opening {rand(runningBalanceData.openingBalance)} ({runningBalanceData.openingMonth}), carried forward month by month — separate from the monthly scenarios below, which reset each month on purpose.
+                  </p>
+                </div>
+                <button onClick={() => setShowBalanceSettings(true)} className="text-[10px] font-black uppercase tracking-widest text-stone-400 hover:text-white shrink-0 self-start md:self-center">
+                  Set Opening Balance
+                </button>
+              </div>
+            )}
+
             {waterfallData.needsConfirmation?.length > 0 && (
               <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4">
                 <p className="text-[12px] font-bold text-amber-700 flex items-center gap-2">
@@ -503,6 +530,18 @@ export default function MoneyAdminPage() {
             invoiceId={invoicePopupId}
             onClose={() => setInvoicePopupId(null)}
             onChanged={() => fetchWaterfall()}
+          />
+        )}
+
+        {showBalanceSettings && runningBalanceData && (
+          <BalanceSettingsPopup
+            initialAmount={runningBalanceData.openingBalance}
+            initialDate={`${runningBalanceData.openingMonth}-01`}
+            onClose={() => setShowBalanceSettings(false)}
+            onSaved={() => {
+              setShowBalanceSettings(false);
+              fetchWaterfall();
+            }}
           />
         )}
 
@@ -752,6 +791,59 @@ function InvoicePopup({ invoiceId, onClose, onChanged }: { invoiceId: string; on
             </p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function BalanceSettingsPopup({ initialAmount, initialDate, onClose, onSaved }: { initialAmount: number; initialDate: string; onClose: () => void; onSaved: () => void }) {
+  const [amount, setAmount] = useState(String(initialAmount));
+  const [date, setDate] = useState(initialDate);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/admin/api/finance-v2/cash-waterfall/running-balance", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opening_balance: Number(amount) || 0, opening_balance_date: date }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      onSaved();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-stone-900/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-sm p-7 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-black text-stone-900">Opening Balance</h3>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+        </div>
+        <p className="text-[11px] text-stone-500">
+          The real bank balance as of a specific date — the anchor the running balance carries forward from. Months before this date aren't tracked and don't affect it.
+        </p>
+        <div>
+          <label className="block text-[11px] font-bold text-stone-600 mb-1">Balance (R)</label>
+          <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-400" />
+        </div>
+        <div>
+          <label className="block text-[11px] font-bold text-stone-600 mb-1">As of Date</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-cyan-400" />
+        </div>
+        {error && <p className="text-xs text-rose-600">{error}</p>}
+        <div className="flex gap-3 pt-1">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-stone-900 hover:bg-stone-800 disabled:opacity-50">{saving ? "Saving…" : "Save"}</button>
+        </div>
       </div>
     </div>
   );
