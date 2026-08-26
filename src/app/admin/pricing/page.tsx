@@ -611,6 +611,7 @@ type EventPackageOption = {
   id: string;
   computed_cost: number | null;
   display_name: string | null;
+  unit_multiplier: number | null;
   package: { name: string } | null;
   featured_program: { title: string } | null;
 };
@@ -693,10 +694,19 @@ function CostLinkingTab() {
   );
 }
 
+// The picker needs to name the real package first - an admin recognizes
+// "Old_Pretoria Workshop - Per Day," not necessarily the parent-facing
+// display_name override a specific attachment got for the public tier
+// picker (e.g. "Single Workshop"). Showing only the override was the actual
+// bug: it made two attachments of the same package look like unrelated,
+// undiscoverable packages. unit_multiplier is what actually distinguishes
+// them (×1 vs ×3), so it's shown explicitly rather than left implicit.
 function eventPackageLabel(ep: EventPackageOption): string {
-  const name = ep.display_name || ep.package?.name || 'Package';
-  const program = ep.featured_program?.title;
-  return `${name}${program ? ` — ${program}` : ' — Global'} (cost R ${Number(ep.computed_cost || 0).toFixed(2)})`;
+  const packageName = ep.package?.name || 'Package';
+  const program = ep.featured_program?.title || 'Global';
+  const multiplier = ep.unit_multiplier && Number(ep.unit_multiplier) !== 1 ? ` ×${ep.unit_multiplier}` : '';
+  const asLabel = ep.display_name && ep.display_name !== packageName ? ` ("${ep.display_name}")` : '';
+  return `${packageName}${asLabel}${multiplier} — ${program} (cost R ${Number(ep.computed_cost || 0).toFixed(2)})`;
 }
 
 function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineItemRow; inventory: InventoryItem[]; eventPackages: EventPackageOption[]; onChanged: () => void }) {
@@ -784,7 +794,8 @@ function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineIt
             {row.costSource === 'package' && (
               <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
                 {row.event_package_quantity != null && Number(row.event_package_quantity) !== Number(row.quantity) ? `${row.event_package_quantity}× ` : ''}
-                {row.eventPackage?.display_name || row.eventPackage?.package?.name || 'Pricing Package'}
+                {row.eventPackage?.package?.name || 'Pricing Package'}
+                {row.eventPackage?.display_name && row.eventPackage.display_name !== row.eventPackage?.package?.name ? ` ("${row.eventPackage.display_name}")` : ''}
               </span>
             )}
             {row.costSource === 'manual' && (
