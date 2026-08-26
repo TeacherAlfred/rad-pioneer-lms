@@ -62,11 +62,19 @@ function matchesFilter(row: ResponseRow, filter: string) {
 // WhatsApp Business (desktop) or their mail client before sending.
 // Gated on consent_marketing: that's the specific opt-in this guide was
 // promised under, so it's the only group these actions show up for.
-function guideMessageBody(firstName: string) {
-  return `Hi ${firstName} 👋\n\nThanks for joining the Irene Primary Health & Wellness community and voting in the Fitness Challenge!\n\nAs promised, here's RAD Academy's free Parent's Guide to Hacking Screen Time - a quick read on turning screen time into a real skill (yes, even Minecraft).\n\nNext week we'll send a second free guide too - this one all about fitness, to go with the community you've just joined.\n\nNo strings attached, just something useful for your family 🙌`;
+//
+// Addressed by the full display name as entered on the form, not a
+// first-name split - some are entered as e.g. "Nxumalo Family", and
+// truncating to the first word there reads as addressing a person named
+// "Nxumalo" instead of the family.
+function guideMessageBody(displayName: string, { markdown }: { markdown: boolean }) {
+  const communityLine = markdown
+    ? "Thanks for joining the _Irene Primary Health & Wellness community_!"
+    : "Thanks for joining the Irene Primary Health & Wellness community!";
+  return `Good afternoon ${displayName},\n\n${communityLine}\n\nAs promised, here's RAD Academy's free Parent's Guide to Hacking Screen Time - a quick read on turning screen time into a real skill (yes, even Minecraft - and applies to any kids who spend time on a screen).\n\nNext week we'll send a second free guide too - this one all about getting kids to understand how fitness devices work, a guide to go with the community you've just joined.\n\nNo strings attached, just something useful for your family 🙌`;
 }
-function guideEmailBody(firstName: string) {
-  return `${guideMessageBody(firstName)}\n\nBest regards,\nThe RAD Academy Team`;
+function guideEmailBody(displayName: string) {
+  return `${guideMessageBody(displayName, { markdown: false })}\n\nBest regards,\nThe RAD Academy Team`;
 }
 
 function IreneFitnessDetailInner() {
@@ -109,17 +117,15 @@ function IreneFitnessDetailInner() {
   }
 
   function sendGuideWhatsapp(row: ResponseRow) {
-    const firstName = row.display_name.split(" ")[0];
     const digits = toWaPhone(row.whatsapp || "");
-    const message = guideMessageBody(firstName);
+    const message = guideMessageBody(row.display_name, { markdown: true });
     copyToClipboard(message, `${row.family_id}-wa`);
     window.open(`https://api.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(message)}`, "_blank");
   }
 
   function sendGuideEmail(row: ResponseRow) {
-    const firstName = row.display_name.split(" ")[0];
     const subject = "Your Free Parent's Guide to Hacking Screen Time";
-    const body = guideEmailBody(firstName);
+    const body = guideEmailBody(row.display_name);
     copyToClipboard(body, `${row.family_id}-email`);
     window.open(`mailto:${row.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
   }
