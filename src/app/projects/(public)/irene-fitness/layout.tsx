@@ -21,7 +21,7 @@ export default function IreneFitnessLayout({
             </div>
             <div>
               <h1 className="text-sm font-bold tracking-tight leading-none">Irene Primary</h1>
-              <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Fitness Challenge</p>
+              <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Fitness Community</p>
             </div>
           </div>
           <Image src="/logo/rad-logo.png" alt="RAD Academy" width={70} height={23} unoptimized />

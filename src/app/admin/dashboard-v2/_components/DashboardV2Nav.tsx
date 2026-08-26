@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Gauge, Kanban, AlertTriangle, Wallet, LayoutList, Users } from "lucide-react";
+import { ArrowLeft, Gauge, Kanban, AlertTriangle, Wallet, LayoutList, Users, FolderKanban } from "lucide-react";
 
 // Light theme is deliberate for dashboard-v2 specifically (design doc §4):
 // status-colour scanning (red/amber/green) reads faster on light than dark.
@@ -14,6 +14,7 @@ const TABS = [
   { label: "Landmines & Risk", path: "/admin/dashboard-v2/landmines", icon: AlertTriangle },
   { label: "Systems Status", path: "/admin/dashboard-v2/systems-status", icon: LayoutList },
   { label: "Money & Admin", path: "/admin/dashboard-v2/money-admin", icon: Wallet },
+  { label: "Projects", path: "/admin/dashboard-v2/projects", icon: FolderKanban },
   { label: "Leads", path: "/admin/lead-funnel/overview", icon: Users },
 ];
 
