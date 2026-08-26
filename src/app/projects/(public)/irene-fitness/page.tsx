@@ -128,7 +128,7 @@ function IreneFitnessPageInner() {
     displayName.trim().length > 0 &&
     displayName.trim().length <= 40 &&
     (waDigits.length > 0 || email.trim().length > 0) &&
-    children.every((c) => c.grade && c.class.trim().length > 0);
+    children.every((c) => c.grade);
 
   async function handleSubmit() {
     if (!canSubmit || submitting) return;
@@ -352,7 +352,7 @@ function IreneFitnessPageInner() {
                   </select>
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Class</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Class (optional)</label>
                   <input
                     type="text"
                     value={child.class}

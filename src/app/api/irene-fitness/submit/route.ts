@@ -50,8 +50,11 @@ export async function POST(request: Request) {
     }
     const childList = Array.isArray(children) ? children.slice(0, 6) : [];
     for (const child of childList) {
-      if (!child?.grade || !child?.class || typeof child.class !== 'string' || !child.class.trim()) {
-        return NextResponse.json({ error: 'Each child needs a grade and class' }, { status: 400 });
+      if (!child?.grade) {
+        return NextResponse.json({ error: 'Each child needs a grade' }, { status: 400 });
+      }
+      if (child.class !== undefined && typeof child.class !== 'string') {
+        return NextResponse.json({ error: 'Invalid class' }, { status: 400 });
       }
     }
     if (childList.length === 0) {
@@ -86,18 +89,24 @@ export async function POST(request: Request) {
       consent_marketing_timestamp: consent_marketing === true ? now : null,
     };
 
-    let family;
+    let family: any = null;
 
     if (existingFamilyId) {
+      // maybeSingle, not single: the cookie can outlive its row (deleted or
+      // reset server-side) since it's kept for 180 days. That must fall
+      // through to lookup-or-create below, not throw "Cannot coerce the
+      // result to a single JSON object" at the visitor.
       const { data, error } = await supabase
         .from('irene_fitness_families')
         .update(familyPayload)
         .eq('id', existingFamilyId)
         .select()
-        .single();
+        .maybeSingle();
       if (error) throw error;
       family = data;
-    } else {
+    }
+
+    if (!family) {
       // Race-safe lookup-or-create: insert first and rely on the whatsapp/
       // email UNIQUE constraints to reject a duplicate, then fall back to a
       // select+update on conflict — same idiom as leads.phone elsewhere.
@@ -145,10 +154,10 @@ export async function POST(request: Request) {
     // shown publicly and votes attach to the response id, not to a child row.
     await supabase.from('irene_fitness_children').delete().eq('family_id', family.id);
     const { error: childrenError } = await supabase.from('irene_fitness_children').insert(
-      childList.map((child: { grade: string; class: string }) => ({
+      childList.map((child: { grade: string; class?: string }) => ({
         family_id: family.id,
         grade: child.grade,
-        class: child.class.trim(),
+        class: child.class?.trim() || null,
       }))
     );
     if (childrenError) throw childrenError;
