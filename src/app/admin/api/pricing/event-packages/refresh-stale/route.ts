@@ -37,6 +37,7 @@ export async function POST(request: Request) {
   const failed: any[] = [];
   for (const ep of eventPackages || []) {
     const items = (itemsByPackage.get(ep.package_id) || []).map((i: any) => ({
+      cost_type: i.inventory_item?.cost_type || 'flat',
       unit_cost: Number(i.inventory_item?.unit_cost || 0),
       quantity_type: i.quantity_type,
       quantity_override: i.quantity_override,

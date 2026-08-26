@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { monthBounds, inRange, lineCostBasis, addMonthKey, computeRunningBalanceThrough } from '@/lib/cashWaterfall';
+import { monthBounds, inRange, lineCostBasis, addMonthKey, computeRunningBalanceThrough, SAST_OFFSET } from '@/lib/cashWaterfall';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

@@ -14,7 +14,9 @@ type Expense = {
   active: boolean;
 };
 
-const emptyForm = { name: "", amount: "", due_date: "", payment_timing: "post_paid" as const, recurring: false, active: true };
+type ExpenseForm = { name: string; amount: string; due_date: string; payment_timing: "pre_paid" | "post_paid"; recurring: boolean; active: boolean };
+
+const emptyForm: ExpenseForm = { name: "", amount: "", due_date: "", payment_timing: "post_paid", recurring: false, active: true };
 
 export default function StandingExpensesPage() {
   const [rows, setRows] = useState<Expense[]>([]);
@@ -22,7 +24,7 @@ export default function StandingExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<ExpenseForm>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);

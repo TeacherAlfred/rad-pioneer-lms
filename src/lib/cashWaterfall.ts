@@ -91,7 +91,7 @@ export async function computeRunningBalanceThrough(supabase: any, throughMonthKe
       ? supabase.from('quote_line_item_costs').select('*, inventory_item:inventory_items(unit_cost)').in('quote_line_item_id', lineIds)
       : Promise.resolve({ data: [] as any[] }),
   ]);
-  const eventPackageById = new Map((eventPackages || []).map((e: any) => [e.id, e]));
+  const eventPackageById = new Map<string, any>((eventPackages || []).map((e: any) => [e.id, e]));
   const costLinksByLine = new Map<string, any[]>();
   (costLinks || []).forEach((link: any) => {
     const arr = costLinksByLine.get(link.quote_line_item_id) || [];
