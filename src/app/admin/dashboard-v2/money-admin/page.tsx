@@ -335,7 +335,11 @@ export default function MoneyAdminPage() {
         </section>
 
         {waterfallData && (
-          <section>
+          // A clear "this zone starts here, ends here" frame, distinct from
+          // the plain sections above/below it - everything inside is one
+          // connected system (order list feeds both scenarios), unlike the
+          // independent stat-tile sections elsewhere on this dashboard.
+          <section className="relative rounded-[40px] border-2 border-cyan-200 bg-gradient-to-b from-cyan-50/50 to-white p-6 md:p-8 shadow-[0_12px_32px_-8px_rgba(6,182,212,0.18)]">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-600">Cash Waterfall</h2>
               <div className="flex items-center gap-2">
@@ -498,7 +502,7 @@ export default function MoneyAdminPage() {
           <InvoicePopup
             invoiceId={invoicePopupId}
             onClose={() => setInvoicePopupId(null)}
-            onMarkedPaid={() => fetchWaterfall()}
+            onChanged={() => fetchWaterfall()}
           />
         )}
 
@@ -587,11 +591,16 @@ export default function MoneyAdminPage() {
 // needed). Mark as Paid is a reconciliation action, not payment capture -
 // see the mark-paid route for why it deliberately doesn't touch
 // invoice_payments.
-function InvoicePopup({ invoiceId, onClose, onMarkedPaid }: { invoiceId: string; onClose: () => void; onMarkedPaid: () => void }) {
+function InvoicePopup({ invoiceId, onClose, onChanged }: { invoiceId: string; onClose: () => void; onChanged: () => void }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any | null>(null);
   const [marking, setMarking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Delivery timing - decoupled from due_at, which stays the payment
+  // deadline. deliveryMonthInput "" means "use due date's month" (default).
+  const [deliveryMonthInput, setDeliveryMonthInput] = useState("");
+  const [deliveryGated, setDeliveryGated] = useState(false);
+  const [savingTiming, setSavingTiming] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -599,6 +608,10 @@ function InvoicePopup({ invoiceId, onClose, onMarkedPaid }: { invoiceId: string;
       const res = await fetch(`/api/finance-v2/invoices/${invoiceId}`);
       const json = await res.json();
       setData(res.ok ? json : null);
+      if (res.ok) {
+        setDeliveryMonthInput(json.invoice.delivery_month || "");
+        setDeliveryGated(!!json.invoice.delivery_gated_on_payment);
+      }
       setLoading(false);
     })();
   }, [invoiceId]);
@@ -611,11 +624,31 @@ function InvoicePopup({ invoiceId, onClose, onMarkedPaid }: { invoiceId: string;
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       setData((prev: any) => (prev ? { ...prev, invoice: json.invoice } : prev));
-      onMarkedPaid();
+      onChanged();
     } catch (err: any) {
       setError(err.message);
     } finally {
       setMarking(false);
+    }
+  }
+
+  async function saveDeliveryTiming() {
+    setSavingTiming(true);
+    setError(null);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/invoices/${invoiceId}/delivery-timing`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ delivery_month: deliveryMonthInput || null, delivery_gated_on_payment: deliveryGated }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setData((prev: any) => (prev ? { ...prev, invoice: json.invoice } : prev));
+      onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingTiming(false);
     }
   }
 
@@ -666,6 +699,37 @@ function InvoicePopup({ invoiceId, onClose, onMarkedPaid }: { invoiceId: string;
                 <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Amount</p>
                 <p className="text-lg font-black text-stone-900">{rand(data.invoice.amount)}</p>
               </div>
+            </div>
+
+            <div className="pt-3 border-t border-stone-100 space-y-2.5">
+              <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Delivery Timing</p>
+              <p className="text-[11px] text-stone-500">
+                When the cost of actually delivering this is incurred — separate from the due date above, which is just when the client needs to pay.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="month"
+                  value={deliveryMonthInput}
+                  onChange={(e) => setDeliveryMonthInput(e.target.value)}
+                  className="flex-1 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-cyan-400"
+                />
+                {deliveryMonthInput && (
+                  <button onClick={() => setDeliveryMonthInput("")} className="text-[10px] font-bold text-stone-400 hover:text-stone-600 shrink-0">
+                    Use due date
+                  </button>
+                )}
+              </div>
+              <label className="flex items-start gap-2 text-[11px] text-stone-600 cursor-pointer">
+                <input type="checkbox" checked={deliveryGated} onChange={(e) => setDeliveryGated(e.target.checked)} className="w-3.5 h-3.5 mt-0.5 accent-cyan-600" />
+                Delivery hasn't started — exclude this from every month's waterfall until the invoice is actually paid (the month above is then just the tentative plan)
+              </label>
+              <button
+                onClick={saveDeliveryTiming}
+                disabled={savingTiming}
+                className="w-full py-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {savingTiming ? <Loader2 size={13} className="animate-spin" /> : null} Save Delivery Timing
+              </button>
             </div>
 
             {error && <p className="text-xs text-rose-600">{error}</p>}

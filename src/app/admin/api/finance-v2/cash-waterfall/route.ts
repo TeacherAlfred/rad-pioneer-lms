@@ -58,6 +58,7 @@ export async function GET(request: Request) {
   const nextMonthNum = month === 12 ? 1 : month + 1;
   const nextMonthYear = month === 12 ? year + 1 : year;
   const nextMonth = monthBounds(nextMonthYear, nextMonthNum);
+  const monthKey = `${year}-${String(month).padStart(2, '0')}`;
 
   const supabase = supabaseAdmin();
 
@@ -88,8 +89,21 @@ export async function GET(request: Request) {
     .filter((p) => inRange(p.received_at, thisMonth.start, thisMonth.end))
     .reduce((s, p) => s + Number(p.amount), 0);
 
-  // --- §2.3: delivery-linked rollup, one expense entry per invoice due this month ---
-  const quoteIdsDue = [...new Set(dueThisMonth.map((i) => i.quote_id).filter(Boolean))];
+  // --- §2.3: delivery-linked rollup, one expense entry per invoice whose
+  // delivery falls in this month. NOT the same set as dueThisMonth: a
+  // workshop instalment can be due in one month for a workshop actually
+  // running in another, and some services don't start (so don't incur any
+  // cost obligation to plan for) until the invoice is actually paid, with
+  // the start month itself only a tentative plan until then. due_at still
+  // drives the Due tracker above - that's a separate question (when the
+  // client needs to pay) from when the cost is actually incurred.
+  const deliveryInvoicesThisMonth = (invoices || []).filter((inv) => {
+    if (inv.delivery_gated_on_payment && inv.status !== 'paid') return false;
+    if (inv.delivery_month) return inv.delivery_month === monthKey;
+    return inRange(inv.due_at, thisMonth.start, thisMonth.end);
+  });
+
+  const quoteIdsDue = [...new Set(deliveryInvoicesThisMonth.map((i) => i.quote_id).filter(Boolean))];
   const { data: linesForDueQuotes } = quoteIdsDue.length
     ? await supabase.from('quote_line_items').select('*').in('quote_id', quoteIdsDue)
     : { data: [] as any[] };
@@ -121,7 +135,7 @@ export async function GET(request: Request) {
   // of delivering a specific service to a specific family, so the label
   // needs to say what and for whom. INV-8 stays, just demoted to a
   // parenthetical reference instead of being the whole label.
-  const quoteIdsForLabels = [...new Set(dueThisMonth.map((i) => i.quote_id).filter(Boolean))];
+  const quoteIdsForLabels = [...new Set(deliveryInvoicesThisMonth.map((i) => i.quote_id).filter(Boolean))];
   const { data: quotesForLabels } = quoteIdsForLabels.length
     ? await supabase.from('quotes').select('id, lead_id, program_id').in('id', quoteIdsForLabels)
     : { data: [] as any[] };
@@ -136,7 +150,7 @@ export async function GET(request: Request) {
   const quoteById = new Map((quotesForLabels || []).map((q: any) => [q.id, q]));
 
   const uncostedLines: any[] = [];
-  const deliveryLinkedExpenses = dueThisMonth
+  const deliveryLinkedExpenses = deliveryInvoicesThisMonth
     .map((inv) => {
       const lines = linesByQuote.get(inv.quote_id) || [];
       let total = 0;
@@ -161,6 +175,8 @@ export async function GET(request: Request) {
         invoiceId: inv.id,
         invoiceNumber: inv.invoice_number,
         invoiceStatus: inv.status,
+        deliveryMonth: inv.delivery_month,
+        deliveryGatedOnPayment: inv.delivery_gated_on_payment,
       };
     })
     .filter((e) => e.amount > 0);
@@ -180,7 +196,6 @@ export async function GET(request: Request) {
   // anything in the current list that wasn't part of a saved sequence
   // (e.g. a new invoice that became due after the last reorder) is
   // appended at the end in date order rather than silently dropped.
-  const monthKey = `${year}-${String(month).padStart(2, '0')}`;
   const { data: overrides } = await supabase
     .from('cash_waterfall_priority_overrides')
     .select('item_key, sort_index')
