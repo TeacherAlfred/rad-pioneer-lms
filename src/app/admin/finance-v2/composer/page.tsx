@@ -99,6 +99,12 @@ function ComposerV2Inner() {
 
   const [isTermEnrolment, setIsTermEnrolment] = useState(false);
   const [installmentCount, setInstallmentCount] = useState(2);
+  // Typed directly rather than forced to grandTotal/installmentCount - a
+  // term price often carries a real premium for paying by instalment
+  // (e.g. R2,250 over 3 months vs R2,000 upfront), not just an equal split
+  // of the same total. See suggestedMonthlyAmount below for the optional
+  // total-÷-count starting point.
+  const [monthlyInstallmentAmountInput, setMonthlyInstallmentAmountInput] = useState("");
 
   const [showPreview, setShowPreview] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -168,7 +174,10 @@ function ComposerV2Inner() {
       }
       setNotes(quote.notes || "");
       setIsTermEnrolment(quote.installment_count > 1);
-      if (quote.installment_count > 1) setInstallmentCount(quote.installment_count);
+      if (quote.installment_count > 1) {
+        setInstallmentCount(quote.installment_count);
+        if (quote.monthly_installment_amount) setMonthlyInstallmentAmountInput(String(quote.monthly_installment_amount));
+      }
       setPrefillSourceLabel(`QT-${quote.quote_number}`);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -223,7 +232,11 @@ function ComposerV2Inner() {
     0
   );
   const grandTotal = subTotal - totalDiscount;
-  const monthlyInstallmentAmount = isTermEnrolment && installmentCount > 1 ? grandTotal / installmentCount : null;
+  const suggestedMonthlyAmount = installmentCount > 1 ? grandTotal / installmentCount : 0;
+  const monthlyInstallmentAmount =
+    isTermEnrolment && installmentCount > 1 && monthlyInstallmentAmountInput !== "" ? Number(monthlyInstallmentAmountInput) : null;
+  const termAmountInvalid = isTermEnrolment && (!monthlyInstallmentAmount || monthlyInstallmentAmount <= 0);
+  const canFinalize = !!selectedLead && !!primaryProgramId && grandTotal > 0 && !termAmountInvalid && !isProcessing;
 
   async function handleCreateLead() {
     const digits = newLeadPhone.replace(/\D/g, "");
@@ -242,7 +255,7 @@ function ComposerV2Inner() {
   }
 
   async function handleFinalize(action: "email" | "pdf" | "link") {
-    if (!selectedLead || !primaryProgramId || grandTotal <= 0 || isProcessing) return;
+    if (!canFinalize) return;
     setIsProcessing(true);
     try {
       const quoteRes = await fetch("/admin/api/finance-v2/quotes", {
@@ -525,13 +538,42 @@ function ComposerV2Inner() {
                 <span className="text-[10px] font-black uppercase text-slate-300">Term enrolment (offer a monthly payment plan)</span>
               </label>
               {isTermEnrolment && (
-                <div className="flex items-center gap-4 pl-8">
-                  <div>
-                    <label className="text-[9px] font-black uppercase text-slate-500">Number of Months</label>
-                    <input type="number" min={2} value={installmentCount} onChange={(e) => setInstallmentCount(Math.max(2, Number(e.target.value) || 2))} className="w-24 bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-purple-500 mt-1 block" />
+                <div className="pl-8 space-y-3">
+                  <div className="flex items-end gap-4 flex-wrap">
+                    <div>
+                      <label className="text-[9px] font-black uppercase text-slate-500">Number of Instalments</label>
+                      <input type="number" min={2} value={installmentCount} onChange={(e) => setInstallmentCount(Math.max(2, Number(e.target.value) || 2))} className="w-24 bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-purple-500 mt-1 block" />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-black uppercase text-slate-500">Amount per Instalment (R)</label>
+                      {/* Typed directly, not forced to Total ÷ Count - a term
+                          price can legitimately carry a premium for paying
+                          by instalment instead of upfront (e.g. R750 x3 =
+                          R2,250 vs a R2,000 full-term price). */}
+                      <input
+                        type="number" min={0} step="0.01" value={monthlyInstallmentAmountInput}
+                        onChange={(e) => setMonthlyInstallmentAmountInput(e.target.value)}
+                        placeholder={suggestedMonthlyAmount > 0 ? suggestedMonthlyAmount.toFixed(2) : "0.00"}
+                        className="w-32 bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-purple-500 mt-1 block"
+                      />
+                    </div>
+                    {suggestedMonthlyAmount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setMonthlyInstallmentAmountInput(suggestedMonthlyAmount.toFixed(2))}
+                        className="text-[10px] font-bold text-purple-400 hover:text-purple-300 underline underline-offset-2 mb-3"
+                      >
+                        Use Total ÷ Count (R {suggestedMonthlyAmount.toFixed(2)})
+                      </button>
+                    )}
                   </div>
                   {monthlyInstallmentAmount !== null && (
-                    <p className="text-xs text-slate-400">R {monthlyInstallmentAmount.toFixed(2)} / month</p>
+                    <p className="text-xs text-slate-400">
+                      R {monthlyInstallmentAmount.toFixed(2)} × {installmentCount} = R {(monthlyInstallmentAmount * installmentCount).toFixed(2)} total by instalment
+                      {Math.abs(monthlyInstallmentAmount * installmentCount - grandTotal) > 0.01 && (
+                        <span className="text-amber-400"> (differs from the R {grandTotal.toFixed(2)} full-term price above — expected if instalments carry a premium)</span>
+                      )}
+                    </p>
                   )}
                 </div>
               )}
@@ -624,14 +666,17 @@ function ComposerV2Inner() {
                 <span className="font-black uppercase text-[10px]">Total Payable</span>
                 <span className="text-4xl font-black tracking-tighter italic">R {grandTotal.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
               </div>
+              {termAmountInvalid && (
+                <p className="text-[11px] text-rose-300 font-bold">Enter a valid amount per instalment below before saving.</p>
+              )}
               <div className="flex flex-col gap-3">
-                <button onClick={() => handleFinalize("email")} disabled={!selectedLead || !primaryProgramId || grandTotal <= 0 || isProcessing || !selectedLead?.email} className="w-full py-4 bg-white text-[#020617] rounded-[24px] font-black uppercase italic tracking-widest hover:bg-slate-200 transition-all flex items-center justify-center gap-2 shadow-xl disabled:opacity-30">
+                <button onClick={() => handleFinalize("email")} disabled={!canFinalize || !selectedLead?.email} className="w-full py-4 bg-white text-[#020617] rounded-[24px] font-black uppercase italic tracking-widest hover:bg-slate-200 transition-all flex items-center justify-center gap-2 shadow-xl disabled:opacity-30">
                   {isProcessing ? <Loader2 className="animate-spin" /> : <><Send size={18} /> Save &amp; Email</>}
                 </button>
-                <button onClick={() => handleFinalize("pdf")} disabled={!selectedLead || !primaryProgramId || grandTotal <= 0 || isProcessing} className="w-full py-4 bg-white/5 border border-white/10 text-white rounded-[24px] font-black uppercase italic tracking-widest hover:bg-white/10 transition-all flex items-center justify-center gap-2 disabled:opacity-30">
+                <button onClick={() => handleFinalize("pdf")} disabled={!canFinalize} className="w-full py-4 bg-white/5 border border-white/10 text-white rounded-[24px] font-black uppercase italic tracking-widest hover:bg-white/10 transition-all flex items-center justify-center gap-2 disabled:opacity-30">
                   {isProcessing ? <Loader2 className="animate-spin" /> : <><Download size={18} /> Save &amp; Download PDF</>}
                 </button>
-                <button onClick={() => handleFinalize("link")} disabled={!selectedLead || !primaryProgramId || grandTotal <= 0 || isProcessing} className="w-full py-4 bg-white/5 border border-white/10 text-white rounded-[24px] font-black uppercase italic tracking-widest hover:bg-white/10 transition-all flex items-center justify-center gap-2 disabled:opacity-30">
+                <button onClick={() => handleFinalize("link")} disabled={!canFinalize} className="w-full py-4 bg-white/5 border border-white/10 text-white rounded-[24px] font-black uppercase italic tracking-widest hover:bg-white/10 transition-all flex items-center justify-center gap-2 disabled:opacity-30">
                   {isProcessing ? <Loader2 className="animate-spin" /> : <><LinkIcon size={18} /> Save &amp; Copy Link</>}
                 </button>
               </div>
