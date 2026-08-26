@@ -622,6 +622,7 @@ type LineItemRow = {
   quantity: number;
   unit_price: number;
   event_package_id: string | null;
+  event_package_quantity: number | null;
   costSource: 'package' | 'manual' | 'uncosted';
   costBasis: number | null;
   costLinks: { id: string; quantity: number; inventory_item: InventoryItem }[];
@@ -702,19 +703,24 @@ function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineIt
   const [addItemId, setAddItemId] = useState('');
   const [addQty, setAddQty] = useState('1');
   const [linkPackageId, setLinkPackageId] = useState('');
+  // Defaults to the line's own billed quantity - correct for the common
+  // case (a line billed "x2" really is 2 units of the package). Only needs
+  // changing when a bundled/discounted line's billed qty doesn't match how
+  // many package units it actually represents.
+  const [linkPackageQty, setLinkPackageQty] = useState(String(row.quantity));
   const [saving, setSaving] = useState(false);
   const [linkingPackage, setLinkingPackage] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function linkPackage() {
-    if (!linkPackageId) return;
+    if (!linkPackageId || !linkPackageQty || Number(linkPackageQty) <= 0) return;
     setLinkingPackage(true);
     setError(null);
     try {
       const res = await fetch(`/admin/api/finance-v2/quote-line-items/${row.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_package_id: linkPackageId }),
+        body: JSON.stringify({ event_package_id: linkPackageId, event_package_quantity: Number(linkPackageQty) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -777,6 +783,7 @@ function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineIt
             <h3 className="font-bold text-slate-800 text-sm">{row.description}</h3>
             {row.costSource === 'package' && (
               <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                {row.event_package_quantity != null && Number(row.event_package_quantity) !== Number(row.quantity) ? `${row.event_package_quantity}× ` : ''}
                 {row.eventPackage?.display_name || row.eventPackage?.package?.name || 'Pricing Package'}
               </span>
             )}
@@ -814,6 +821,13 @@ function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineIt
                   <option value="">— choose a package —</option>
                   {eventPackages.map(ep => <option key={ep.id} value={ep.id}>{eventPackageLabel(ep)}</option>)}
                 </select>
+              </div>
+              <div className="w-16 shrink-0">
+                <input
+                  type="number" min={0.01} step="0.01" value={linkPackageQty} onChange={e => setLinkPackageQty(e.target.value)}
+                  title="How many units of this package this line represents — defaults to the line's own billed quantity"
+                  className={`${INPUT_CLS} text-[13px] py-2 text-center`}
+                />
               </div>
               <button onClick={linkPackage} disabled={linkingPackage || !linkPackageId} className="h-[38px] px-3 rounded-[10px] bg-slate-900 text-white text-[12px] font-medium disabled:opacity-50 shrink-0 flex items-center gap-1">
                 {linkingPackage ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />} Link

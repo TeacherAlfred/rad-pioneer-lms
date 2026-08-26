@@ -23,7 +23,11 @@ function inRange(iso: string | null, start: string, end: string) {
 function lineCostBasis(line: any, eventPackageById: Map<string, any>, costLinksByLine: Map<string, any[]>): number | null {
   const eventPackage = line.event_package_id ? eventPackageById.get(line.event_package_id) : null;
   if (eventPackage && eventPackage.computed_cost != null) {
-    return Number(eventPackage.computed_cost) * Number(line.quantity);
+    // How many units of the package this line represents isn't always the
+    // line's own billed quantity - e.g. one bundled/discounted line could
+    // cover 2x Pretoria Workshop. event_package_quantity overrides when set.
+    const packageQty = line.event_package_quantity !== null && line.event_package_quantity !== undefined ? line.event_package_quantity : line.quantity;
+    return Number(eventPackage.computed_cost) * Number(packageQty);
   }
   const links = costLinksByLine.get(line.id) || [];
   if (links.length > 0) {
