@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Coins, CalendarDays, TrendingUp, Wallet, Clock,
   FileText, CreditCard, Receipt, Send, Package, Building2, ShieldCheck,
+  ArrowRight, AlertTriangle, RefreshCw, Waves,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
@@ -31,6 +32,7 @@ const NAV_TILES = [
   { label: "Quote Composer", desc: "Build a new quote against a lead", icon: FileText, path: "/admin/finance-v2/composer" },
   { label: "Quote Pipeline", desc: "View every quote sent, self-serve or manual", icon: Send, path: "/admin/finance-v2/pipeline" },
   { label: "Capture Payment", desc: "Manual (non-PayFast) payment entry", icon: Receipt, path: "/admin/finance-v2/capture" },
+  { label: "Standing Expenses", desc: "Rent, subscriptions, recurring admin overhead", icon: Wallet, path: "/admin/finance-v2/expenses" },
 ];
 
 const LEGACY_NAV_TILES = [
@@ -53,17 +55,23 @@ export default function MoneyAdminPage() {
   const [v2Quotes, setV2Quotes] = useState<any[]>([]);
   const [consentByLane, setConsentByLane] = useState<Record<string, any>>({});
   const [securityAudit, setSecurityAudit] = useState<{ last_security_audit_at: string | null; last_security_audit_note: string | null } | null>(null);
+  // Finance Pipeline: Cash Waterfall spec - due/invoiced/paid tracking and
+  // the two-scenario waterfall, computed server-side by cash-waterfall
+  // (real invoices + monthly_expenses + pricing-engine cost data, not a
+  // second copy of any of that logic here).
+  const [waterfallData, setWaterfallData] = useState<any | null>(null);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const [{ data: recordsData }, { data: itemsData }, consentRes, settingsRes, v2QuotesRes] = await Promise.all([
+        const [{ data: recordsData }, { data: itemsData }, consentRes, settingsRes, v2QuotesRes, waterfallRes] = await Promise.all([
           supabase.from("billing_records").select("*"),
           supabase.from("billing_items").select("name, category, aliases"),
           fetch("/admin/api/dashboard-v2/consent-summary"),
           fetch("/admin/api/dashboard-v2/settings"),
           fetch("/admin/api/finance-v2/quotes/list"),
+          fetch("/admin/api/finance-v2/cash-waterfall"),
         ]);
         if (recordsData) setRecords(recordsData);
         if (itemsData) setBillingItems(itemsData);
@@ -73,6 +81,7 @@ export default function MoneyAdminPage() {
         setSecurityAudit(settings || null);
         const { quotes: v2QuotesData } = await v2QuotesRes.json();
         setV2Quotes(v2QuotesData || []);
+        setWaterfallData(await waterfallRes.json());
       } catch (err) {
         console.error("Failed to fetch money-admin data:", err);
       } finally {
@@ -264,6 +273,98 @@ export default function MoneyAdminPage() {
           </div>
         </section>
 
+        {waterfallData && (
+          <section>
+            <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-600 mb-4">Cash Waterfall — {waterfallData.month}</h2>
+
+            {waterfallData.needsConfirmation?.length > 0 && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4">
+                <p className="text-[12px] font-bold text-amber-700 flex items-center gap-2">
+                  <RefreshCw size={14} /> {waterfallData.needsConfirmation.length} recurring expense{waterfallData.needsConfirmation.length === 1 ? "" : "s"} need{waterfallData.needsConfirmation.length === 1 ? "s" : ""} next month confirmed
+                </p>
+                <Link href="/admin/finance-v2/expenses" className="text-[10px] font-black uppercase tracking-widest text-amber-700 hover:text-amber-900 flex items-center gap-1 shrink-0">
+                  Review <ArrowRight size={12} />
+                </Link>
+              </div>
+            )}
+
+            {waterfallData.uncostedLines?.length > 0 && (
+              <div className="mb-4 bg-orange-50 border border-orange-200 rounded-2xl p-4 flex items-center justify-between gap-4">
+                <p className="text-[12px] font-bold text-orange-700 flex items-center gap-2">
+                  <AlertTriangle size={14} /> {waterfallData.uncostedLines.length} line item{waterfallData.uncostedLines.length === 1 ? "" : "s"} on this month's invoices have no known delivery cost
+                </p>
+                <Link href="/admin/pricing" className="text-[10px] font-black uppercase tracking-widest text-orange-700 hover:text-orange-900 flex items-center gap-1 shrink-0">
+                  Link Costs <ArrowRight size={12} />
+                </Link>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              <div className="bg-white border border-stone-200 rounded-[24px] p-6 shadow-sm">
+                <h3 className="text-xs font-black uppercase tracking-widest text-stone-400 mb-4">Due Tracker</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">This Month</p>
+                    <p className="text-lg font-black text-emerald-600">{rand(waterfallData.dueTracker.thisMonth.paid)} <span className="text-[10px] text-stone-400 font-bold">paid</span></p>
+                    <p className="text-lg font-black text-rose-500">{rand(waterfallData.dueTracker.thisMonth.outstanding)} <span className="text-[10px] text-stone-400 font-bold">outstanding</span></p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Next Month</p>
+                    <p className="text-lg font-black text-emerald-600">{rand(waterfallData.dueTracker.nextMonth.paid)} <span className="text-[10px] text-stone-400 font-bold">paid</span></p>
+                    <p className="text-lg font-black text-rose-500">{rand(waterfallData.dueTracker.nextMonth.outstanding)} <span className="text-[10px] text-stone-400 font-bold">outstanding</span></p>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-white border border-stone-200 rounded-[24px] p-6 shadow-sm">
+                <h3 className="text-xs font-black uppercase tracking-widest text-stone-400 mb-4">Invoiced vs. Paid — This Month</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Invoiced</p>
+                    <p className="text-xl font-black text-stone-900">{rand(waterfallData.invoicedVsPaid.invoiced)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Paid</p>
+                    <p className="text-xl font-black text-stone-900">{rand(waterfallData.invoicedVsPaid.paid)}</p>
+                  </div>
+                </div>
+                <p className="text-[10px] text-stone-400 mt-3">These can legitimately diverge — an invoice raised this month due later, or a payment landing against an older invoice.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {[
+                { key: "cashInHand", label: "Cash-in-Hand", desc: "What's actually been paid this month" },
+                { key: "fullyCollected", label: "Fully-Collected", desc: "If everyone still due this month pays on time" },
+              ].map(({ key, label, desc }) => {
+                const scenario = waterfallData.waterfall[key];
+                return (
+                  <div key={key} className="bg-white border border-stone-200 rounded-[24px] p-6 shadow-sm">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="text-xs font-black uppercase tracking-widest text-stone-700 flex items-center gap-1.5"><Waves size={13} className="text-cyan-500" /> {label}</h3>
+                      {scenario.totalShortfall > 0 && <span className="text-[10px] font-black uppercase tracking-widest text-rose-600">Shortfall {rand(scenario.totalShortfall)}</span>}
+                    </div>
+                    <p className="text-[10px] text-stone-400 mb-3">{desc}</p>
+                    {scenario.items.length === 0 ? (
+                      <p className="text-[12px] text-stone-400 italic py-4">No standing or delivery-linked expenses due this month yet.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {scenario.items.map((item: any) => (
+                          <div key={item.id} className="flex items-center justify-between text-[12px] px-3 py-2 rounded-lg bg-stone-50">
+                            <span className="text-stone-600 truncate">{item.label} <span className="text-stone-400">({new Date(item.due_date).toLocaleDateString("en-ZA")})</span></span>
+                            <span className={`font-bold shrink-0 ml-2 ${item.status === "covered" ? "text-emerald-600" : item.status === "partial" ? "text-amber-600" : "text-rose-600"}`}>
+                              {rand(item.amount)} · {item.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <section>
           <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600 mb-4">POPIA Consent State</h2>
           <div className="bg-white border border-stone-200 rounded-[24px] p-6 md:p-8 shadow-sm overflow-x-auto">
@@ -308,7 +409,7 @@ export default function MoneyAdminPage() {
 
         <section>
           <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 mb-4">Finance Tools</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {NAV_TILES.map((tile) => (
               <Link key={tile.path} href={tile.path} className="p-5 bg-white border border-stone-200 hover:border-blue-300 rounded-[20px] transition-all flex flex-col gap-3 shadow-sm">
                 <tile.icon size={22} className="text-stone-400" />

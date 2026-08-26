@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, ArrowLeft, DollarSign, Plus, X, Pencil, Trash2, Boxes, Package, Check } from "lucide-react";
+import { Loader2, ArrowLeft, DollarSign, Plus, X, Pencil, Trash2, Boxes, Package, Check, Link2, AlertTriangle } from "lucide-react";
 import { computeCostRollup, computeRecommendedFee } from "@/lib/pricingEngine";
 
 type InventoryItem = {
@@ -78,7 +78,7 @@ const LABEL_CLS = "block text-[13px] font-medium text-slate-700 mb-1.5";
 const INPUT_CLS = "w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none transition-all duration-150 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10";
 
 export default function PricingLibraryPage() {
-  const [tab, setTab] = useState<'inventory' | 'packages'>('inventory');
+  const [tab, setTab] = useState<'inventory' | 'packages' | 'costLinking'>('inventory');
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -103,9 +103,12 @@ export default function PricingLibraryPage() {
           <button onClick={() => setTab('packages')} className={`px-4 py-2.5 text-[13px] font-bold flex items-center gap-1.5 border-b-2 -mb-px transition-colors ${tab === 'packages' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
             <Package size={14} /> Packages
           </button>
+          <button onClick={() => setTab('costLinking')} className={`px-4 py-2.5 text-[13px] font-bold flex items-center gap-1.5 border-b-2 -mb-px transition-colors ${tab === 'costLinking' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+            <Link2 size={14} /> Cost Linking
+          </button>
         </div>
 
-        {tab === 'inventory' ? <InventoryTab /> : <PackagesTab />}
+        {tab === 'inventory' ? <InventoryTab /> : tab === 'packages' ? <PackagesTab /> : <CostLinkingTab />}
       </div>
     </div>
   );
@@ -600,6 +603,168 @@ function PackageItemEditRow({ item, onUpdate, onRemove }: {
         <button onClick={onRemove} className="text-slate-300 hover:text-rose-500" title="Remove"><Trash2 size={14} /></button>
       </div>
       {isZero && <p className="text-[11px] text-rose-500">Quantity can&apos;t be 0 — remove the item instead (trash icon) if it doesn&apos;t belong in this package.</p>}
+    </div>
+  );
+}
+
+type LineItemRow = {
+  id: string;
+  quote_id: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  event_package_id: string | null;
+  costSource: 'package' | 'manual' | 'uncosted';
+  costBasis: number | null;
+  costLinks: { id: string; quantity: number; inventory_item: InventoryItem }[];
+  quote: { quote_number: number; lead: { name: string | null } | null } | null;
+};
+
+// Finance Pipeline: Cash Waterfall spec §2.3 - a line sourced from a priced
+// Pricing Package already has a real cost via event_package_id. Everything
+// else (freeform/programme lines - the vast majority of quotes so far) has
+// none, so the delivery-linked cost rollup can't see it. This is where an
+// admin retroactively says "this line item's real cost is these inventory
+// items, at these quantities" instead of that cost silently reading as R0.
+function CostLinkingTab() {
+  const [rows, setRows] = useState<LineItemRow[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAll, setShowAll] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    const [lRes, iRes] = await Promise.all([
+      fetch('/admin/api/finance-v2/quote-line-items'),
+      fetch('/admin/api/pricing/inventory'),
+    ]);
+    const lData = await lRes.json();
+    const iData = await iRes.json();
+    setRows(lData.lineItems || []);
+    setInventory(iData.rows || []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  const visibleRows = showAll ? rows : rows.filter(r => r.costSource === 'uncosted');
+  const uncostedCount = rows.filter(r => r.costSource === 'uncosted').length;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-[13px] text-slate-500">
+          {uncostedCount === 0
+            ? 'Every line item has a known cost — nothing needs linking.'
+            : `${uncostedCount} line item${uncostedCount === 1 ? '' : 's'} with no known cost — these read as R0 in the Cash Waterfall until linked.`}
+        </p>
+        <label className="flex items-center gap-2 text-[12px] text-slate-500 cursor-pointer shrink-0 ml-4">
+          <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" /> Show costed lines too
+        </label>
+      </div>
+
+      {loading ? (
+        <div className="py-24 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading...</div>
+      ) : visibleRows.length === 0 ? (
+        <div className="py-16 text-center text-slate-400 text-sm bg-white rounded-2xl border border-slate-200">
+          {showAll ? 'No quote line items yet.' : 'Nothing needs linking right now.'}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {visibleRows.map(row => (
+            <CostLinkRow key={row.id} row={row} inventory={inventory} onChanged={load} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CostLinkRow({ row, inventory, onChanged }: { row: LineItemRow; inventory: InventoryItem[]; onChanged: () => void }) {
+  const [addItemId, setAddItemId] = useState('');
+  const [addQty, setAddQty] = useState('1');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function addLink() {
+    if (!addItemId || !Number(addQty) || Number(addQty) <= 0) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/quote-line-items/${row.id}/costs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inventory_item_id: addItemId, quantity: Number(addQty) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setAddItemId('');
+      setAddQty('1');
+      await onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeLink(linkId: string) {
+    await fetch(`/admin/api/finance-v2/quote-line-items/${row.id}/costs?linkId=${linkId}`, { method: 'DELETE' });
+    await onChanged();
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            {row.quote && <span className="text-[11px] font-mono text-slate-400">QT-{row.quote.quote_number}</span>}
+            <h3 className="font-bold text-slate-800 text-sm">{row.description}</h3>
+            {row.costSource === 'package' && (
+              <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">Pricing Package</span>
+            )}
+            {row.costSource === 'uncosted' && (
+              <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-100 flex items-center gap-1">
+                <AlertTriangle size={10} /> Uncosted
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            {row.quote?.lead?.name || 'Unknown lead'} · qty {row.quantity} × R {Number(row.unit_price).toFixed(2)}
+            {row.costBasis !== null && ` · cost R ${row.costBasis.toFixed(2)}`}
+          </p>
+        </div>
+      </div>
+
+      {row.costSource !== 'package' && (
+        <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+          {row.costLinks.length > 0 && (
+            <div className="space-y-1.5">
+              {row.costLinks.map(link => (
+                <div key={link.id} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[12px]">
+                  <span className="text-slate-700">{link.inventory_item?.name} × {link.quantity}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400">R {(Number(link.quantity) * Number(link.inventory_item?.unit_cost || 0)).toFixed(2)}</span>
+                    <button onClick={() => removeLink(link.id)} className="text-slate-300 hover:text-rose-500"><Trash2 size={12} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+            <div className="flex-1 min-w-0">
+              <select value={addItemId} onChange={e => setAddItemId(e.target.value)} className={`${INPUT_CLS} appearance-none cursor-pointer text-[13px] py-2`}>
+                <option value="">— link an inventory item —</option>
+                {inventory.map(i => <option key={i.id} value={i.id}>{i.name} (R {Number(i.unit_cost).toFixed(2)})</option>)}
+              </select>
+            </div>
+            <input type="number" min={0.01} step="0.01" value={addQty} onChange={e => setAddQty(e.target.value)} className={`${INPUT_CLS} w-20 text-[13px] py-2`} />
+            <button onClick={addLink} disabled={saving || !addItemId} className="h-[38px] px-3 rounded-[10px] bg-slate-900 text-white text-[12px] font-medium disabled:opacity-50 shrink-0 flex items-center gap-1">
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Link
+            </button>
+          </div>
+          {error && <p className="text-[11px] text-rose-500">{error}</p>}
+        </div>
+      )}
     </div>
   );
 }
