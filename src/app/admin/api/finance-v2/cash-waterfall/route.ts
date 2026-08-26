@@ -117,6 +117,24 @@ export async function GET(request: Request) {
     linesByQuote.set(line.quote_id, arr);
   });
 
+  // "INV-8 delivery cost" means nothing on its own - this is the real cost
+  // of delivering a specific service to a specific family, so the label
+  // needs to say what and for whom. INV-8 stays, just demoted to a
+  // parenthetical reference instead of being the whole label.
+  const quoteIdsForLabels = [...new Set(dueThisMonth.map((i) => i.quote_id).filter(Boolean))];
+  const { data: quotesForLabels } = quoteIdsForLabels.length
+    ? await supabase.from('quotes').select('id, lead_id, program_id').in('id', quoteIdsForLabels)
+    : { data: [] as any[] };
+  const leadIdsForLabels = [...new Set((quotesForLabels || []).map((q: any) => q.lead_id).filter(Boolean))];
+  const programIdsForLabels = [...new Set((quotesForLabels || []).map((q: any) => q.program_id).filter(Boolean))];
+  const [{ data: leadsForLabels }, { data: programsForLabels }] = await Promise.all([
+    leadIdsForLabels.length ? supabase.from('leads').select('id, name').in('id', leadIdsForLabels) : Promise.resolve({ data: [] as any[] }),
+    programIdsForLabels.length ? supabase.from('programs').select('id, name').in('id', programIdsForLabels) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const leadNameById = new Map((leadsForLabels || []).map((l: any) => [l.id, l.name]));
+  const programNameById = new Map((programsForLabels || []).map((p: any) => [p.id, p.name]));
+  const quoteById = new Map((quotesForLabels || []).map((q: any) => [q.id, q]));
+
   const uncostedLines: any[] = [];
   const deliveryLinkedExpenses = dueThisMonth
     .map((inv) => {
@@ -130,7 +148,11 @@ export async function GET(request: Request) {
           total += basis;
         }
       }
-      return { id: `inv-${inv.id}`, label: `INV-${inv.invoice_number} delivery cost`, due_date: inv.due_at, amount: total, type: 'delivery' as const };
+      const quote = quoteById.get(inv.quote_id);
+      const leadName = quote ? leadNameById.get(quote.lead_id) : null;
+      const programName = quote ? programNameById.get(quote.program_id) : null;
+      const label = [leadName, programName].filter(Boolean).join(' — ') || 'Delivery cost (lead/programme unavailable)';
+      return { id: `inv-${inv.id}`, label: `${label} (INV-${inv.invoice_number})`, due_date: inv.due_at, amount: total, type: 'delivery' as const };
     })
     .filter((e) => e.amount > 0);
 
