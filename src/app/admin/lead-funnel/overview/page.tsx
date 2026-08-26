@@ -5,17 +5,18 @@ import Link from "next/link";
 import {
   Loader2, Users, UserPlus, MessageCircleWarning, Users2, MessageSquare,
   Send, XCircle, Baby, GraduationCap, CalendarClock, BellOff, AlertTriangle,
-  ArrowRight, X,
+  ArrowRight, X, HelpCircle, UserCheck,
 } from "lucide-react";
 import { isWithinDnd, type DndDay } from "@/lib/dndSchedule";
 
 type Lead = {
   id: string; name: string | null; phone: string; lifecycle_stage: string | null;
-  created_at: string | null; needs_human: boolean | null;
+  created_at: string | null; needs_human: boolean | null; is_potential_student?: boolean | null;
+  is_confirmed_parent?: boolean | null;
   household_id: string | null; household_name: string | null; tags: string[] | null;
 };
 type MessageRow = { id: string; lead_id: string; lead_name: string | null; lead_phone: string | null; direction: 'inbound' | 'outbound'; body: string; created_at: string | null };
-type Kid = { id: string; name: string; age: number | null; grade: string | null; kid_guardians: { leads: { name: string | null; phone: string } | null }[]; enrolments: { status: string }[] };
+type Kid = { id: string; name: string; age: number | null; grade: string | null; kid_guardians: { lead_id: string; leads: { name: string | null; phone: string } | null }[]; enrolments: { status: string }[] };
 type SessionRow = { id: string; starts_at: string | null; programs: { name: string } | null; venues: { name: string } | null; enrolments: { id: string }[] };
 
 const INHOUSE_TAG = 'inhouse';
@@ -113,6 +114,60 @@ export default function LeadsOverviewPage() {
 
   const enrolledKids = useMemo(() => (kids || []).filter(k => (k.enrolments || []).some(e => e.status === 'active' || e.status === 'registered')), [kids]);
 
+  // A lead counts as "categorized" once it's linked as a kid's guardian or
+  // flagged is_confirmed_parent (it's a parent) or flagged
+  // is_potential_student (it's the kid itself). Anything else hasn't had
+  // either indicated yet. is_confirmed_parent exists for the case where
+  // you know it's a parent but haven't linked them to a specific kids row
+  // yet - it shouldn't require creating a Kids record just to clear the
+  // Uncategorized queue.
+  const guardianLeadIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const k of kids || []) for (const g of k.kid_guardians || []) if (g.lead_id) ids.add(g.lead_id);
+    return ids;
+  }, [kids]);
+  const uncategorizedLeads = useMemo(
+    () => nonInhouseLeads.filter(l => !l.is_potential_student && !l.is_confirmed_parent && !guardianLeadIds.has(l.id)),
+    [nonInhouseLeads, guardianLeadIds]
+  );
+
+  const [markingParentId, setMarkingParentId] = useState<string | null>(null);
+  async function markAsParent(leadId: string) {
+    setMarkingParentId(leadId);
+    try {
+      const res = await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: leadId, is_confirmed_parent: true }),
+      });
+      if (res.ok) {
+        setLeads(prev => (prev || []).map(l => l.id === leadId ? { ...l, is_confirmed_parent: true } : l));
+        setActiveTile(prev => prev ? { ...prev, items: prev.items.filter((i: any) => i.id !== leadId) } : prev);
+      }
+    } finally {
+      setMarkingParentId(null);
+    }
+  }
+
+  // Dedicated row for the Uncategorized tile only - a one-click way to clear
+  // a lead off the queue once you can tell it's a parent, without leaving
+  // the modal or needing a kids row to link them to yet.
+  const uncategorizedLeadRow = (l: Lead) => (
+    <div className="flex items-center justify-between gap-3 bg-slate-50 rounded-xl px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="font-bold text-slate-800 text-sm truncate">{l.name || '(no name)'}</div>
+        <div className="text-xs text-slate-400">+{l.phone}</div>
+      </div>
+      <button
+        onClick={() => markAsParent(l.id)}
+        disabled={markingParentId === l.id}
+        className="shrink-0 inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-full bg-emerald-50 text-emerald-600 hover:bg-emerald-100 disabled:opacity-50"
+      >
+        <UserCheck size={11} /> {markingParentId === l.id ? 'Saving...' : 'Mark as Parent'}
+      </button>
+    </div>
+  );
+
   const upcomingSessionsList = useMemo(() => {
     const now = Date.now();
     return (sessions || []).filter(s => s.starts_at && new Date(s.starts_at).getTime() >= now);
@@ -177,6 +232,7 @@ export default function LeadsOverviewPage() {
                 { icon: Baby, label: 'Total Kids', value: (kids || []).length, items: kids || [], renderRow: kidRow },
                 { icon: GraduationCap, label: 'Enrolled', value: enrolledKids.length, accent: 'text-emerald-600', items: enrolledKids, renderRow: kidRow },
                 { icon: CalendarClock, label: 'Upcoming Sessions', value: upcomingSessionsList.length, accent: 'text-indigo-600', items: upcomingSessionsList, renderRow: sessionRow },
+                { icon: HelpCircle, label: 'Uncategorized', value: uncategorizedLeads.length, accent: uncategorizedLeads.length > 0 ? 'text-amber-600' : undefined, items: uncategorizedLeads, renderRow: uncategorizedLeadRow },
               ]}
               onTileClick={openTile}
             />

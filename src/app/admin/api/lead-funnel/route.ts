@@ -51,7 +51,8 @@ export async function GET() {
   return NextResponse.json({ rows });
 }
 
-// Edits tags, lifecycle_stage, household_id, is_potential_student, and/or
+// Edits tags, lifecycle_stage, household_id, is_potential_student,
+// is_confirmed_parent, and/or
 // the lead's own contact details (name, phone, email, school, class,
 // children_names). lifecycle_stage edits are the manual path (from the
 // stages dashboard) for transitions the bot/admin-button flow can't set
@@ -63,7 +64,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, bot_paused } = body;
+    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused } = body;
     // "class" is a reserved word, can't destructure it bare above.
     const className = body.class;
 
@@ -110,6 +111,7 @@ export async function PATCH(req: Request) {
     if (className !== undefined) update.class = className || null;
     if (children_names !== undefined) update.children_names = children_names;
     if (is_potential_student !== undefined) update.is_potential_student = !!is_potential_student;
+    if (is_confirmed_parent !== undefined) update.is_confirmed_parent = !!is_confirmed_parent;
     if (bot_paused !== undefined) {
       update.bot_paused = !!bot_paused;
       update.bot_paused_at = bot_paused ? new Date().toISOString() : null;

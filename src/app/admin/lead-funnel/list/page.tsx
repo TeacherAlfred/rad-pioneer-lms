@@ -6,7 +6,7 @@ import {
   Loader2, Users, UserPlus, CalendarClock, PhoneOff,
   MessageCircleWarning, Megaphone, Search, Home,
   Send, X, Plus, Trash2, AlertTriangle, CheckCircle2, XCircle, MessageSquare, Users2, Pencil, Baby,
-  GraduationCap, StickyNote, Tag, Activity, Flame,
+  GraduationCap, StickyNote, Tag, Activity, Flame, UserCheck,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -39,6 +39,7 @@ type Lead = {
   class?: string | null;
   children_names?: string[] | null;
   is_potential_student?: boolean | null;
+  is_confirmed_parent?: boolean | null;
   last_sent_at?: string | null;
   last_sent_label?: string | null;
   last_sent_failed?: boolean;
@@ -480,6 +481,13 @@ export default function LeadFunnelPage() {
     setEditingLead(l => l ? { ...l, is_potential_student: next } : l);
   }
 
+  async function toggleConfirmedParent() {
+    if (!editingLead) return;
+    const next = !editingLead.is_confirmed_parent;
+    await patchLeadField(editingLead.id, { is_confirmed_parent: next });
+    setEditingLead(l => l ? { ...l, is_confirmed_parent: next } : l);
+  }
+
   async function patchLeadField(id: string, patch: Record<string, any>) {
     const res = await fetch('/admin/api/lead-funnel', {
       method: 'PATCH',
@@ -908,6 +916,11 @@ export default function LeadFunnelPage() {
                                 <GraduationCap size={10} /> Student
                               </span>
                             )}
+                            {r.is_confirmed_parent && (
+                              <span title="Confirmed Parent" className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">
+                                <UserCheck size={10} /> Parent
+                              </span>
+                            )}
                             {(r.tags || []).map(t => (
                               <span key={t} className="text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{t}</span>
                             ))}
@@ -1219,6 +1232,23 @@ export default function LeadFunnelPage() {
               </div>
 
               <div>
+                <button
+                  onClick={toggleConfirmedParent}
+                  className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl border transition-colors ${
+                    editingLead.is_confirmed_parent ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-400'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest">
+                    <UserCheck size={13} /> Confirmed Parent
+                  </span>
+                  <span className="text-[10px] font-black uppercase tracking-widest">{editingLead.is_confirmed_parent ? 'Yes' : 'Mark'}</span>
+                </button>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Confirms this lead is a parent/guardian enquiring on a child's behalf. Clears them off the Uncategorized tile on the Leads Overview page without needing a Kids record yet.
+                </p>
+              </div>
+
+              <div>
                 <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1 flex items-center gap-1"><Tag size={11} /> Tags</label>
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {(editingLead.tags || []).map(t => (
@@ -1379,6 +1409,11 @@ export default function LeadFunnelPage() {
                   {viewingLead.is_potential_student && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">
                       <GraduationCap size={10} /> Student
+                    </span>
+                  )}
+                  {viewingLead.is_confirmed_parent && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">
+                      <UserCheck size={10} /> Parent
                     </span>
                   )}
                   {(viewingLead.tags || []).map(t => (
