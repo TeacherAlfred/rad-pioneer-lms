@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, ArrowLeft, DollarSign, Plus, X, Pencil, Trash2, Boxes, Package, Check, Link2, AlertTriangle } from "lucide-react";
+import { Loader2, ArrowLeft, DollarSign, Plus, X, Pencil, Trash2, Boxes, Package, Check, Link2, AlertTriangle, RefreshCw } from "lucide-react";
 import { computeCostRollup, computeRecommendedFee } from "@/lib/pricingEngine";
 
 type InventoryItem = {
@@ -263,6 +263,113 @@ function InventoryTab() {
   );
 }
 
+type StalenessRow = {
+  id: string;
+  package_name: string;
+  display_name: string | null;
+  featured_program_title: string | null;
+  published: boolean;
+  stored_cost: number | null;
+  fresh_cost: number;
+  is_stale: boolean;
+  needs_attendee_decision: boolean;
+};
+
+// computed_cost/recommended_fee are snapshots taken at save time - they
+// drift silently whenever an inventory_item's cost changes, or a featured
+// program's expected_attendee_count changes, since neither of those
+// changes has any way to know which event_packages rows depend on them.
+// This surfaces the drift instead of leaving it to be discovered the way
+// the Pretoria Workshop R110-vs-R145 mismatch was.
+function StalenessBanner() {
+  const [rows, setRows] = useState<StalenessRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+  const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    const res = await fetch('/admin/api/pricing/event-packages/staleness');
+    const data = await res.json();
+    setRows((data.results || []).filter((r: StalenessRow) => r.is_stale));
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function refresh(ids: string[]) {
+    setRefreshError(null);
+    setRefreshingIds(prev => new Set([...prev, ...ids]));
+    try {
+      const res = await fetch('/admin/api/pricing/event-packages/refresh-stale', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const data = await res.json();
+      if (data.failed?.length > 0) setRefreshError(data.failed.map((f: any) => f.error).join(' '));
+      await load();
+    } finally {
+      setRefreshingIds(prev => {
+        const next = new Set(prev);
+        ids.forEach(id => next.delete(id));
+        return next;
+      });
+    }
+  }
+
+  if (loading || rows.length === 0) return null;
+
+  const refreshable = rows.filter(r => !r.needs_attendee_decision);
+  const needsDecision = rows.filter(r => r.needs_attendee_decision);
+
+  return (
+    <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <button onClick={() => setExpanded(e => !e)} className="text-[13px] font-bold text-amber-700 text-left">
+          {rows.length} package attachment{rows.length === 1 ? '' : 's'} {rows.length === 1 ? 'has' : 'have'} drifted from their real cost since last saved — {expanded ? 'hide' : 'show'} details
+        </button>
+        {refreshable.length > 0 && (
+          <button
+            onClick={() => refresh(refreshable.map(r => r.id))}
+            disabled={refreshable.some(r => refreshingIds.has(r.id))}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-[11px] font-black uppercase tracking-widest hover:bg-amber-700 disabled:opacity-50 shrink-0"
+          >
+            <RefreshCw size={12} /> Refresh {refreshable.length}
+          </button>
+        )}
+      </div>
+
+      {refreshError && <p className="text-[11px] text-rose-600 mt-2">{refreshError}</p>}
+
+      {expanded && (
+        <div className="mt-3 space-y-1.5">
+          {rows.map(r => (
+            <div key={r.id} className="flex items-center justify-between gap-3 bg-white border border-amber-100 rounded-lg px-3 py-2 text-[12px]">
+              <div className="min-w-0">
+                <span className="font-bold text-slate-700">{r.package_name}</span>
+                {r.display_name && <span className="text-slate-400"> ("{r.display_name}")</span>}
+                <span className="text-slate-400"> — {r.featured_program_title || 'Global'}</span>
+                {r.published && <span className="ml-1.5 text-[9px] font-black uppercase tracking-widest text-rose-500">Published</span>}
+              </div>
+              {r.needs_attendee_decision ? (
+                <span className="text-amber-600 text-[11px] shrink-0">No attendee count set — needs a decision, not just a refresh</span>
+              ) : (
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-slate-400">R {Number(r.stored_cost).toFixed(2)} → R {r.fresh_cost.toFixed(2)}</span>
+                  <button onClick={() => refresh([r.id])} disabled={refreshingIds.has(r.id)} className="text-amber-700 hover:text-amber-900 disabled:opacity-50">
+                    {refreshingIds.has(r.id) ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PackagesTab() {
   const [rows, setRows] = useState<Pkg[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -380,6 +487,8 @@ function PackagesTab() {
 
   return (
     <div>
+      <StalenessBanner />
+
       <div className="flex justify-end mb-4">
         <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800">
           <Plus size={14} /> New Package
@@ -852,7 +961,7 @@ function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineIt
                   {eventPackages.map(ep => <option key={ep.id} value={ep.id}>{eventPackageLabel(ep)}</option>)}
                 </select>
               </div>
-              <div className="w-16 shrink-0">
+              <div className="w-20 shrink-0">
                 <input
                   type="number" min={0.01} step="0.01" value={linkPackageQty} onChange={e => setLinkPackageQty(e.target.value)}
                   title="How many units of this package this line represents — defaults to the line's own billed quantity"
