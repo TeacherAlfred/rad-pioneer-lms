@@ -607,6 +607,14 @@ function PackageItemEditRow({ item, onUpdate, onRemove }: {
   );
 }
 
+type EventPackageOption = {
+  id: string;
+  computed_cost: number | null;
+  display_name: string | null;
+  package: { name: string } | null;
+  featured_program: { title: string } | null;
+};
+
 type LineItemRow = {
   id: string;
   quote_id: string;
@@ -617,6 +625,7 @@ type LineItemRow = {
   costSource: 'package' | 'manual' | 'uncosted';
   costBasis: number | null;
   costLinks: { id: string; quantity: number; inventory_item: InventoryItem }[];
+  eventPackage: { id: string; computed_cost: number | null; display_name: string | null; package: { name: string } | null } | null;
   quote: { quote_number: number; lead: { name: string | null } | null } | null;
 };
 
@@ -629,19 +638,23 @@ type LineItemRow = {
 function CostLinkingTab() {
   const [rows, setRows] = useState<LineItemRow[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [eventPackages, setEventPackages] = useState<EventPackageOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
 
   async function load() {
     setLoading(true);
-    const [lRes, iRes] = await Promise.all([
+    const [lRes, iRes, epRes] = await Promise.all([
       fetch('/admin/api/finance-v2/quote-line-items'),
       fetch('/admin/api/pricing/inventory'),
+      fetch('/admin/api/pricing/event-packages'),
     ]);
     const lData = await lRes.json();
     const iData = await iRes.json();
+    const epData = await epRes.json();
     setRows(lData.lineItems || []);
     setInventory(iData.rows || []);
+    setEventPackages((epData.rows || []).filter((r: any) => r.computed_cost != null));
     setLoading(false);
   }
   useEffect(() => { load(); }, []);
@@ -671,7 +684,7 @@ function CostLinkingTab() {
       ) : (
         <div className="space-y-2">
           {visibleRows.map(row => (
-            <CostLinkRow key={row.id} row={row} inventory={inventory} onChanged={load} />
+            <CostLinkRow key={row.id} row={row} inventory={inventory} eventPackages={eventPackages} onChanged={load} />
           ))}
         </div>
       )}
@@ -679,11 +692,54 @@ function CostLinkingTab() {
   );
 }
 
-function CostLinkRow({ row, inventory, onChanged }: { row: LineItemRow; inventory: InventoryItem[]; onChanged: () => void }) {
+function eventPackageLabel(ep: EventPackageOption): string {
+  const name = ep.display_name || ep.package?.name || 'Package';
+  const program = ep.featured_program?.title;
+  return `${name}${program ? ` — ${program}` : ' — Global'} (cost R ${Number(ep.computed_cost || 0).toFixed(2)})`;
+}
+
+function CostLinkRow({ row, inventory, eventPackages, onChanged }: { row: LineItemRow; inventory: InventoryItem[]; eventPackages: EventPackageOption[]; onChanged: () => void }) {
   const [addItemId, setAddItemId] = useState('');
   const [addQty, setAddQty] = useState('1');
+  const [linkPackageId, setLinkPackageId] = useState('');
   const [saving, setSaving] = useState(false);
+  const [linkingPackage, setLinkingPackage] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function linkPackage() {
+    if (!linkPackageId) return;
+    setLinkingPackage(true);
+    setError(null);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/quote-line-items/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_package_id: linkPackageId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setLinkPackageId('');
+      await onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLinkingPackage(false);
+    }
+  }
+
+  async function unlinkPackage() {
+    setLinkingPackage(true);
+    try {
+      await fetch(`/admin/api/finance-v2/quote-line-items/${row.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_package_id: null }),
+      });
+      await onChanged();
+    } finally {
+      setLinkingPackage(false);
+    }
+  }
 
   async function addLink() {
     if (!addItemId || !Number(addQty) || Number(addQty) <= 0) return;
@@ -720,7 +776,12 @@ function CostLinkRow({ row, inventory, onChanged }: { row: LineItemRow; inventor
             {row.quote && <span className="text-[11px] font-mono text-slate-400">QT-{row.quote.quote_number}</span>}
             <h3 className="font-bold text-slate-800 text-sm">{row.description}</h3>
             {row.costSource === 'package' && (
-              <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">Pricing Package</span>
+              <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
+                {row.eventPackage?.display_name || row.eventPackage?.package?.name || 'Pricing Package'}
+              </span>
+            )}
+            {row.costSource === 'manual' && (
+              <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-100">Manually Linked</span>
             )}
             {row.costSource === 'uncosted' && (
               <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-100 flex items-center gap-1">
@@ -733,34 +794,62 @@ function CostLinkRow({ row, inventory, onChanged }: { row: LineItemRow; inventor
             {row.costBasis !== null && ` · cost R ${row.costBasis.toFixed(2)}`}
           </p>
         </div>
+        {row.costSource === 'package' && (
+          <button onClick={unlinkPackage} disabled={linkingPackage} className="text-[11px] font-medium text-slate-400 hover:text-rose-500 disabled:opacity-50 shrink-0">
+            {linkingPackage ? <Loader2 size={13} className="animate-spin" /> : 'Unlink package'}
+          </button>
+        )}
       </div>
 
       {row.costSource !== 'package' && (
-        <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
-          {row.costLinks.length > 0 && (
-            <div className="space-y-1.5">
-              {row.costLinks.map(link => (
-                <div key={link.id} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[12px]">
-                  <span className="text-slate-700">{link.inventory_item?.name} × {link.quantity}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-slate-400">R {(Number(link.quantity) * Number(link.inventory_item?.unit_cost || 0)).toFixed(2)}</span>
-                    <button onClick={() => removeLink(link.id)} className="text-slate-300 hover:text-rose-500"><Trash2 size={12} /></button>
+        <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
+          {/* Packages are largely what's actually on an invoice - offered
+              first, since re-tagging individual inventory items by hand is
+              the fallback for a line that genuinely has no matching package. */}
+          <div>
+            <p className="text-[11px] font-medium text-slate-500 mb-1.5">Link to a Pricing Package (recommended)</p>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <select value={linkPackageId} onChange={e => setLinkPackageId(e.target.value)} className={`${INPUT_CLS} appearance-none cursor-pointer text-[13px] py-2`}>
+                  <option value="">— choose a package —</option>
+                  {eventPackages.map(ep => <option key={ep.id} value={ep.id}>{eventPackageLabel(ep)}</option>)}
+                </select>
+              </div>
+              <button onClick={linkPackage} disabled={linkingPackage || !linkPackageId} className="h-[38px] px-3 rounded-[10px] bg-slate-900 text-white text-[12px] font-medium disabled:opacity-50 shrink-0 flex items-center gap-1">
+                {linkingPackage ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />} Link
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <p className="text-[11px] font-medium text-slate-500 mb-1.5">Or link individual inventory items</p>
+            {row.costLinks.length > 0 && (
+              <div className="space-y-1.5 mb-2">
+                {row.costLinks.map(link => (
+                  <div key={link.id} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-[12px]">
+                    <span className="text-slate-700">{link.inventory_item?.name} × {link.quantity}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">R {(Number(link.quantity) * Number(link.inventory_item?.unit_cost || 0)).toFixed(2)}</span>
+                      <button onClick={() => removeLink(link.id)} className="text-slate-300 hover:text-rose-500"><Trash2 size={12} /></button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <select value={addItemId} onChange={e => setAddItemId(e.target.value)} className={`${INPUT_CLS} appearance-none cursor-pointer text-[13px] py-2`}>
+                  <option value="">— choose an inventory item —</option>
+                  {inventory.map(i => <option key={i.id} value={i.id}>{i.name} (R {Number(i.unit_cost).toFixed(2)})</option>)}
+                </select>
+              </div>
+              <div className="w-20 shrink-0">
+                <input type="number" min={0.01} step="0.01" value={addQty} onChange={e => setAddQty(e.target.value)} className={`${INPUT_CLS} text-[13px] py-2`} />
+              </div>
+              <button onClick={addLink} disabled={saving || !addItemId} className="h-[38px] px-3 rounded-[10px] bg-slate-900 text-white text-[12px] font-medium disabled:opacity-50 shrink-0 flex items-center gap-1">
+                {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Link
+              </button>
             </div>
-          )}
-          <div className="flex items-end gap-2">
-            <div className="flex-1 min-w-0">
-              <select value={addItemId} onChange={e => setAddItemId(e.target.value)} className={`${INPUT_CLS} appearance-none cursor-pointer text-[13px] py-2`}>
-                <option value="">— link an inventory item —</option>
-                {inventory.map(i => <option key={i.id} value={i.id}>{i.name} (R {Number(i.unit_cost).toFixed(2)})</option>)}
-              </select>
-            </div>
-            <input type="number" min={0.01} step="0.01" value={addQty} onChange={e => setAddQty(e.target.value)} className={`${INPUT_CLS} w-20 text-[13px] py-2`} />
-            <button onClick={addLink} disabled={saving || !addItemId} className="h-[38px] px-3 rounded-[10px] bg-slate-900 text-white text-[12px] font-medium disabled:opacity-50 shrink-0 flex items-center gap-1">
-              {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Link
-            </button>
           </div>
           {error && <p className="text-[11px] text-rose-500">{error}</p>}
         </div>

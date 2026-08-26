@@ -23,7 +23,9 @@ export async function GET() {
     lineIds.length
       ? supabase.from('quote_line_item_costs').select('*, inventory_item:inventory_items(id, name, unit_cost, unit_label)').in('quote_line_item_id', lineIds)
       : Promise.resolve({ data: [] as any[] }),
-    eventPackageIds.length ? supabase.from('event_packages').select('id, computed_cost').in('id', eventPackageIds) : Promise.resolve({ data: [] as any[] }),
+    eventPackageIds.length
+      ? supabase.from('event_packages').select('id, computed_cost, display_name, package:packages(name)').in('id', eventPackageIds)
+      : Promise.resolve({ data: [] as any[] }),
   ]);
 
   const leadIds = [...new Set((quotes || []).map((q: any) => q.lead_id).filter(Boolean))];
@@ -56,6 +58,7 @@ export async function GET() {
       ...line,
       quote: quoteById.get(line.quote_id) || null,
       costLinks: links,
+      eventPackage: eventPackage || null,
       costSource: isPackageCosted ? 'package' : links.length > 0 ? 'manual' : 'uncosted',
       costBasis,
     };
