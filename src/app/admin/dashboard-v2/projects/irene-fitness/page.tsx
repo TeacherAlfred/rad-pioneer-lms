@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { Loader2, MessageCircle, Mail, ArrowLeft } from "lucide-react";
+import { Loader2, MessageCircle, Mail, ArrowLeft, Check } from "lucide-react";
 import { DashboardV2Nav } from "../../_components/DashboardV2Nav";
 
 type ChildRow = { grade: string; class: string | null };
@@ -27,6 +27,18 @@ const FILTERS: { key: string; label: string }[] = [
   { key: "whatsapp", label: "Has WhatsApp" },
   { key: "email", label: "Has Email" },
 ];
+
+// Families type local SA numbers on the consent form (e.g. "082 123 4567"),
+// stored digits-only with the leading 0 intact. WhatsApp's click-to-chat
+// needs the full international form (27...) to resolve to that specific
+// contact - without it, api.whatsapp.com can't match anyone and just opens
+// the app's home screen instead of the chat. Same fix as session-photos'
+// toWaPhone.
+function toWaPhone(phone: string) {
+  let p = (phone || "").replace(/\D/g, "");
+  if (p.startsWith("0")) p = "27" + p.substring(1);
+  return p;
+}
 
 function matchesFilter(row: ResponseRow, filter: string) {
   switch (filter) {
@@ -64,6 +76,7 @@ function IreneFitnessDetailInner() {
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<ResponseRow[]>([]);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/admin/api/dashboard-v2/projects")
@@ -78,20 +91,37 @@ function IreneFitnessDetailInner() {
     router.push(`/admin/dashboard-v2/projects/irene-fitness?filter=${key}`);
   }
 
+  // Neither wa.me nor api.whatsapp.com reliably carries ?text= through to
+  // the WhatsApp desktop app - it opens the right chat but drops the
+  // pre-fill (a long-standing desktop-client limitation, not a URL-format
+  // bug). So the message is copied to the clipboard first, guaranteed to
+  // work regardless of that quirk - the admin just pastes it once the
+  // chat/email window is open.
+  async function copyToClipboard(text: string, key: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 3000);
+    } catch {
+      // Clipboard API can fail (permissions, insecure context) - the ?text=
+      // param still gets a shot at pre-filling on its own in that case.
+    }
+  }
+
   function sendGuideWhatsapp(row: ResponseRow) {
     const firstName = row.display_name.split(" ")[0];
-    const digits = (row.whatsapp || "").replace(/\D/g, "");
-    // api.whatsapp.com, not the wa.me shortcut - matches the fix already
-    // adopted elsewhere in this codebase (MediaDispatchCart, session-photos):
-    // the WhatsApp desktop app reliably drops the ?text= prefill when it's
-    // handed a wa.me link, but honors it via api.whatsapp.com/send.
-    window.open(`https://api.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(guideMessageBody(firstName))}`, "_blank");
+    const digits = toWaPhone(row.whatsapp || "");
+    const message = guideMessageBody(firstName);
+    copyToClipboard(message, `${row.family_id}-wa`);
+    window.open(`https://api.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(message)}`, "_blank");
   }
 
   function sendGuideEmail(row: ResponseRow) {
     const firstName = row.display_name.split(" ")[0];
     const subject = "Your Free Parent's Guide to Hacking Screen Time";
-    window.open(`mailto:${row.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(guideEmailBody(firstName))}`, "_blank");
+    const body = guideEmailBody(firstName);
+    copyToClipboard(body, `${row.family_id}-email`);
+    window.open(`mailto:${row.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
   }
 
   if (loading) {
@@ -188,19 +218,25 @@ function IreneFitnessDetailInner() {
                         {row.whatsapp && (
                           <button
                             onClick={() => sendGuideWhatsapp(row)}
-                            title="Send guide via WhatsApp"
-                            className="p-2 rounded-xl bg-teal-50 text-teal-600 hover:bg-teal-100 transition-colors"
+                            title="Copy guide message & open WhatsApp"
+                            className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                              copiedKey === `${row.family_id}-wa` ? "bg-emerald-100 text-emerald-700" : "bg-teal-50 text-teal-600 hover:bg-teal-100"
+                            }`}
                           >
-                            <MessageCircle size={16} />
+                            {copiedKey === `${row.family_id}-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
+                            {copiedKey === `${row.family_id}-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
                           </button>
                         )}
                         {row.email && (
                           <button
                             onClick={() => sendGuideEmail(row)}
-                            title="Send guide via email"
-                            className="p-2 rounded-xl bg-slate-50 text-slate-600 hover:bg-slate-100 transition-colors"
+                            title="Copy guide message & open email"
+                            className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                              copiedKey === `${row.family_id}-email` ? "bg-emerald-100 text-emerald-700" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                            }`}
                           >
-                            <Mail size={16} />
+                            {copiedKey === `${row.family_id}-email` ? <Check size={16} /> : <Mail size={16} />}
+                            {copiedKey === `${row.family_id}-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
                           </button>
                         )}
                       </div>
