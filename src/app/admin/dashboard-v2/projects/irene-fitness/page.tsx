@@ -45,16 +45,16 @@ function matchesFilter(row: ResponseRow, filter: string) {
   }
 }
 
-// wa.me / mailto can't attach a file, so these just open the chat or email
-// pre-filled with the guide copy - the admin still attaches the actual PDF
-// by hand in WhatsApp Business (desktop) or their mail client before sending.
+// The chat/email can't carry an attachment, so these just open pre-filled
+// with the guide copy - the admin still attaches the actual PDF by hand in
+// WhatsApp Business (desktop) or their mail client before sending.
 // Gated on consent_marketing: that's the specific opt-in this guide was
 // promised under, so it's the only group these actions show up for.
-function guideWhatsappMessage(firstName: string) {
-  return `Hi ${firstName}! 👋 Thanks for joining the Irene Primary Fitness Community and asking for RAD Academy's free guide on turning screen time into a coding skill. Here it is — let us know if you have any questions! 🚀`;
+function guideMessageBody(firstName: string) {
+  return `Hi ${firstName} 👋\n\nThanks for joining the Irene Primary Health & Wellness community and voting in the Fitness Challenge!\n\nAs promised, here's RAD Academy's free Parent's Guide to Hacking Screen Time - a quick read on turning screen time into a real skill (yes, even Minecraft).\n\nNext week we'll send a second free guide too - this one all about fitness, to go with the community you've just joined.\n\nNo strings attached, just something useful for your family 🙌`;
 }
 function guideEmailBody(firstName: string) {
-  return `Hi ${firstName},\n\nThanks for joining the Irene Primary Fitness Community! As promised, please find attached RAD Academy's free guide on turning screen time into a coding skill.\n\nLet us know if you have any questions.\n\nBest regards,\nThe RAD Academy Team`;
+  return `${guideMessageBody(firstName)}\n\nBest regards,\nThe RAD Academy Team`;
 }
 
 function IreneFitnessDetailInner() {
@@ -81,12 +81,16 @@ function IreneFitnessDetailInner() {
   function sendGuideWhatsapp(row: ResponseRow) {
     const firstName = row.display_name.split(" ")[0];
     const digits = (row.whatsapp || "").replace(/\D/g, "");
-    window.open(`https://wa.me/${digits}?text=${encodeURIComponent(guideWhatsappMessage(firstName))}`, "_blank");
+    // api.whatsapp.com, not the wa.me shortcut - matches the fix already
+    // adopted elsewhere in this codebase (MediaDispatchCart, session-photos):
+    // the WhatsApp desktop app reliably drops the ?text= prefill when it's
+    // handed a wa.me link, but honors it via api.whatsapp.com/send.
+    window.open(`https://api.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(guideMessageBody(firstName))}`, "_blank");
   }
 
   function sendGuideEmail(row: ResponseRow) {
     const firstName = row.display_name.split(" ")[0];
-    const subject = "Your RAD Academy Coding & Robotics Guide";
+    const subject = "Your Free Parent's Guide to Hacking Screen Time";
     window.open(`mailto:${row.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(guideEmailBody(firstName))}`, "_blank");
   }
 
