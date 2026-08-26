@@ -5,8 +5,9 @@ import Link from "next/link";
 import {
   Coins, CalendarDays, TrendingUp, Wallet, Clock,
   FileText, CreditCard, Receipt, Send, Package, Building2, ShieldCheck,
-  ArrowRight, AlertTriangle, RefreshCw, Waves,
+  ArrowRight, AlertTriangle, RefreshCw, Waves, GripVertical, RotateCcw,
 } from "lucide-react";
+import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 import { supabase } from "@/lib/supabase";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
 import { ConstraintPill } from "../_components/ConstraintPill";
@@ -60,18 +61,31 @@ export default function MoneyAdminPage() {
   // (real invoices + monthly_expenses + pricing-engine cost data, not a
   // second copy of any of that logic here).
   const [waterfallData, setWaterfallData] = useState<any | null>(null);
+  // Local, draggable copy of waterfallData.priorityOrder - due date is the
+  // recommendation, not a rule (spec §4), so this can be manually
+  // reordered and the override is remembered per month. Both scenario
+  // panels below are read-only and always reflect this same order, since
+  // they're both computed server-side against the one underlying list.
+  const [priorityOrder, setPriorityOrder] = useState<any[]>([]);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  async function fetchWaterfall() {
+    const res = await fetch("/admin/api/finance-v2/cash-waterfall");
+    const data = await res.json();
+    setWaterfallData(data);
+    setPriorityOrder(data.priorityOrder || []);
+  }
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const [{ data: recordsData }, { data: itemsData }, consentRes, settingsRes, v2QuotesRes, waterfallRes] = await Promise.all([
+        const [{ data: recordsData }, { data: itemsData }, consentRes, settingsRes, v2QuotesRes] = await Promise.all([
           supabase.from("billing_records").select("*"),
           supabase.from("billing_items").select("name, category, aliases"),
           fetch("/admin/api/dashboard-v2/consent-summary"),
           fetch("/admin/api/dashboard-v2/settings"),
           fetch("/admin/api/finance-v2/quotes/list"),
-          fetch("/admin/api/finance-v2/cash-waterfall"),
         ]);
         if (recordsData) setRecords(recordsData);
         if (itemsData) setBillingItems(itemsData);
@@ -81,7 +95,7 @@ export default function MoneyAdminPage() {
         setSecurityAudit(settings || null);
         const { quotes: v2QuotesData } = await v2QuotesRes.json();
         setV2Quotes(v2QuotesData || []);
-        setWaterfallData(await waterfallRes.json());
+        await fetchWaterfall();
       } catch (err) {
         console.error("Failed to fetch money-admin data:", err);
       } finally {
@@ -89,6 +103,37 @@ export default function MoneyAdminPage() {
       }
     })();
   }, []);
+
+  async function onDragEndPriority(result: DropResult) {
+    if (!result.destination || !waterfallData) return;
+    if (result.source.index === result.destination.index) return;
+    const reordered = Array.from(priorityOrder);
+    const [moved] = reordered.splice(result.source.index, 1);
+    reordered.splice(result.destination.index, 0, moved);
+    setPriorityOrder(reordered);
+    setSavingOrder(true);
+    try {
+      await fetch("/admin/api/finance-v2/cash-waterfall/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: waterfallData.month, order: reordered.map((item) => item.id) }),
+      });
+      await fetchWaterfall();
+    } finally {
+      setSavingOrder(false);
+    }
+  }
+
+  async function resetPriorityOrder() {
+    if (!waterfallData) return;
+    setSavingOrder(true);
+    try {
+      await fetch(`/admin/api/finance-v2/cash-waterfall/order?month=${waterfallData.month}`, { method: "DELETE" });
+      await fetchWaterfall();
+    } finally {
+      setSavingOrder(false);
+    }
+  }
 
   const categoryMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -329,6 +374,51 @@ export default function MoneyAdminPage() {
                 </div>
                 <p className="text-[10px] text-stone-400 mt-3">These can legitimately diverge — an invoice raised this month due later, or a payment landing against an older invoice.</p>
               </div>
+            </div>
+
+            <div className="bg-white border border-stone-200 rounded-[24px] p-6 shadow-sm mb-6">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-xs font-black uppercase tracking-widest text-stone-700">Payment Priority Order</h3>
+                {waterfallData.orderIsOverridden && (
+                  <button onClick={resetPriorityOrder} disabled={savingOrder} className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-stone-400 hover:text-stone-600 disabled:opacity-50">
+                    <RotateCcw size={12} /> Reset to Due Date Order
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-stone-400 mb-4">
+                Due date is the recommendation, not a rule — drag to reorder. Both scenarios below always follow this same order.
+                {waterfallData.orderIsOverridden && <span className="text-cyan-600 font-bold"> Manually ordered.</span>}
+              </p>
+              {priorityOrder.length === 0 ? (
+                <p className="text-[12px] text-stone-400 italic py-4">No standing or delivery-linked expenses due this month yet.</p>
+              ) : (
+                <DragDropContext onDragEnd={onDragEndPriority}>
+                  <Droppable droppableId="priority-order">
+                    {(provided) => (
+                      <div ref={provided.innerRef} {...provided.droppableProps} className="space-y-1.5">
+                        {priorityOrder.map((item, index) => (
+                          <Draggable key={item.id} draggableId={item.id} index={index}>
+                            {(dragProvided, snapshot) => (
+                              <div
+                                ref={dragProvided.innerRef}
+                                {...dragProvided.draggableProps}
+                                className={`flex items-center gap-2 text-[12px] px-3 py-2 rounded-lg ${snapshot.isDragging ? "bg-cyan-50 shadow-md" : "bg-stone-50"}`}
+                              >
+                                <span {...dragProvided.dragHandleProps} className="text-stone-300 hover:text-stone-500 cursor-grab active:cursor-grabbing shrink-0">
+                                  <GripVertical size={14} />
+                                </span>
+                                <span className="text-stone-600 truncate flex-1">{item.label} <span className="text-stone-400">({new Date(item.due_date).toLocaleDateString("en-ZA")})</span></span>
+                                <span className="font-bold text-stone-900 shrink-0">{rand(item.amount)}</span>
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </DragDropContext>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

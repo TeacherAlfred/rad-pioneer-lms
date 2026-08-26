@@ -162,7 +162,30 @@ export async function GET(request: Request) {
     .map((e) => ({ id: `exp-${e.id}`, label: e.name, due_date: e.due_date, amount: Number(e.amount), type: 'standing' as const }));
 
   // --- §4: waterfall, both scenarios ---
-  const orderedList = [...standingExpenses, ...deliveryLinkedExpenses].sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
+  const dateOrderedList = [...standingExpenses, ...deliveryLinkedExpenses].sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
+
+  // Due-date order is the recommendation, not a rule - an admin can
+  // override it (e.g. pay a specific supplier ahead of an earlier-due
+  // item for relationship reasons the date alone doesn't capture). The
+  // override is a full saved sequence for this month, not per-item ranks -
+  // anything in the current list that wasn't part of a saved sequence
+  // (e.g. a new invoice that became due after the last reorder) is
+  // appended at the end in date order rather than silently dropped.
+  const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+  const { data: overrides } = await supabase
+    .from('cash_waterfall_priority_overrides')
+    .select('item_key, sort_index')
+    .eq('month', monthKey)
+    .order('sort_index', { ascending: true });
+  let orderedList = dateOrderedList;
+  let orderIsOverridden = false;
+  if (overrides && overrides.length > 0) {
+    orderIsOverridden = true;
+    const rankByKey = new Map(overrides.map((o) => [o.item_key, o.sort_index]));
+    const ranked = dateOrderedList.filter((item) => rankByKey.has(item.id)).sort((a, b) => rankByKey.get(a.id)! - rankByKey.get(b.id)!);
+    const unranked = dateOrderedList.filter((item) => !rankByKey.has(item.id));
+    orderedList = [...ranked, ...unranked];
+  }
 
   const dueUnpaidThisMonth = dueThisMonth.filter((i) => i.status !== 'paid').reduce((s, i) => s + (Number(i.amount) - Number(i.amount_paid || 0)), 0);
 
@@ -202,9 +225,15 @@ export async function GET(request: Request) {
   });
 
   return NextResponse.json({
-    month: `${year}-${String(month).padStart(2, '0')}`,
+    month: monthKey,
     dueTracker,
     invoicedVsPaid: { invoiced: invoicedThisMonth, paid: paidThisMonth },
+    // Order-only view (no per-scenario covered/shortfall) - the single
+    // source of truth for "what order" that the drag-to-reorder UI edits.
+    // Both scenarios below are guaranteed to share this exact order, since
+    // they're both run against the same orderedList.
+    priorityOrder: orderedList.map(({ id, label, due_date, amount, type }) => ({ id, label, due_date, amount, type })),
+    orderIsOverridden,
     waterfall: { cashInHand, fullyCollected },
     uncostedLines,
     needsConfirmation,
