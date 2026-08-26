@@ -1,50 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-
-// RAD Academy runs on SAST (UTC+2, no DST) - month boundaries are computed
-// against that fixed offset rather than the server's own UTC clock, so a
-// payment/due date near midnight lands in the calendar month a person in
-// Pretoria would actually call it, not whatever month UTC happens to be in.
-const SAST_OFFSET = '+02:00';
-
-function monthBounds(year: number, month1to12: number) {
-  const start = `${year}-${String(month1to12).padStart(2, '0')}-01T00:00:00${SAST_OFFSET}`;
-  const nextMonth = month1to12 === 12 ? 1 : month1to12 + 1;
-  const nextYear = month1to12 === 12 ? year + 1 : year;
-  const end = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00${SAST_OFFSET}`;
-  return { start, end };
-}
-
-function inRange(iso: string | null, start: string, end: string) {
-  if (!iso) return false;
-  return iso >= start && iso < end;
-}
-
-function lineCostBasis(line: any, eventPackageById: Map<string, any>, costLinksByLine: Map<string, any[]>): number | null {
-  const eventPackage = line.event_package_id ? eventPackageById.get(line.event_package_id) : null;
-  if (eventPackage && eventPackage.computed_cost != null) {
-    // Two different semantics depending on how event_package_id got set.
-    // The Composer's Pricing Package line source sets it at quote-creation
-    // time with quantity meaning "how many of this exact priced row" (its
-    // computed_cost already has that row's own unit_multiplier baked in) -
-    // that path is untouched: computed_cost * line.quantity.
-    // The Cost Linking tab (retroactive) instead lets an admin pick a
-    // package by its real name and set a genuine base-unit count via
-    // event_package_quantity - the picked row is just a representative
-    // price reference there, so its own unit_multiplier has to be divided
-    // back out first to get a true per-unit rate before multiplying.
-    if (line.event_package_quantity !== null && line.event_package_quantity !== undefined) {
-      const perUnitCost = Number(eventPackage.computed_cost) / Number(eventPackage.unit_multiplier || 1);
-      return perUnitCost * Number(line.event_package_quantity);
-    }
-    return Number(eventPackage.computed_cost) * Number(line.quantity);
-  }
-  const links = costLinksByLine.get(line.id) || [];
-  if (links.length > 0) {
-    return links.reduce((sum: number, l: any) => sum + Number(l.quantity) * Number(l.inventory_item?.unit_cost || 0), 0);
-  }
-  return null; // uncosted
-}
+import { monthBounds, inRange, lineCostBasis, addMonthKey, computeRunningBalanceThrough } from '@/lib/cashWaterfall';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -213,6 +169,15 @@ export async function GET(request: Request) {
 
   const dueUnpaidThisMonth = dueThisMonth.filter((i) => i.status !== 'paid').reduce((s, i) => s + (Number(i.amount) - Number(i.amount_paid || 0)), 0);
 
+  // Cash-in-Hand's available cash can't just be this month's fresh receipts
+  // reset to R0 - a family's payment landing in an earlier month (say,
+  // INV-8's own payment, received in July) is real cash still sitting in
+  // the bank in August, and this month's shortfall check needs to see it.
+  // Entering balance = the running balance as of the END of the PREVIOUS
+  // month (a straight sum, not a priority walk - see computeRunningBalanceThrough).
+  const enteringBalanceResult = await computeRunningBalanceThrough(supabase, addMonthKey(monthKey, -1));
+  const enteringBalance = enteringBalanceResult.balance;
+
   function runScenario(availableCash: number) {
     let remaining = availableCash;
     let totalShortfall = 0;
@@ -233,8 +198,8 @@ export async function GET(request: Request) {
     return { items, totalShortfall };
   }
 
-  const cashInHand = runScenario(paidThisMonth);
-  const fullyCollected = runScenario(paidThisMonth + dueUnpaidThisMonth);
+  const cashInHand = runScenario(enteringBalance + paidThisMonth);
+  const fullyCollected = runScenario(enteringBalance + paidThisMonth + dueUnpaidThisMonth);
 
   // --- recurring-expense confirmation prompts (never auto-created) ---
   const nowDateStr = now.toISOString().split('T')[0];
@@ -260,6 +225,7 @@ export async function GET(request: Request) {
       id, label, due_date, amount, type, invoiceId, invoiceNumber, invoiceStatus,
     })),
     orderIsOverridden,
+    enteringBalance,
     waterfall: { cashInHand, fullyCollected },
     uncostedLines,
     needsConfirmation,

@@ -487,8 +487,8 @@ export default function MoneyAdminPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {[
-                { key: "cashInHand", label: "Cash-in-Hand", desc: "What's actually been paid this month" },
-                { key: "fullyCollected", label: "Fully-Collected", desc: "If everyone still due this month pays on time" },
+                { key: "cashInHand", label: "Cash-in-Hand", desc: `Cash carried in (${rand(waterfallData.enteringBalance || 0)}) plus what's actually been paid this month` },
+                { key: "fullyCollected", label: "Fully-Collected", desc: "Cash-in-Hand, plus everyone still due this month paying on time" },
               ].map(({ key, label, desc }) => {
                 const scenario = waterfallData.waterfall[key];
                 return (
