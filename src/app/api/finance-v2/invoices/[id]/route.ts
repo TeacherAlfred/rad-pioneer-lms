@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (error || !invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
 
   const [{ data: lead }, { data: lineItems }] = await Promise.all([
-    supabase.from('leads').select('id, name, phone, email').eq('id', invoice.lead_id).single(),
+    supabase.from('leads').select('id, name, phone, email, customer_type, company_name').eq('id', invoice.lead_id).single(),
     invoice.quote_id
       ? supabase.from('quote_line_items').select('*').eq('quote_id', invoice.quote_id).order('sort_order')
       : Promise.resolve({ data: [] }),

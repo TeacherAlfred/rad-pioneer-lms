@@ -42,7 +42,7 @@ export default function PublicQuoteView() {
       // 2. Fetch Document Data
       const { data: quoteData, error: quoteErr } = await supabase
         .from('billing_records')
-        .select('*')
+        .select('*, corporate_clients(*)')
         .eq('id', quoteId)
         .single();
 
@@ -56,7 +56,7 @@ export default function PublicQuoteView() {
 
       setQuote(quoteData);
 
-      // 3. Prospect-Aware Routing
+      // 3. Prospect-Aware Routing (B2C household / B2B corporate / temp prospect)
       if (quoteData.guardian_id) {
         const { data: guardianData } = await supabase
           .from('profiles')
@@ -65,6 +65,16 @@ export default function PublicQuoteView() {
           .single();
 
         if (guardianData) setGuardian(guardianData);
+      } else if (quoteData.corporate_clients) {
+        const corp = quoteData.corporate_clients;
+        setGuardian({
+          id: corp.id,
+          isB2B: true,
+          display_name: corp.company_name,
+          email: corp.email,
+          phone: corp.phone,
+          metadata: { email: corp.email, phone: corp.phone, contact_person: corp.contact_person },
+        });
       } else if (quoteData.metadata?.prospect_name) {
         setGuardian({
           id: null,
@@ -93,14 +103,16 @@ export default function PublicQuoteView() {
         .update({ status: pendingAction })
         .eq('id', quoteId);
 
-      if (pendingAction === 'accepted' && guardian?.id) {
+      // guardian.id is a corporate_clients id for B2B recipients - only
+      // households (profiles rows) get the funnel-stage side effect.
+      if (pendingAction === 'accepted' && guardian?.id && !guardian.isB2B) {
         await supabase
           .from('profiles')
           .update({ status: 'active', funnel_stage: 'Active (Paid Client)' })
           .eq('id', guardian.id);
       }
 
-      if (pendingAction === 'declined' && guardian?.id) {
+      if (pendingAction === 'declined' && guardian?.id && !guardian.isB2B) {
         await supabase
           .from('profiles')
           .update({ status: 'dropped', funnel_stage: 'Dropped' })
@@ -148,7 +160,7 @@ export default function PublicQuoteView() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-white p-4 md:p-12 font-sans selection:bg-purple-500/30">
-      
+
       {/* STATUS BANNER */}
       {actionState !== 'pending' && (
         <motion.div 
@@ -194,7 +206,7 @@ export default function PublicQuoteView() {
 
       {/* THE DOCUMENT (Dynamically shifts between Quote/Invoice rendering) */}
       <div className={`transition-all duration-700 ${actionState !== 'pending' && quote.doc_type === 'quote' ? 'opacity-50 grayscale pointer-events-none' : ''}`}>
-        <RADBillingDocument 
+        <RADBillingDocument
           type={quote.doc_type || "quote"}
           docNumber={`${quote.doc_type === 'invoice' ? 'INV' : 'QT'}-${quote.invoice_number}`}
           recipient={{

@@ -159,7 +159,7 @@ export default function PublicQuoteV2View() {
         <RADBillingDocument
           type="quote"
           docNumber={`QT-${quote.quote_number}`}
-          recipient={{ name: lead.name || "Customer", email: lead.email || "", phone: lead.phone || "" }}
+          recipient={{ name: lead.company_name || lead.name || "Customer", email: lead.email || "", phone: lead.phone || "" }}
           items={documentItems}
           date={new Date(quote.created_at).toLocaleDateString("en-ZA")}
           dueDate={quote.expires_at ? new Date(quote.expires_at).toLocaleDateString("en-ZA") : "No Expiry"}

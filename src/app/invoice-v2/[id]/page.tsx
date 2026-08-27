@@ -80,7 +80,7 @@ export default function PublicInvoiceV2View() {
       <RADBillingDocument
         type="invoice"
         docNumber={`INV-${invoice.invoice_number}`}
-        recipient={{ name: lead.name || "Customer", email: lead.email || "", phone: lead.phone || "" }}
+        recipient={{ name: lead.company_name || lead.name || "Customer", email: lead.email || "", phone: lead.phone || "" }}
         items={documentItems}
         date={new Date(invoice.created_at).toLocaleDateString("en-ZA")}
         dueDate={invoice.due_at ? new Date(invoice.due_at).toLocaleDateString("en-ZA") : "On Receipt"}
