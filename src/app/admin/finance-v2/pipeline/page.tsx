@@ -17,11 +17,11 @@ function effectiveStatus(quote: any): EffectiveStatus {
 }
 
 const STATUS_STYLE: Record<EffectiveStatus, { label: string; className: string; icon: any }> = {
-  sent: { label: "Open", className: "bg-purple-500/10 text-purple-400 border-purple-500/20", icon: Send },
-  expired: { label: "Expired", className: "bg-amber-500/10 text-amber-400 border-amber-500/20", icon: AlertCircle },
-  accepted: { label: "Accepted", className: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", icon: CheckCircle2 },
-  declined: { label: "Declined", className: "bg-rose-500/10 text-rose-400 border-rose-500/20", icon: XCircle },
-  superseded: { label: "Superseded", className: "bg-white/5 text-slate-400 border-white/10", icon: Layers },
+  sent: { label: "Open", className: "bg-purple-50 text-purple-600 border-purple-100", icon: Send },
+  expired: { label: "Expired", className: "bg-amber-50 text-amber-600 border-amber-100", icon: AlertCircle },
+  accepted: { label: "Accepted", className: "bg-emerald-50 text-emerald-600 border-emerald-100", icon: CheckCircle2 },
+  declined: { label: "Declined", className: "bg-rose-50 text-rose-600 border-rose-100", icon: XCircle },
+  superseded: { label: "Superseded", className: "bg-slate-100 text-slate-500 border-slate-200", icon: Layers },
 };
 
 const TABS: { key: "all" | EffectiveStatus; label: string }[] = [
@@ -75,6 +75,7 @@ export default function QuotePipelineV2Page() {
       const haystack = [
         `qt-${quote.quote_number}`,
         quote.lead?.name,
+        quote.lead?.company_name,
         quote.lead?.phone,
         quote.lead?.email,
         quote.program?.name,
@@ -237,20 +238,25 @@ export default function QuotePipelineV2Page() {
   }
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans">
+    <div className="min-h-screen bg-slate-50 text-slate-900 p-6 lg:p-12 font-sans">
       <div className="max-w-6xl mx-auto space-y-8">
         <div>
-          <Link href="/admin/dashboard-v2/money-admin" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2 transition-colors mb-4">
-            <ArrowLeft size={14} /> Back
-          </Link>
+          <div className="flex items-center justify-between mb-4">
+            <Link href="/admin/dashboard-v2/money-admin" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-600 flex items-center gap-2 transition-colors">
+              <ArrowLeft size={14} /> Back
+            </Link>
+            <Link href="/admin/finance-v2/balances" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-600 transition-colors">
+              Balances Brought Forward
+            </Link>
+          </div>
           <h1 className="text-4xl md:text-5xl font-black tracking-tighter italic uppercase leading-none">
-            Quote <span className="text-purple-500">Pipeline</span> <span className="text-cyan-500 text-xl align-top">v2</span>
+            Quote <span className="text-purple-600">Pipeline</span> <span className="text-cyan-600 text-xl align-top">v2</span>
           </h1>
           <p className="text-slate-500 text-sm mt-2">Every quote created through the composer or self-serve package selection — the real quotes table, not the old billing_records pipeline.</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white/[0.03] border border-white/10 rounded-[24px] p-6 flex items-start justify-between">
+          <div className="bg-white border border-slate-200 rounded-[24px] p-6 flex items-start justify-between shadow-sm">
             <div>
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Open Pipeline</p>
               <p className="text-2xl font-black tracking-tight mt-1">{rand(metrics.openValue)}</p>
@@ -258,7 +264,7 @@ export default function QuotePipelineV2Page() {
             </div>
             <Send className="text-purple-500" size={20} />
           </div>
-          <div className="bg-white/[0.03] border border-white/10 rounded-[24px] p-6 flex items-start justify-between">
+          <div className="bg-white border border-slate-200 rounded-[24px] p-6 flex items-start justify-between shadow-sm">
             <div>
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Accepted</p>
               <p className="text-2xl font-black tracking-tight mt-1">{rand(metrics.acceptedValue)}</p>
@@ -266,7 +272,7 @@ export default function QuotePipelineV2Page() {
             </div>
             <CheckCircle2 className="text-emerald-500" size={20} />
           </div>
-          <div className="bg-white/[0.03] border border-white/10 rounded-[24px] p-6 flex items-start justify-between">
+          <div className="bg-white border border-slate-200 rounded-[24px] p-6 flex items-start justify-between shadow-sm">
             <div>
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Outstanding on Accepted</p>
               <p className="text-2xl font-black tracking-tight mt-1">{rand(metrics.outstanding)}</p>
@@ -283,7 +289,7 @@ export default function QuotePipelineV2Page() {
                 key={t.key}
                 onClick={() => setTab(t.key)}
                 className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                  tab === t.key ? "bg-white text-[#020617]" : "bg-white/5 text-slate-400 hover:bg-white/10"
+                  tab === t.key ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-500 hover:bg-slate-100"
                 }`}
               >
                 {t.label}
@@ -291,12 +297,12 @@ export default function QuotePipelineV2Page() {
             ))}
           </div>
           <div className="relative w-full md:w-72">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search lead, phone, quote #..."
-              className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-xs outline-none focus:border-purple-500/50"
+              className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-xs outline-none focus:border-purple-400"
             />
           </div>
         </div>
@@ -306,7 +312,7 @@ export default function QuotePipelineV2Page() {
             <Loader2 className="animate-spin text-purple-500" size={32} />
           </div>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-24 text-slate-500 text-sm">No quotes match this view.</div>
+          <div className="text-center py-24 text-slate-400 text-sm">No quotes match this view.</div>
         ) : (
           <div className="space-y-3">
             {filtered.map((quote) => {
@@ -314,10 +320,10 @@ export default function QuotePipelineV2Page() {
               const style = STATUS_STYLE[status];
               const StatusIcon = style.icon;
               return (
-                <div key={quote.id} className="bg-white/[0.03] border border-white/10 rounded-[20px] p-5 flex flex-col md:flex-row md:items-center gap-4">
+                <div key={quote.id} className="bg-white border border-slate-200 rounded-[20px] p-5 flex flex-col md:flex-row md:items-center gap-4 shadow-sm">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 flex-wrap">
-                      <span className="font-mono text-xs text-slate-500">QT-{quote.quote_number}</span>
+                      <span className="font-mono text-xs text-slate-400">QT-{quote.quote_number}</span>
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${style.className}`}>
                         <StatusIcon size={11} /> {style.label}
                       </span>
@@ -325,26 +331,26 @@ export default function QuotePipelineV2Page() {
                         <button
                           onClick={() => quickConvertToInvoice(quote)}
                           disabled={convertingId === quote.id}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20 transition-all disabled:opacity-50"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-emerald-50 text-emerald-600 border-emerald-100 hover:bg-emerald-100 transition-all disabled:opacity-50"
                           title="Mark accepted and generate the invoice"
                         >
                           {convertingId === quote.id ? <Loader2 className="animate-spin" size={11} /> : <Receipt size={11} />} Convert to Invoice
                         </button>
                       )}
                       {quote.source === "self_serve" && (
-                        <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                        <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest bg-cyan-50 text-cyan-600 border border-cyan-100">
                           Self-Serve
                         </span>
                       )}
                       {status === "accepted" && (
-                        <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest bg-white/5 text-slate-300 border border-white/10">
+                        <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 border border-slate-200">
                           {quote.accepted_plan_type === "monthly"
                             ? `Split — ${quote.invoices?.length || quote.installment_count} payments`
                             : "One Payment"}
                         </span>
                       )}
                     </div>
-                    <p className="font-bold text-sm mt-2 truncate">{quote.lead?.name || "Unknown Lead"}</p>
+                    <p className="font-bold text-sm mt-2 truncate text-slate-800">{quote.lead?.company_name || quote.lead?.name || "Unknown Lead"}</p>
                     <p className="text-[11px] text-slate-500 truncate">{quote.program?.name || "—"} · {quote.lead?.phone || quote.lead?.email || "No contact"}</p>
                   </div>
 
@@ -360,30 +366,38 @@ export default function QuotePipelineV2Page() {
 
                     <div className="flex items-center gap-2">
                       <Link
+                        href={`/statement-v2/${quote.lead?.id || quote.lead_id}`}
+                        target="_blank"
+                        className="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-slate-900 hover:border-slate-300 transition-all"
+                        title="View lead statement"
+                      >
+                        <Coins size={14} />
+                      </Link>
+                      <Link
                         href={`/quote-v2/${quote.id}`}
                         target="_blank"
-                        className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/30 transition-all"
+                        className="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-slate-900 hover:border-slate-300 transition-all"
                         title="View live quote"
                       >
                         <ExternalLink size={14} />
                       </Link>
                       <button
                         onClick={() => copyLink(quote.id)}
-                        className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/30 transition-all"
+                        className="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-slate-900 hover:border-slate-300 transition-all"
                         title="Copy quote link"
                       >
-                        {copiedId === quote.id ? <CheckCircle2 size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                        {copiedId === quote.id ? <CheckCircle2 size={14} className="text-emerald-500" /> : <Copy size={14} />}
                       </button>
                       <a
                         href={`/api/quote-v2/${quote.id}/pdf`}
-                        className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/30 transition-all"
+                        className="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-slate-900 hover:border-slate-300 transition-all"
                         title="Download PDF"
                       >
                         <Download size={14} />
                       </a>
                       <button
                         onClick={() => openManage(quote)}
-                        className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/30 transition-all"
+                        className="p-2.5 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-slate-900 hover:border-slate-300 transition-all"
                         title="Manage: status, duplicate, supersede, convert to invoice"
                       >
                         <Settings2 size={14} />
@@ -404,9 +418,9 @@ export default function QuotePipelineV2Page() {
       )}
 
       {manageQuote && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/70 backdrop-blur-sm" onClick={closeManage}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm" onClick={closeManage}>
           <div
-            className="bg-[#0b1220] border border-white/10 rounded-[32px] w-full max-w-lg p-8 space-y-6 max-h-[90vh] overflow-y-auto"
+            className="bg-white border border-slate-200 shadow-2xl ring-1 ring-black/5 rounded-[32px] w-full max-w-lg p-8 space-y-6 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -414,19 +428,19 @@ export default function QuotePipelineV2Page() {
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Manage</p>
                 <h3 className="text-xl font-black tracking-tight">QT-{manageQuote.quote_number} · {manageQuote.lead?.name || "Unknown Lead"}</h3>
               </div>
-              <button onClick={closeManage} className="p-2 text-slate-500 hover:text-white transition-colors">
+              <button onClick={closeManage} className="p-2 text-slate-400 hover:text-slate-900 transition-colors">
                 <X size={20} />
               </button>
             </div>
 
             {actionError && (
-              <p className="text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3">{actionError}</p>
+              <p className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3">{actionError}</p>
             )}
 
             <div className="space-y-2">
               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Status</p>
               {manageQuote.status === "accepted" || manageQuote.status === "superseded" ? (
-                <p className="text-xs text-slate-400 bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+                <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
                   {manageQuote.status === "accepted"
                     ? "This quote has been accepted and invoiced — status can't be changed here."
                     : "This quote has already been superseded."}
@@ -436,7 +450,7 @@ export default function QuotePipelineV2Page() {
                   <select
                     value={statusDraft}
                     onChange={(e) => setStatusDraft(e.target.value)}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-xs outline-none [color-scheme:dark]"
+                    className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs outline-none"
                   >
                     <option value="sent">Sent (Open)</option>
                     <option value="declined">Declined</option>
@@ -445,7 +459,7 @@ export default function QuotePipelineV2Page() {
                   <button
                     onClick={submitStatusChange}
                     disabled={isActing || statusDraft === manageQuote.status}
-                    className="px-4 py-2.5 rounded-xl bg-white text-[#020617] text-[10px] font-black uppercase disabled:opacity-30"
+                    className="px-4 py-2.5 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase disabled:opacity-30"
                   >
                     {isActing ? <Loader2 className="animate-spin" size={14} /> : "Update"}
                   </button>
@@ -456,8 +470,8 @@ export default function QuotePipelineV2Page() {
             {manageQuote.status === "accepted" && (
               <div className="space-y-2">
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Payment Plan</p>
-                <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
-                  <p className="text-xs font-bold text-white">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                  <p className="text-xs font-bold text-slate-900">
                     {manageQuote.accepted_plan_type === "monthly"
                       ? `Split into ${manageQuote.invoices?.length || manageQuote.installment_count} payments`
                       : "Accepted as one payment"}
@@ -468,8 +482,8 @@ export default function QuotePipelineV2Page() {
                       {manageQuote.invoices.map((inv: any) => {
                         const isPaid = inv.status === "paid";
                         return (
-                          <div key={inv.id} className="flex items-center justify-between gap-2 text-[11px] px-3 py-2 rounded-lg bg-white/5">
-                            <Link href={`/invoice-v2/${inv.id}`} target="_blank" className="text-slate-300 hover:text-white shrink-0">
+                          <div key={inv.id} className="flex items-center justify-between gap-2 text-[11px] px-3 py-2 rounded-lg bg-white border border-slate-200">
+                            <Link href={`/invoice-v2/${inv.id}`} target="_blank" className="text-slate-600 hover:text-slate-900 shrink-0">
                               INV-{inv.invoice_number}{manageQuote.accepted_plan_type === "monthly" ? ` (${inv.sequence_number}/${manageQuote.installment_count})` : ""}
                             </Link>
                             <div className="flex items-center gap-1.5 shrink-0">
@@ -479,10 +493,10 @@ export default function QuotePipelineV2Page() {
                                 value={inv.due_at ? inv.due_at.slice(0, 10) : ""}
                                 onChange={(e) => updateInvoiceDueDate(inv.id, e.target.value)}
                                 disabled={savingInvoiceId === inv.id}
-                                className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-[10px] outline-none [color-scheme:dark] disabled:opacity-50"
+                                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] outline-none disabled:opacity-50"
                               />
                             </div>
-                            <span className={`font-bold shrink-0 ${isPaid ? "text-emerald-400" : "text-amber-400"}`}>
+                            <span className={`font-bold shrink-0 ${isPaid ? "text-emerald-600" : "text-amber-600"}`}>
                               {rand(Number(inv.amount) || 0)} {isPaid ? "· Paid" : "· Unpaid"}
                             </span>
                           </div>
@@ -497,25 +511,25 @@ export default function QuotePipelineV2Page() {
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => router.push(`/admin/finance-v2/composer?duplicate=${manageQuote.id}`)}
-                className="p-4 rounded-2xl bg-white/5 border border-white/10 hover:border-white/30 text-left transition-all"
+                className="p-4 rounded-2xl bg-white border border-slate-200 hover:border-slate-300 text-left transition-all"
               >
-                <CopyPlus className="text-cyan-400 mb-2" size={18} />
+                <CopyPlus className="text-cyan-500 mb-2" size={18} />
                 <p className="text-xs font-black uppercase">Duplicate</p>
                 <p className="text-[10px] text-slate-500 mt-1">New, unlinked quote using this as a base.</p>
               </button>
               <button
                 onClick={() => router.push(`/admin/finance-v2/composer?supersede=${manageQuote.id}`)}
                 disabled={manageQuote.status === "superseded"}
-                className="p-4 rounded-2xl bg-white/5 border border-white/10 hover:border-white/30 text-left transition-all disabled:opacity-30"
+                className="p-4 rounded-2xl bg-white border border-slate-200 hover:border-slate-300 text-left transition-all disabled:opacity-30"
               >
-                <ArrowRightLeft className="text-amber-400 mb-2" size={18} />
+                <ArrowRightLeft className="text-amber-500 mb-2" size={18} />
                 <p className="text-xs font-black uppercase">Supersede</p>
                 <p className="text-[10px] text-slate-500 mt-1">Replace with updated pricing/items — this one gets marked superseded.</p>
               </button>
             </div>
 
             {manageQuote.status === "sent" && (
-              <div className="border-t border-white/5 pt-6 space-y-3">
+              <div className="border-t border-slate-100 pt-6 space-y-3">
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Convert to Invoice</p>
                 <p className="text-[11px] text-slate-500">Client agreed offline (phone/WhatsApp)? Mark this quote accepted and generate the invoice(s) directly — same effect as them clicking Accept on the live quote.</p>
                 {manageQuote.installment_count > 1 && manageQuote.monthly_installment_amount ? (
@@ -530,7 +544,7 @@ export default function QuotePipelineV2Page() {
                     <button
                       onClick={() => acceptOffline("monthly")}
                       disabled={isActing}
-                      className="flex-1 py-3 rounded-xl bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-black uppercase disabled:opacity-40"
+                      className="flex-1 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black uppercase disabled:opacity-40"
                     >
                       Monthly ×{manageQuote.installment_count}
                     </button>

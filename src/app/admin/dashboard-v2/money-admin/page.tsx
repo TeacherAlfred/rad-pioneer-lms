@@ -33,6 +33,7 @@ function netLineValue(li: any): number {
 const NAV_TILES = [
   { label: "Quote Composer", desc: "Build a new quote against a lead", icon: FileText, path: "/admin/finance-v2/composer" },
   { label: "Quote Pipeline", desc: "View every quote sent, self-serve or manual", icon: Send, path: "/admin/finance-v2/pipeline" },
+  { label: "Invoices", desc: "Every invoice across every client, sorted by due date", icon: CreditCard, path: "/admin/finance-v2/invoices" },
   { label: "Capture Payment", desc: "Manual (non-PayFast) payment entry", icon: Receipt, path: "/admin/finance-v2/capture" },
   { label: "Standing Expenses", desc: "Rent, subscriptions, recurring admin overhead", icon: Wallet, path: "/admin/finance-v2/expenses" },
 ];

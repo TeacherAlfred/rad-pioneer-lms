@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft, Search, Wallet, CheckCircle2, AlertTriangle,
   Receipt, Loader2, ArrowRight, Coins, RefreshCw, Save,
@@ -13,6 +14,22 @@ import confetti from "canvas-confetti";
 const PAYMENT_METHODS = ["eft", "cash", "card", "other"];
 
 export default function PaymentCaptureV2Page() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
+      <PaymentCaptureV2Inner />
+    </Suspense>
+  );
+}
+
+function PaymentCaptureV2Inner() {
+  const searchParams = useSearchParams();
+  // Deep-linked from the Invoices list ("Capture Payment" on a specific
+  // invoice/client) - prefills the lead (and, if given, fully allocates one
+  // invoice) so the admin doesn't have to re-search for who they just came
+  // from looking at.
+  const prefillLeadId = searchParams.get("lead_id");
+  const prefillInvoiceId = searchParams.get("invoice_id");
+
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -31,7 +48,17 @@ export default function PaymentCaptureV2Page() {
   const [paymentDate, setPaymentDate] = useState<string>(new Date().toISOString().split("T")[0]);
 
   useEffect(() => {
-    setLoading(false);
+    if (!prefillLeadId) {
+      setLoading(false);
+      return;
+    }
+    (async () => {
+      const res = await fetch(`/admin/api/finance-v2/leads?id=${prefillLeadId}`);
+      const { leads: found } = await res.json();
+      if (found?.[0]) setSelectedLead(found[0]);
+      setLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -59,9 +86,17 @@ export default function PaymentCaptureV2Page() {
       const res = await fetch(`/admin/api/finance-v2/leads/${selectedLead.id}/invoices`);
       const { invoices: found } = await res.json();
       setInvoices(found || []);
-      setAllocations({});
       setIsLoadingInvoices(false);
+
+      const targetInvoice = prefillInvoiceId ? (found || []).find((inv: any) => inv.id === prefillInvoiceId) : null;
+      if (targetInvoice) {
+        setTotalReceived(String(targetInvoice.outstanding));
+        setAllocations({ [targetInvoice.id]: targetInvoice.outstanding });
+      } else {
+        setAllocations({});
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLead]);
 
   const totalAllocated = useMemo(() => Object.values(allocations).reduce((sum, v) => sum + (v || 0), 0), [allocations]);
@@ -186,8 +221,8 @@ export default function PaymentCaptureV2Page() {
                   const isSelected = selectedLead?.id === l.id;
                   return (
                     <div key={l.id} onClick={() => setSelectedLead(l)} className={`p-4 rounded-2xl border cursor-pointer transition-all ${isSelected ? "bg-blue-50 border-blue-300 shadow-md ring-1 ring-blue-500" : "bg-white border-slate-100 hover:border-blue-200 hover:bg-slate-50"}`}>
-                      <p className={`font-black text-sm leading-tight ${isSelected ? "text-blue-700" : "text-slate-900"}`}>{l.name || "Unnamed"}</p>
-                      <p className="text-[10px] font-bold text-slate-400 truncate mt-1">{l.phone}</p>
+                      <p className={`font-black text-sm leading-tight ${isSelected ? "text-blue-700" : "text-slate-900"}`}>{l.company_name || l.name || "Unnamed"}</p>
+                      <p className="text-[10px] font-bold text-slate-400 truncate mt-1">{l.company_name ? `${l.name || "No contact"} · ` : ""}{l.phone}</p>
                     </div>
                   );
                 })}

@@ -21,7 +21,7 @@ export async function GET() {
 
   const [{ data: leads }, { data: programs }, { data: invoices }] = await Promise.all([
     leadIds.length
-      ? supabase.from('leads').select('id, name, phone, email').in('id', leadIds)
+      ? supabase.from('leads').select('id, name, phone, email, customer_type, company_name').in('id', leadIds)
       : Promise.resolve({ data: [] as any[] }),
     programIds.length
       ? supabase.from('programs').select('id, name').in('id', programIds)

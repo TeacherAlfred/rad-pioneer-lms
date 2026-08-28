@@ -199,30 +199,30 @@ export default function RecurringBillingPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
         <Loader2 className="animate-spin text-emerald-500" size={40} />
-        <p className="text-emerald-400 font-black uppercase tracking-widest text-[10px]">Loading...</p>
+        <p className="text-emerald-600 font-black uppercase tracking-widest text-[10px]">Loading...</p>
       </div>
     );
   }
 
   if (!lead) {
     return (
-      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center text-white gap-4">
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center text-slate-900 gap-4">
         <p className="font-black uppercase italic">Lead not found</p>
-        <Link href="/admin/finance-v2/pipeline" className="text-emerald-400 underline text-sm">Back to Pipeline</Link>
+        <Link href="/admin/finance-v2/pipeline" className="text-emerald-600 underline text-sm">Back to Pipeline</Link>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans">
+    <div className="min-h-screen bg-slate-50 text-slate-900 p-6 lg:p-12 font-sans">
       <div className="max-w-4xl mx-auto space-y-10">
-        <header className="space-y-4 border-b border-white/5 pb-8">
-          <Link href="/admin/finance-v2/pipeline" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2 transition-colors w-fit">
+        <header className="space-y-4 border-b border-slate-200 pb-8">
+          <Link href="/admin/finance-v2/pipeline" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-600 flex items-center gap-2 transition-colors w-fit">
             <ArrowLeft size={14} /> Back to Pipeline
           </Link>
-          <div className="flex items-center gap-2 text-blue-400">
+          <div className="flex items-center gap-2 text-blue-600">
             <Building2 size={14} />
             <span className="text-[10px] font-black uppercase tracking-[0.2em]">Recurring Billing</span>
           </div>
@@ -233,15 +233,15 @@ export default function RecurringBillingPage() {
         </header>
 
         {message && (
-          <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-[11px] font-bold text-emerald-300 flex items-center justify-between gap-4">
+          <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-[11px] font-bold text-emerald-700 flex items-center justify-between gap-4">
             <span>{message}</span>
-            <button onClick={() => setMessage(null)} className="text-emerald-400/60 hover:text-emerald-300 shrink-0"><X size={14} /></button>
+            <button onClick={() => setMessage(null)} className="text-emerald-500 hover:text-emerald-700 shrink-0"><X size={14} /></button>
           </div>
         )}
 
         {!activePlan ? (
-          <div className="bg-white/[0.02] border border-white/5 rounded-[32px] p-8 space-y-6">
-            <h3 className="text-sm font-black uppercase tracking-widest text-purple-400 flex items-center gap-2"><Repeat size={16} /> No Recurring Plan</h3>
+          <div className="bg-white border border-slate-200 rounded-[32px] p-8 space-y-6 shadow-sm">
+            <h3 className="text-sm font-black uppercase tracking-widest text-purple-600 flex items-center gap-2"><Repeat size={16} /> No Recurring Plan</h3>
             {!showCreateForm ? (
               acceptedQuotes.length > 0 ? (
                 <button onClick={() => setShowCreateForm(true)} className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
@@ -254,7 +254,7 @@ export default function RecurringBillingPage() {
               <div className="space-y-4">
                 <div>
                   <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Link to an accepted quote</label>
-                  <select value={newPlanQuoteId} onChange={(e) => setNewPlanQuoteId(e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold text-white outline-none focus:border-purple-500 mt-1">
+                  <select value={newPlanQuoteId} onChange={(e) => setNewPlanQuoteId(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-900 outline-none focus:border-purple-400 mt-1">
                     <option value="">— choose a quote —</option>
                     {acceptedQuotes.map((q) => (
                       <option key={q.id} value={q.id}>QT-{q.quote_number} (R{q.total_amount})</option>
@@ -263,13 +263,13 @@ export default function RecurringBillingPage() {
                 </div>
                 <div>
                   <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Next Due Date</label>
-                  <input type="date" value={newPlanNextDue} onChange={(e) => setNewPlanNextDue(e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold text-white outline-none focus:border-purple-500 mt-1 [color-scheme:dark]" />
+                  <input type="date" value={newPlanNextDue} onChange={(e) => setNewPlanNextDue(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-900 outline-none focus:border-purple-400 mt-1" />
                 </div>
                 <div className="flex gap-3">
                   <button onClick={handleCreatePlan} disabled={savingPlan} className="flex-1 py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
                     {savingPlan ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Save Plan
                   </button>
-                  <button onClick={() => setShowCreateForm(false)} className="px-5 py-3 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest">Cancel</button>
+                  <button onClick={() => setShowCreateForm(false)} className="px-5 py-3 bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest">Cancel</button>
                 </div>
               </div>
             )}
@@ -277,33 +277,33 @@ export default function RecurringBillingPage() {
         ) : (
           <>
             {/* QUOTE EDITOR */}
-            <div className="bg-white/[0.02] border border-white/5 rounded-[32px] p-8 space-y-6">
-              <div className="flex items-center justify-between border-b border-white/5 pb-4">
-                <h3 className="text-sm font-black uppercase tracking-widest text-emerald-500">Source Quote Terms</h3>
+            <div className="bg-white border border-slate-200 rounded-[32px] p-8 space-y-6 shadow-sm">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <h3 className="text-sm font-black uppercase tracking-widest text-emerald-600">Source Quote Terms</h3>
                 <button
                   onClick={() => setEditItems((prev) => [...prev, { description: "", quantity: 1, unit_price: 0, discount_pct: 0 }])}
-                  className="text-[10px] font-black uppercase bg-emerald-500/10 text-emerald-400 px-4 py-2 rounded-xl hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1"
+                  className="text-[10px] font-black uppercase bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1"
                 >
                   <Plus size={12} /> Add Line
                 </button>
               </div>
               <div className="space-y-4">
                 {editItems.map((item, idx) => (
-                  <div key={idx} className="bg-white/5 p-5 rounded-2xl border border-white/5 flex flex-col md:flex-row gap-4 md:items-end">
+                  <div key={idx} className="bg-slate-50 p-5 rounded-2xl border border-slate-100 flex flex-col md:flex-row gap-4 md:items-end">
                     <div className="flex-1">
                       <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Description</label>
-                      <input value={item.description} onChange={(e) => updateEditItem(idx, { description: e.target.value })} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold text-white outline-none focus:border-emerald-500 mt-1" />
+                      <input value={item.description} onChange={(e) => updateEditItem(idx, { description: e.target.value })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-900 outline-none focus:border-emerald-400 mt-1" />
                     </div>
                     <div className="w-full md:w-24">
                       <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Qty</label>
-                      <input type="number" step="0.01" value={item.quantity} onChange={(e) => updateEditItem(idx, { quantity: Number(e.target.value) || 0 })} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" />
+                      <input type="number" step="0.01" value={item.quantity} onChange={(e) => updateEditItem(idx, { quantity: Number(e.target.value) || 0 })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-400" />
                     </div>
                     <div className="w-full md:w-32">
                       <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Fee / Unit (R)</label>
-                      <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateEditItem(idx, { unit_price: Number(e.target.value) || 0 })} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" />
+                      <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateEditItem(idx, { unit_price: Number(e.target.value) || 0 })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-400" />
                     </div>
                     {editItems.length > 1 && (
-                      <button onClick={() => setEditItems((prev) => prev.filter((_, i) => i !== idx))} className="text-slate-600 hover:text-rose-500 transition-colors shrink-0 pb-3">
+                      <button onClick={() => setEditItems((prev) => prev.filter((_, i) => i !== idx))} className="text-slate-400 hover:text-rose-500 transition-colors shrink-0 pb-3">
                         <Trash2 size={18} />
                       </button>
                     )}
@@ -312,13 +312,13 @@ export default function RecurringBillingPage() {
               </div>
               <div>
                 <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Due Date</label>
-                <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} className="bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold text-white outline-none focus:border-emerald-500 mt-1 [color-scheme:dark]" />
+                <input type="date" value={editDueDate} onChange={(e) => setEditDueDate(e.target.value)} className="bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-900 outline-none focus:border-emerald-400 mt-1" />
                 <p className="text-[9px] text-slate-500 mt-1.5">Defaults to the last day of the current month.</p>
               </div>
-              <div className="pt-4 border-t border-white/10 flex items-center justify-between">
-                <p className="text-lg font-black italic text-white">Total: R {editTotal.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</p>
+              <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
+                <p className="text-lg font-black italic text-slate-900">Total: R {editTotal.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</p>
               </div>
-              {editError && <p className="text-xs font-bold text-rose-400">{editError}</p>}
+              {editError && <p className="text-xs font-bold text-rose-600">{editError}</p>}
               <p className="text-[10px] text-slate-500">Saving updates the quote and this recurring plan&apos;s billed amount going forward.</p>
               <button onClick={handleSaveQuoteEdit} disabled={savingEdit} className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all disabled:opacity-40">
                 {savingEdit ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save Changes
@@ -332,32 +332,32 @@ export default function RecurringBillingPage() {
               const dueLabel = daysUntilDue <= 0 ? "Due now" : `Due in ${daysUntilDue} day${daysUntilDue === 1 ? "" : "s"}`;
               const busy = busyPlanId === plan.id;
               return (
-                <div key={plan.id} className={`p-6 rounded-[32px] border space-y-4 ${isPaused ? "bg-white/[0.02] border-white/5 opacity-70" : "bg-purple-500/5 border-purple-500/20"}`}>
+                <div key={plan.id} className={`p-6 rounded-[32px] border space-y-4 shadow-sm ${isPaused ? "bg-white border-slate-200 opacity-70" : "bg-purple-50 border-purple-100"}`}>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
-                      <p className="text-2xl font-black italic text-white">R {Number(plan.total_amount).toLocaleString("en-ZA", { minimumFractionDigits: 2 })} <span className="text-xs font-bold text-slate-500 uppercase not-italic">/ {plan.frequency}</span></p>
-                      <p className="text-[10px] text-slate-400 mt-1">{plan.line_items?.[0]?.description || "Recurring charge"}</p>
+                      <p className="text-2xl font-black italic text-slate-900">R {Number(plan.total_amount).toLocaleString("en-ZA", { minimumFractionDigits: 2 })} <span className="text-xs font-bold text-slate-500 uppercase not-italic">/ {plan.frequency}</span></p>
+                      <p className="text-[10px] text-slate-500 mt-1">{plan.line_items?.[0]?.description || "Recurring charge"}</p>
                     </div>
-                    <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${isPaused ? "bg-slate-500/10 text-slate-400 border-slate-500/20" : daysUntilDue <= 0 ? "bg-rose-500/10 text-rose-400 border-rose-500/20" : "bg-blue-500/10 text-blue-400 border-blue-500/20"}`}>
+                    <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${isPaused ? "bg-slate-100 text-slate-500 border-slate-200" : daysUntilDue <= 0 ? "bg-rose-50 text-rose-600 border-rose-100" : "bg-blue-50 text-blue-600 border-blue-100"}`}>
                       {isPaused ? "Paused" : dueLabel}
                     </span>
                   </div>
                   <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Next due: {new Date(plan.next_due_date).toLocaleDateString("en-ZA")}</p>
-                  <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-white/5">
+                  <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-100">
                     {!isPaused && (
                       <>
                         <button disabled={busy} onClick={() => handleGenerate(plan.id, true)} className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40">
                           {busy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Generate &amp; Send Invoice
                         </button>
-                        <button disabled={busy} onClick={() => handleGenerate(plan.id, false)} className="px-4 py-2.5 bg-white/5 border border-white/10 hover:bg-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40">
+                        <button disabled={busy} onClick={() => handleGenerate(plan.id, false)} className="px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40">
                           Generate Only
                         </button>
                       </>
                     )}
-                    <button disabled={busy} onClick={() => handleSetStatus(plan.id, isPaused ? "active" : "paused")} className="px-4 py-2.5 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40 ml-auto">
+                    <button disabled={busy} onClick={() => handleSetStatus(plan.id, isPaused ? "active" : "paused")} className="px-4 py-2.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40 ml-auto">
                       {isPaused ? <Play size={14} /> : <Pause size={14} />} {isPaused ? "Resume" : "Pause"}
                     </button>
-                    <button disabled={busy} onClick={() => { if (confirm("Cancel this recurring plan? This cannot be undone.")) handleSetStatus(plan.id, "cancelled"); }} className="px-4 py-2.5 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-400 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40">
+                    <button disabled={busy} onClick={() => { if (confirm("Cancel this recurring plan? This cannot be undone.")) handleSetStatus(plan.id, "cancelled"); }} className="px-4 py-2.5 bg-rose-50 border border-rose-100 hover:bg-rose-100 text-rose-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40">
                       <Ban size={14} /> Cancel
                     </button>
                   </div>
@@ -366,15 +366,15 @@ export default function RecurringBillingPage() {
             })}
 
             {/* INVOICE HISTORY */}
-            <div className="bg-white/[0.02] border border-white/5 rounded-[32px] overflow-hidden">
-              <div className="p-6 border-b border-white/5">
-                <h3 className="text-sm font-black uppercase tracking-widest text-slate-300">Invoice History</h3>
+            <div className="bg-white border border-slate-200 rounded-[32px] overflow-hidden shadow-sm">
+              <div className="p-6 border-b border-slate-100">
+                <h3 className="text-sm font-black uppercase tracking-widest text-slate-700">Invoice History</h3>
               </div>
               {invoices.length === 0 ? (
-                <p className="p-8 text-center text-slate-500 font-bold italic text-xs">No invoices generated yet.</p>
+                <p className="p-8 text-center text-slate-400 font-bold italic text-xs">No invoices generated yet.</p>
               ) : (
                 <table className="w-full text-left">
-                  <thead className="bg-black/20 text-[9px] font-black uppercase tracking-widest text-slate-500">
+                  <thead className="bg-slate-50 text-[9px] font-black uppercase tracking-widest text-slate-500">
                     <tr>
                       <th className="px-6 py-3">Invoice</th>
                       <th className="px-6 py-3">Due</th>
@@ -383,17 +383,17 @@ export default function RecurringBillingPage() {
                       <th className="px-6 py-3 text-right">Link</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-slate-100">
                     {invoices.map((inv) => (
                       <tr key={inv.id}>
-                        <td className="px-6 py-4 text-xs font-black text-white">INV-{inv.invoice_number}</td>
-                        <td className="px-6 py-4 text-xs text-slate-400">{new Date(inv.due_at).toLocaleDateString("en-ZA")}</td>
-                        <td className="px-6 py-4 text-xs font-black text-white text-right">R {Number(inv.amount).toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</td>
+                        <td className="px-6 py-4 text-xs font-black text-slate-900">INV-{inv.invoice_number}</td>
+                        <td className="px-6 py-4 text-xs text-slate-500">{new Date(inv.due_at).toLocaleDateString("en-ZA")}</td>
+                        <td className="px-6 py-4 text-xs font-black text-slate-900 text-right">R {Number(inv.amount).toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</td>
                         <td className="px-6 py-4 text-center">
-                          <span className="px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-widest bg-white/5 border border-white/10 text-slate-300">{inv.status}</span>
+                          <span className="px-2.5 py-1 rounded text-[8px] font-black uppercase tracking-widest bg-slate-100 border border-slate-200 text-slate-600">{inv.status}</span>
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <a href={`/invoice-v2/${inv.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 text-[10px] font-black uppercase">
+                          <a href={`/invoice-v2/${inv.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-emerald-600 hover:text-emerald-700 text-[10px] font-black uppercase">
                             View <ArrowRight size={12} />
                           </a>
                         </td>

@@ -54,7 +54,7 @@ function resolveDiscountPct(quantity: number, unitPrice: number, mode: DiscountM
 
 export default function ComposerV2Page() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#020617]" />}>
+    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
       <ComposerV2Inner />
     </Suspense>
   );
@@ -350,55 +350,55 @@ function ComposerV2Inner() {
   }));
 
   return (
-    <div className="min-h-screen bg-[#020617] text-white p-6 lg:p-12 font-sans">
+    <div className="min-h-screen bg-slate-50 text-slate-900 p-6 lg:p-12 font-sans">
       <div className="max-w-6xl mx-auto space-y-10">
         {prefillSourceId && (
-          <div className="max-w-3xl mx-auto md:mx-0 px-5 py-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-bold flex items-center gap-2">
+          <div className="max-w-3xl mx-auto md:mx-0 px-5 py-3 rounded-2xl bg-cyan-50 border border-cyan-100 text-cyan-700 text-xs font-bold flex items-center gap-2">
             {supersedeFromId ? "Superseding" : "Duplicating"} {prefillSourceLabel || `QT-${prefillSourceId}`}
             {supersedeFromId && " — saving here will mark the original as superseded and link it to this new quote."}
           </div>
         )}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-slate-200 pb-10">
           <div className="space-y-4">
-            <Link href="/admin/finance-v2/pipeline" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-400 flex items-center gap-2 transition-colors">
+            <Link href="/admin/finance-v2/pipeline" className="text-[10px] font-black uppercase text-slate-500 hover:text-emerald-600 flex items-center gap-2 transition-colors">
               <ArrowLeft size={14} /> Back
             </Link>
             <h1 className="text-4xl md:text-5xl font-black tracking-tighter italic uppercase leading-none">
-              Gen_<span className="text-purple-500">quote</span> <span className="text-cyan-500 text-xl align-top">v2</span>
+              Gen_<span className="text-purple-600">quote</span> <span className="text-cyan-600 text-xl align-top">v2</span>
             </h1>
             <div className="flex flex-wrap items-center gap-4 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
               <span>Ref: QT-{nextQuoteNumber}</span>
-              <div className="flex items-center gap-2 px-3 py-1 rounded-lg border text-purple-400 bg-purple-500/10 border-purple-500/20">
+              <div className="flex items-center gap-2 px-3 py-1 rounded-lg border text-purple-600 bg-purple-50 border-purple-100">
                 <Calendar size={12} /> Expires:
-                <input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className="bg-transparent outline-none cursor-pointer font-bold ml-1 [color-scheme:dark]" />
+                <input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} className="bg-transparent outline-none cursor-pointer font-bold ml-1" />
               </div>
             </div>
           </div>
-          <button onClick={() => setShowPreview(true)} disabled={!selectedLead || !primaryProgramId} className="flex items-center gap-2 px-6 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-black uppercase hover:bg-white/10 transition-all disabled:opacity-20">
+          <button onClick={() => setShowPreview(true)} disabled={!selectedLead || !primaryProgramId} className="flex items-center gap-2 px-6 py-3 bg-white border border-slate-200 rounded-2xl text-[10px] font-black uppercase hover:bg-slate-100 transition-all disabled:opacity-20">
             <Eye size={16} /> Preview
           </button>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-6">
-              <div className="flex items-center justify-between border-b border-white/5 pb-6">
-                <h3 className="text-sm font-black uppercase tracking-widest text-emerald-500">Line Items</h3>
-                <button onClick={addLine} className="text-[10px] font-black uppercase bg-emerald-500/10 text-emerald-400 px-4 py-2 rounded-xl hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1">
+            <div className="bg-white border border-slate-200 rounded-[40px] p-8 shadow-sm space-y-6">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-6">
+                <h3 className="text-sm font-black uppercase tracking-widest text-emerald-600">Line Items</h3>
+                <button onClick={addLine} className="text-[10px] font-black uppercase bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1">
                   <Plus size={12} /> Add Line
                 </button>
               </div>
 
               <div className="space-y-4">
                 {lineItems.map((item, idx) => (
-                  <div key={idx} className="bg-white/5 p-6 rounded-3xl border border-white/5 relative">
+                  <div key={idx} className="bg-slate-50 p-6 rounded-3xl border border-slate-100 relative">
                     <div className="flex items-center gap-2 mb-4">
                       {(["freeform", "program", "package"] as LineSource[]).map((src) => (
                         <button
                           key={src}
                           type="button"
                           onClick={() => updateLine(idx, { source: src, program_id: null, session_id: null, event_package_id: null })}
-                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${item.source === src ? "bg-emerald-500 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
+                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${item.source === src ? "bg-emerald-500 text-white" : "bg-white border border-slate-200 text-slate-500 hover:bg-slate-100"}`}
                         >
                           {src === "freeform" ? "Freeform" : src === "program" ? "Curriculum Programme" : "Pricing Package"}
                         </button>
@@ -416,7 +416,7 @@ function ComposerV2Inner() {
                               updateLine(idx, { program_id: pid, session_id: null });
                               if (pid) loadSessionsFor(pid);
                             }}
-                            className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 mt-1"
+                            className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
                           >
                             <option value="">— choose a programme —</option>
                             {programs.map((p) => (
@@ -438,7 +438,7 @@ function ComposerV2Inner() {
                                   description: item.description || (session ? `${programs.find((p) => p.id === item.program_id)?.name} — ${new Date(session.starts_at).toLocaleDateString("en-ZA")}` : item.description),
                                 });
                               }}
-                              className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 mt-1"
+                              className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
                             >
                               <option value="">— No specific session —</option>
                               {(sessionsByProgram[item.program_id] || []).map((s) => (
@@ -465,7 +465,7 @@ function ComposerV2Inner() {
                               quantity: selectedLead?.number_of_children || item.quantity || 1,
                             });
                           }}
-                          className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500 mt-1"
+                          className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
                         >
                           <option value="">— choose a priced package —</option>
                           {eventPackages.map((ep) => (
@@ -483,28 +483,28 @@ function ComposerV2Inner() {
                     <input
                       value={item.description}
                       onChange={(e) => updateLine(idx, { description: e.target.value })}
-                      className="w-full bg-transparent border-b border-white/5 pb-2 mb-4 text-xs text-slate-300 outline-none focus:border-emerald-500"
+                      className="w-full bg-transparent border-b border-slate-200 pb-2 mb-4 text-xs text-slate-700 outline-none focus:border-emerald-400"
                       placeholder="Description shown on the document..."
                     />
 
                     <div className="flex flex-wrap gap-4">
                       <div className="w-20">
                         <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Qty</label>
-                        <input type="number" value={item.quantity} onChange={(e) => updateLine(idx, { quantity: Number(e.target.value) || 0 })} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" />
+                        <input type="number" value={item.quantity} onChange={(e) => updateLine(idx, { quantity: Number(e.target.value) || 0 })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-400" />
                       </div>
                       <div className="w-28">
                         <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Unit Price (R)</label>
-                        <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateLine(idx, { unit_price: Number(e.target.value) || 0 })} className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-500" />
+                        <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateLine(idx, { unit_price: Number(e.target.value) || 0 })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-400" />
                       </div>
                       <div className="w-32">
                         <div className="flex items-center justify-between">
                           <label className="text-[9px] font-black uppercase text-slate-500">Discount</label>
-                          <div className="flex rounded-md overflow-hidden border border-white/10">
+                          <div className="flex rounded-md overflow-hidden border border-slate-200">
                             {(["pct", "amount"] as DiscountMode[]).map((m) => (
                               <button
                                 key={m} type="button"
                                 onClick={() => updateLine(idx, { discount_mode: m, discount_input: item.discount_mode === m ? item.discount_input : "" })}
-                                className={`px-1.5 text-[9px] font-black ${item.discount_mode === m ? "bg-emerald-500 text-[#0a0f1d]" : "bg-white/5 text-slate-500"}`}
+                                className={`px-1.5 text-[9px] font-black ${item.discount_mode === m ? "bg-emerald-500 text-white" : "bg-white text-slate-500"}`}
                               >
                                 {m === "pct" ? "%" : "R"}
                               </button>
@@ -515,14 +515,14 @@ function ComposerV2Inner() {
                           type="number" step="0.01" value={item.discount_input}
                           onChange={(e) => updateLine(idx, { discount_input: e.target.value })}
                           placeholder={item.discount_mode === "pct" ? "0" : "0.00"}
-                          className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-emerald-400 text-center outline-none focus:border-emerald-500 mt-1"
+                          className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-emerald-600 text-center outline-none focus:border-emerald-400 mt-1"
                         />
                         {item.discount_mode === "amount" && item.discount_pct > 0 && (
                           <p className="text-[8px] text-slate-500 text-center mt-1">≈ {item.discount_pct.toFixed(1)}%</p>
                         )}
                       </div>
                       {lineItems.length > 1 && (
-                        <button onClick={() => removeLine(idx)} className="ml-auto self-end mb-2 text-slate-600 hover:text-rose-500 transition-colors">
+                        <button onClick={() => removeLine(idx)} className="ml-auto self-end mb-2 text-slate-400 hover:text-rose-500 transition-colors">
                           <Trash2 size={18} />
                         </button>
                       )}
@@ -532,17 +532,17 @@ function ComposerV2Inner() {
               </div>
             </div>
 
-            <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-4">
+            <div className="bg-white border border-slate-200 rounded-[40px] p-8 shadow-sm space-y-4">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input type="checkbox" checked={isTermEnrolment} onChange={(e) => setIsTermEnrolment(e.target.checked)} className="w-5 h-5 accent-purple-500" />
-                <span className="text-[10px] font-black uppercase text-slate-300">Term enrolment (offer a monthly payment plan)</span>
+                <span className="text-[10px] font-black uppercase text-slate-700">Term enrolment (offer a monthly payment plan)</span>
               </label>
               {isTermEnrolment && (
                 <div className="pl-8 space-y-3">
                   <div className="flex items-end gap-4 flex-wrap">
                     <div>
                       <label className="text-[9px] font-black uppercase text-slate-500">Number of Instalments</label>
-                      <input type="number" min={2} value={installmentCount} onChange={(e) => setInstallmentCount(Math.max(2, Number(e.target.value) || 2))} className="w-24 bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-purple-500 mt-1 block" />
+                      <input type="number" min={2} value={installmentCount} onChange={(e) => setInstallmentCount(Math.max(2, Number(e.target.value) || 2))} className="w-24 bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-purple-400 mt-1 block" />
                     </div>
                     <div>
                       <label className="text-[9px] font-black uppercase text-slate-500">Amount per Instalment (R)</label>
@@ -554,24 +554,24 @@ function ComposerV2Inner() {
                         type="number" min={0} step="0.01" value={monthlyInstallmentAmountInput}
                         onChange={(e) => setMonthlyInstallmentAmountInput(e.target.value)}
                         placeholder={suggestedMonthlyAmount > 0 ? suggestedMonthlyAmount.toFixed(2) : "0.00"}
-                        className="w-32 bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-purple-500 mt-1 block"
+                        className="w-32 bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-purple-400 mt-1 block"
                       />
                     </div>
                     {suggestedMonthlyAmount > 0 && (
                       <button
                         type="button"
                         onClick={() => setMonthlyInstallmentAmountInput(suggestedMonthlyAmount.toFixed(2))}
-                        className="text-[10px] font-bold text-purple-400 hover:text-purple-300 underline underline-offset-2 mb-3"
+                        className="text-[10px] font-bold text-purple-600 hover:text-purple-700 underline underline-offset-2 mb-3"
                       >
                         Use Total ÷ Count (R {suggestedMonthlyAmount.toFixed(2)})
                       </button>
                     )}
                   </div>
                   {monthlyInstallmentAmount !== null && (
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-slate-500">
                       R {monthlyInstallmentAmount.toFixed(2)} × {installmentCount} = R {(monthlyInstallmentAmount * installmentCount).toFixed(2)} total by instalment
                       {Math.abs(monthlyInstallmentAmount * installmentCount - grandTotal) > 0.01 && (
-                        <span className="text-amber-400"> (differs from the R {grandTotal.toFixed(2)} full-term price above — expected if instalments carry a premium)</span>
+                        <span className="text-amber-600"> (differs from the R {grandTotal.toFixed(2)} full-term price above — expected if instalments carry a premium)</span>
                       )}
                     </p>
                   )}
@@ -579,19 +579,19 @@ function ComposerV2Inner() {
               )}
             </div>
 
-            <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-4">
+            <div className="bg-white border border-slate-200 rounded-[40px] p-8 shadow-sm space-y-4">
               <label className="text-[10px] font-black uppercase text-slate-500 flex items-center gap-2"><FileText size={14} /> Notes</label>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full bg-[#0a0f1d] border border-white/10 rounded-2xl p-4 text-xs text-slate-300 outline-none focus:border-emerald-500 min-h-[80px] resize-none" placeholder="Notes for this quote..." />
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="w-full bg-white border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 outline-none focus:border-emerald-400 min-h-[80px] resize-none" placeholder="Notes for this quote..." />
             </div>
           </div>
 
           <div className="space-y-8">
-            <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-4">
-              <h3 className="text-sm font-black uppercase tracking-widest text-white border-b border-white/5 pb-4">Programme <span className="text-rose-400">*</span></h3>
+            <div className="bg-white border border-slate-200 rounded-[40px] p-8 shadow-sm space-y-4">
+              <h3 className="text-sm font-black uppercase tracking-widest text-slate-900 border-b border-slate-100 pb-4">Programme <span className="text-rose-500">*</span></h3>
               <select
                 value={primaryProgramId}
                 onChange={(e) => setPrimaryProgramId(e.target.value)}
-                className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-500"
+                className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400"
               >
                 <option value="" disabled>— Select the programme this quote is for —</option>
                 {featuredPrograms.filter((fp) => fp.programs_id).length > 0 && (
@@ -610,41 +610,41 @@ function ComposerV2Inner() {
               <p className="text-[9px] text-slate-500">Required — every quote belongs to one primary programme, even if extra freeform or package lines are added below. Prefer the Featured Programs group where a card exists.</p>
             </div>
 
-            <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 shadow-2xl space-y-6">
-              <h3 className="text-sm font-black uppercase tracking-widest text-white border-b border-white/5 pb-4">Recipient (Lead)</h3>
+            <div className="bg-white border border-slate-200 rounded-[40px] p-8 shadow-sm space-y-6">
+              <h3 className="text-sm font-black uppercase tracking-widest text-slate-900 border-b border-slate-100 pb-4">Recipient (Lead)</h3>
               {!selectedLead ? (
                 <div className="space-y-3">
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
-                    <input value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} placeholder="Search leads by name or phone..." className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl py-3 pl-10 text-xs outline-none focus:border-blue-500" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                    <input value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} placeholder="Search leads by name or phone..." className="w-full bg-white border border-slate-200 rounded-xl py-3 pl-10 text-xs outline-none focus:border-blue-400" />
                   </div>
                   {suggestedLeads.length > 0 && (
-                    <div className="bg-[#0f172a] border border-white/10 rounded-2xl overflow-hidden">
+                    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
                       {suggestedLeads.map((l) => (
-                        <button key={l.id} onClick={() => { setSelectedLead(l); setLeadSearch(""); setSuggestedLeads([]); }} className="w-full text-left p-4 hover:bg-blue-500/10 border-b border-white/5 last:border-b-0 text-xs font-bold transition-colors">
-                          {l.name || "Unnamed"} <span className="text-[9px] text-slate-500 ml-2">{l.phone}</span>
+                        <button key={l.id} onClick={() => { setSelectedLead(l); setLeadSearch(""); setSuggestedLeads([]); }} className="w-full text-left p-4 hover:bg-blue-50 border-b border-slate-100 last:border-b-0 text-xs font-bold transition-colors">
+                          {l.company_name || l.name || "Unnamed"} <span className="text-[9px] text-slate-500 ml-2">{l.phone}</span>
                         </button>
                       ))}
                     </div>
                   )}
                   {leadSearch.length > 2 && suggestedLeads.length === 0 && (
-                    <div className="p-4 bg-black/20 border border-dashed border-white/10 rounded-2xl space-y-3">
+                    <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-2xl space-y-3">
                       <p className="text-[10px] text-slate-500">No matching lead — create one:</p>
-                      <input value={newLeadPhone} onChange={(e) => setNewLeadPhone(e.target.value)} placeholder="WhatsApp number" className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-blue-500" />
-                      <input value={newLeadEmail} onChange={(e) => setNewLeadEmail(e.target.value)} placeholder="Email (optional)" className="w-full bg-[#0a0f1d] border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-blue-500" />
-                      <button onClick={handleCreateLead} className="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-black uppercase">Create Lead: {leadSearch}</button>
+                      <input value={newLeadPhone} onChange={(e) => setNewLeadPhone(e.target.value)} placeholder="WhatsApp number" className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs outline-none focus:border-blue-400" />
+                      <input value={newLeadEmail} onChange={(e) => setNewLeadEmail(e.target.value)} placeholder="Email (optional)" className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs outline-none focus:border-blue-400" />
+                      <button onClick={handleCreateLead} className="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-[10px] font-black uppercase text-white">Create Lead: {leadSearch}</button>
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="p-5 bg-blue-500/10 border border-blue-500/30 rounded-3xl relative group">
+                <div className="p-5 bg-blue-50 border border-blue-200 rounded-3xl relative group">
                   <button onClick={() => setSelectedLead(null)} className="absolute -top-2 -right-2 p-1.5 bg-rose-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12} /></button>
-                  <p className="text-[9px] font-black text-blue-500 uppercase mb-1 tracking-widest flex items-center gap-1.5"><User size={10} /> Lead</p>
-                  <p className="text-xl font-black uppercase italic leading-none">{selectedLead.name || "Unnamed"}</p>
-                  <p className="text-[10px] text-slate-400 mt-2">{selectedLead.email || "No Email"} · {selectedLead.phone}</p>
+                  <p className="text-[9px] font-black text-blue-600 uppercase mb-1 tracking-widest flex items-center gap-1.5"><User size={10} /> Lead</p>
+                  <p className="text-xl font-black uppercase italic leading-none text-slate-900">{selectedLead.company_name || selectedLead.name || "Unnamed"}</p>
+                  <p className="text-[10px] text-slate-500 mt-2">{selectedLead.email || "No Email"} · {selectedLead.phone}</p>
                 </div>
               )}
-              <div className="flex items-center gap-3 p-4 bg-rose-500/5 border border-rose-500/20 rounded-2xl">
+              <div className="flex items-center gap-3 p-4 bg-rose-50 border border-rose-100 rounded-2xl">
                 <CreditCard className="text-rose-500" size={20} />
                 <p className="text-[9px] text-slate-500 font-bold uppercase">New pipeline — writes to quotes/leads, not billing_records</p>
               </div>
@@ -687,17 +687,17 @@ function ComposerV2Inner() {
 
       <AnimatePresence>
         {showPreview && selectedLead && (
-          <div className="fixed inset-0 z-[200] flex justify-center items-center p-6 bg-black/95 backdrop-blur-xl">
-            <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="w-full max-w-5xl bg-[#020617] rounded-[40px] border border-white/10 flex flex-col h-[90vh]">
-              <div className="p-6 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
-                <p className="text-sm font-black uppercase italic tracking-tight">Previewing QT-{nextQuoteNumber}</p>
-                <button onClick={() => setShowPreview(false)} className="p-3 text-slate-500 hover:text-rose-500 bg-white/5 rounded-xl transition-all"><X size={24} /></button>
+          <div className="fixed inset-0 z-[200] flex justify-center items-center p-6 bg-slate-900/60 backdrop-blur-xl">
+            <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="w-full max-w-5xl bg-white rounded-[40px] border border-slate-200 shadow-2xl flex flex-col h-[90vh]">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <p className="text-sm font-black uppercase italic tracking-tight text-slate-900">Previewing QT-{nextQuoteNumber}</p>
+                <button onClick={() => setShowPreview(false)} className="p-3 text-slate-500 hover:text-rose-500 bg-white border border-slate-200 rounded-xl transition-all"><X size={24} /></button>
               </div>
               <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
                 <RADBillingDocument
                   type="quote"
                   docNumber={`QT-${nextQuoteNumber}`}
-                  recipient={{ name: selectedLead.name || "Lead", email: selectedLead.email || "", phone: selectedLead.phone || "" }}
+                  recipient={{ name: selectedLead.company_name || selectedLead.name || "Lead", email: selectedLead.email || "", phone: selectedLead.phone || "" }}
                   items={documentItems}
                   date={new Date().toLocaleDateString("en-ZA")}
                   dueDate={expiryDate}
@@ -712,9 +712,9 @@ function ComposerV2Inner() {
       <AnimatePresence>
         {successMessage && (
           <div className="fixed bottom-10 right-10 z-[300] flex justify-end pointer-events-none">
-            <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="bg-[#0f172a] border border-emerald-500/30 rounded-2xl p-5 shadow-2xl flex items-center gap-4 max-w-sm pointer-events-auto">
-              <CheckCircle2 className="text-emerald-400 shrink-0" size={20} />
-              <p className="text-[10px] font-bold text-slate-400">{successMessage}</p>
+            <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="bg-white border border-emerald-200 rounded-2xl p-5 shadow-2xl flex items-center gap-4 max-w-sm pointer-events-auto">
+              <CheckCircle2 className="text-emerald-500 shrink-0" size={20} />
+              <p className="text-[10px] font-bold text-slate-600">{successMessage}</p>
             </motion.div>
           </div>
         )}

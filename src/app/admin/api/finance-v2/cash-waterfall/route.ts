@@ -18,10 +18,11 @@ export async function GET(request: Request) {
 
   const supabase = supabaseAdmin();
 
-  const [{ data: invoices }, { data: payments }, { data: expenses }] = await Promise.all([
+  const [{ data: invoices }, { data: payments }, { data: expenses }, { data: balanceForwardPayments }] = await Promise.all([
     supabase.from('invoices').select('*'),
     supabase.from('invoice_payments').select('*'),
     supabase.from('monthly_expenses').select('*').eq('active', true),
+    supabase.from('lead_balance_forward_payments').select('*'),
   ]);
 
   // --- §3: Due tracker ---
@@ -43,7 +44,12 @@ export async function GET(request: Request) {
   const invoicedThisMonth = sumAmt((invoices || []).filter((inv) => inRange(inv.created_at, thisMonth.start, thisMonth.end)));
   const paidThisMonth = (payments || [])
     .filter((p) => inRange(p.received_at, thisMonth.start, thisMonth.end))
-    .reduce((s, p) => s + Number(p.amount), 0);
+    .reduce((s, p) => s + Number(p.amount), 0)
+    // Legacy brought-forward debt collected this month is real cash too -
+    // see computeRunningBalanceThrough for why this has to match.
+    + (balanceForwardPayments || [])
+      .filter((p) => inRange(p.received_at + 'T00:00:00' + SAST_OFFSET, thisMonth.start, thisMonth.end))
+      .reduce((s, p) => s + Number(p.amount), 0);
 
   // --- §2.3: delivery-linked rollup, one expense entry per invoice whose
   // delivery falls in this month. NOT the same set as dueThisMonth: a

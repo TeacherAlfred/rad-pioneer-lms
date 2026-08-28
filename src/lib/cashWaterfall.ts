@@ -73,10 +73,11 @@ export async function computeRunningBalanceThrough(supabase: any, throughMonthKe
   }
 
   const MAX_MONTHS = 60;
-  const [{ data: invoices }, { data: payments }, { data: expenses }] = await Promise.all([
+  const [{ data: invoices }, { data: payments }, { data: expenses }, { data: balanceForwardPayments }] = await Promise.all([
     supabase.from('invoices').select('*'),
     supabase.from('invoice_payments').select('*'),
     supabase.from('monthly_expenses').select('*').eq('active', true),
+    supabase.from('lead_balance_forward_payments').select('*'),
   ]);
 
   const quoteIds = [...new Set((invoices || []).map((i: any) => i.quote_id).filter(Boolean))];
@@ -124,6 +125,13 @@ export async function computeRunningBalanceThrough(supabase: any, throughMonthKe
 
   const paidByMonth = new Map<string, number>();
   for (const p of payments || []) {
+    const mk = String(p.received_at).slice(0, 7);
+    paidByMonth.set(mk, (paidByMonth.get(mk) || 0) + Number(p.amount));
+  }
+  // Real cash landing against a legacy brought-forward debt is real cash in
+  // the bank, same as any invoice payment - has to count here too, or the
+  // running balance understates true cash position by exactly this amount.
+  for (const p of balanceForwardPayments || []) {
     const mk = String(p.received_at).slice(0, 7);
     paidByMonth.set(mk, (paidByMonth.get(mk) || 0) + Number(p.amount));
   }
