@@ -2,35 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Users, GraduationCap, Eye, Bell, Gift, MessageCircle, Mail, ArrowRight } from "lucide-react";
+import { Loader2, ArrowRight, FolderKanban } from "lucide-react";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
-import { LightStatTile } from "../_components/LightStatTile";
 
-type IreneFitnessSummary = {
-  total_responses: number;
-  total_children: number;
-  consent_public_display: number;
-  consent_updates: number;
-  consent_marketing: number;
-  whatsapp_provided: number;
-  email_provided: number;
+type ProjectCard = {
+  key: string;
+  name: string;
+  href: string;
+  teaser_label: string | null;
+  teaser_value: number | null;
 };
 
 export default function ProjectsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [ireneFitness, setIreneFitness] = useState<IreneFitnessSummary | null>(null);
+  const [projects, setProjects] = useState<ProjectCard[]>([]);
 
   useEffect(() => {
     fetch("/admin/api/dashboard-v2/projects")
       .then((r) => r.json())
-      .then((data) => setIreneFitness(data.irene_fitness?.summary || null))
+      .then((data) => setProjects(data.projects || []))
       .finally(() => setLoading(false));
   }, []);
-
-  function viewDetail(filter: string) {
-    router.push(`/admin/dashboard-v2/projects/irene-fitness?filter=${filter}`);
-  }
 
   if (loading) {
     return (
@@ -48,36 +41,37 @@ export default function ProjectsPage() {
         <header>
           <h1 className="text-3xl md:text-4xl font-black tracking-tight">Projects</h1>
           <p className="text-stone-500 text-sm mt-1">
-            Per-project summaries, outside the main lead funnel. More projects will land here over time.
+            Standalone initiatives outside the main lead funnel, each with its own dashboard.
           </p>
         </header>
 
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400">
-              Irene Primary Fitness Community
-            </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {projects.map((p) => (
             <button
-              onClick={() => viewDetail("all")}
-              className="flex items-center gap-1 text-[11px] font-black uppercase tracking-widest text-blue-600 hover:text-blue-800"
+              key={p.key}
+              onClick={() => router.push(p.href)}
+              className="text-left bg-white border border-stone-200 hover:border-blue-300 p-6 rounded-[24px] shadow-sm transition-colors flex flex-col justify-between gap-8"
             >
-              View all responses <ArrowRight size={12} />
+              <div className="flex items-start justify-between">
+                <div className="p-3 rounded-2xl bg-stone-50 text-blue-600">
+                  <FolderKanban size={22} />
+                </div>
+                <ArrowRight size={16} className="text-stone-300" />
+              </div>
+              <div>
+                <h2 className="font-black text-lg tracking-tight">{p.name}</h2>
+                {p.teaser_label && (
+                  <p className="text-[11px] font-black uppercase tracking-widest text-stone-400 mt-1">
+                    {p.teaser_value} {p.teaser_label}
+                  </p>
+                )}
+              </div>
             </button>
-          </div>
-          {ireneFitness ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              <LightStatTile onClick={() => viewDetail("all")} label="Total Responses" value={ireneFitness.total_responses} icon={Users} color="text-blue-600" />
-              <LightStatTile onClick={() => viewDetail("all")} label="Children Registered" value={ireneFitness.total_children} icon={GraduationCap} color="text-violet-600" />
-              <LightStatTile onClick={() => viewDetail("public_display")} label="Public Display Consent" value={ireneFitness.consent_public_display} icon={Eye} color="text-emerald-600" />
-              <LightStatTile onClick={() => viewDetail("updates")} label="Community Updates Opt-in" value={ireneFitness.consent_updates} icon={Bell} color="text-amber-600" />
-              <LightStatTile onClick={() => viewDetail("marketing")} label="Marketing Guide Opt-in" value={ireneFitness.consent_marketing} icon={Gift} color="text-rose-600" />
-              <LightStatTile onClick={() => viewDetail("whatsapp")} label="WhatsApp Provided" value={ireneFitness.whatsapp_provided} icon={MessageCircle} color="text-teal-600" />
-              <LightStatTile onClick={() => viewDetail("email")} label="Email Provided" value={ireneFitness.email_provided} icon={Mail} color="text-slate-600" />
-            </div>
-          ) : (
-            <p className="text-sm text-stone-400">Couldn&apos;t load Irene Fitness data.</p>
+          ))}
+          {projects.length === 0 && (
+            <p className="text-sm text-stone-400 col-span-full">No projects yet.</p>
           )}
-        </section>
+        </div>
       </div>
     </div>
   );
