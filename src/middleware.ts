@@ -5,10 +5,6 @@ export async function middleware(request: NextRequest) {
   
   const url = request.nextUrl.clone()
 
-  if (url.pathname.startsWith('/student')) {
-    return NextResponse.next();
-  }
-
   // 1. Create an initial response
   let supabaseResponse = NextResponse.next({
     request,
@@ -33,11 +29,25 @@ export async function middleware(request: NextRequest) {
           )
         },
       },
+      global: {
+        // Bound the auth round-trip so a slow/unresponsive Supabase Auth
+        // API fails fast instead of hanging until Vercel's edge middleware
+        // execution limit kills the whole request with a 504
+        // MIDDLEWARE_INVOCATION_TIMEOUT.
+        fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(5000) }),
+      },
     }
   )
 
-  // 3. IMPORTANT: Use getUser() to validate the session
-  const { data: { user } } = await supabase.auth.getUser()
+  // 3. IMPORTANT: Use getUser() to validate the session.
+  // Fail closed (treat as logged-out) if Supabase Auth doesn't respond in time.
+  let user: { id: string } | null = null
+  try {
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch {
+    user = null
+  }
 
   // 4. THE REDIRECT LOGIC
   // IF YOU are logged in, funnel you to admin
@@ -83,7 +93,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
+  // Only run this (Supabase-hitting) middleware on the paths that actually
+  // need the auth/redirect check. Previously matched almost every route
+  // (including API endpoints like the WhatsApp webhook), so a slow Supabase
+  // Auth response caused MIDDLEWARE_INVOCATION_TIMEOUT site-wide.
+  matcher: ['/', '/login', '/staff/dashboard', '/admin/:path*'],
 }
