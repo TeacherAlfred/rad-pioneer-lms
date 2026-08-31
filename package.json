@@ -21,6 +21,7 @@
     "bcrypt": "^6.0.0",
     "blockly": "^12.5.1",
     "canvas-confetti": "^1.9.4",
+    "cmdk": "^1.1.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "epubjs": "^0.3.93",
@@ -36,7 +37,8 @@
     "react-dom": "19.2.4",
     "react-pdf": "^10.4.1",
     "recharts": "^3.8.1",
-    "resend": "^6.10.0"
+    "resend": "^6.10.0",
+    "sonner": "^2.0.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

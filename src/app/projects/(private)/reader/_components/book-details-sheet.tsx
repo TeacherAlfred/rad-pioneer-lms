@@ -2,23 +2,29 @@
 
 import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
+import { toast } from "sonner";
+import { Check } from "lucide-react";
 import { toggleBookStatus, updateBookCover, updateBookFormat } from "../_actions/books";
+import ConfirmDialog from "./confirm-dialog";
 
 interface BookDetailsSheetProps {
   book: any | null;
   isOpen: boolean;
   onClose: () => void;
   onDelete: (id: string) => void;
+  onBookUpdated?: (bookId: string, patch: Record<string, any>) => void;
 }
 
-export default function BookDetailsSheet({ book, isOpen, onClose, onDelete }: BookDetailsSheetProps) {
+export default function BookDetailsSheet({ book, isOpen, onClose, onDelete, onBookUpdated }: BookDetailsSheetProps) {
   const [isVip, setIsVip] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSynopsisExpanded, setIsSynopsisExpanded] = useState(false);
-  
+
   // NEW: Format states
   const [isDigital, setIsDigital] = useState(false);
   const [isPhysical, setIsPhysical] = useState(false);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [isRemoveCoverConfirmOpen, setIsRemoveCoverConfirmOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -29,6 +35,7 @@ export default function BookDetailsSheet({ book, isOpen, onClose, onDelete }: Bo
       setIsVip(book.is_vip || false);
       setIsDigital(book.has_digital || false);
       setIsPhysical(book.has_physical || false);
+      setIsCompleted(book.status === 'completed');
     }
   }, [book]);
 
@@ -47,11 +54,28 @@ export default function BookDetailsSheet({ book, isOpen, onClose, onDelete }: Bo
   const handleToggleVip = async () => {
     const newValue = !isVip;
     setIsVip(newValue);
+    onBookUpdated?.(book.id, { is_vip: newValue });
     try {
       await toggleBookStatus(book.id, { is_vip: newValue });
     } catch (error) {
       console.error("Failed to toggle VIP status", error);
       setIsVip(!newValue);
+      onBookUpdated?.(book.id, { is_vip: !newValue });
+    }
+  };
+
+  const handleToggleCompleted = async () => {
+    const newStatus = isCompleted ? 'reading' : 'completed';
+    setIsCompleted(!isCompleted);
+    onBookUpdated?.(book.id, { status: newStatus });
+    try {
+      await toggleBookStatus(book.id, { status: newStatus });
+      toast.success(newStatus === 'completed' ? "Marked as read." : "Moved back to Currently Reading.");
+    } catch (error) {
+      console.error("Failed to update status", error);
+      setIsCompleted(isCompleted);
+      onBookUpdated?.(book.id, { status: book.status });
+      toast.error("Failed to update status.");
     }
   };
 
@@ -70,15 +94,14 @@ export default function BookDetailsSheet({ book, isOpen, onClose, onDelete }: Bo
       // Revert on failure
       setIsDigital(isDigital);
       setIsPhysical(isPhysical);
-      alert("Failed to update format.");
+      toast.error("Failed to update format.");
     }
   };
 
   const handleRemoveCover = async () => {
-    if (confirm("Are you sure you want to remove this cover art?")) {
-      await updateBookCover(book.id, ""); 
-      onClose(); 
-    }
+    await updateBookCover(book.id, "");
+    toast.success("Cover art removed.");
+    onClose();
   };
 
   const handleUploadCover = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -99,10 +122,11 @@ export default function BookDetailsSheet({ book, isOpen, onClose, onDelete }: Bo
       
       const { key } = await response.json();
       await updateBookCover(book.id, key);
-      onClose(); 
+      toast.success("Cover art updated.");
+      onClose();
     } catch (error) {
       console.error("Failed to upload new cover", error);
-      alert("Failed to upload cover art.");
+      toast.error("Failed to upload cover art.");
     } finally {
       setIsUploading(false);
     }
@@ -165,7 +189,7 @@ export default function BookDetailsSheet({ book, isOpen, onClose, onDelete }: Bo
               </button>
               {book.cover_key && (
                 <button 
-                  onClick={handleRemoveCover}
+                  onClick={() => setIsRemoveCoverConfirmOpen(true)}
                   className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-100 text-sm font-semibold rounded-lg backdrop-blur-md transition-colors"
                 >
                   Remove Cover
@@ -198,6 +222,18 @@ export default function BookDetailsSheet({ book, isOpen, onClose, onDelete }: Bo
                 }`}
               >
                 Physical
+              </button>
+
+              <button
+                onClick={handleToggleCompleted}
+                className={`px-3 py-1 text-[10px] font-bold rounded-md border tracking-wide uppercase transition-colors flex items-center gap-1 ${
+                  isCompleted
+                    ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'
+                    : 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-slate-100 hover:text-slate-600'
+                }`}
+              >
+                {isCompleted && <Check size={10} strokeWidth={3} />}
+                {isCompleted ? 'Read' : 'Mark as Read'}
               </button>
             </div>
             {/* ---------------------------------- */}
@@ -313,6 +349,18 @@ export default function BookDetailsSheet({ book, isOpen, onClose, onDelete }: Bo
           </Link>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={isRemoveCoverConfirmOpen}
+        title="Remove this cover?"
+        description="This removes the cover art from this volume. You can upload a new one anytime."
+        confirmLabel="Remove"
+        onConfirm={() => {
+          setIsRemoveCoverConfirmOpen(false);
+          handleRemoveCover();
+        }}
+        onCancel={() => setIsRemoveCoverConfirmOpen(false)}
+      />
     </>
   );
 }

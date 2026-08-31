@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { fetchAndStoreBookMetadata } from "@/lib/metadata-helper";
+import { isAdmin } from "@/lib/require-admin";
 
 export async function POST(request: Request) {
+  if (!(await isAdmin())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await request.json();
     const { books } = body; 

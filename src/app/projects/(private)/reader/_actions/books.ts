@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/utils/supabase/server"; // Adjust path to your Supabase server client factory
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, BUCKET_NAME } from "@/lib/storage";
 
 export interface BookWithTags {
@@ -21,7 +21,13 @@ export interface BookWithTags {
   suggested_metadata?: any; 
   is_vip?: boolean;
   is_vaulted?: boolean;
+  reading_progress?: number | null;
+  last_page_number?: number | null;
+  last_cfi?: string | null;
+  last_read_at?: string | null;
   tags: { id: string; name: string }[];
+  /** Only populated by getDuplicateGroups() - fetched on-demand from R2, not persisted. */
+  fileSizeBytes?: number | null;
 }
 
 /**
@@ -153,7 +159,7 @@ export async function getBookById(id: string) {
   };
 }
 
-export async function toggleBookStatus(bookId: string, updates: { is_vip?: boolean, is_vaulted?: boolean }) {
+export async function toggleBookStatus(bookId: string, updates: { is_vip?: boolean, is_vaulted?: boolean, status?: 'unread' | 'reading' | 'completed' }) {
   const supabase = await createClient();
   const { error } = await supabase.from("rad_books").update(updates).eq("id", bookId);
   if (error) throw new Error(error.message);
@@ -246,10 +252,27 @@ export async function getDuplicateGroups(): Promise<BookWithTags[][]> {
 
   // Filter to only return groups that have 2 or more copies
   const duplicates = Object.values(groups).filter(group => group.length > 1);
-  
+
   // Sort alphabetically by title
   duplicates.sort((a, b) => (a[0].title || "").localeCompare(b[0].title || ""));
-  
+
+  // File size isn't stored anywhere - fetch it on-demand from R2, scoped only
+  // to files already in a flagged duplicate group (bounded by duplicate
+  // count, not library size), for the side-by-side diff cards.
+  await Promise.all(
+    duplicates.flatMap(group =>
+      group.map(async (book) => {
+        if (!book.file_key) return;
+        try {
+          const head = await r2Client.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: book.file_key }));
+          book.fileSizeBytes = head.ContentLength ?? null;
+        } catch {
+          book.fileSizeBytes = null;
+        }
+      })
+    )
+  );
+
   return duplicates;
 }
 
@@ -296,4 +319,62 @@ export async function updateBookFormat(bookId: string, has_digital: boolean, has
 
   if (error) throw new Error(error.message);
   revalidatePath("/projects/reader");
+}
+
+export interface CommandPaletteBook {
+  id: string;
+  title: string;
+  author: string | null;
+  status: BookWithTags['status'];
+  tags: { id: string; name: string }[];
+}
+
+/**
+ * Trimmed index for the command palette - excludes synopsis/suggested_metadata/
+ * cover_key etc. since those aren't needed to render or filter results, and
+ * excludes WIP books since /projects/reader/[bookId] 404s on those. Paginated
+ * the same way as getLibraryBooks() to avoid silently truncating past the
+ * 1000-row PostgREST default on a large library.
+ */
+export async function getCommandPaletteIndex(): Promise<CommandPaletteBook[]> {
+  const supabase = await createClient();
+
+  let allBooks: any[] = [];
+  let fetchMore = true;
+  let from = 0;
+  const step = 1000;
+
+  while (fetchMore) {
+    const { data, error } = await supabase
+      .from("rad_books")
+      .select(`
+        id, title, author, status,
+        rad_book_tags ( rad_tags (id, name) )
+      `)
+      .eq("marked_for_deletion", false)
+      .neq("status", "wip")
+      .order("title", { ascending: true })
+      .range(from, from + step - 1);
+
+    if (error) {
+      console.error("Error fetching command palette index:", error);
+      return [];
+    }
+
+    if (data && data.length > 0) {
+      allBooks = [...allBooks, ...data];
+      from += step;
+      if (data.length < step) fetchMore = false;
+    } else {
+      fetchMore = false;
+    }
+  }
+
+  return allBooks.map((book: any) => ({
+    id: book.id,
+    title: book.title,
+    author: book.author,
+    status: book.status,
+    tags: book.rad_book_tags?.map((bt: any) => bt.rad_tags).filter(Boolean) || [],
+  }));
 }

@@ -1,8 +1,13 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, BUCKET_NAME } from "@/lib/storage";
 import { NextResponse } from "next/server";
+import { isAdmin } from "@/lib/require-admin";
 
 export async function GET(request: Request) {
+  if (!(await isAdmin())) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const key = searchParams.get("key");
 

@@ -28,6 +28,23 @@
   /* Typography */
   --font-sans: Arial, Helvetica, sans-serif;
   --font-brand: var(--font-geist-sans); /* Using Geist as a stand-in for Quan Slim */
+
+  /* Reader v2 ("Meridian") type system - loaded via next/font/google in
+     reader-v2/layout.tsx and scoped to that route tree, not app-wide. */
+  --font-display: var(--font-instrument-serif), Georgia, serif;
+  --font-precision: var(--font-archivo), Arial, Helvetica, sans-serif;
+  --font-data: var(--font-fragment-mono), "SF Mono", Menlo, monospace;
+
+  /* Reader v2 ("Meridian") brass accent - reading-lamp amber refined into a
+     warm metal read, replacing flat amber fills. Kept on the existing light
+     ground per an explicit decision not to move the reader to a dark theme. */
+  --color-brass-50: #fbf6ec;
+  --color-brass-100: #f5e9cf;
+  --color-brass-200: #ecd8a8;
+  --color-brass-400: #d9b06a;
+  --color-brass-500: #c79a4b;
+  --color-brass-600: #ad8038;
+  --color-brass-700: #8a642c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -63,4 +80,35 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
 input[type="time"]::-webkit-calendar-picker-indicator:hover {
     filter: invert(1) opacity(100%);
+}
+
+/* Styled thin scrollbar (amber-tinted) used across the reader's scroll
+   panels - was referenced in that feature's markup with no matching rule
+   for a while, so scrollbars there rendered as plain browser defaults. */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #fbbf2480;
+  border-radius: 9999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #f59e0b;
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #fbbf2480 transparent;
+}
+
+/* Search-term highlight injected into react-pdf's text layer via
+   customTextRenderer. The text layer itself is invisible (positioned over
+   the rendered canvas glyphs for selection purposes) - the mark's
+   background is what actually paints the visible highlight. */
+.pdf-search-mark {
+  background: rgba(245, 158, 11, 0.45);
+  border-radius: 2px;
 }

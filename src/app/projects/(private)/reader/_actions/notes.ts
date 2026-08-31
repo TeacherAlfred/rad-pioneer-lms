@@ -46,3 +46,28 @@ export async function getBookNotes(bookId: string) {
   if (error) return [];
   return data;
 }
+
+/**
+ * Silently persists the exact resume position (page number for PDFs, CFI for
+ * EPUBs), separate from the manual 0-100 reading_progress field above. Called
+ * debounced during reading and once on unmount/visibility change.
+ */
+export async function saveLastPosition(
+  bookId: string,
+  position: { lastPageNumber?: number; lastCfi?: string }
+) {
+  const supabase = await createClient();
+
+  const updates: { last_page_number?: number; last_cfi?: string; last_read_at: string } = {
+    last_read_at: new Date().toISOString(),
+  };
+  if (position.lastPageNumber !== undefined) updates.last_page_number = position.lastPageNumber;
+  if (position.lastCfi !== undefined) updates.last_cfi = position.lastCfi;
+
+  const { error } = await supabase
+    .from("rad_books")
+    .update(updates)
+    .eq("id", bookId);
+
+  if (error) throw new Error(error.message);
+}

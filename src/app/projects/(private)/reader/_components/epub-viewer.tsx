@@ -1,25 +1,69 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import ePub, { Book, Rendition } from "epubjs";
+import { ChevronLeft, ChevronRight, Sun, BookOpen, Moon, Minus, Plus } from "lucide-react";
 
 interface EpubViewerProps {
   url: string;
+  initialCfi?: string; // Exact resume position from a previous session
   currentColor?: string;
   onHighlight?: (text: string, cfi: string, color: string) => void;
   onHighlightClick?: (cfi: string) => void;
+  onLocationChange?: (cfi: string) => void;
 }
 
-export default function EpubViewer({ url, currentColor = "yellow", onHighlight, onHighlightClick }: EpubViewerProps) {
+type EpubTheme = 'light' | 'sepia' | 'dark';
+
+const THEME_STYLES: Record<EpubTheme, Record<string, Record<string, string>>> = {
+  light: { body: { color: "#1e293b", background: "#ffffff" } },
+  sepia: { body: { color: "#5b4636", background: "#f4ecd8" } },
+  dark: { body: { color: "#e2e8f0", background: "#0f172a" } },
+};
+
+const THEME_FRAME_CLASS: Record<EpubTheme, string> = {
+  light: "bg-white",
+  sepia: "bg-[#f4ecd8]",
+  dark: "bg-[#0f172a]",
+};
+
+const THEME_OUTER_CLASS: Record<EpubTheme, string> = {
+  light: "bg-slate-50",
+  sepia: "bg-[#ece0c8]",
+  dark: "bg-[#020617]",
+};
+
+const THEME_ORDER: EpubTheme[] = ['light', 'sepia', 'dark'];
+const THEME_ICON: Record<EpubTheme, typeof Sun> = { light: Sun, sepia: BookOpen, dark: Moon };
+
+export interface EpubViewerHandle {
+  nextPage: () => void;
+  prevPage: () => void;
+}
+
+const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubViewer(
+  { url, initialCfi, currentColor = "yellow", onHighlight, onHighlightClick, onLocationChange },
+  ref
+) {
   const viewerRef = useRef<HTMLDivElement>(null);
-  
+
   const [book, setBook] = useState<Book | null>(null);
   const [rendition, setRendition] = useState<Rendition | null>(null);
   const [isReady, setIsReady] = useState(false);
-  
+
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
   const [currentLocation, setCurrentLocation] = useState<string>("");
+
+  const [theme, setTheme] = useState<EpubTheme>('light');
+  const [fontSize, setFontSize] = useState(100);
+
+  // Kept in a ref (not the effect's dependency array) so passing a fresh
+  // inline callback on every parent render doesn't remount the whole book.
+  const onLocationChangeRef = useRef(onLocationChange);
+  useEffect(() => {
+    onLocationChangeRef.current = onLocationChange;
+  }, [onLocationChange]);
 
   useEffect(() => {
     let isMounted = true;
@@ -32,12 +76,18 @@ export default function EpubViewer({ url, currentColor = "yellow", onHighlight, 
       const newRendition = newBook.renderTo(viewerRef.current, {
         width: "100%",
         height: "100%",
-        spread: "none", 
+        spread: "none",
         manager: "continuous",
         flow: "paginated",
       });
 
       setRendition(newRendition);
+
+      Object.entries(THEME_STYLES).forEach(([name, styles]) => {
+        newRendition.themes.register(name, styles);
+      });
+      newRendition.themes.select(theme);
+      newRendition.themes.fontSize(`${fontSize}%`);
 
       // Inject custom CSS to prevent darker overlapping shades
       newRendition.hooks.content.register((contents: any) => {
@@ -50,7 +100,7 @@ export default function EpubViewer({ url, currentColor = "yellow", onHighlight, 
         ]);
       });
 
-      newRendition.display().then(() => {
+      newRendition.display(initialCfi || undefined).then(() => {
         if (isMounted) setIsReady(true);
       });
 
@@ -59,13 +109,14 @@ export default function EpubViewer({ url, currentColor = "yellow", onHighlight, 
         setAtStart(location.atStart);
         setAtEnd(location.atEnd);
         setCurrentLocation(location.start.cfi);
+        onLocationChangeRef.current?.(location.start.cfi);
       });
 
       // The Highlight Action Listener
       newRendition.on("selected", (cfiRange: string, contents: any) => {
         newBook.getRange(cfiRange).then((range) => {
           const text = range.toString().trim();
-          
+
           if (text) {
             // Paint the text with the currently active color
             newRendition.annotations.highlight(cfiRange, { color: currentColor }, (e: any) => {
@@ -86,7 +137,7 @@ export default function EpubViewer({ url, currentColor = "yellow", onHighlight, 
     return () => {
       isMounted = false;
       try { newBook.destroy(); } catch (e) {}
-      if (viewerRef.current) viewerRef.current.innerHTML = ""; 
+      if (viewerRef.current) viewerRef.current.innerHTML = "";
     };
   }, [url, onHighlight, onHighlightClick]); // Note: currentColor is NOT in dependency array so it doesn't remount the book when you switch colors
 
@@ -96,36 +147,80 @@ export default function EpubViewer({ url, currentColor = "yellow", onHighlight, 
     currentColorRef.current = currentColor;
   }, [currentColor]);
 
+  // Theme/font-size changes apply to the live rendition - no remount needed.
+  useEffect(() => {
+    rendition?.themes.select(theme);
+  }, [theme, rendition]);
+
+  useEffect(() => {
+    rendition?.themes.fontSize(`${fontSize}%`);
+  }, [fontSize, rendition]);
+
+  const cycleTheme = () => {
+    const nextIndex = (THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length;
+    setTheme(THEME_ORDER[nextIndex]);
+  };
+
+  const ThemeIcon = THEME_ICON[theme];
+
   const changePage = (direction: 'next' | 'prev') => {
     if (!rendition || !isReady) return;
     if (direction === 'next') rendition.next();
     if (direction === 'prev') rendition.prev();
   };
 
+  useImperativeHandle(ref, () => ({
+    nextPage: () => changePage('next'),
+    prevPage: () => changePage('prev'),
+  }));
+
   return (
-    <div className="flex flex-col h-full w-full bg-slate-50">
+    <div className={`flex flex-col h-full w-full transition-colors ${THEME_OUTER_CLASS[theme]}`}>
       <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 flex-shrink-0 shadow-sm z-10">
         <div className="flex items-center gap-3">
           <button disabled={!isReady || atStart} onClick={() => changePage('prev')} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            <ChevronLeft size={18} strokeWidth={2.5} />
           </button>
           <button disabled={!isReady || atEnd} onClick={() => changePage('next')} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            <ChevronRight size={18} strokeWidth={2.5} />
           </button>
         </div>
-        <div className="text-[9px] text-slate-400 font-mono truncate max-w-[200px]" title={currentLocation}>
-          {!isReady ? "Mounting Engine..." : `CFI: ${currentLocation}`}
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={cycleTheme}
+            title={`Reading theme: ${theme} (click to cycle)`}
+            className="p-1.5 text-slate-500 hover:bg-slate-100 rounded transition-colors"
+          >
+            <ThemeIcon size={16} strokeWidth={2} />
+          </button>
+
+          <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-200">
+            <button onClick={() => setFontSize(s => Math.max(70, s - 10))} className="p-1 text-slate-500 hover:text-slate-900">
+              <Minus size={12} strokeWidth={2.5} />
+            </button>
+            <span className="text-[10px] font-bold text-slate-500 w-8 text-center">{fontSize}%</span>
+            <button onClick={() => setFontSize(s => Math.min(180, s + 10))} className="p-1 text-slate-500 hover:text-slate-900">
+              <Plus size={12} strokeWidth={2.5} />
+            </button>
+          </div>
+
+          <div className="hidden lg:block text-[9px] text-slate-400 font-mono truncate max-w-[140px]" title={currentLocation}>
+            {!isReady ? "Mounting Engine..." : `CFI: ${currentLocation}`}
+          </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden flex justify-center p-6 lg:p-10 custom-scrollbar relative">
         {!isReady && (
-          <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-20">
-             <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <div className={`absolute inset-0 flex items-center justify-center z-20 transition-colors ${THEME_OUTER_CLASS[theme]}`}>
+             <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
         )}
-        <div ref={viewerRef} className="w-full max-w-3xl h-full bg-white shadow-xl rounded-md overflow-hidden transition-opacity duration-300" style={{ opacity: isReady ? 1 : 0 }} />
+        <div ref={viewerRef} className={`w-full max-w-3xl h-full shadow-xl rounded-md overflow-hidden transition-opacity duration-300 ${THEME_FRAME_CLASS[theme]}`} style={{ opacity: isReady ? 1 : 0 }} />
       </div>
     </div>
   );
-}
+});
+
+export default EpubViewer;

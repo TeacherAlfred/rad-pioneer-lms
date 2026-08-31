@@ -6,24 +6,29 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { ArrowLeft, StickyNote, X, CheckCircle, ClipboardCopy } from "lucide-react";
-import { saveMarginNote, getBookNotes, saveReadingProgress, saveLastPosition } from "../_actions/notes";
-import { toggleBookStatus } from "../_actions/books";
-import { useReaderShortcuts } from "./use-reader-shortcuts";
-import type { PdfViewerHandle } from "./pdf-viewer";
-import type { EpubViewerHandle } from "./epub-viewer";
+import { ArrowLeft, StickyNote, X, CheckCircle, ClipboardCopy, Lock } from "lucide-react";
+import { saveMarginNote, getBookNotes, saveReadingProgress, saveLastPosition } from "../../reader/_actions/notes";
+import { toggleBookStatus } from "../../reader/_actions/books";
+import { useReaderShortcuts } from "../../reader/_components/use-reader-shortcuts";
+import type { PdfViewerHandle } from "../../reader/_components/pdf-viewer";
+import type { EpubViewerHandle } from "../../reader/_components/epub-viewer";
+import ReadingGauge from "./reading-gauge";
+import BookCloseMoment from "./book-close-moment";
 
-const PdfViewer = dynamic(() => import("./pdf-viewer"), { ssr: false });
-const EpubViewer = dynamic(() => import("./epub-viewer"), { ssr: false });
+// Reusing the existing, already-solid PDF/EPUB internals (search, highlight,
+// EPUB themes, resume position) - Meridian re-skins the chrome around them,
+// not the reading engines themselves.
+const PdfViewer = dynamic(() => import("../../reader/_components/pdf-viewer"), { ssr: false });
+const EpubViewer = dynamic(() => import("../../reader/_components/epub-viewer"), { ssr: false });
 
-interface ReaderLayoutProps {
+interface MeridianReaderLayoutProps {
   book: any;
   fileUrl: string | null;
 }
 
 const POSITION_SAVE_DEBOUNCE_MS = 3000;
 
-export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
+export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLayoutProps) {
   const router = useRouter();
   const [activeStreamUrl] = useState(fileUrl);
 
@@ -32,12 +37,13 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
   const epubRef = useRef<EpubViewerHandle>(null);
   const draftTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Set default to false so mobile users see the book first
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const [readingProgress, setReadingProgress] = useState<number>(book.reading_progress || 0);
   const [isSavingProgress, setIsSavingProgress] = useState(false);
   const [isCompleted, setIsCompleted] = useState(book.status === 'completed');
+  const [isVaulted, setIsVaulted] = useState(Boolean(book.is_vaulted));
+  const [showCloseMoment, setShowCloseMoment] = useState(false);
 
   const [notes, setNotes] = useState<any[]>([]);
   const [activeExcerpt, setActiveExcerpt] = useState("");
@@ -46,8 +52,6 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isComposeOpen, setIsComposeOpen] = useState(false);
 
-  // "Welcome back" glow - only fires once, on session reopen (this component
-  // mounting), never on an in-session page turn.
   const [showWelcomeBack] = useState(() => Boolean(book.last_page_number || book.last_cfi));
   const [welcomeBackVisible, setWelcomeBackVisible] = useState(showWelcomeBack);
   const welcomeBackLabel =
@@ -63,8 +67,6 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
     loadNotes();
   }, [book.id]);
 
-  // --- EXACT RESUME POSITION: debounced auto-save, separate from the manual
-  // 0-100 progress button below ---
   const positionRef = useRef<{ lastPageNumber?: number; lastCfi?: string }>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -116,10 +118,15 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
 
   const handleToggleCompleted = async () => {
     const newStatus = isCompleted ? 'reading' : 'completed';
+    const justFinished = !isCompleted;
     setIsCompleted(!isCompleted);
     try {
       await toggleBookStatus(book.id, { status: newStatus });
-      toast.success(newStatus === 'completed' ? "Marked as read — nice work." : "Moved back to Currently Reading.");
+      if (justFinished) {
+        setShowCloseMoment(true);
+      } else {
+        toast.success("Moved back to Currently Reading.");
+      }
     } catch (error) {
       console.error("Failed to update status", error);
       setIsCompleted(isCompleted);
@@ -127,11 +134,24 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
     }
   };
 
+  const handleToggleVaulted = async () => {
+    const newValue = !isVaulted;
+    setIsVaulted(newValue);
+    try {
+      await toggleBookStatus(book.id, { is_vaulted: newValue });
+      toast.success(newValue ? "Moved to your private vault." : "Removed from vault.");
+    } catch (error) {
+      console.error("Failed to update vault status", error);
+      setIsVaulted(!newValue);
+      toast.error("Failed to update.");
+    }
+  };
+
   const handleTextSelected = (text: string, pageNum: number) => {
     setActiveExcerpt(text);
     setActivePage(pageNum);
     setIsComposeOpen(true);
-    setIsSidebarOpen(true); // Automatically slides out on highlight
+    setIsSidebarOpen(true);
   };
 
   const handleSaveNote = async () => {
@@ -175,7 +195,6 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
     }
   };
 
-  // Focus the draft textarea once it mounts (e.g. after the "n" shortcut)
   useEffect(() => {
     if (isComposeOpen) {
       const id = requestAnimationFrame(() => draftTextareaRef.current?.focus());
@@ -183,7 +202,6 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
     }
   }, [isComposeOpen]);
 
-  // --- KEYBOARD SHORTCUTS ---
   const handleToggleFullscreen = () => {
     if (!document.fullscreenElement) {
       rootRef.current?.requestFullscreen?.().catch(() => {});
@@ -201,7 +219,7 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
       setIsSidebarOpen(false);
       return;
     }
-    router.push("/projects/reader");
+    router.push("/projects/reader-v2");
   };
 
   useReaderShortcuts({
@@ -210,51 +228,39 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
     onOpenNote: () => { setIsSidebarOpen(true); setIsComposeOpen(true); },
     onToggleFullscreen: handleToggleFullscreen,
     onEscape: handleEscape,
-    // onOpenPalette wired in once the command palette exists
   });
 
   if (!activeStreamUrl && book.has_digital) {
-    return <div className="flex items-center justify-center h-screen bg-slate-50"><p className="text-slate-500">Failed to load secure file stream.</p></div>;
+    return <div className="flex items-center justify-center h-screen bg-[#faf7f1]"><p className="font-precision text-slate-500">Failed to load secure file stream.</p></div>;
   }
 
   return (
-    <div ref={rootRef} className="flex flex-col h-screen bg-slate-50 overflow-hidden relative">
+    <div ref={rootRef} className="flex flex-col h-screen bg-[#faf7f1] overflow-hidden relative font-precision">
 
-      <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 flex-shrink-0 z-10 shadow-sm relative">
-        <div className="flex items-center gap-4 z-20">
-          <Link href="/projects/reader" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-md transition-colors">
+      <header className="h-16 bg-white/90 backdrop-blur-sm border-b border-brass-200/60 flex items-center justify-between px-5 flex-shrink-0 z-10 shadow-sm relative">
+        <div className="flex items-center gap-4 z-20 min-w-0">
+          <Link href="/projects/reader-v2" className="p-1.5 text-slate-400 hover:text-brass-600 hover:bg-brass-50 rounded-md transition-colors flex-shrink-0">
             <ArrowLeft size={20} strokeWidth={2.5} />
           </Link>
-          <div className="border-l border-slate-200 h-6"></div>
-          <div className="hidden sm:block">
-            <h1 className="text-sm font-bold text-slate-900 truncate max-w-[200px] md:max-w-[300px]">{book.title}</h1>
-            <p className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{book.author || "Unknown Author"}</p>
+          <div className="border-l border-slate-200 h-7 flex-shrink-0"></div>
+          <div className="hidden sm:block min-w-0">
+            <h1 className="font-display italic text-lg text-slate-900 truncate max-w-[220px] md:max-w-[340px] leading-tight">{book.title}</h1>
+            <p className="font-data text-[9px] text-slate-500 uppercase tracking-widest truncate">{book.author || "Unknown Author"}</p>
           </div>
         </div>
 
-        {/* PROGRESS BAR & SAVE BUTTON */}
-        <div className="absolute left-1/2 -translate-x-1/2 flex flex-col md:flex-row items-center gap-2 md:gap-6 z-10 w-[140px] md:w-auto">
-          <div className="flex flex-col items-center justify-center w-full md:w-48">
-            <span className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 hidden md:block">{readingProgress}% Complete</span>
-            <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-              <motion.div
-                className="bg-amber-500 h-full rounded-full"
-                initial={false}
-                animate={{ width: `${readingProgress}%` }}
-                transition={{ duration: 0.4, ease: "easeOut" }}
-              />
-            </div>
+        <div className="flex items-center gap-3 z-20">
+          <div className="hidden md:flex items-center gap-2">
+            <ReadingGauge progress={readingProgress} size={44} showTicks={false} />
+            <button
+              onClick={handleSaveProgress}
+              disabled={isSavingProgress}
+              className="font-data text-[9px] font-bold uppercase tracking-widest px-3 py-2 bg-slate-50 text-slate-500 hover:bg-brass-50 hover:text-brass-700 rounded-md transition-colors disabled:opacity-50"
+            >
+              {isSavingProgress ? "Saved!" : "Log Progress"}
+            </button>
           </div>
-          <button
-            onClick={handleSaveProgress}
-            disabled={isSavingProgress}
-            className="text-[9px] md:text-[10px] font-bold uppercase tracking-wider px-2 py-1 md:px-3 md:py-1.5 bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-700 rounded-md transition-colors disabled:opacity-50 min-w-[80px] md:min-w-[110px]"
-          >
-            {isSavingProgress ? "Saved!" : "Log Progress"}
-          </button>
-        </div>
 
-        <div className="flex items-center gap-2 z-20">
           <button
             onClick={handleToggleCompleted}
             title={isCompleted ? "Marked as read — click to undo" : "Mark as read"}
@@ -263,7 +269,15 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
             <CheckCircle size={18} strokeWidth={2} fill={isCompleted ? "currentColor" : "none"} fillOpacity={0.15} />
           </button>
 
-          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`p-2 rounded-md transition-colors relative ${isSidebarOpen ? 'bg-amber-50 text-amber-600' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'}`}>
+          <button
+            onClick={handleToggleVaulted}
+            title={isVaulted ? "In your private vault — click to remove" : "Keep private"}
+            className={`p-2 rounded-md transition-colors ${isVaulted ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'}`}
+          >
+            <Lock size={17} strokeWidth={2} />
+          </button>
+
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className={`p-2 rounded-md transition-colors relative ${isSidebarOpen ? 'bg-brass-50 text-brass-600' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-700'}`}>
             <StickyNote size={18} strokeWidth={2} />
             {notes.length > 0 && !isSidebarOpen && (
               <span className="absolute top-1 right-1 w-2 h-2 bg-rose-500 rounded-full border border-white"></span>
@@ -279,7 +293,7 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
             animate={{ opacity: [0, 1, 1, 0], scale: 1 }}
             transition={{ duration: 2.5, times: [0, 0.15, 0.8, 1], ease: "easeInOut" }}
             onAnimationComplete={() => setWelcomeBackVisible(false)}
-            className="absolute top-16 left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-amber-500 text-white text-xs font-bold rounded-full shadow-[0_0_20px_rgba(245,158,11,0.5)] pointer-events-none"
+            className="absolute top-[72px] left-1/2 -translate-x-1/2 z-20 px-4 py-2 bg-brass-500 text-white text-xs font-bold font-precision rounded-full shadow-[0_0_20px_rgba(199,154,75,0.5)] pointer-events-none"
           >
             {welcomeBackLabel}
           </motion.div>
@@ -287,7 +301,7 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
       </AnimatePresence>
 
       <main className="flex flex-1 overflow-hidden relative">
-        <section className="flex-1 transition-all duration-300 relative bg-slate-100/50 flex flex-col items-center justify-center overflow-hidden">
+        <section className="flex-1 transition-all duration-300 relative bg-[#f0ece2] flex flex-col items-center justify-center overflow-hidden">
           {book.file_type === 'pdf' && activeStreamUrl ? (
             <PdfViewer
               ref={pdfRef}
@@ -305,30 +319,28 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
               onLocationChange={handleEpubLocationChange}
             />
           ) : (
-            <div className="text-center max-w-md px-6">Physical Volume Interface</div>
+            <div className="text-center max-w-md px-6 font-precision text-slate-500">Physical Volume Interface</div>
           )}
         </section>
 
-        {/* Mobile Backdrop Overlay */}
         <div
           className={`md:hidden absolute inset-0 bg-slate-900/20 backdrop-blur-sm z-30 transition-opacity duration-300 ${isSidebarOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}
           onClick={() => setIsSidebarOpen(false)}
         />
 
-        {/* Right Pane: Notes Sidebar (Mobile Absolute Overlay, Desktop Flex Shrink) */}
         <aside
-          className={`bg-white border-l border-slate-200 transition-all duration-300 ease-in-out flex flex-col absolute md:relative top-0 right-0 h-full z-40
+          className={`bg-white border-l border-brass-200/60 transition-all duration-300 ease-in-out flex flex-col absolute md:relative top-0 right-0 h-full z-40
           ${isSidebarOpen ? 'w-full sm:w-96 md:w-80 lg:w-96 translate-x-0 opacity-100 shadow-2xl md:shadow-none' : 'w-full sm:w-96 md:w-0 translate-x-full md:translate-x-0 opacity-0'}`}
         >
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-            <h3 className="text-sm font-bold text-slate-900">Margin Notes</h3>
+            <h3 className="font-display italic text-base text-slate-900">Margin Notes</h3>
             <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold text-slate-400">{notes.length} Notes</span>
+              <span className="font-data text-[10px] text-slate-400">{notes.length} NOTES</span>
               {notes.length > 0 && (
                 <button
                   onClick={handleExportNotes}
                   title="Copy all notes as Markdown"
-                  className="p-1 text-slate-400 hover:text-amber-600 transition-colors"
+                  className="p-1 text-slate-400 hover:text-brass-600 transition-colors"
                 >
                   <ClipboardCopy size={15} strokeWidth={2} />
                 </button>
@@ -342,9 +354,9 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
 
             {isComposeOpen && (
-              <div className="p-4 bg-amber-50/50 border-b border-amber-100">
+              <div className="p-4 bg-brass-50/60 border-b border-brass-100">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">
+                  <span className="font-data text-[10px] font-bold text-brass-700 uppercase tracking-widest">
                     {activeExcerpt ? `Page ${activePage} Extraction` : "New Note"}
                   </span>
                   <button onClick={() => { setActiveExcerpt(""); setIsComposeOpen(false); }} className="text-slate-400 hover:text-slate-700">
@@ -352,8 +364,8 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
                   </button>
                 </div>
                 {activeExcerpt && (
-                  <div className="bg-white p-3 rounded-lg border border-amber-100 shadow-sm mb-3">
-                    <p className="text-xs text-slate-600 font-serif italic border-l-2 border-amber-300 pl-2 line-clamp-4">"{activeExcerpt}"</p>
+                  <div className="bg-white p-3 rounded-lg border border-brass-100 shadow-sm mb-3">
+                    <p className="text-xs text-slate-600 font-display italic border-l-2 border-brass-300 pl-2 line-clamp-4">"{activeExcerpt}"</p>
                   </div>
                 )}
                 <textarea
@@ -361,12 +373,12 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
                   value={draftComment}
                   onChange={(e) => setDraftComment(e.target.value)}
                   placeholder="Add your thoughts or commentary..."
-                  className="w-full text-sm p-3 border border-amber-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20 bg-white mb-3 min-h-[100px] resize-none"
+                  className="w-full text-sm font-precision p-3 border border-brass-200 rounded-lg focus:outline-none focus:ring-4 focus:ring-brass-200 bg-white mb-3 min-h-[100px] resize-none"
                 />
                 <button
                   onClick={handleSaveNote}
                   disabled={isSavingNote || !draftComment.trim()}
-                  className="w-full py-2 bg-amber-600 text-white text-sm font-bold rounded-lg disabled:opacity-50 hover:bg-amber-500 transition-colors"
+                  className="w-full py-2 bg-slate-900 text-white text-sm font-bold rounded-lg disabled:opacity-50 hover:bg-slate-800 transition-colors"
                 >
                   {isSavingNote ? "Saving..." : "Save Note"}
                 </button>
@@ -376,17 +388,17 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
             <div className="p-4 space-y-4">
               {notes.length === 0 && !isComposeOpen ? (
                 <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center mt-4">
-                  <p className="text-xs font-semibold text-slate-400">No margin notes yet.</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Highlight text (or press "n") to add one.</p>
+                  <p className="font-precision text-xs font-semibold text-slate-400">No margin notes yet.</p>
+                  <p className="font-precision text-[10px] text-slate-400 mt-1">Highlight text (or press "n") to add one.</p>
                 </div>
               ) : (
                 notes.map(note => (
                   <div key={note.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Page {note.page_number}</span>
+                    <span className="font-data text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Page {note.page_number}</span>
                     {note.excerpt && (
-                      <p className="text-xs text-slate-500 font-serif italic border-l-2 border-slate-300 pl-2 mb-3">"{note.excerpt}"</p>
+                      <p className="text-xs text-slate-500 font-display italic border-l-2 border-slate-300 pl-2 mb-3">"{note.excerpt}"</p>
                     )}
-                    <p className="text-sm text-slate-900 font-medium whitespace-pre-line">{note.user_comment}</p>
+                    <p className="text-sm font-precision text-slate-900 font-medium whitespace-pre-line">{note.user_comment}</p>
                   </div>
                 ))
               )}
@@ -395,6 +407,13 @@ export default function ReaderLayout({ book, fileUrl }: ReaderLayoutProps) {
           </div>
         </aside>
       </main>
+
+      <BookCloseMoment
+        isOpen={showCloseMoment}
+        coverKey={book.cover_key ?? null}
+        title={book.title}
+        onDismiss={() => setShowCloseMoment(false)}
+      />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { publishWipBook } from "../_actions/upload";
 import { searchBookOptions } from "../_actions/metadata";
 
@@ -36,11 +37,11 @@ export default function WipCard({ book, onPublishSuccess, isSelectable, isSelect
       if (results.length > 0) {
         setSearchResults(results);
       } else {
-        alert("No matches found. Try simplifying the search query.");
+        toast.error("No matches found. Try simplifying the search query.");
       }
     } catch (error) {
       console.error(error);
-      alert("Search failed. Try again.");
+      toast.error("Search failed. Try again.");
     } finally {
       setIsSearching(false);
     }
@@ -56,19 +57,23 @@ export default function WipCard({ book, onPublishSuccess, isSelectable, isSelect
   };
 
   const handlePublish = async () => {
-    if (!title.trim()) return alert("Title is required.");
+    if (!title.trim()) {
+      toast.error("Title is required.");
+      return;
+    }
     setIsPublishing(true);
 
     try {
       const fileExt = book.file_type === "pdf" ? "pdf" : "epub";
       await publishWipBook(
-        book.id as string, book.file_key, author, title, fileExt, 
+        book.id as string, book.file_key, author, title, fileExt,
         suggested.coverKey, selectedCoverId, suggested.synopsis
       );
+      toast.success(`"${title}" published to your library.`);
       onPublishSuccess();
     } catch (error) {
       console.error("Failed to publish:", error);
-      alert("Failed to move file to the main library.");
+      toast.error("Failed to move file to the main library.");
       setIsPublishing(false);
     }
   };
