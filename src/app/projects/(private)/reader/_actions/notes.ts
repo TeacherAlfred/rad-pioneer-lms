@@ -23,7 +23,12 @@ export async function saveReadingProgress(bookId: string, percentage: number) {
   revalidatePath("/projects/reader");
 }
 
-export async function saveMarginNote(bookId: string, pageNumber: number, excerpt: string, comment: string) {
+/**
+ * pageNumber is null for EPUB highlights - EPUBs are reflowable and have no
+ * stable page number, only a CFI (not persisted here yet). PDFs always pass
+ * their real page number.
+ */
+export async function saveMarginNote(bookId: string, pageNumber: number | null, excerpt: string, comment: string) {
   const supabase = await createClient();
   const { error } = await supabase.from("rad_book_notes").insert({
     book_id: bookId,

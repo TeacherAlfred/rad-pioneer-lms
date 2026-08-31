@@ -53,7 +53,8 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
 
   const [notes, setNotes] = useState<any[]>([]);
   const [activeExcerpt, setActiveExcerpt] = useState("");
-  const [activePage, setActivePage] = useState(0);
+  // null for an EPUB highlight - EPUBs are reflowable and have no page number.
+  const [activePage, setActivePage] = useState<number | null>(0);
   const [draftComment, setDraftComment] = useState("");
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isComposeOpen, setIsComposeOpen] = useState(false);
@@ -153,11 +154,18 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
     }
   };
 
-  const handleTextSelected = (text: string, pageNum: number) => {
+  const handleTextSelected = (text: string, pageNum: number | null) => {
     setActiveExcerpt(text);
     setActivePage(pageNum);
     setIsComposeOpen(true);
     setIsSidebarOpen(true);
+  };
+
+  // EPUB's "selected" event already paints the highlight and hands back the
+  // text - this just routes it into the same compose flow PDF uses. EPUBs
+  // have no page number, so this note carries none.
+  const handleEpubHighlight = (text: string) => {
+    handleTextSelected(text, null);
   };
 
   const handleSaveNote = async () => {
@@ -186,7 +194,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
       .slice()
       .reverse()
       .map((n) => {
-        const parts = [`## Page ${n.page_number}`];
+        const parts = [n.page_number !== null ? `## Page ${n.page_number}` : `## Highlight`];
         if (n.excerpt) parts.push(`> ${n.excerpt}`);
         if (n.user_comment) parts.push(n.user_comment);
         return parts.join("\n\n");
@@ -247,7 +255,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
   return (
     <div
       ref={rootRef}
-      className="flex flex-col h-screen overflow-hidden relative font-precision transition-colors duration-[3000ms]"
+      className="flex flex-col h-dvh overflow-hidden relative font-precision transition-colors duration-[3000ms]"
       style={{ backgroundColor: ambientBackground }}
     >
 
@@ -332,6 +340,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               initialCfi={book.last_cfi ?? undefined}
               initialTheme={ambientEpubTheme}
               onLocationChange={handleEpubLocationChange}
+              onHighlight={handleEpubHighlight}
             />
           ) : (
             <div className="text-center max-w-md px-6 font-precision text-slate-500">Physical Volume Interface</div>
@@ -372,7 +381,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               <div className="p-4 bg-brass-50/60 border-b border-brass-100">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-data text-[10px] font-bold text-brass-700 uppercase tracking-widest">
-                    {activeExcerpt ? `Page ${activePage} Extraction` : "New Note"}
+                    {activeExcerpt ? (activePage !== null ? `Page ${activePage} Extraction` : "Highlight Extraction") : "New Note"}
                   </span>
                   <button onClick={() => { setActiveExcerpt(""); setIsComposeOpen(false); }} className="text-slate-400 hover:text-slate-700">
                     <X size={14} strokeWidth={2} />
@@ -409,7 +418,9 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               ) : (
                 notes.map(note => (
                   <div key={note.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                    <span className="font-data text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Page {note.page_number}</span>
+                    <span className="font-data text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
+                      {note.page_number !== null ? `Page ${note.page_number}` : "Highlight"}
+                    </span>
                     {note.excerpt && (
                       <p className="text-xs text-slate-500 font-display italic border-l-2 border-slate-300 pl-2 mb-3">"{note.excerpt}"</p>
                     )}

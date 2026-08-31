@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { ChevronLeft, ChevronRight, Minus, Plus, Search, X, ChevronUp, ChevronDown } from "lucide-react";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -38,7 +38,36 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
 ) {
   const [numPages, setNumPages] = useState<number>();
   const [pageNumber, setPageNumber] = useState<number>(1);
-  const [scale, setScale] = useState<number>(1.2);
+
+  // Fit-to-width rendering: PDFs are fixed-layout, so instead of a hardcoded
+  // scale (which on a phone either overflows sideways or forces a pinch-zoom
+  // out that shrinks the text below readable size), the scale is derived
+  // from the actual available width divided by the page's native width.
+  // zoomFactor is a multiplier on top of that fit - 100% always means "fills
+  // the screen," on any device, rather than a fixed absolute PDF scale.
+  const pageWrapperRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [pageNativeWidth, setPageNativeWidth] = useState(0);
+  const [zoomFactor, setZoomFactor] = useState(1);
+
+  useEffect(() => {
+    const el = pageWrapperRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) setContainerWidth(width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const handlePageLoadSuccess = (page: any) => {
+    const viewport = page.getViewport({ scale: 1 });
+    setPageNativeWidth(viewport.width);
+  };
+
+  const fitScale = containerWidth > 0 && pageNativeWidth > 0 ? containerWidth / pageNativeWidth : null;
+  const scale = fitScale !== null ? fitScale * zoomFactor : 1;
 
   // Holds the full PDFDocumentProxy (react-pdf's onLoadSuccess actually
   // receives this whole object, not just { numPages }) so search can walk
@@ -98,14 +127,15 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
   }));
 
   // --- TEXT EXTRACTION ENGINE ---
-  const handleMouseUp = () => {
+  // Bound to both mouseup and touchend so selecting text (via mouse drag on
+  // desktop, or long-press-and-drag handles on mobile) reliably triggers a
+  // note, instead of relying on mouseup alone which touch browsers don't
+  // consistently fire for a finalized selection.
+  const handleSelectionEnd = () => {
     const selection = window.getSelection();
     if (selection && selection.toString().trim() !== '') {
       const selectedText = selection.toString().trim();
       if (onTextSelected) onTextSelected(selectedText, pageNumber);
-
-      // Optional: Clear the browser's blue highlight after extraction to keep UI clean
-      // selection.removeAllRanges();
     }
   };
 
@@ -182,12 +212,12 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
 
   return (
     <div className="flex flex-col h-full w-full bg-slate-200/50">
-      <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 flex-shrink-0 shadow-sm z-10 gap-3">
-        <div className="flex items-center gap-3 flex-shrink-0">
+      <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 flex-shrink-0 shadow-sm z-10 gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           <button
             disabled={pageNumber <= 1}
             onClick={() => changePage(-1)}
-            className="p-1.5 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30 transition-colors"
+            className="p-2 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30 transition-colors"
           >
             <ChevronLeft size={18} strokeWidth={2.5} />
           </button>
@@ -199,7 +229,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
           <button
             disabled={pageNumber >= (numPages || 1)}
             onClick={() => changePage(1)}
-            className="p-1.5 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30 transition-colors"
+            className="p-2 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30 transition-colors"
           >
             <ChevronRight size={18} strokeWidth={2.5} />
           </button>
@@ -248,43 +278,48 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
         )}
 
         <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-lg border border-slate-200 flex-shrink-0">
-          <button onClick={() => setScale(s => Math.max(0.5, s - 0.1))} className="p-1 text-slate-500 hover:text-slate-900">
+          <button onClick={() => setZoomFactor(z => Math.max(0.5, +(z - 0.1).toFixed(2)))} className="p-1.5 text-slate-500 hover:text-slate-900">
             <Minus size={14} strokeWidth={2.5} />
           </button>
-          <span className="text-[10px] font-bold text-slate-500 w-10 text-center">{Math.round(scale * 100)}%</span>
-          <button onClick={() => setScale(s => Math.min(3, s + 0.1))} className="p-1 text-slate-500 hover:text-slate-900">
+          <span className="text-[10px] font-bold text-slate-500 w-10 text-center">{Math.round(zoomFactor * 100)}%</span>
+          <button onClick={() => setZoomFactor(z => Math.min(2.5, +(z + 0.1).toFixed(2)))} className="p-1.5 text-slate-500 hover:text-slate-900">
             <Plus size={14} strokeWidth={2.5} />
           </button>
         </div>
       </div>
 
-      {/* Attach MouseUp to the scrollable container */}
+      {/* mouseup covers desktop drag-selection; touchend covers a finalized
+          long-press selection on mobile, which doesn't reliably fire mouseup */}
       <div
-        className="flex-1 overflow-y-auto flex justify-center p-6 custom-scrollbar ph-no-capture"
-        onMouseUp={handleMouseUp}
+        className="flex-1 overflow-y-auto flex justify-center p-2 sm:p-6 custom-scrollbar ph-no-capture"
+        onMouseUp={handleSelectionEnd}
+        onTouchEnd={handleSelectionEnd}
       >
-        <Document
-          file={url}
-          options={pdfOptions}
-          onLoadSuccess={onDocumentLoadSuccess}
-          loading={
-            <div className="flex flex-col items-center justify-center mt-20 gap-3 text-slate-400">
-              <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-sm font-medium">Decrypting secure stream...</p>
-            </div>
-          }
-          className="drop-shadow-2xl"
-        >
-          <Page
-            pageNumber={pageNumber}
-            scale={scale}
-            renderMode="canvas"
-            renderTextLayer={true}
-            renderAnnotationLayer={true}
-            customTextRenderer={customTextRenderer}
-            className="bg-white overflow-hidden rounded-sm"
-          />
-        </Document>
+        <div ref={pageWrapperRef} className="w-full max-w-3xl flex justify-center">
+          <Document
+            file={url}
+            options={pdfOptions}
+            onLoadSuccess={onDocumentLoadSuccess}
+            loading={
+              <div className="flex flex-col items-center justify-center mt-20 gap-3 text-slate-400">
+                <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-sm font-medium">Decrypting secure stream...</p>
+              </div>
+            }
+            className="drop-shadow-2xl"
+          >
+            <Page
+              pageNumber={pageNumber}
+              scale={scale}
+              renderMode="canvas"
+              renderTextLayer={true}
+              renderAnnotationLayer={true}
+              customTextRenderer={customTextRenderer}
+              onLoadSuccess={handlePageLoadSuccess}
+              className="bg-white overflow-hidden rounded-sm"
+            />
+          </Document>
+        </div>
       </div>
     </div>
   );

@@ -57,7 +57,11 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
   const [currentLocation, setCurrentLocation] = useState<string>("");
 
   const [theme, setTheme] = useState<EpubTheme>(initialTheme || 'light');
-  const [fontSize, setFontSize] = useState(100);
+  // A touch-typical phone width renders the same percentage smaller in
+  // practice than a desktop reading pane, so start a notch larger there.
+  const [fontSize, setFontSize] = useState(() =>
+    typeof window !== "undefined" && window.innerWidth < 640 ? 115 : 100
+  );
 
   // Kept in a ref (not the effect's dependency array) so passing a fresh
   // inline callback on every parent render doesn't remount the whole book.
@@ -177,12 +181,12 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
 
   return (
     <div className={`flex flex-col h-full w-full transition-colors ${THEME_OUTER_CLASS[theme]}`}>
-      <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 flex-shrink-0 shadow-sm z-10">
-        <div className="flex items-center gap-3">
-          <button disabled={!isReady || atStart} onClick={() => changePage('prev')} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30">
+      <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 flex-shrink-0 shadow-sm z-10">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button disabled={!isReady || atStart} onClick={() => changePage('prev')} className="p-2 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30">
             <ChevronLeft size={18} strokeWidth={2.5} />
           </button>
-          <button disabled={!isReady || atEnd} onClick={() => changePage('next')} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30">
+          <button disabled={!isReady || atEnd} onClick={() => changePage('next')} className="p-2 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30">
             <ChevronRight size={18} strokeWidth={2.5} />
           </button>
         </div>
@@ -191,17 +195,17 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
           <button
             onClick={cycleTheme}
             title={`Reading theme: ${theme} (click to cycle)`}
-            className="p-1.5 text-slate-500 hover:bg-slate-100 rounded transition-colors"
+            className="p-2 text-slate-500 hover:bg-slate-100 rounded transition-colors"
           >
             <ThemeIcon size={16} strokeWidth={2} />
           </button>
 
           <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-slate-200">
-            <button onClick={() => setFontSize(s => Math.max(70, s - 10))} className="p-1 text-slate-500 hover:text-slate-900">
+            <button onClick={() => setFontSize(s => Math.max(70, s - 10))} className="p-1.5 text-slate-500 hover:text-slate-900">
               <Minus size={12} strokeWidth={2.5} />
             </button>
             <span className="text-[10px] font-bold text-slate-500 w-8 text-center">{fontSize}%</span>
-            <button onClick={() => setFontSize(s => Math.min(180, s + 10))} className="p-1 text-slate-500 hover:text-slate-900">
+            <button onClick={() => setFontSize(s => Math.min(180, s + 10))} className="p-1.5 text-slate-500 hover:text-slate-900">
               <Plus size={12} strokeWidth={2.5} />
             </button>
           </div>
@@ -212,7 +216,7 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden flex justify-center p-6 lg:p-10 custom-scrollbar relative">
+      <div className="flex-1 overflow-hidden flex justify-center p-2 sm:p-6 lg:p-10 custom-scrollbar relative">
         {!isReady && (
           <div className={`absolute inset-0 flex items-center justify-center z-20 transition-colors ${THEME_OUTER_CLASS[theme]}`}>
              <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
