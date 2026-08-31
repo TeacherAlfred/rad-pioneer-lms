@@ -4,6 +4,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Check } from "lucide-react";
 import type { BookWithTags } from "../../reader/_actions/books";
+import FormatBadge from "./format-badge";
 
 interface ShelfCoverProps {
   book: BookWithTags;
@@ -34,6 +35,8 @@ export default function ShelfCover({ book, index, selected, onToggleSelect }: Sh
         >
           {selected && <Check size={11} className="text-white" strokeWidth={3} />}
         </button>
+
+        <FormatBadge fileType={book.file_type} className="absolute bottom-1.5 right-1.5 z-10 shadow-sm" />
 
         {book.cover_key ? (
           <img

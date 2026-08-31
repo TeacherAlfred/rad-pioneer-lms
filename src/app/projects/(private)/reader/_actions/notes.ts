@@ -28,6 +28,11 @@ export async function saveReadingProgress(bookId: string, percentage: number) {
  * stable page number, only a CFI (not persisted here yet). PDFs always pass
  * their real page number.
  *
+ * chapterTitle is resolved client-side from the book's own outline (PDF) or
+ * table of contents (EPUB) at the moment of highlighting, so a note carries
+ * "which chapter" even without a stable page number - the thing you actually
+ * want when skimming back for context rather than citing a page.
+ *
  * tagIds lets a note be tagged at the moment it's created, while the reason
  * for the highlight is still fresh, rather than only via the after-the-fact
  * picker in the global Notes view. Goes through updateNoteTags so the same
@@ -38,7 +43,8 @@ export async function saveMarginNote(
   pageNumber: number | null,
   excerpt: string,
   comment: string,
-  tagIds: string[] = []
+  tagIds: string[] = [],
+  chapterTitle: string | null = null
 ) {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -48,6 +54,7 @@ export async function saveMarginNote(
       page_number: pageNumber,
       excerpt,
       user_comment: comment,
+      chapter_title: chapterTitle,
     })
     .select("id")
     .single();
@@ -74,6 +81,7 @@ export async function getBookNotes(bookId: string) {
 export interface NoteWithBook {
   id: string;
   pageNumber: number | null;
+  chapterTitle: string | null;
   excerpt: string | null;
   userComment: string;
   createdAt: string | null;
@@ -98,7 +106,7 @@ export async function getAllNotes(): Promise<NoteWithBook[]> {
   const { data, error } = await supabase
     .from("rad_book_notes")
     .select(`
-      id, page_number, excerpt, user_comment, created_at,
+      id, page_number, chapter_title, excerpt, user_comment, created_at,
       rad_books ( id, title, author, cover_key, is_vaulted ),
       rad_book_note_tags ( tag_id )
     `)
@@ -114,6 +122,7 @@ export async function getAllNotes(): Promise<NoteWithBook[]> {
     .map((n: any) => ({
       id: n.id,
       pageNumber: n.page_number,
+      chapterTitle: n.chapter_title,
       excerpt: n.excerpt,
       userComment: n.user_comment,
       createdAt: n.created_at,

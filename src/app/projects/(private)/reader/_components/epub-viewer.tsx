@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import ePub, { Book, Rendition } from "epubjs";
-import { ChevronLeft, ChevronRight, Sun, BookOpen, Moon, Minus, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Sun, BookOpen, Moon, Minus, Plus, Search, X, ChevronUp, ChevronDown } from "lucide-react";
 
 export type EpubTheme = 'light' | 'sepia' | 'dark';
 
@@ -11,9 +11,32 @@ interface EpubViewerProps {
   initialCfi?: string; // Exact resume position from a previous session
   initialTheme?: EpubTheme; // Defaults to 'light' - v1 doesn't pass this, so it's unaffected
   currentColor?: string;
-  onHighlight?: (text: string, cfi: string, color: string) => void;
+  onHighlight?: (text: string, cfi: string, color: string, chapterTitle: string | null) => void;
   onHighlightClick?: (cfi: string) => void;
   onLocationChange?: (cfi: string) => void;
+}
+
+function flattenToc(items: any[]): { href: string; label: string }[] {
+  const flat: { href: string; label: string }[] = [];
+  const walk = (nodes: any[]) => {
+    nodes.forEach((node) => {
+      if (node.href && node.label) flat.push({ href: node.href, label: String(node.label).trim() });
+      if (node.subitems && node.subitems.length > 0) walk(node.subitems);
+    });
+  };
+  walk(items || []);
+  return flat;
+}
+
+function hrefBasename(href: string): string {
+  return href.split("/").pop()?.split("#")[0] || href;
+}
+
+function findChapterForHref(toc: { href: string; label: string }[], href: string | null): string | null {
+  if (!href) return null;
+  const target = hrefBasename(href);
+  const match = toc.find((entry) => hrefBasename(entry.href) === target);
+  return match ? match.label : null;
 }
 
 const THEME_STYLES: Record<EpubTheme, Record<string, Record<string, string>>> = {
@@ -70,6 +93,20 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
     onLocationChangeRef.current = onLocationChange;
   }, [onLocationChange]);
 
+  // Chapter lookup for the currently-displayed section, resolved from the
+  // book's table of contents. Refs (not state) since they're read inside
+  // event handlers, not rendered.
+  const tocRef = useRef<{ href: string; label: string }[]>([]);
+  const currentHrefRef = useRef<string | null>(null);
+
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchMatches, setSearchMatches] = useState<{ href: string; excerpt: string }[]>([]);
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
+  const [hasSearched, setHasSearched] = useState(false);
+  const preSearchCfiRef = useRef<string | null>(null);
+
   useEffect(() => {
     let isMounted = true;
     const newBook = ePub(url);
@@ -87,6 +124,10 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
       });
 
       setRendition(newRendition);
+
+      newBook.loaded.navigation.then((nav: any) => {
+        if (isMounted) tocRef.current = flattenToc(nav?.toc);
+      });
 
       Object.entries(THEME_STYLES).forEach(([name, styles]) => {
         newRendition.themes.register(name, styles);
@@ -114,6 +155,7 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
         setAtStart(location.atStart);
         setAtEnd(location.atEnd);
         setCurrentLocation(location.start.cfi);
+        currentHrefRef.current = location.start.href;
         onLocationChangeRef.current?.(location.start.cfi);
       });
 
@@ -132,7 +174,7 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
             contents.window.getSelection().removeAllRanges();
 
             if (onHighlight) {
-              onHighlight(text, cfiRange, currentColor);
+              onHighlight(text, cfiRange, currentColor, findChapterForHref(tocRef.current, currentHrefRef.current));
             }
           }
         });
@@ -174,6 +216,71 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
     if (direction === 'prev') rendition.prev();
   };
 
+  // --- SEARCH WITHIN BOOK ---
+  // One match per spine section (chapter file), mirroring PdfViewer's
+  // one-match-per-page granularity. Sections are loaded off-render via
+  // epub.js's own load/unload, not the visible rendition, so searching
+  // doesn't disturb your current reading position until you jump to a
+  // result. Closing search restores wherever you actually were.
+  const openSearch = () => {
+    preSearchCfiRef.current = currentLocation || null;
+    setIsSearchOpen(true);
+  };
+
+  const runSearch = async () => {
+    const query = searchQuery.trim().toLowerCase();
+    const activeBook = book;
+    if (!query || !activeBook) return;
+
+    setIsSearching(true);
+    setHasSearched(true);
+    const matches: { href: string; excerpt: string }[] = [];
+    const spineItems: any[] = (activeBook as any).spine?.spineItems || [];
+
+    for (const item of spineItems) {
+      try {
+        const doc: Document = await item.load(activeBook.load.bind(activeBook));
+        const text = (doc.body?.textContent || "").replace(/\s+/g, " ").trim();
+        const idx = text.toLowerCase().indexOf(query);
+        if (idx !== -1) {
+          const start = Math.max(0, idx - 40);
+          const end = Math.min(text.length, idx + query.length + 40);
+          const excerpt = `${start > 0 ? "…" : ""}${text.slice(start, end)}…`;
+          matches.push({ href: item.href, excerpt });
+        }
+        item.unload();
+      } catch {
+        // Skip sections that fail to load rather than aborting the whole search.
+      }
+    }
+
+    setSearchMatches(matches);
+    setSearchMatchIndex(0);
+    setIsSearching(false);
+
+    if (matches.length > 0) {
+      rendition?.display(matches[0].href);
+    }
+  };
+
+  const goToMatch = (delta: number) => {
+    if (searchMatches.length === 0 || !rendition) return;
+    const newIndex = (searchMatchIndex + delta + searchMatches.length) % searchMatches.length;
+    setSearchMatchIndex(newIndex);
+    rendition.display(searchMatches[newIndex].href);
+  };
+
+  const closeSearch = () => {
+    setIsSearchOpen(false);
+    setSearchQuery("");
+    setSearchMatches([]);
+    setHasSearched(false);
+    if (preSearchCfiRef.current && rendition) {
+      rendition.display(preSearchCfiRef.current);
+      preSearchCfiRef.current = null;
+    }
+  };
+
   useImperativeHandle(ref, () => ({
     nextPage: () => changePage('next'),
     prevPage: () => changePage('prev'),
@@ -181,8 +288,8 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
 
   return (
     <div className={`flex flex-col h-full w-full transition-colors ${THEME_OUTER_CLASS[theme]}`}>
-      <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 flex-shrink-0 shadow-sm z-10">
-        <div className="flex items-center gap-2 sm:gap-3">
+      <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 flex-shrink-0 shadow-sm z-10 gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           <button disabled={!isReady || atStart} onClick={() => changePage('prev')} className="p-2 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30">
             <ChevronLeft size={18} strokeWidth={2.5} />
           </button>
@@ -191,7 +298,50 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        {isSearchOpen ? (
+          <div className="flex-1 flex items-center gap-2 min-w-0">
+            <div className="flex-1 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 min-w-0">
+              <Search size={13} className="text-slate-400 flex-shrink-0" />
+              <input
+                autoFocus
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && runSearch()}
+                placeholder="Search this book..."
+                className="flex-1 min-w-0 text-xs bg-transparent outline-none placeholder:text-slate-400"
+              />
+              {isSearching && <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
+            </div>
+
+            {hasSearched && !isSearching && (
+              <span className="text-[10px] font-bold text-slate-400 flex-shrink-0 whitespace-nowrap">
+                {searchMatches.length > 0 ? `${searchMatchIndex + 1}/${searchMatches.length}` : "0 results"}
+              </span>
+            )}
+
+            <button onClick={() => goToMatch(-1)} disabled={searchMatches.length === 0} className="p-1 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30 flex-shrink-0">
+              <ChevronUp size={14} strokeWidth={2.5} />
+            </button>
+            <button onClick={() => goToMatch(1)} disabled={searchMatches.length === 0} className="p-1 text-slate-500 hover:bg-slate-100 rounded disabled:opacity-30 flex-shrink-0">
+              <ChevronDown size={14} strokeWidth={2.5} />
+            </button>
+            <button onClick={closeSearch} className="p-1 text-slate-400 hover:text-slate-700 flex-shrink-0">
+              <X size={14} strokeWidth={2.5} />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={openSearch}
+            disabled={!isReady}
+            className="p-2 text-slate-500 hover:bg-slate-100 rounded transition-colors flex-shrink-0 disabled:opacity-30"
+            title="Search this book"
+          >
+            <Search size={16} strokeWidth={2} />
+          </button>
+        )}
+
+        <div className="flex items-center gap-2 flex-shrink-0">
           <button
             onClick={cycleTheme}
             title={`Reading theme: ${theme} (click to cycle)`}
@@ -210,7 +360,7 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
             </button>
           </div>
 
-          <div className="hidden lg:block text-[9px] text-slate-400 font-mono truncate max-w-[140px]" title={currentLocation}>
+          <div className="hidden xl:block text-[9px] text-slate-400 font-mono truncate max-w-[140px]" title={currentLocation}>
             {!isReady ? "Mounting Engine..." : `CFI: ${currentLocation}`}
           </div>
         </div>

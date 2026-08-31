@@ -7173,6 +7173,7 @@ export type Database = {
       rad_book_notes: {
         Row: {
           book_id: string | null
+          chapter_title: string | null
           created_at: string | null
           excerpt: string | null
           id: string
@@ -7181,6 +7182,7 @@ export type Database = {
         }
         Insert: {
           book_id?: string | null
+          chapter_title?: string | null
           created_at?: string | null
           excerpt?: string | null
           id?: string
@@ -7189,6 +7191,7 @@ export type Database = {
         }
         Update: {
           book_id?: string | null
+          chapter_title?: string | null
           created_at?: string | null
           excerpt?: string | null
           id?: string

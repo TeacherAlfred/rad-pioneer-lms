@@ -24,7 +24,14 @@ interface PdfViewerProps {
   initialProgress?: number;
   initialPage?: number; // Exact resume position - takes priority over initialProgress when present
   onProgressChange?: (currentPage: number, totalPages: number) => void;
-  onTextSelected?: (text: string, pageNum: number) => void;
+  onTextSelected?: (text: string, pageNum: number, chapterTitle: string | null) => void;
+  // Existing notes' excerpts for this book, keyed by page - used to paint an
+  // approximate "you noted something here" marker when revisiting a page.
+  // Approximate (first ~60 chars of the excerpt, single text-item match)
+  // because PDF text layers are chunked per line/run, not per selection, so
+  // an exact multi-line replay of the original selection isn't reliable the
+  // way EPUB's CFI-anchored highlight is.
+  noteExcerptsByPage?: Record<number, string[]>;
 }
 
 export interface PdfViewerHandle {
@@ -33,7 +40,7 @@ export interface PdfViewerHandle {
 }
 
 const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer(
-  { url, initialProgress = 0, initialPage, onProgressChange, onTextSelected },
+  { url, initialProgress = 0, initialPage, onProgressChange, onTextSelected, noteExcerptsByPage },
   ref
 ) {
   const [numPages, setNumPages] = useState<number>();
@@ -93,10 +100,63 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
     standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
   };
 
+  // Chapter titles for the currently-selected excerpt, resolved from the
+  // PDF's own outline/bookmarks (not every PDF has one - scanned or
+  // simply-built PDFs often don't, and that's fine, notes just carry no
+  // chapter then, same as before this existed).
+  const outlineRef = useRef<{ page: number; title: string }[] | null>(null);
+
+  const getChapterForPage = (page: number): string | null => {
+    const outline = outlineRef.current;
+    if (!outline || outline.length === 0) return null;
+    let match: string | null = null;
+    for (const entry of outline) {
+      if (entry.page > page) break;
+      match = entry.title;
+    }
+    return match;
+  };
+
+  const loadOutline = async (pdf: any) => {
+    try {
+      const items = await pdf.getOutline();
+      if (!items || items.length === 0) return;
+
+      const flat: { title: string; dest: any }[] = [];
+      const flatten = (nodes: any[]) => {
+        nodes.forEach((node) => {
+          if (node.title && node.dest) flat.push({ title: node.title, dest: node.dest });
+          if (node.items && node.items.length > 0) flatten(node.items);
+        });
+      };
+      flatten(items);
+
+      const resolved = await Promise.all(
+        flat.map(async ({ title, dest }) => {
+          try {
+            const explicitDest = typeof dest === "string" ? await pdf.getDestination(dest) : dest;
+            if (!explicitDest) return null;
+            const pageIndex = await pdf.getPageIndex(explicitDest[0]);
+            return { page: pageIndex + 1, title };
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      outlineRef.current = resolved
+        .filter((e): e is { page: number; title: string } => e !== null)
+        .sort((a, b) => a.page - b.page);
+    } catch {
+      // No outline, or pdf.js couldn't parse one - notes just carry no chapter.
+    }
+  };
+
   const onDocumentLoadSuccess = (pdf: any) => {
     pdfDocRef.current = pdf;
     const total = pdf.numPages as number;
     setNumPages(total);
+    loadOutline(pdf);
 
     const startPage = initialPage
       ? Math.min(Math.max(1, initialPage), total)
@@ -135,7 +195,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
     const selection = window.getSelection();
     if (selection && selection.toString().trim() !== '') {
       const selectedText = selection.toString().trim();
-      if (onTextSelected) onTextSelected(selectedText, pageNumber);
+      if (onTextSelected) onTextSelected(selectedText, pageNumber, getChapterForPage(pageNumber));
     }
   };
 
@@ -200,14 +260,47 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
     }
   };
 
+  // A short, word-bounded lead-in from each note's excerpt on this page -
+  // enough to spot "I noted something here" while scrolling back, without
+  // pretending to reconstruct the exact original (possibly multi-line)
+  // selection the way EPUB's CFI-anchored highlight can.
+  const pageNoteMarkers = noteExcerptsByPage?.[pageNumber] || [];
+  const noteMarkerTerms = pageNoteMarkers
+    .map((excerpt) => {
+      const lead = excerpt.trim().slice(0, 60);
+      const words = lead.split(/\s+/);
+      // Drop a possibly mid-word-truncated trailing word so the term
+      // matches cleanly rather than failing to match at all.
+      if (words.length > 1) words.pop();
+      return words.join(" ");
+    })
+    .filter((term) => term.length > 3);
+
   const customTextRenderer = useCallback(
     (textItem: { str: string }) => {
       const escaped = escapeHtml(textItem.str);
-      if (!highlightTerm) return escaped;
-      const regex = new RegExp(`(${escapeRegExp(escapeHtml(highlightTerm))})`, "gi");
-      return escaped.replace(regex, '<mark class="pdf-search-mark">$1</mark>');
+
+      // Active search takes priority and is shown exclusively - layering both
+      // mark types could produce overlapping/nested <mark> tags on the same
+      // run of text.
+      if (highlightTerm) {
+        const regex = new RegExp(`(${escapeRegExp(escapeHtml(highlightTerm))})`, "gi");
+        return escaped.replace(regex, '<mark class="pdf-search-mark">$1</mark>');
+      }
+
+      if (noteMarkerTerms.length === 0) return escaped;
+      let result = escaped;
+      for (const term of noteMarkerTerms) {
+        if (!term) continue;
+        const regex = new RegExp(`(${escapeRegExp(escapeHtml(term))})`, "i");
+        if (regex.test(result)) {
+          result = result.replace(regex, '<mark class="pdf-note-mark">$1</mark>');
+          break;
+        }
+      }
+      return result;
     },
-    [highlightTerm]
+    [highlightTerm, noteMarkerTerms.join("|")]
   );
 
   return (

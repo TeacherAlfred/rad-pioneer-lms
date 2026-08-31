@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -22,6 +22,7 @@ import type { EpubViewerHandle } from "../../reader/_components/epub-viewer";
 import ReadingGauge from "./reading-gauge";
 import BookCloseMoment from "./book-close-moment";
 import NoteTagSelector from "./note-tag-selector";
+import FormatBadge from "./format-badge";
 import { useAmbientBackground } from "../_lib/use-ambient-background";
 import { getAmbientEpubTheme } from "../_lib/time-of-day";
 
@@ -63,6 +64,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
   const [activeExcerpt, setActiveExcerpt] = useState("");
   // null for an EPUB highlight - EPUBs are reflowable and have no page number.
   const [activePage, setActivePage] = useState<number | null>(0);
+  const [activeChapter, setActiveChapter] = useState<string | null>(null);
   const [draftComment, setDraftComment] = useState("");
   const [draftTagIds, setDraftTagIds] = useState<string[]>([]);
   const [isSavingNote, setIsSavingNote] = useState(false);
@@ -84,6 +86,19 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
     loadNotes();
     getNoteTagOptions().then(setTagOptions);
   }, [book.id]);
+
+  // Groups this book's existing note excerpts by page, for PdfViewer to
+  // paint an approximate "you noted something here" marker when revisiting
+  // a page.
+  const noteExcerptsByPage = useMemo(() => {
+    const map: Record<number, string[]> = {};
+    notes.forEach((note) => {
+      if (note.page_number === null || !note.excerpt) return;
+      if (!map[note.page_number]) map[note.page_number] = [];
+      map[note.page_number].push(note.excerpt);
+    });
+    return map;
+  }, [notes]);
 
   const positionRef = useRef<{ lastPageNumber?: number; lastCfi?: string }>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -165,9 +180,10 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
     }
   };
 
-  const handleTextSelected = (text: string, pageNum: number | null) => {
+  const handleTextSelected = (text: string, pageNum: number | null, chapterTitle: string | null) => {
     setActiveExcerpt(text);
     setActivePage(pageNum);
+    setActiveChapter(chapterTitle);
     setDraftTagIds([]);
     setIsComposeOpen(true);
     setIsSidebarOpen(true);
@@ -176,8 +192,8 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
   // EPUB's "selected" event already paints the highlight and hands back the
   // text - this just routes it into the same compose flow PDF uses. EPUBs
   // have no page number, so this note carries none.
-  const handleEpubHighlight = (text: string) => {
-    handleTextSelected(text, null);
+  const handleEpubHighlight = (text: string, _cfi: string, _color: string, chapterTitle: string | null) => {
+    handleTextSelected(text, null, chapterTitle);
   };
 
   const handleSaveNote = async () => {
@@ -185,11 +201,12 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
     setIsSavingNote(true);
 
     try {
-      await saveMarginNote(book.id, activePage, activeExcerpt, draftComment, draftTagIds);
+      await saveMarginNote(book.id, activePage, activeExcerpt, draftComment, draftTagIds, activeChapter);
       const updatedNotes = await getBookNotes(book.id);
       setNotes(updatedNotes);
       setDraftComment("");
       setActiveExcerpt("");
+      setActiveChapter(null);
       setDraftTagIds([]);
       setIsComposeOpen(false);
       toast.success("Note saved.");
@@ -207,7 +224,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
       .slice()
       .reverse()
       .map((n) => {
-        const parts = [n.page_number !== null ? `## Page ${n.page_number}` : `## Highlight`];
+        const parts = [`## ${n.page_number !== null ? `Page ${n.page_number}` : n.chapter_title || "Highlight"}`];
         if (n.excerpt) parts.push(`> ${n.excerpt}`);
         if (n.user_comment) parts.push(n.user_comment);
         return parts.join("\n\n");
@@ -279,7 +296,10 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
           </Link>
           <div className="border-l border-slate-200 h-7 flex-shrink-0"></div>
           <div className="hidden sm:block min-w-0">
-            <h1 className="font-display italic text-lg text-slate-900 truncate max-w-[220px] md:max-w-[340px] leading-tight">{book.title}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="font-display italic text-lg text-slate-900 truncate max-w-[220px] md:max-w-[340px] leading-tight">{book.title}</h1>
+              <FormatBadge fileType={book.file_type} />
+            </div>
             <p className="font-data text-[9px] text-slate-500 uppercase tracking-widest truncate">{book.author || "Unknown Author"}</p>
           </div>
         </div>
@@ -345,6 +365,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               initialPage={book.last_page_number ?? undefined}
               onProgressChange={handleProgressChange}
               onTextSelected={handleTextSelected}
+              noteExcerptsByPage={noteExcerptsByPage}
             />
           ) : book.file_type === 'epub' && activeStreamUrl ? (
             <EpubViewer
@@ -396,10 +417,13 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
                   <span className="font-data text-[10px] font-bold text-brass-700 uppercase tracking-widest">
                     {activeExcerpt ? (activePage !== null ? `Page ${activePage} Extraction` : "Highlight Extraction") : "New Note"}
                   </span>
-                  <button onClick={() => { setActiveExcerpt(""); setDraftTagIds([]); setIsComposeOpen(false); }} className="text-slate-400 hover:text-slate-700">
+                  <button onClick={() => { setActiveExcerpt(""); setActiveChapter(null); setDraftTagIds([]); setIsComposeOpen(false); }} className="text-slate-400 hover:text-slate-700">
                     <X size={14} strokeWidth={2} />
                   </button>
                 </div>
+                {activeChapter && (
+                  <p className="font-data text-[9px] text-slate-400 uppercase tracking-widest mb-2">{activeChapter}</p>
+                )}
                 {activeExcerpt && (
                   <div className="bg-white p-3 rounded-lg border border-brass-100 shadow-sm mb-3">
                     <p className="text-xs text-slate-600 font-display italic border-l-2 border-brass-300 pl-2 line-clamp-4">"{activeExcerpt}"</p>
@@ -432,9 +456,16 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               ) : (
                 notes.map(note => (
                   <div key={note.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                    <span className="font-data text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
-                      {note.page_number !== null ? `Page ${note.page_number}` : "Highlight"}
-                    </span>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="font-data text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        {note.page_number !== null ? `Page ${note.page_number}` : "Highlight"}
+                      </span>
+                      {note.chapter_title && (
+                        <span className="font-data text-[9px] text-slate-400 truncate max-w-[55%]" title={note.chapter_title}>
+                          {note.chapter_title}
+                        </span>
+                      )}
+                    </div>
                     {note.excerpt && (
                       <p className="text-xs text-slate-500 font-display italic border-l-2 border-slate-300 pl-2 mb-3">"{note.excerpt}"</p>
                     )}

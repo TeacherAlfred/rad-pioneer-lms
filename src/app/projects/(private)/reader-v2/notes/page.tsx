@@ -150,7 +150,8 @@ export default function NotesPage() {
 
     const sections = Array.from(byBook.values()).map(({ book, notes: bookNotes }) => {
       const noteBlocks = bookNotes.map((n) => {
-        const parts = [`### Page ${n.pageNumber ?? "—"}`];
+        const heading = n.pageNumber !== null ? `Page ${n.pageNumber}` : n.chapterTitle || "Highlight";
+        const parts = [`### ${heading}`];
         if (n.excerpt) parts.push(`> ${n.excerpt}`);
         if (n.userComment) parts.push(n.userComment);
         return parts.join("\n\n");
@@ -207,6 +208,9 @@ export default function NotesPage() {
       )}
       {note.userComment && (
         <p className="font-precision text-sm text-slate-900 whitespace-pre-line mb-3">{note.userComment}</p>
+      )}
+      {note.chapterTitle && (
+        <p className="font-data text-[9px] text-slate-400 uppercase tracking-widest mb-3 truncate">{note.chapterTitle}</p>
       )}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 font-data text-[9px] text-slate-400 uppercase tracking-widest flex-shrink-0">
