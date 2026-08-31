@@ -27,17 +27,36 @@ export async function saveReadingProgress(bookId: string, percentage: number) {
  * pageNumber is null for EPUB highlights - EPUBs are reflowable and have no
  * stable page number, only a CFI (not persisted here yet). PDFs always pass
  * their real page number.
+ *
+ * tagIds lets a note be tagged at the moment it's created, while the reason
+ * for the highlight is still fresh, rather than only via the after-the-fact
+ * picker in the global Notes view. Goes through updateNoteTags so the same
+ * vocabulary cap (2 domain + 1 function) is enforced either way.
  */
-export async function saveMarginNote(bookId: string, pageNumber: number | null, excerpt: string, comment: string) {
+export async function saveMarginNote(
+  bookId: string,
+  pageNumber: number | null,
+  excerpt: string,
+  comment: string,
+  tagIds: string[] = []
+) {
   const supabase = await createClient();
-  const { error } = await supabase.from("rad_book_notes").insert({
-    book_id: bookId,
-    page_number: pageNumber,
-    excerpt,
-    user_comment: comment
-  });
+  const { data, error } = await supabase
+    .from("rad_book_notes")
+    .insert({
+      book_id: bookId,
+      page_number: pageNumber,
+      excerpt,
+      user_comment: comment,
+    })
+    .select("id")
+    .single();
 
   if (error) throw new Error(error.message);
+
+  if (tagIds.length > 0) {
+    await updateNoteTags(data.id, tagIds);
+  }
 }
 
 export async function getBookNotes(bookId: string) {

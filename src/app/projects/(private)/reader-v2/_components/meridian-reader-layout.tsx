@@ -7,13 +7,21 @@ import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { ArrowLeft, StickyNote, X, CheckCircle, ClipboardCopy, Lock } from "lucide-react";
-import { saveMarginNote, getBookNotes, saveReadingProgress, saveLastPosition } from "../../reader/_actions/notes";
+import {
+  saveMarginNote,
+  getBookNotes,
+  saveReadingProgress,
+  saveLastPosition,
+  getNoteTagOptions,
+  type NoteTagOption,
+} from "../../reader/_actions/notes";
 import { toggleBookStatus } from "../../reader/_actions/books";
 import { useReaderShortcuts } from "../../reader/_components/use-reader-shortcuts";
 import type { PdfViewerHandle } from "../../reader/_components/pdf-viewer";
 import type { EpubViewerHandle } from "../../reader/_components/epub-viewer";
 import ReadingGauge from "./reading-gauge";
 import BookCloseMoment from "./book-close-moment";
+import NoteTagSelector from "./note-tag-selector";
 import { useAmbientBackground } from "../_lib/use-ambient-background";
 import { getAmbientEpubTheme } from "../_lib/time-of-day";
 
@@ -56,8 +64,10 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
   // null for an EPUB highlight - EPUBs are reflowable and have no page number.
   const [activePage, setActivePage] = useState<number | null>(0);
   const [draftComment, setDraftComment] = useState("");
+  const [draftTagIds, setDraftTagIds] = useState<string[]>([]);
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isComposeOpen, setIsComposeOpen] = useState(false);
+  const [tagOptions, setTagOptions] = useState<NoteTagOption[]>([]);
 
   const [showWelcomeBack] = useState(() => Boolean(book.last_page_number || book.last_cfi));
   const [welcomeBackVisible, setWelcomeBackVisible] = useState(showWelcomeBack);
@@ -72,6 +82,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
       setNotes(fetchedNotes);
     }
     loadNotes();
+    getNoteTagOptions().then(setTagOptions);
   }, [book.id]);
 
   const positionRef = useRef<{ lastPageNumber?: number; lastCfi?: string }>({});
@@ -157,6 +168,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
   const handleTextSelected = (text: string, pageNum: number | null) => {
     setActiveExcerpt(text);
     setActivePage(pageNum);
+    setDraftTagIds([]);
     setIsComposeOpen(true);
     setIsSidebarOpen(true);
   };
@@ -173,16 +185,17 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
     setIsSavingNote(true);
 
     try {
-      await saveMarginNote(book.id, activePage, activeExcerpt, draftComment);
+      await saveMarginNote(book.id, activePage, activeExcerpt, draftComment, draftTagIds);
       const updatedNotes = await getBookNotes(book.id);
       setNotes(updatedNotes);
       setDraftComment("");
       setActiveExcerpt("");
+      setDraftTagIds([]);
       setIsComposeOpen(false);
       toast.success("Note saved.");
     } catch (error) {
       console.error("Failed to save note", error);
-      toast.error("Failed to save note.");
+      toast.error(error instanceof Error ? error.message : "Failed to save note.");
     } finally {
       setIsSavingNote(false);
     }
@@ -383,7 +396,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
                   <span className="font-data text-[10px] font-bold text-brass-700 uppercase tracking-widest">
                     {activeExcerpt ? (activePage !== null ? `Page ${activePage} Extraction` : "Highlight Extraction") : "New Note"}
                   </span>
-                  <button onClick={() => { setActiveExcerpt(""); setIsComposeOpen(false); }} className="text-slate-400 hover:text-slate-700">
+                  <button onClick={() => { setActiveExcerpt(""); setDraftTagIds([]); setIsComposeOpen(false); }} className="text-slate-400 hover:text-slate-700">
                     <X size={14} strokeWidth={2} />
                   </button>
                 </div>
@@ -392,6 +405,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
                     <p className="text-xs text-slate-600 font-display italic border-l-2 border-brass-300 pl-2 line-clamp-4">"{activeExcerpt}"</p>
                   </div>
                 )}
+                <NoteTagSelector tags={tagOptions} selectedTagIds={draftTagIds} onChange={setDraftTagIds} />
                 <textarea
                   ref={draftTextareaRef}
                   value={draftComment}
