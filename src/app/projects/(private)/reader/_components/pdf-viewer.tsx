@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { ChevronLeft, ChevronRight, Minus, Plus, Search, X, ChevronUp, ChevronDown } from "lucide-react";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -87,11 +87,20 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
   // wherever you last peeked at a result.
   const preSearchPageRef = useRef<number | null>(null);
 
-  const pdfOptions = {
-    cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
-    cMapPacked: true,
-    standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
-  };
+  // react-pdf reloads the whole document whenever this object's identity
+  // changes (its internal loadDocument effect has `options` in its
+  // dependency array) - unmemoized, a fresh object every render meant every
+  // page turn (which updates reading progress in the parent, causing a
+  // re-render) reloaded the PDF from scratch and reset back to the start
+  // page. That's what made the reader look stuck / constantly refreshing.
+  const pdfOptions = useMemo(
+    () => ({
+      cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+      cMapPacked: true,
+      standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
+    }),
+    []
+  );
 
   // Chapter titles for the currently-selected excerpt, resolved from the
   // PDF's own outline/bookmarks (not every PDF has one - scanned or
