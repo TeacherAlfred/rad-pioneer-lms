@@ -14,6 +14,17 @@ interface EpubViewerProps {
   onHighlight?: (text: string, cfi: string, color: string, chapterTitle: string | null) => void;
   onHighlightClick?: (cfi: string) => void;
   onLocationChange?: (cfi: string) => void;
+  // Previously-generated locations map (book.locations.save()'s output), so
+  // percentage tracking doesn't require re-walking the whole book's text on
+  // every open. Undefined/null on a book's first-ever open.
+  cachedLocations?: string | null;
+  // Fired once, after generating a fresh locations map for a book that
+  // didn't have one cached yet - the caller persists it for next time.
+  onLocationsGenerated?: (locations: string) => void;
+  // Real 0-100 percentage, only fires once locations are ready (cached or
+  // freshly generated) - undefined/absent until then, same as PDF's
+  // page/total-derived percentage.
+  onProgressChange?: (percentage: number) => void;
 }
 
 function flattenToc(items: any[]): { href: string; label: string }[] {
@@ -66,7 +77,18 @@ export interface EpubViewerHandle {
 }
 
 const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubViewer(
-  { url, initialCfi, initialTheme, currentColor = "yellow", onHighlight, onHighlightClick, onLocationChange },
+  {
+    url,
+    initialCfi,
+    initialTheme,
+    currentColor = "yellow",
+    onHighlight,
+    onHighlightClick,
+    onLocationChange,
+    cachedLocations,
+    onLocationsGenerated,
+    onProgressChange,
+  },
   ref
 ) {
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -92,6 +114,35 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
   useEffect(() => {
     onLocationChangeRef.current = onLocationChange;
   }, [onLocationChange]);
+
+  const onHighlightRef = useRef(onHighlight);
+  useEffect(() => {
+    onHighlightRef.current = onHighlight;
+  }, [onHighlight]);
+
+  const onHighlightClickRef = useRef(onHighlightClick);
+  useEffect(() => {
+    onHighlightClickRef.current = onHighlightClick;
+  }, [onHighlightClick]);
+
+  const onLocationsGeneratedRef = useRef(onLocationsGenerated);
+  useEffect(() => {
+    onLocationsGeneratedRef.current = onLocationsGenerated;
+  }, [onLocationsGenerated]);
+
+  const onProgressChangeRef = useRef(onProgressChange);
+  useEffect(() => {
+    onProgressChangeRef.current = onProgressChange;
+  }, [onProgressChange]);
+
+  // Percentage tracking: locationsReadyRef flips true once a locations map
+  // is either loaded from cache or freshly generated, and currentCfiRef
+  // tracks where we are so a percentage can be reported the instant
+  // generation finishes, without waiting for the next page turn.
+  const locationsReadyRef = useRef(false);
+  const currentCfiRef = useRef<string | null>(null);
+  // null = not generating (cached, not yet started, or finished); 0-100 while running.
+  const [generationProgress, setGenerationProgress] = useState<number | null>(null);
 
   // Chapter lookup for the currently-displayed section, resolved from the
   // book's table of contents. Refs (not state) since they're read inside
@@ -129,6 +180,91 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
         if (isMounted) tocRef.current = flattenToc(nav?.toc);
       });
 
+      // Percentage-accurate progress: reuse a previously-generated locations
+      // map if we have one (instant), otherwise generate one in the
+      // background - on a second, entirely separate, never-rendered Book
+      // instance. This matters: epub.js's own Locations.generate() (and an
+      // earlier version of this) walks newBook.spine's actual Section
+      // objects, calling section.unload() on each after reading it - the
+      // *same* Section objects the live rendition has open/cached for
+      // reading. Unloading one out from under the visible page mid-read is
+      // exactly what caused the flashing and the intermittent
+      // "replaceCss" crash: content the manager still had a reference to
+      // got ripped out while something else was still using it. A second
+      // Book instance has its own independent Sections, so indexing can
+      // never touch what's actually on screen. The finished map gets
+      // copied onto the live book's `locations` afterward so the rest of
+      // this component doesn't need to know indexing happened elsewhere.
+      //
+      // Also reimplements the loop itself (calling Locations' still-public
+      // parse() per section) rather than calling generate() directly,
+      // since its hardcoded 100ms pause between every section adds several
+      // seconds of pure waiting on a book with many chapters for no
+      // benefit, and it exposes no progress signal at all.
+      const generateLocations = async () => {
+        const indexBook = ePub(url);
+        try {
+          await indexBook.ready;
+          if (!isMounted) return;
+
+          const locations = indexBook.locations as any;
+          locations.break = 1600;
+          const spineItems: any[] = ((indexBook.spine as any).spineItems || []).filter((s: any) => s.linear);
+
+          if (spineItems.length === 0) {
+            locationsReadyRef.current = true;
+            return;
+          }
+
+          setGenerationProgress(0);
+          let collected: string[] = [];
+
+          for (let i = 0; i < spineItems.length; i++) {
+            if (!isMounted) return;
+            const section = spineItems[i];
+            try {
+              const contents = await section.load(indexBook.load.bind(indexBook));
+              if (!isMounted) return;
+              collected = collected.concat(locations.parse(contents, section.cfiBase));
+              section.unload();
+            } catch (e) {
+              console.error("Failed to index a section for EPUB progress", e);
+            }
+            if (!isMounted) return;
+            setGenerationProgress(Math.round(((i + 1) / spineItems.length) * 100));
+            // Yield a full tick so the browser can paint/handle input
+            // between sections, rather than running the whole book
+            // through back-to-back.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+
+          if (!isMounted) return;
+
+          const liveLocations = newBook.locations as any;
+          liveLocations._locations = collected;
+          liveLocations.total = collected.length - 1;
+
+          locationsReadyRef.current = true;
+          setGenerationProgress(null);
+          onLocationsGeneratedRef.current?.(liveLocations.save());
+          if (currentCfiRef.current) {
+            const percentage = Math.round(liveLocations.percentageFromCfi(currentCfiRef.current) * 100);
+            onProgressChangeRef.current?.(percentage);
+          }
+        } finally {
+          try { indexBook.destroy(); } catch (e) {}
+        }
+      };
+
+      if (cachedLocations) {
+        try {
+          newBook.locations.load(cachedLocations);
+          locationsReadyRef.current = true;
+        } catch (e) {
+          console.error("Failed to load cached EPUB locations", e);
+        }
+      }
+
       Object.entries(THEME_STYLES).forEach(([name, styles]) => {
         newRendition.themes.register(name, styles);
       });
@@ -147,7 +283,18 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
       });
 
       newRendition.display(initialCfi || undefined).then(() => {
-        if (isMounted) setIsReady(true);
+        if (!isMounted) return;
+        setIsReady(true);
+
+        // Deferred until after the book is visible and painted, and started
+        // on a fresh tick rather than immediately - generation is heavy
+        // enough that kicking it off in the same tick as the initial render
+        // is what was causing the visible flash on open.
+        if (!cachedLocations) {
+          setTimeout(() => {
+            if (isMounted) generateLocations();
+          }, 250);
+        }
       });
 
       newRendition.on("relocated", (location: any) => {
@@ -156,7 +303,12 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
         setAtEnd(location.atEnd);
         setCurrentLocation(location.start.cfi);
         currentHrefRef.current = location.start.href;
+        currentCfiRef.current = location.start.cfi;
         onLocationChangeRef.current?.(location.start.cfi);
+        if (locationsReadyRef.current) {
+          const percentage = Math.round(newBook.locations.percentageFromCfi(location.start.cfi) * 100);
+          onProgressChangeRef.current?.(percentage);
+        }
       });
 
       // The Highlight Action Listener
@@ -168,14 +320,12 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
             // Paint the text with the currently active color
             newRendition.annotations.highlight(cfiRange, { color: currentColor }, (e: any) => {
               // Click listener for deletion
-              if (onHighlightClick) onHighlightClick(cfiRange);
+              onHighlightClickRef.current?.(cfiRange);
             });
 
             contents.window.getSelection().removeAllRanges();
 
-            if (onHighlight) {
-              onHighlight(text, cfiRange, currentColor, findChapterForHref(tocRef.current, currentHrefRef.current));
-            }
+            onHighlightRef.current?.(text, cfiRange, currentColor, findChapterForHref(tocRef.current, currentHrefRef.current));
           }
         });
       });
@@ -183,10 +333,38 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
 
     return () => {
       isMounted = false;
-      try { newBook.destroy(); } catch (e) {}
+      // Clear the DOM immediately so a fast remount (e.g. navigating
+      // straight back into a book) never overlaps with this instance's
+      // rendition.
       if (viewerRef.current) viewerRef.current.innerHTML = "";
+
+      // epub.js runs an async resource-URL replacement step as part of its
+      // own book-opening sequence (this.replacements(), triggered
+      // internally on unpack). destroy() nulls out internal state
+      // (including `resources`) synchronously - destroying while that step
+      // is still in flight makes its trailing .then() dereference
+      // `resources` after it's gone, which epub.js logs via console.error
+      // (already caught internally, so nothing actually breaks, but Next's
+      // dev overlay surfaces it as if it were a crash). Waiting for the
+      // book's own `opened` promise first avoids the race; the timeout
+      // fallback just bounds how long a failed-to-open book can delay
+      // cleanup.
+      Promise.race([newBook.opened.catch(() => {}), new Promise((resolve) => setTimeout(resolve, 3000))]).then(() => {
+        try { newBook.destroy(); } catch (e) {}
+      });
     };
-  }, [url, onHighlight, onHighlightClick]); // Note: currentColor is NOT in dependency array so it doesn't remount the book when you switch colors
+  }, [url]);
+  // onHighlight/onHighlightClick/currentColor are deliberately NOT in this
+  // dependency array, and are read via refs inside the listeners above
+  // instead. meridian-reader-layout.tsx passes onHighlight as a fresh
+  // inline function every render (it calls setState internally, so a new
+  // reference is created on every one of THIS component's own re-renders
+  // too) - having it in this array meant the whole book got destroyed and
+  // recreated on every single relocate event, forever: recreate -> display
+  // at the static initial position -> fires "relocated" -> updates
+  // progress -> parent re-renders -> new onHighlight reference -> recreate
+  // again. That loop was the actual cause of the reader flashing and
+  // repeatedly saving the same page-1 position.
 
   // Listen for color changes without remounting
   const currentColorRef = useRef(currentColor);
@@ -365,6 +543,22 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
           </div>
         </div>
       </div>
+
+      {generationProgress !== null && (
+        <div
+          className="px-4 py-1.5 bg-brass-50/60 border-b border-brass-100 flex items-center gap-2 flex-shrink-0"
+          title="Indexing this book once so progress tracking is percentage-accurate - only happens the first time you open it."
+        >
+          <span className="text-[9px] font-bold text-brass-600 flex-shrink-0">Indexing for progress tracking…</span>
+          <div className="flex-1 h-1 bg-brass-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-brass-400 rounded-full transition-[width] duration-200 ease-out"
+              style={{ width: `${generationProgress}%` }}
+            />
+          </div>
+          <span className="text-[9px] font-mono text-brass-600 flex-shrink-0 w-7 text-right">{generationProgress}%</span>
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden flex justify-center p-2 sm:p-6 lg:p-10 custom-scrollbar relative">
         {!isReady && (

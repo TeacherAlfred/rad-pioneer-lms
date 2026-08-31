@@ -3,6 +3,7 @@
 import { fetchAndStoreBookMetadata } from "@/lib/metadata-helper";
 import { revalidatePath } from "next/cache";
 import { fetchExactOpenLibraryEdition } from "@/lib/metadata-helper";
+import { createClient } from "@/utils/supabase/server";
 
 /**
  * Triggers a targeted metadata search using a user-provided, hand-cleaned query string.
@@ -54,11 +55,20 @@ export async function autoScanSingleBook(bookId: string, title: string) {
   try {
     await fetchAndStoreBookMetadata(bookId, title);
     // Force the dashboard to refresh immediately after this one book finishes
-    revalidatePath("/projects/reader"); 
-    return { success: true };
+    revalidatePath("/projects/reader");
+    revalidatePath("/projects/reader-v2/inbox");
+
+    // fetchAndStoreBookMetadata writes straight to the DB rather than
+    // returning its result - read it back so callers (the v2 inbox review
+    // card in particular) can update their local review state without a
+    // separate full-list refetch.
+    const supabase = await createClient();
+    const { data } = await supabase.from("rad_books").select("suggested_metadata").eq("id", bookId).single();
+
+    return { success: true, suggested_metadata: data?.suggested_metadata ?? null };
   } catch (error) {
     console.error("Auto-scan failed:", error);
-    return { success: false };
+    return { success: false, suggested_metadata: null };
   }
 }
 

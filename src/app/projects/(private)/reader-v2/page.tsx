@@ -5,12 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { Search, BookOpen, Lock, X, Settings, StickyNote } from "lucide-react";
+import { Search, BookOpen, Lock, X, Settings, StickyNote, Inbox, UploadCloud } from "lucide-react";
 import { getLibraryBooks, toggleBookStatus, type BookWithTags } from "../reader/_actions/books";
 import { getReaderSettings } from "../reader/_actions/settings";
 import ReadingGauge from "./_components/reading-gauge";
 import ReadingStreak from "./_components/reading-streak";
 import ShelfCover from "./_components/shelf-cover";
+import AddBooksModal from "./_components/add-books-modal";
 import { markVaultUnlocked, clearVaultUnlocked } from "./_lib/vault-session";
 import { useAmbientBackground } from "./_lib/use-ambient-background";
 
@@ -53,12 +54,17 @@ export default function MeridianHome() {
   const pinBufferRef = useRef("");
   const vaultPinRef = useRef<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
 
-  useEffect(() => {
+  const refreshLibrary = () => {
     getLibraryBooks().then((data) => {
       setBooks(data);
       setLoading(false);
     });
+  };
+
+  useEffect(() => {
+    refreshLibrary();
   }, []);
 
   useEffect(() => {
@@ -122,6 +128,8 @@ export default function MeridianHome() {
     [books]
   );
 
+  const wipCount = useMemo(() => books.filter((b) => b.status === "wip").length, [books]);
+
   const continueBook = useMemo(() => {
     return readable
       .filter((b) => b.status === "reading")
@@ -167,6 +175,25 @@ export default function MeridianHome() {
               className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-full text-sm font-precision text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-brass-200 focus:border-brass-400 transition-all"
             />
           </div>
+          <button
+            onClick={() => setIsUploadOpen(true)}
+            title="Add books"
+            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-white rounded-full transition-colors flex-shrink-0"
+          >
+            <UploadCloud size={17} strokeWidth={2} />
+          </button>
+          <Link
+            href="/projects/reader-v2/inbox"
+            title="Inbox"
+            className="relative p-2 text-slate-400 hover:text-slate-700 hover:bg-white rounded-full transition-colors flex-shrink-0"
+          >
+            <Inbox size={17} strokeWidth={2} />
+            {wipCount > 0 && (
+              <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] px-0.5 flex items-center justify-center bg-brass-500 text-white text-[8px] font-bold rounded-full border border-white">
+                {wipCount}
+              </span>
+            )}
+          </Link>
           <Link
             href="/projects/reader-v2/notes"
             title="Notes"
@@ -281,6 +308,13 @@ export default function MeridianHome() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AddBooksModal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        existingBooks={books}
+        onUploaded={refreshLibrary}
+      />
     </div>
   );
 }

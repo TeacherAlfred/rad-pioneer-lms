@@ -7243,6 +7243,7 @@ export type Database = {
           author: string | null
           cover_key: string | null
           created_at: string | null
+          epub_locations: string | null
           file_key: string | null
           file_type: string | null
           has_digital: boolean | null
@@ -7264,6 +7265,7 @@ export type Database = {
           author?: string | null
           cover_key?: string | null
           created_at?: string | null
+          epub_locations?: string | null
           file_key?: string | null
           file_type?: string | null
           has_digital?: boolean | null
@@ -7285,6 +7287,7 @@ export type Database = {
           author?: string | null
           cover_key?: string | null
           created_at?: string | null
+          epub_locations?: string | null
           file_key?: string | null
           file_type?: string | null
           has_digital?: boolean | null

@@ -435,3 +435,15 @@ export async function saveLastPosition(
 
   if (error) throw new Error(error.message);
 }
+
+/**
+ * Caches epub.js's generated locations map (book.locations.save()'s output)
+ * so a percentage-accurate EPUB progress bar doesn't require re-walking the
+ * whole book's text on every open - generated once, on first open, reused
+ * from here on every open after.
+ */
+export async function saveEpubLocations(bookId: string, locations: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ epub_locations: locations }).eq("id", bookId);
+  if (error) throw new Error(error.message);
+}

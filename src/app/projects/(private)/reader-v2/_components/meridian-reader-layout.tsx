@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -12,6 +12,7 @@ import {
   getBookNotes,
   saveReadingProgress,
   saveLastPosition,
+  saveEpubLocations,
   getNoteTagOptions,
   type NoteTagOption,
 } from "../../reader/_actions/notes";
@@ -87,29 +88,33 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
     getNoteTagOptions().then(setTagOptions);
   }, [book.id]);
 
-  // Groups this book's existing note excerpts by page, for PdfViewer to
-  // paint an approximate "you noted something here" marker when revisiting
-  // a page.
-  const noteExcerptsByPage = useMemo(() => {
-    const map: Record<number, string[]> = {};
-    notes.forEach((note) => {
-      if (note.page_number === null || !note.excerpt) return;
-      if (!map[note.page_number]) map[note.page_number] = [];
-      map[note.page_number].push(note.excerpt);
-    });
-    return map;
-  }, [notes]);
-
-  const positionRef = useRef<{ lastPageNumber?: number; lastCfi?: string }>({});
+  const positionRef = useRef<{ lastPageNumber?: number; lastCfi?: string; progressPercentage?: number }>({});
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // PDF page turns silently kept last_page_number current, but the
+  // manually-clicked "Log Progress" button was the only thing that ever
+  // updated reading_progress - the field the library grid actually displays.
+  // Read far past the last click and the grid just goes stale (this is what
+  // happened to "The Algorithm": 24 pages in, still showing 3% because the
+  // last manual log was ages ago). Flushing progressPercentage in the same
+  // debounced save as the position fixes that going forward, for PDFs where
+  // a percentage is directly computable from page/total. EPUB has no
+  // reliable percentage without generating locations, so it still relies on
+  // the manual button.
   const flushPositionSave = () => {
-    const pos = positionRef.current;
-    if (pos.lastPageNumber === undefined && pos.lastCfi === undefined) return;
-    saveLastPosition(book.id, pos).catch((error) => console.error("Failed to save reading position", error));
+    const { lastPageNumber, lastCfi, progressPercentage } = positionRef.current;
+    if (lastPageNumber === undefined && lastCfi === undefined) return;
+    saveLastPosition(book.id, { lastPageNumber, lastCfi }).catch((error) =>
+      console.error("Failed to save reading position", error)
+    );
+    if (progressPercentage !== undefined) {
+      saveReadingProgress(book.id, progressPercentage).catch((error) =>
+        console.error("Failed to auto-save reading progress", error)
+      );
+    }
   };
 
-  const schedulePositionSave = (next: { lastPageNumber?: number; lastCfi?: string }) => {
+  const schedulePositionSave = (next: { lastPageNumber?: number; lastCfi?: string; progressPercentage?: number }) => {
     positionRef.current = { ...positionRef.current, ...next };
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(flushPositionSave, POSITION_SAVE_DEBOUNCE_MS);
@@ -131,11 +136,25 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
   const handleProgressChange = (currentPage: number, totalPages: number) => {
     const percentage = Math.round((currentPage / totalPages) * 100);
     setReadingProgress(percentage);
-    schedulePositionSave({ lastPageNumber: currentPage });
+    schedulePositionSave({ lastPageNumber: currentPage, progressPercentage: percentage });
   };
 
   const handleEpubLocationChange = (cfi: string) => {
     schedulePositionSave({ lastCfi: cfi });
+  };
+
+  // Percentage only starts flowing once epub.js's locations map is ready
+  // (cached or freshly generated) - same debounced auto-save PDFs use, so
+  // reading_progress stays current without the manual "Log Progress" click.
+  const handleEpubProgressChange = (percentage: number) => {
+    setReadingProgress(percentage);
+    schedulePositionSave({ progressPercentage: percentage });
+  };
+
+  const handleEpubLocationsGenerated = (locations: string) => {
+    saveEpubLocations(book.id, locations).catch((error) =>
+      console.error("Failed to cache EPUB locations", error)
+    );
   };
 
   const handleSaveProgress = async () => {
@@ -365,7 +384,6 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               initialPage={book.last_page_number ?? undefined}
               onProgressChange={handleProgressChange}
               onTextSelected={handleTextSelected}
-              noteExcerptsByPage={noteExcerptsByPage}
             />
           ) : book.file_type === 'epub' && activeStreamUrl ? (
             <EpubViewer
@@ -375,6 +393,9 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               initialTheme={ambientEpubTheme}
               onLocationChange={handleEpubLocationChange}
               onHighlight={handleEpubHighlight}
+              cachedLocations={book.epub_locations ?? undefined}
+              onLocationsGenerated={handleEpubLocationsGenerated}
+              onProgressChange={handleEpubProgressChange}
             />
           ) : (
             <div className="text-center max-w-md px-6 font-precision text-slate-500">Physical Volume Interface</div>

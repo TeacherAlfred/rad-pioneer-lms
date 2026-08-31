@@ -46,6 +46,8 @@ export async function registerWipBook(title: string, fileKey: string, fileType: 
 
   if (error) throw new Error(error.message);
   revalidatePath("/projects/reader");
+  revalidatePath("/projects/reader-v2");
+  revalidatePath("/projects/reader-v2/inbox");
   return data;
 }
 
@@ -116,8 +118,10 @@ export async function publishWipBook(
       .eq("id", bookId);
 
     if (error) throw new Error(error.message);
-    
+
     revalidatePath("/projects/reader");
+    revalidatePath("/projects/reader-v2");
+    revalidatePath("/projects/reader-v2/inbox");
     return { success: true };
 
   } catch (error) {

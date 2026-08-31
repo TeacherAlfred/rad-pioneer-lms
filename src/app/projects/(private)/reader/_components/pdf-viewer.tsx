@@ -25,13 +25,6 @@ interface PdfViewerProps {
   initialPage?: number; // Exact resume position - takes priority over initialProgress when present
   onProgressChange?: (currentPage: number, totalPages: number) => void;
   onTextSelected?: (text: string, pageNum: number, chapterTitle: string | null) => void;
-  // Existing notes' excerpts for this book, keyed by page - used to paint an
-  // approximate "you noted something here" marker when revisiting a page.
-  // Approximate (first ~60 chars of the excerpt, single text-item match)
-  // because PDF text layers are chunked per line/run, not per selection, so
-  // an exact multi-line replay of the original selection isn't reliable the
-  // way EPUB's CFI-anchored highlight is.
-  noteExcerptsByPage?: Record<number, string[]>;
 }
 
 export interface PdfViewerHandle {
@@ -40,7 +33,7 @@ export interface PdfViewerHandle {
 }
 
 const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer(
-  { url, initialProgress = 0, initialPage, onProgressChange, onTextSelected, noteExcerptsByPage },
+  { url, initialProgress = 0, initialPage, onProgressChange, onTextSelected },
   ref
 ) {
   const [numPages, setNumPages] = useState<number>();
@@ -260,47 +253,14 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer
     }
   };
 
-  // A short, word-bounded lead-in from each note's excerpt on this page -
-  // enough to spot "I noted something here" while scrolling back, without
-  // pretending to reconstruct the exact original (possibly multi-line)
-  // selection the way EPUB's CFI-anchored highlight can.
-  const pageNoteMarkers = noteExcerptsByPage?.[pageNumber] || [];
-  const noteMarkerTerms = pageNoteMarkers
-    .map((excerpt) => {
-      const lead = excerpt.trim().slice(0, 60);
-      const words = lead.split(/\s+/);
-      // Drop a possibly mid-word-truncated trailing word so the term
-      // matches cleanly rather than failing to match at all.
-      if (words.length > 1) words.pop();
-      return words.join(" ");
-    })
-    .filter((term) => term.length > 3);
-
   const customTextRenderer = useCallback(
     (textItem: { str: string }) => {
       const escaped = escapeHtml(textItem.str);
-
-      // Active search takes priority and is shown exclusively - layering both
-      // mark types could produce overlapping/nested <mark> tags on the same
-      // run of text.
-      if (highlightTerm) {
-        const regex = new RegExp(`(${escapeRegExp(escapeHtml(highlightTerm))})`, "gi");
-        return escaped.replace(regex, '<mark class="pdf-search-mark">$1</mark>');
-      }
-
-      if (noteMarkerTerms.length === 0) return escaped;
-      let result = escaped;
-      for (const term of noteMarkerTerms) {
-        if (!term) continue;
-        const regex = new RegExp(`(${escapeRegExp(escapeHtml(term))})`, "i");
-        if (regex.test(result)) {
-          result = result.replace(regex, '<mark class="pdf-note-mark">$1</mark>');
-          break;
-        }
-      }
-      return result;
+      if (!highlightTerm) return escaped;
+      const regex = new RegExp(`(${escapeRegExp(escapeHtml(highlightTerm))})`, "gi");
+      return escaped.replace(regex, '<mark class="pdf-search-mark">$1</mark>');
     },
-    [highlightTerm, noteMarkerTerms.join("|")]
+    [highlightTerm]
   );
 
   return (

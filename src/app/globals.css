@@ -112,11 +112,3 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover {
   background: rgba(245, 158, 11, 0.45);
   border-radius: 2px;
 }
-
-/* Approximate "you noted something here" marker, sourced from existing
-   notes' excerpts rather than a live search - a muted brass tone so it
-   never gets confused with an active search match. */
-.pdf-note-mark {
-  background: rgba(199, 154, 75, 0.3);
-  border-radius: 2px;
-}
