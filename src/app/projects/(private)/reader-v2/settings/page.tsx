@@ -5,8 +5,10 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { getReaderSettings, updateVaultPin } from "../../reader/_actions/settings";
+import { useAmbientBackground } from "../_lib/use-ambient-background";
 
 export default function SettingsPage() {
+  const ambientBackground = useAmbientBackground();
   const [loading, setLoading] = useState(true);
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -40,7 +42,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#faf7f1]">
+    <div className="min-h-screen transition-colors duration-[3000ms]" style={{ backgroundColor: ambientBackground }}>
       <header className="max-w-2xl mx-auto px-8 pt-10 pb-6 flex items-center gap-4">
         <Link href="/projects/reader-v2" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-full transition-colors">
           <ArrowLeft size={18} strokeWidth={2.5} />

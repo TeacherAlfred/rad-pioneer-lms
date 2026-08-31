@@ -5,25 +5,27 @@ import { revalidatePath } from "next/cache";
 
 export interface ReaderSettings {
   vaultPin: string;
+  focusTagIds: string[];
 }
 
-const FALLBACK_SETTINGS: ReaderSettings = { vaultPin: "112358" };
+const FALLBACK_SETTINGS: ReaderSettings = { vaultPin: "112358", focusTagIds: [] };
 
 /**
  * Shared between v1 (reader) and v2 (reader-v2) - the vault PIN was
  * previously a hardcoded constant duplicated in both, which let them drift.
- * One row, one source of truth.
+ * One row, one source of truth. focusTagIds is the "seasonal focus" pin -
+ * tags deliberately brought to the forefront regardless of note count.
  */
 export async function getReaderSettings(): Promise<ReaderSettings> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("rad_reader_settings")
-    .select("vault_pin")
+    .select("vault_pin, focus_tag_ids")
     .eq("id", true)
     .single();
 
   if (error || !data) return FALLBACK_SETTINGS;
-  return { vaultPin: data.vault_pin };
+  return { vaultPin: data.vault_pin, focusTagIds: data.focus_tag_ids || [] };
 }
 
 export async function updateVaultPin(newPin: string) {
@@ -40,5 +42,17 @@ export async function updateVaultPin(newPin: string) {
   if (error) throw new Error(error.message);
 
   revalidatePath("/projects/reader");
+  revalidatePath("/projects/reader-v2");
+}
+
+export async function setFocusTags(tagIds: string[]) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("rad_reader_settings")
+    .update({ focus_tag_ids: tagIds, updated_at: new Date().toISOString() })
+    .eq("id", true);
+
+  if (error) throw new Error(error.message);
+
   revalidatePath("/projects/reader-v2");
 }

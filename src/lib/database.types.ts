@@ -7140,6 +7140,36 @@ export type Database = {
           },
         ]
       }
+      rad_book_note_tags: {
+        Row: {
+          note_id: string
+          tag_id: string
+        }
+        Insert: {
+          note_id: string
+          tag_id: string
+        }
+        Update: {
+          note_id?: string
+          tag_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rad_book_note_tags_note_id_fkey"
+            columns: ["note_id"]
+            isOneToOne: false
+            referencedRelation: "rad_book_notes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rad_book_note_tags_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "rad_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rad_book_notes: {
         Row: {
           book_id: string | null
@@ -7435,16 +7465,19 @@ export type Database = {
       }
       rad_reader_settings: {
         Row: {
+          focus_tag_ids: string[]
           id: boolean
           updated_at: string
           vault_pin: string
         }
         Insert: {
+          focus_tag_ids?: string[]
           id?: boolean
           updated_at?: string
           vault_pin?: string
         }
         Update: {
+          focus_tag_ids?: string[]
           id?: boolean
           updated_at?: string
           vault_pin?: string
@@ -7488,14 +7521,17 @@ export type Database = {
       }
       rad_tags: {
         Row: {
+          category: string | null
           id: string
           name: string
         }
         Insert: {
+          category?: string | null
           id?: string
           name: string
         }
         Update: {
+          category?: string | null
           id?: string
           name?: string
         }

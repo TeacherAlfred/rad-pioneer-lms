@@ -4,16 +4,17 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import ePub, { Book, Rendition } from "epubjs";
 import { ChevronLeft, ChevronRight, Sun, BookOpen, Moon, Minus, Plus } from "lucide-react";
 
+export type EpubTheme = 'light' | 'sepia' | 'dark';
+
 interface EpubViewerProps {
   url: string;
   initialCfi?: string; // Exact resume position from a previous session
+  initialTheme?: EpubTheme; // Defaults to 'light' - v1 doesn't pass this, so it's unaffected
   currentColor?: string;
   onHighlight?: (text: string, cfi: string, color: string) => void;
   onHighlightClick?: (cfi: string) => void;
   onLocationChange?: (cfi: string) => void;
 }
-
-type EpubTheme = 'light' | 'sepia' | 'dark';
 
 const THEME_STYLES: Record<EpubTheme, Record<string, Record<string, string>>> = {
   light: { body: { color: "#1e293b", background: "#ffffff" } },
@@ -42,7 +43,7 @@ export interface EpubViewerHandle {
 }
 
 const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubViewer(
-  { url, initialCfi, currentColor = "yellow", onHighlight, onHighlightClick, onLocationChange },
+  { url, initialCfi, initialTheme, currentColor = "yellow", onHighlight, onHighlightClick, onLocationChange },
   ref
 ) {
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -55,7 +56,7 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
   const [atEnd, setAtEnd] = useState(false);
   const [currentLocation, setCurrentLocation] = useState<string>("");
 
-  const [theme, setTheme] = useState<EpubTheme>('light');
+  const [theme, setTheme] = useState<EpubTheme>(initialTheme || 'light');
   const [fontSize, setFontSize] = useState(100);
 
   // Kept in a ref (not the effect's dependency array) so passing a fresh

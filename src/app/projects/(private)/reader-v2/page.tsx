@@ -5,13 +5,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { Search, BookOpen, Lock, X, Settings } from "lucide-react";
+import { Search, BookOpen, Lock, X, Settings, StickyNote } from "lucide-react";
 import { getLibraryBooks, toggleBookStatus, type BookWithTags } from "../reader/_actions/books";
 import { getReaderSettings } from "../reader/_actions/settings";
 import ReadingGauge from "./_components/reading-gauge";
 import ReadingStreak from "./_components/reading-streak";
 import ShelfCover from "./_components/shelf-cover";
 import { markVaultUnlocked, clearVaultUnlocked } from "./_lib/vault-session";
+import { useAmbientBackground } from "./_lib/use-ambient-background";
 
 // Typed anywhere on this page, no visible trigger by design - a visible
 // "unlock" affordance would itself give away that a private collection
@@ -45,6 +46,7 @@ function affinityScore(book: BookWithTags, now: number): number {
 
 export default function MeridianHome() {
   const router = useRouter();
+  const ambientBackground = useAmbientBackground();
   const [books, setBooks] = useState<BookWithTags[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -148,7 +150,7 @@ export default function MeridianHome() {
   }, [books]);
 
   return (
-    <div className="min-h-screen bg-[#faf7f1]">
+    <div className="min-h-screen transition-colors duration-[3000ms]" style={{ backgroundColor: ambientBackground }}>
       <header className="max-w-5xl mx-auto px-8 pt-10 pb-6 flex items-center justify-between gap-6">
         <Link href="/projects/reader-v2" className="font-display italic text-2xl text-slate-900 tracking-tight">
           Meridian
@@ -165,6 +167,13 @@ export default function MeridianHome() {
               className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-full text-sm font-precision text-slate-900 shadow-sm focus:outline-none focus:ring-4 focus:ring-brass-200 focus:border-brass-400 transition-all"
             />
           </div>
+          <Link
+            href="/projects/reader-v2/notes"
+            title="Notes"
+            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-white rounded-full transition-colors flex-shrink-0"
+          >
+            <StickyNote size={17} strokeWidth={2} />
+          </Link>
           <Link
             href="/projects/reader-v2/settings"
             title="Settings"

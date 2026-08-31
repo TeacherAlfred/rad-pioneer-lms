@@ -14,6 +14,8 @@ import type { PdfViewerHandle } from "../../reader/_components/pdf-viewer";
 import type { EpubViewerHandle } from "../../reader/_components/epub-viewer";
 import ReadingGauge from "./reading-gauge";
 import BookCloseMoment from "./book-close-moment";
+import { useAmbientBackground } from "../_lib/use-ambient-background";
+import { getAmbientEpubTheme } from "../_lib/time-of-day";
 
 // Reusing the existing, already-solid PDF/EPUB internals (search, highlight,
 // EPUB themes, resume position) - Meridian re-skins the chrome around them,
@@ -30,6 +32,10 @@ const POSITION_SAVE_DEBOUNCE_MS = 3000;
 
 export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLayoutProps) {
   const router = useRouter();
+  const ambientBackground = useAmbientBackground();
+  // Computed once at open, not live - an EPUB theme swapping under you mid-
+  // session would be jarring in a way a chrome color drift isn't.
+  const [ambientEpubTheme] = useState(() => getAmbientEpubTheme());
   const [activeStreamUrl] = useState(fileUrl);
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -231,11 +237,19 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
   });
 
   if (!activeStreamUrl && book.has_digital) {
-    return <div className="flex items-center justify-center h-screen bg-[#faf7f1]"><p className="font-precision text-slate-500">Failed to load secure file stream.</p></div>;
+    return (
+      <div className="flex items-center justify-center h-screen transition-colors duration-[3000ms]" style={{ backgroundColor: ambientBackground }}>
+        <p className="font-precision text-slate-500">Failed to load secure file stream.</p>
+      </div>
+    );
   }
 
   return (
-    <div ref={rootRef} className="flex flex-col h-screen bg-[#faf7f1] overflow-hidden relative font-precision">
+    <div
+      ref={rootRef}
+      className="flex flex-col h-screen overflow-hidden relative font-precision transition-colors duration-[3000ms]"
+      style={{ backgroundColor: ambientBackground }}
+    >
 
       <header className="h-16 bg-white/90 backdrop-blur-sm border-b border-brass-200/60 flex items-center justify-between px-5 flex-shrink-0 z-10 shadow-sm relative">
         <div className="flex items-center gap-4 z-20 min-w-0">
@@ -316,6 +330,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               ref={epubRef}
               url={activeStreamUrl}
               initialCfi={book.last_cfi ?? undefined}
+              initialTheme={ambientEpubTheme}
               onLocationChange={handleEpubLocationChange}
             />
           ) : (
