@@ -29,7 +29,11 @@ export async function GET() {
     supabase.from('irene_fitness_responses').select('id, family_id, display_name'),
     supabase.from('irene_fitness_children').select('family_id, grade, class'),
     supabase.from('irene_fitness_votes').select('response_id, category'),
-    supabase.from('irene_fitness_voting_settings').select('phase, updated_at').eq('id', 1).single(),
+    supabase
+      .from('irene_fitness_voting_settings')
+      .select('phase, updated_at, results_announcement_date, submissions_open')
+      .eq('id', 1)
+      .single(),
   ]);
   if (familiesError) return NextResponse.json({ error: familiesError.message }, { status: 500 });
   if (responsesError) return NextResponse.json({ error: responsesError.message }, { status: 500 });
@@ -115,25 +119,43 @@ export async function GET() {
       top_responses_grade: topResponsesGrade,
       top_votes_grade: topVotesGrade && topVotesGrade.vote_count > 0 ? topVotesGrade : null,
     },
-    settings: settings || { phase: 'locked', updated_at: null },
+    settings: settings || { phase: 'locked', updated_at: null, results_announcement_date: null, submissions_open: true },
     rows,
   });
 }
 
-// Phase toggle only - the settings row always exists (seeded by migration
-// 20260827130000), so this is an update, never an insert.
+// Partial update - the settings row always exists (seeded by migration
+// 20260827130000), so this is always an update, never an insert. Only
+// fields present in the body get patched, same convention as
+// admin/api/irene-settings/route.ts on the older irene-comrades platform.
 export async function PATCH(request: Request) {
   const body = await request.json().catch(() => ({}));
-  const { phase } = body as { phase?: string };
-  if (!phase || !['locked', 'open', 'standings_only'].includes(phase)) {
-    return NextResponse.json({ error: 'phase must be one of: locked, open, standings_only' }, { status: 400 });
+  const { phase, results_announcement_date, submissions_open } = body as {
+    phase?: string;
+    results_announcement_date?: string | null;
+    submissions_open?: boolean;
+  };
+
+  const update: Record<string, unknown> = {};
+  if (phase !== undefined) {
+    if (!['locked', 'open', 'standings_only'].includes(phase)) {
+      return NextResponse.json({ error: 'phase must be one of: locked, open, standings_only' }, { status: 400 });
+    }
+    update.phase = phase;
   }
+  if (results_announcement_date !== undefined) {
+    update.results_announcement_date = results_announcement_date?.trim() || null;
+  }
+  if (submissions_open !== undefined) {
+    update.submissions_open = submissions_open === true;
+  }
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: 'No recognized fields to update' }, { status: 400 });
+  }
+  update.updated_at = new Date().toISOString();
 
   const supabase = supabaseAdmin();
-  const { error } = await supabase
-    .from('irene_fitness_voting_settings')
-    .update({ phase, updated_at: new Date().toISOString() })
-    .eq('id', 1);
+  const { error } = await supabase.from('irene_fitness_voting_settings').update(update).eq('id', 1);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, phase });
+  return NextResponse.json({ ok: true });
 }

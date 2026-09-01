@@ -1,5 +1,6 @@
 import React from 'react';
 import Image from 'next/image';
+import { HeaderActions } from './HeaderActions';
 
 export const metadata = {
   title: 'Irene Primary Fitness Challenge | Powered by RAD Academy',
@@ -24,7 +25,10 @@ export default function IreneFitnessLayout({
               <p className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Fitness Community</p>
             </div>
           </div>
-          <Image src="/logo/rad-logo.png" alt="RAD Academy" width={70} height={23} unoptimized />
+          <div className="flex items-center gap-2 shrink-0">
+            <HeaderActions />
+            <Image src="/logo/rad-logo.png" alt="RAD Academy" width={70} height={23} unoptimized className="ml-1" />
+          </div>
         </div>
       </nav>
 

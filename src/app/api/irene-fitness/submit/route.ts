@@ -75,18 +75,27 @@ export async function POST(request: Request) {
       .find((c) => c.startsWith(`${FAMILY_COOKIE}=`))
       ?.split('=')[1];
 
+    // consent_public_display is deliberately NOT in this shared payload - a
+    // returning visitor tweaking their story after opting out (via
+    // /api/irene-fitness/opt-out) must not get silently flipped back to
+    // publicly visible on their next save. Only a brand-new family (never
+    // asked before) gets it defaulted to true, via insertPayload below;
+    // existing families keep whatever they last chose.
     const familyPayload = {
       whatsapp: waDigits || null,
       email: emailTrimmed || null,
       ip_address: ipAddress,
-      consent_public_display: true,
-      consent_public_display_timestamp: now,
       consent_wording_version: CONSENT_WORDING_VERSION,
       consent_source,
       consent_updates: consent_updates === true,
       consent_updates_timestamp: consent_updates === true ? now : null,
       consent_marketing: consent_marketing === true,
       consent_marketing_timestamp: consent_marketing === true ? now : null,
+    };
+    const insertPayload = {
+      ...familyPayload,
+      consent_public_display: true,
+      consent_public_display_timestamp: now,
     };
 
     let family: any = null;
@@ -112,7 +121,7 @@ export async function POST(request: Request) {
       // select+update on conflict — same idiom as leads.phone elsewhere.
       const { data: inserted } = await supabase
         .from('irene_fitness_families')
-        .insert([familyPayload])
+        .insert([insertPayload])
         .select()
         .single();
 

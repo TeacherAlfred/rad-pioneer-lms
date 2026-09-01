@@ -56,7 +56,12 @@ type DashboardData = {
   summary: Summary;
   votes: VotesSummary;
   grade_stats: GradeStats;
-  settings: { phase: Phase; updated_at: string | null };
+  settings: {
+    phase: Phase;
+    updated_at: string | null;
+    results_announcement_date: string | null;
+    submissions_open: boolean;
+  };
   rows: ResponseRow[];
 };
 
@@ -70,9 +75,9 @@ const FILTERS: { key: string; label: string }[] = [
 ];
 
 const VOTE_CATEGORY_LABELS: Record<VoteCategory, string> = {
-  funniest: "Funniest",
-  most_inspiring: "Most Inspiring",
-  mad_scientist: "Mad Scientist (Craziest Diet)",
+  funniest: "Funny",
+  most_inspiring: "Inspiring",
+  mad_scientist: "Craziest Diet",
 };
 
 const PHASES: { key: Phase; label: string; icon: typeof Lock; description: string }[] = [
@@ -153,11 +158,17 @@ function IreneFitnessDashboardInner() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [savingPhase, setSavingPhase] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [resultsDateDraft, setResultsDateDraft] = useState("");
+  const [resultsDateDirty, setResultsDateDirty] = useState(false);
 
   useEffect(() => {
     fetch("/admin/api/dashboard-v2/projects/irene-fitness")
       .then((r) => r.json())
-      .then((d) => setData(d))
+      .then((d) => {
+        setData(d);
+        setResultsDateDraft(d?.settings?.results_announcement_date || "");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -168,23 +179,41 @@ function IreneFitnessDashboardInner() {
     router.push(`/admin/dashboard-v2/projects/irene-fitness?filter=${key}`);
   }
 
-  async function setPhase(phase: Phase) {
-    if (!data || savingPhase || data.settings.phase === phase) return;
-    setSavingPhase(true);
-    const prevPhase = data.settings.phase;
-    setData({ ...data, settings: { ...data.settings, phase } });
+  // Shared by the phase buttons, the submissions-open toggle, and the
+  // results-date save button - optimistic update + PATCH + rollback on
+  // failure, same shape the old single-purpose setPhase used.
+  async function saveSettings(partial: Partial<DashboardData["settings"]>, setSaving: (v: boolean) => void) {
+    if (!data) return;
+    setSaving(true);
+    const prevSettings = data.settings;
+    setData({ ...data, settings: { ...data.settings, ...partial } });
     try {
       const res = await fetch("/admin/api/dashboard-v2/projects/irene-fitness", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phase }),
+        body: JSON.stringify(partial),
       });
       if (!res.ok) throw new Error("Failed to save");
     } catch {
-      setData((d) => (d ? { ...d, settings: { ...d.settings, phase: prevPhase } } : d));
+      setData((d) => (d ? { ...d, settings: prevSettings } : d));
     } finally {
-      setSavingPhase(false);
+      setSaving(false);
     }
+  }
+
+  async function setPhase(phase: Phase) {
+    if (!data || savingPhase || data.settings.phase === phase) return;
+    await saveSettings({ phase }, setSavingPhase);
+  }
+
+  async function saveResultsDate() {
+    await saveSettings({ results_announcement_date: resultsDateDraft.trim() || null }, setSavingSettings);
+    setResultsDateDirty(false);
+  }
+
+  async function toggleSubmissionsOpen() {
+    if (!data) return;
+    await saveSettings({ submissions_open: !data.settings.submissions_open }, setSavingSettings);
   }
 
   // Neither wa.me nor api.whatsapp.com reliably carries ?text= through to
@@ -358,14 +387,70 @@ function IreneFitnessDashboardInner() {
                 );
               })}
             </div>
-            <button
-              disabled
-              title="Public voting/gallery page not built yet - tracked in Systems Status"
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-50 text-stone-300 cursor-not-allowed shrink-0"
+            <a
+              href="/projects/irene-fitness/community"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-50 text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors shrink-0"
             >
               <EyeOff size={14} />
               View as Anonymous
-            </button>
+            </a>
+          </div>
+        </section>
+
+        {/* FAQ content - read by the public page's FAQ modal, no redeploy needed to change */}
+        <section>
+          <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400 mb-4">FAQ Content</h2>
+          <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm p-6 space-y-5">
+            <div>
+              <label className="block text-[11px] font-black uppercase tracking-widest text-stone-500 mb-2">
+                Results announcement date{" "}
+                <span className="text-stone-300 normal-case font-medium">(optional, cosmetic only)</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={resultsDateDraft}
+                  onChange={(e) => {
+                    setResultsDateDraft(e.target.value);
+                    setResultsDateDirty(true);
+                  }}
+                  placeholder="e.g. Week of 15 September"
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300"
+                />
+                <button
+                  onClick={saveResultsDate}
+                  disabled={!resultsDateDirty || savingSettings}
+                  className="px-4 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-900 text-white disabled:opacity-40 transition-opacity"
+                >
+                  Save
+                </button>
+              </div>
+              <p className="text-[11px] text-stone-400 mt-1.5">
+                Shown in the FAQ&apos;s &quot;when are winners announced&quot; answer. Leave blank to show a generic
+                &quot;we&apos;ll confirm soon&quot; line instead.
+              </p>
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Submissions still open</p>
+                <p className="text-[11px] text-stone-400 mt-1">
+                  Controls the FAQ&apos;s &quot;can I still submit my story&quot; answer.
+                </p>
+              </div>
+              <button
+                onClick={toggleSubmissionsOpen}
+                disabled={savingSettings}
+                className={`px-4 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all disabled:opacity-60 ${
+                  data.settings.submissions_open
+                    ? "bg-emerald-600 text-white"
+                    : "bg-stone-50 text-stone-500 hover:text-stone-900"
+                }`}
+              >
+                {data.settings.submissions_open ? "Open" : "Closed"}
+              </button>
+            </div>
           </div>
         </section>
 
