@@ -1,10 +1,10 @@
 'use client';
 
-import React, { Suspense, useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import React, { useEffect, useState } from 'react';
 import { Smile, Sparkles, FlaskConical, Footprints, Mountain, Target, ChevronDown, Check, X } from 'lucide-react';
 import { BottomSheetModal } from '../BottomSheetModal';
 import { TourOverlay, type TourStep } from '../TourOverlay';
+import { START_TOUR_EVENT } from '../HeaderActions';
 
 type VoteCategory = 'funniest' | 'most_inspiring' | 'mad_scientist';
 type Phase = 'locked' | 'open' | 'standings_only';
@@ -478,9 +478,7 @@ function TourPrompt({ onStart }: { onStart: () => void }) {
   );
 }
 
-function IreneFitnessCommunityInner() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
+export default function IreneFitnessCommunityPage() {
   const [phase, setPhase] = useState<Phase | null>(null);
   const [responses, setResponses] = useState<FeedResponse[]>([]);
   const [order, setOrder] = useState<string[]>([]);
@@ -524,19 +522,20 @@ function IreneFitnessCommunityInner() {
     };
   }, []);
 
-  // "Replay the guide" from the FAQ (api/irene-fitness/faq's "How do I use
-  // this page?" link_url) lands here with ?tour=1 - the same tour targets
-  // TourPrompt uses, just triggered from a URL instead of the banner. Only
-  // fires once phase is known to be 'open' (the tour's targets don't exist
-  // in the DOM otherwise - the whole feed is replaced by a "not open yet"
-  // message when locked). The param is stripped right after so a refresh
-  // doesn't re-trigger it.
+  // "Replay the guide" in the FAQ (HeaderActions.tsx's FaqAccordion, via its
+  // REPLAY_TOUR_LINK sentinel) dispatches this instead of navigating - same
+  // tour targets TourPrompt uses, just triggered from the FAQ modal instead
+  // of the banner. No phase check needed here the way TourPrompt has one:
+  // by the time someone reaches this link the feed has already loaded (the
+  // FAQ button itself is part of that loaded page), so the tour's targets
+  // already exist in the DOM.
   useEffect(() => {
-    if (phase === 'open' && searchParams.get('tour') === '1') {
+    function onStartTour() {
       setTourStep(0);
-      router.replace('/projects/irene-fitness/community');
     }
-  }, [phase, searchParams, router]);
+    window.addEventListener(START_TOUR_EVENT, onStartTour);
+    return () => window.removeEventListener(START_TOUR_EVENT, onStartTour);
+  }, []);
 
   const interactive = phase === 'open';
 
@@ -695,13 +694,5 @@ function IreneFitnessCommunityInner() {
         />
       )}
     </div>
-  );
-}
-
-export default function IreneFitnessCommunityPage() {
-  return (
-    <Suspense fallback={<div className="max-w-2xl mx-auto px-4 py-24 text-center text-slate-400 text-sm">Loading…</div>}>
-      <IreneFitnessCommunityInner />
-    </Suspense>
   );
 }

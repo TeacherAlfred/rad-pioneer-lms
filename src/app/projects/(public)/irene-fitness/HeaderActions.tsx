@@ -23,6 +23,19 @@ export function openIreneFitnessFaq(question?: string) {
   window.dispatchEvent(new CustomEvent(OPEN_FAQ_EVENT, { detail: { question } }));
 }
 
+// Same idea, the other direction: the FAQ's "Replay the guide" link needs to
+// start the tour that lives in community/page.tsx. Not a real URL - a
+// sentinel link_url value (see REPLAY_TOUR_LINK below) tells FaqAccordion to
+// dispatch this instead of rendering a plain <a>, so replaying happens
+// in-page (closes the FAQ, starts the tour immediately) instead of a full
+// navigation that used to open in a new tab and leave the FAQ modal open
+// behind it.
+export const START_TOUR_EVENT = 'irene-fitness:start-tour';
+export const REPLAY_TOUR_LINK = 'irene-fitness://replay-tour';
+function startIreneFitnessTour() {
+  window.dispatchEvent(new CustomEvent(START_TOUR_EVENT));
+}
+
 const ICON_BTN_CLS =
   'w-9 h-9 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center transition-colors shrink-0';
 const INPUT_CLS =
@@ -73,15 +86,27 @@ function FaqAccordion({
             {open && (
               <div className="pb-4 -mt-1">
                 <p className="text-sm text-slate-600 leading-relaxed">{item.answer}</p>
-                {item.link_url && (
-                  <a
-                    href={item.link_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 inline-block text-xs font-bold text-[#0066cc] hover:underline"
+                {item.link_url === REPLAY_TOUR_LINK ? (
+                  <button
+                    onClick={() => {
+                      startIreneFitnessTour();
+                      onOpenPanel('none');
+                    }}
+                    className="mt-2 text-xs font-bold text-[#0066cc] hover:underline"
                   >
-                    {item.link_label || item.link_url}
-                  </a>
+                    {item.link_label || 'Replay the guide'}
+                  </button>
+                ) : (
+                  item.link_url && (
+                    <a
+                      href={item.link_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-block text-xs font-bold text-[#0066cc] hover:underline"
+                    >
+                      {item.link_label || item.link_url}
+                    </a>
+                  )
                 )}
               </div>
             )}
