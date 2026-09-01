@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { Smile, Sparkles, FlaskConical, Footprints, Mountain, Target, ChevronDown, Check } from 'lucide-react';
+import React, { Suspense, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Smile, Sparkles, FlaskConical, Footprints, Mountain, Target, ChevronDown, Check, X } from 'lucide-react';
 import { BottomSheetModal } from '../BottomSheetModal';
+import { TourOverlay, type TourStep } from '../TourOverlay';
 
 type VoteCategory = 'funniest' | 'most_inspiring' | 'mad_scientist';
 type Phase = 'locked' | 'open' | 'standings_only';
@@ -229,13 +231,17 @@ function ResponseCard({
   interactive,
   onVote,
   onReadStory,
+  isExample,
+  voteButtonsId,
 }: {
   response: FeedResponse;
   tapped: Set<VoteCategory>;
   votedBefore: boolean;
   interactive: boolean;
   onVote: (category: VoteCategory) => void;
-  onReadStory: () => void;
+  onReadStory?: () => void;
+  isExample?: boolean;
+  voteButtonsId?: string;
 }) {
   const pills = factPills(response.story);
   const teaser = teaserLine(response.story);
@@ -245,6 +251,11 @@ function ResponseCard({
       <div className="flex items-center gap-3 mb-3">
         <Avatar name={response.display_name} size={36} />
         <p className="font-black text-lg">{response.display_name}</p>
+        {isExample && (
+          <span className="text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-slate-100 text-slate-400">
+            Example
+          </span>
+        )}
       </div>
 
       {votedBefore && (
@@ -272,20 +283,45 @@ function ResponseCard({
         </div>
       )}
 
-      <button
-        onClick={onReadStory}
-        className="flex items-center gap-1 text-xs font-bold text-[#0066cc] hover:underline mb-4"
-      >
-        Read full story
-        <ChevronDown size={14} />
-      </button>
+      {onReadStory && (
+        <button
+          onClick={onReadStory}
+          className="flex items-center gap-1 text-xs font-bold text-[#0066cc] hover:underline mb-4"
+        >
+          Read full story
+          <ChevronDown size={14} />
+        </button>
+      )}
 
-      <div className="pt-4 border-t border-black/5">
+      <div id={voteButtonsId} className="pt-4 border-t border-black/5">
         <VoteButtons votes={response.votes} tapped={tapped} interactive={interactive} onVote={onVote} />
       </div>
     </div>
   );
 }
+
+// Client-side only - never touches the API, never appears in `responses`,
+// so there's no real id for anyone to vote against and nothing to clean up
+// server-side. Exists purely so the tour's "Categories" step has a stable
+// element to scroll to and spotlight (real cards shuffle position), and is
+// only rendered for the duration of that one step (see tourStep === 2
+// below) so it's never mistaken for an actual entry.
+const TOUR_DUMMY_RESPONSE: FeedResponse = {
+  id: '__tour_dummy__',
+  display_name: 'Example Family',
+  story: {
+    motivation: null,
+    club_member: null,
+    club_names: null,
+    shoe_count: 2,
+    boss_level_challenge_2026: null,
+    toughest_challenge: null,
+    proudest_moment: null,
+    weirdest_fuel: null,
+    funniest_fail: 'Tripped over my own shoelaces crossing the finish line',
+  },
+  votes: { funniest: 0, most_inspiring: 0, mad_scientist: 0 },
+};
 
 // Capped low enough that 8 overlapping 32px avatars + a "+N more" label
 // still clear a single row on the narrowest phone widths this page
@@ -303,8 +339,9 @@ function CheerSquad({ responses }: { responses: FeedResponse[] }) {
   const visible = responses.slice(0, CHEER_SQUAD_VISIBLE);
   const remaining = responses.length - visible.length;
   return (
-    <div className="p-5 rounded-2xl bg-white border border-black/5 shadow-sm mb-4">
-      <p className="text-xs font-bold text-slate-400 mb-3">Also cheering everyone on</p>
+    <div id="tour-cheer-squad" className="p-5 rounded-2xl bg-white border border-black/5 shadow-sm mb-4">
+      <p className="text-xs font-bold text-slate-400">Also cheering everyone on</p>
+      <p className="text-[11px] text-slate-400 mb-3">No story shared, but you can still vote on their entries.</p>
       <div className="flex items-center flex-nowrap">
         {visible.map((r, i) => (
           <Avatar
@@ -335,26 +372,115 @@ const FILTER_OPTIONS: { key: CardFilter; label: string }[] = [
 // quick check-in, not something done while scrolling for minutes.
 function FilterPills({ value, onChange }: { value: CardFilter; onChange: (f: CardFilter) => void }) {
   return (
-    <div className="flex items-center gap-2 mb-4">
-      {FILTER_OPTIONS.map((opt) => {
-        const active = value === opt.key;
-        return (
-          <button
-            key={opt.key}
-            onClick={() => onChange(opt.key)}
-            className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-colors ${
-              active ? 'bg-[#0066cc] text-white' : 'bg-white border border-slate-200 text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
+    <div id="tour-filter-tabs" className="mb-4">
+      <div className="flex items-center gap-2">
+        {FILTER_OPTIONS.map((opt) => {
+          const active = value === opt.key;
+          return (
+            <button
+              key={opt.key}
+              onClick={() => onChange(opt.key)}
+              className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-colors ${
+                active ? 'bg-[#0066cc] text-white' : 'bg-white border border-slate-200 text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-[11px] text-slate-400 mt-2">
+        New to you = haven&apos;t voted yet · Your favourites = already voted
+      </p>
     </div>
   );
 }
 
-export default function IreneFitnessCommunityPage() {
+const TOUR_DISMISSED_KEY = 'irene_fitness_tour_dismissed';
+
+// The three genuinely non-obvious items on the feed (business-advisor
+// review, 2026-09-01, plus the vote-category step added after) - the FAQ/
+// message icons are already self-evident on sight, so no step for those.
+// Same explanations also live permanently in the "How do I use this page?"
+// FAQ entry, so dismissing this once doesn't mean losing access to it.
+const TOUR_STEPS: TourStep[] = [
+  {
+    targetId: 'tour-filter-tabs',
+    title: 'Filter the feed',
+    description: (
+      <>
+        <strong>New to you</strong> shows entries you haven&apos;t voted on yet. <strong>Your favourites</strong>{' '}
+        shows the ones you have.
+      </>
+    ),
+  },
+  {
+    targetId: 'tour-cheer-squad',
+    title: 'Cheer Squad',
+    description: (
+      <>Families who joined to show support. They can still vote on everyone else&apos;s entries.</>
+    ),
+  },
+  {
+    targetId: 'tour-vote-categories',
+    title: 'Categories',
+    description: (
+      <>
+        Tap <strong className="text-teal-700">Funny</strong>, <strong className="text-[#0066cc]">Inspiring</strong>,
+        and/or <strong className="text-violet-700">Craziest Diet</strong> to like and vote for an entry.
+      </>
+    ),
+  },
+];
+
+// Opt-in, not forced (business-advisor review, 2026-09-01): a chunk of real
+// traffic is shared links landing mid-feed, not top-of-page, so a blocking
+// sequential tour has a real blind spot. Dismissing is remembered per
+// device; nothing forces it on a second visit.
+function TourPrompt({ onStart }: { onStart: () => void }) {
+  const [dismissed, setDismissed] = useState(true);
+
+  useEffect(() => {
+    // Starting `dismissed` true keeps the server-rendered and first-client-
+    // paint output identical (localStorage doesn't exist during SSR) - this
+    // read has to happen post-mount, not in a lazy initializer, or the two
+    // renders diverge and React flags a hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDismissed(localStorage.getItem(TOUR_DISMISSED_KEY) === '1');
+  }, []);
+
+  function dismiss() {
+    localStorage.setItem(TOUR_DISMISSED_KEY, '1');
+    setDismissed(true);
+  }
+
+  if (dismissed) return null;
+
+  return (
+    <div className="flex items-center gap-3 p-4 rounded-2xl bg-[#0066cc]/5 border border-[#0066cc]/10 mb-4">
+      <button
+        onClick={() => {
+          onStart();
+          dismiss();
+        }}
+        className="flex-1 text-left text-sm font-bold text-[#0066cc]"
+      >
+        New here? Quick 30-second tour →
+      </button>
+      <button
+        onClick={dismiss}
+        aria-label="Dismiss"
+        className="shrink-0 p-1.5 rounded-full text-slate-400 hover:bg-black/5 hover:text-slate-600 transition-colors"
+      >
+        <X size={16} />
+      </button>
+    </div>
+  );
+}
+
+function IreneFitnessCommunityInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase | null>(null);
   const [responses, setResponses] = useState<FeedResponse[]>([]);
   const [order, setOrder] = useState<string[]>([]);
@@ -364,6 +490,7 @@ export default function IreneFitnessCommunityPage() {
   const [loading, setLoading] = useState(true);
   const [openStoryId, setOpenStoryId] = useState<string | null>(null);
   const [filter, setFilter] = useState<CardFilter>('all');
+  const [tourStep, setTourStep] = useState<number | null>(null);
 
   useEffect(() => {
     const id = getDeviceId();
@@ -396,6 +523,20 @@ export default function IreneFitnessCommunityPage() {
       cancelled = true;
     };
   }, []);
+
+  // "Replay the guide" from the FAQ (api/irene-fitness/faq's "How do I use
+  // this page?" link_url) lands here with ?tour=1 - the same tour targets
+  // TourPrompt uses, just triggered from a URL instead of the banner. Only
+  // fires once phase is known to be 'open' (the tour's targets don't exist
+  // in the DOM otherwise - the whole feed is replaced by a "not open yet"
+  // message when locked). The param is stripped right after so a refresh
+  // doesn't re-trigger it.
+  useEffect(() => {
+    if (phase === 'open' && searchParams.get('tour') === '1') {
+      setTourStep(0);
+      router.replace('/projects/irene-fitness/community');
+    }
+  }, [phase, searchParams, router]);
 
   const interactive = phase === 'open';
 
@@ -494,6 +635,8 @@ export default function IreneFitnessCommunityPage() {
           : 'Tap to vote for your favourites — one tap per category, per entry, per day.'}
       </p>
 
+      {phase === 'open' && <TourPrompt onStart={() => setTourStep(0)} />}
+
       <CheerSquad responses={cheerSquad} />
 
       {storiedResponses.length > 0 && <FilterPills value={filter} onChange={setFilter} />}
@@ -508,6 +651,18 @@ export default function IreneFitnessCommunityPage() {
             ? "You've voted on everyone so far — nice work. Check back as more entries come in."
             : "You haven't voted on anyone yet — tap a category on a card to add it here."}
         </p>
+      )}
+
+      {tourStep === 2 && (
+        <ResponseCard
+          response={TOUR_DUMMY_RESPONSE}
+          tapped={new Set()}
+          votedBefore={false}
+          interactive={false}
+          onVote={() => {}}
+          isExample
+          voteButtonsId="tour-vote-categories"
+        />
       )}
 
       {filteredResponses.map((r) => (
@@ -529,6 +684,24 @@ export default function IreneFitnessCommunityPage() {
           onClose={() => setOpenStoryId(null)}
         />
       )}
+
+      {tourStep !== null && (
+        <TourOverlay
+          steps={TOUR_STEPS}
+          current={tourStep}
+          onNext={() => (tourStep === TOUR_STEPS.length - 1 ? setTourStep(null) : setTourStep((s) => (s ?? 0) + 1))}
+          onPrev={() => setTourStep((s) => Math.max(0, (s ?? 0) - 1))}
+          onClose={() => setTourStep(null)}
+        />
+      )}
     </div>
+  );
+}
+
+export default function IreneFitnessCommunityPage() {
+  return (
+    <Suspense fallback={<div className="max-w-2xl mx-auto px-4 py-24 text-center text-slate-400 text-sm">Loading…</div>}>
+      <IreneFitnessCommunityInner />
+    </Suspense>
   );
 }

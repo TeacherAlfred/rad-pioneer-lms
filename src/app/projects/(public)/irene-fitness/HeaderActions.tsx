@@ -13,6 +13,16 @@ type FaqItem = {
   link_label: string | null;
 };
 
+// Lets a sibling component (community/page.tsx's "New here?" tour prompt,
+// which lives in a different file/route entirely - HeaderActions is
+// rendered by the shared layout, not the page) open the FAQ to a specific
+// question without prop-drilling through the layout or introducing a
+// context provider for one cross-component call.
+export const OPEN_FAQ_EVENT = 'irene-fitness:open-faq';
+export function openIreneFitnessFaq(question?: string) {
+  window.dispatchEvent(new CustomEvent(OPEN_FAQ_EVENT, { detail: { question } }));
+}
+
 const ICON_BTN_CLS =
   'w-9 h-9 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center transition-colors shrink-0';
 const INPUT_CLS =
@@ -25,8 +35,25 @@ const PRIMARY_BTN_CLS =
 // (source: irene_fitness_faq_items). "Opt out" below is deliberately NOT one
 // of these items - it's a fixed line in the modal shell itself, so it can
 // never be edited or archived away by mistake.
-function FaqAccordion({ items, onOpenPanel }: { items: FaqItem[]; onOpenPanel: (p: Panel) => void }) {
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
+function FaqAccordion({
+  items,
+  initialOpenQuestion,
+  onOpenPanel,
+}: {
+  items: FaqItem[];
+  initialOpenQuestion?: string;
+  onOpenPanel: (p: Panel) => void;
+}) {
+  // Lazy initializer, not an effect: this component fully remounts each time
+  // the FAQ modal opens (it's conditionally rendered in HeaderActions), so
+  // items/initialOpenQuestion are already current at that moment - no need
+  // to sync after the fact.
+  const [openIndex, setOpenIndex] = useState<number | null>(() => {
+    if (!initialOpenQuestion) return null;
+    const i = items.findIndex((it) => it.question === initialOpenQuestion);
+    return i >= 0 ? i : null;
+  });
+
   return (
     <div>
       {items.map((item, i) => {
@@ -252,12 +279,22 @@ export function HeaderActions() {
   const [panel, setPanel] = useState<Panel>('none');
   const [faqItems, setFaqItems] = useState<FaqItem[]>([]);
   const [contactPrefill, setContactPrefill] = useState<string | undefined>(undefined);
+  const [faqQuestion, setFaqQuestion] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     fetch('/api/irene-fitness/faq')
       .then((r) => r.json())
       .then((d) => setFaqItems(d.items || []))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    function onOpenFaq(e: Event) {
+      setFaqQuestion((e as CustomEvent<{ question?: string }>).detail?.question);
+      setPanel('faq');
+    }
+    window.addEventListener(OPEN_FAQ_EVENT, onOpenFaq);
+    return () => window.removeEventListener(OPEN_FAQ_EVENT, onOpenFaq);
   }, []);
 
   function openContact(prefill?: string) {
@@ -276,7 +313,11 @@ export function HeaderActions() {
 
       {panel === 'faq' && (
         <BottomSheetModal title="Frequently asked questions" onClose={() => setPanel('none')}>
-          <FaqAccordion items={faqItems} onOpenPanel={(p) => (p === 'contact' ? openContact(undefined) : setPanel(p))} />
+          <FaqAccordion
+            items={faqItems}
+            initialOpenQuestion={faqQuestion}
+            onOpenPanel={(p) => (p === 'contact' ? openContact(undefined) : setPanel(p))}
+          />
         </BottomSheetModal>
       )}
 

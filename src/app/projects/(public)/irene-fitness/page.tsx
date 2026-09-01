@@ -267,6 +267,12 @@ function IreneFitnessPageInner() {
             To take part, we just need one thing from you first.
           </p>
 
+          <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 mb-6">
+            <p className="text-sm text-amber-900 leading-relaxed">
+              Only children currently enrolled at Irene Primary School are eligible for the class prize draw.
+            </p>
+          </div>
+
           <label className="flex items-start gap-3 p-4 rounded-2xl bg-white border border-black/5 shadow-sm mb-6 cursor-pointer">
             <input
               type="checkbox"
