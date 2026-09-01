@@ -4,11 +4,14 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin';
 const VOTE_CATEGORIES = ['funniest', 'most_inspiring', 'mad_scientist'] as const;
 type VoteCategory = (typeof VOTE_CATEGORIES)[number];
 
-// Public community feed - only families with consent_public_display=true on
-// irene_fitness_families ever appear here. Story answers are optional per
+// Public community feed - only families with consent_public_display=true AND
+// a QA-confirmed response ever appear here. Story answers are optional per
 // family (spec: "Tell Your Story" was always skippable), so a response with
 // no story row still renders as a name-only card, same as the story_preview
-// step already shows during submission.
+// step already shows during submission. qa_confirmed defaults true (existing
+// responses stay visible) but resets to false on every submit/edit (see
+// submit/route.ts) - typos or thin content shouldn't go live again without a
+// fresh admin sign-off.
 export async function GET() {
   const supabase = supabaseAdmin();
 
@@ -25,7 +28,11 @@ export async function GET() {
   }
 
   const [{ data: responses, error: responsesError }, { data: votes, error: votesError }] = await Promise.all([
-    supabase.from('irene_fitness_responses').select('id, family_id, display_name').in('family_id', familyIds),
+    supabase
+      .from('irene_fitness_responses')
+      .select('id, family_id, display_name')
+      .in('family_id', familyIds)
+      .eq('qa_confirmed', true),
     supabase.from('irene_fitness_votes').select('response_id, category'),
   ]);
   if (responsesError) return NextResponse.json({ error: responsesError.message }, { status: 500 });

@@ -40,14 +40,14 @@ export async function POST(request: Request) {
 
   const { data: response, error: responseError } = await supabase
     .from('irene_fitness_responses')
-    .select('id, family_id, irene_fitness_families!inner(consent_public_display)')
+    .select('id, family_id, qa_confirmed, irene_fitness_families!inner(consent_public_display)')
     .eq('id', response_id)
     .single();
   if (responseError || !response) {
     return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
   }
   const family = response.irene_fitness_families as unknown as { consent_public_display: boolean };
-  if (!family?.consent_public_display) {
+  if (!family?.consent_public_display || !response.qa_confirmed) {
     return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
   }
 

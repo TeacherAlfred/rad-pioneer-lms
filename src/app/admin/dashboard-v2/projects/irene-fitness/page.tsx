@@ -22,6 +22,12 @@ import {
   Unlock,
   BarChart3,
   EyeOff,
+  ShieldCheck,
+  ShieldAlert,
+  Pencil,
+  Archive,
+  ArchiveRestore,
+  Plus,
 } from "lucide-react";
 import { DashboardV2Nav } from "../../_components/DashboardV2Nav";
 import { LightStatTile } from "../../_components/LightStatTile";
@@ -29,12 +35,14 @@ import { LightStatTile } from "../../_components/LightStatTile";
 type ChildRow = { grade: string; class: string | null };
 type ResponseRow = {
   family_id: string;
+  response_id: string | null;
   display_name: string;
   whatsapp: string | null;
   email: string | null;
   consent_public_display: boolean;
   consent_updates: boolean;
   consent_marketing: boolean;
+  qa_confirmed: boolean | null;
   created_at: string;
   children: ChildRow[];
 };
@@ -46,6 +54,7 @@ type Summary = {
   consent_marketing: number;
   whatsapp_provided: number;
   email_provided: number;
+  qa_pending: number;
 };
 type VoteCategory = "funniest" | "most_inspiring" | "mad_scientist";
 type VotesSummary = { total: number; by_category: Record<VoteCategory, number> };
@@ -56,18 +65,26 @@ type DashboardData = {
   summary: Summary;
   votes: VotesSummary;
   grade_stats: GradeStats;
-  settings: {
-    phase: Phase;
-    updated_at: string | null;
-    results_announcement_date: string | null;
-    submissions_open: boolean;
-  };
+  settings: { phase: Phase; updated_at: string | null };
   rows: ResponseRow[];
 };
+type FaqItem = {
+  id: string;
+  question: string;
+  answer: string;
+  link_url: string | null;
+  link_label: string | null;
+  sort_order: number;
+  archived: boolean;
+};
+type FaqDraft = { question: string; answer: string; link_url: string; link_label: string; sort_order: string };
+
+const EMPTY_FAQ_DRAFT: FaqDraft = { question: "", answer: "", link_url: "", link_label: "", sort_order: "0" };
 
 const FILTERS: { key: string; label: string }[] = [
   { key: "all", label: "All Responses" },
   { key: "public_display", label: "Public Display Consent" },
+  { key: "qa_pending", label: "Pending QA" },
   { key: "updates", label: "Community Updates" },
   { key: "marketing", label: "Marketing Guide" },
   { key: "whatsapp", label: "Has WhatsApp" },
@@ -102,6 +119,8 @@ function matchesFilter(row: ResponseRow, filter: string) {
   switch (filter) {
     case "public_display":
       return row.consent_public_display;
+    case "qa_pending":
+      return row.qa_confirmed === false;
     case "updates":
       return row.consent_updates;
     case "marketing":
@@ -135,6 +154,69 @@ function guideEmailBody(displayName: string) {
   return `${guideMessageBody(displayName, { markdown: false })}\n\nBest regards,\nThe RAD Academy Team`;
 }
 
+function FaqEditForm({ draft, onChange }: { draft: FaqDraft; onChange: (d: FaqDraft) => void }) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">Question</label>
+        <input
+          type="text"
+          value={draft.question}
+          onChange={(e) => onChange({ ...draft, question: e.target.value })}
+          className="w-full px-3 py-2 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300"
+        />
+      </div>
+      <div>
+        <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">Answer</label>
+        <textarea
+          value={draft.answer}
+          onChange={(e) => onChange({ ...draft, answer: e.target.value })}
+          rows={3}
+          className="w-full px-3 py-2 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300"
+        />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="sm:col-span-1">
+          <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">
+            Link URL (optional)
+          </label>
+          <input
+            type="text"
+            value={draft.link_url}
+            onChange={(e) => onChange({ ...draft, link_url: e.target.value })}
+            placeholder="/projects/irene-fitness"
+            className="w-full px-3 py-2 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">
+            Link label
+          </label>
+          <input
+            type="text"
+            value={draft.link_label}
+            onChange={(e) => onChange({ ...draft, link_label: e.target.value })}
+            placeholder="Go to the submission page"
+            className="w-full px-3 py-2 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">Order</label>
+          <input
+            type="number"
+            value={draft.sort_order}
+            onChange={(e) => onChange({ ...draft, sort_order: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300"
+          />
+        </div>
+      </div>
+      <p className="text-[11px] text-stone-400">
+        Opt out and Ask us are always shown at the bottom of the FAQ automatically - no need to add them here.
+      </p>
+    </div>
+  );
+}
+
 function VoteBadge({ icon: Icon, label, value }: { icon: typeof Vote; label: string; value: number }) {
   return (
     <div className="bg-white border border-stone-200 rounded-2xl p-4 flex items-center gap-3">
@@ -158,18 +240,21 @@ function IreneFitnessDashboardInner() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [savingPhase, setSavingPhase] = useState(false);
-  const [savingSettings, setSavingSettings] = useState(false);
-  const [resultsDateDraft, setResultsDateDraft] = useState("");
-  const [resultsDateDirty, setResultsDateDirty] = useState(false);
+  const [savingQa, setSavingQa] = useState<string | null>(null);
+
+  const [faqItems, setFaqItems] = useState<FaqItem[] | null>(null);
+  const [faqEditingId, setFaqEditingId] = useState<string | "new" | null>(null);
+  const [faqDraft, setFaqDraft] = useState<FaqDraft>(EMPTY_FAQ_DRAFT);
+  const [savingFaq, setSavingFaq] = useState(false);
 
   useEffect(() => {
     fetch("/admin/api/dashboard-v2/projects/irene-fitness")
       .then((r) => r.json())
-      .then((d) => {
-        setData(d);
-        setResultsDateDraft(d?.settings?.results_announcement_date || "");
-      })
+      .then((d) => setData(d))
       .finally(() => setLoading(false));
+    fetch("/admin/api/dashboard-v2/projects/irene-fitness/faq")
+      .then((r) => r.json())
+      .then((d) => setFaqItems(d.items || []));
   }, []);
 
   const rows = data?.rows;
@@ -179,41 +264,119 @@ function IreneFitnessDashboardInner() {
     router.push(`/admin/dashboard-v2/projects/irene-fitness?filter=${key}`);
   }
 
-  // Shared by the phase buttons, the submissions-open toggle, and the
-  // results-date save button - optimistic update + PATCH + rollback on
-  // failure, same shape the old single-purpose setPhase used.
-  async function saveSettings(partial: Partial<DashboardData["settings"]>, setSaving: (v: boolean) => void) {
-    if (!data) return;
-    setSaving(true);
-    const prevSettings = data.settings;
-    setData({ ...data, settings: { ...data.settings, ...partial } });
+  async function setPhase(phase: Phase) {
+    if (!data || savingPhase || data.settings.phase === phase) return;
+    setSavingPhase(true);
+    const prevPhase = data.settings.phase;
+    setData({ ...data, settings: { ...data.settings, phase } });
     try {
       const res = await fetch("/admin/api/dashboard-v2/projects/irene-fitness", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(partial),
+        body: JSON.stringify({ phase }),
       });
       if (!res.ok) throw new Error("Failed to save");
     } catch {
-      setData((d) => (d ? { ...d, settings: prevSettings } : d));
+      setData((d) => (d ? { ...d, settings: { ...d.settings, phase: prevPhase } } : d));
     } finally {
-      setSaving(false);
+      setSavingPhase(false);
     }
   }
 
-  async function setPhase(phase: Phase) {
-    if (!data || savingPhase || data.settings.phase === phase) return;
-    await saveSettings({ phase }, setSavingPhase);
+  // Optimistic toggle + rollback, same shape as everywhere else in this
+  // dashboard. responseId can be null for a family with no response row yet
+  // ("(no response yet)") - nothing to QA in that case, so the button is
+  // disabled rather than reachable.
+  async function toggleQa(responseId: string, next: boolean) {
+    if (!data || savingQa) return;
+    setSavingQa(responseId);
+    const prevRows = data.rows;
+    setData({
+      ...data,
+      rows: data.rows.map((r) => (r.response_id === responseId ? { ...r, qa_confirmed: next } : r)),
+    });
+    try {
+      const res = await fetch(`/admin/api/dashboard-v2/projects/irene-fitness/responses/${responseId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qa_confirmed: next }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+    } catch {
+      setData((d) => (d ? { ...d, rows: prevRows } : d));
+    } finally {
+      setSavingQa(null);
+    }
   }
 
-  async function saveResultsDate() {
-    await saveSettings({ results_announcement_date: resultsDateDraft.trim() || null }, setSavingSettings);
-    setResultsDateDirty(false);
+  function startEditFaq(item: FaqItem) {
+    setFaqEditingId(item.id);
+    setFaqDraft({
+      question: item.question,
+      answer: item.answer,
+      link_url: item.link_url || "",
+      link_label: item.link_label || "",
+      sort_order: String(item.sort_order),
+    });
   }
 
-  async function toggleSubmissionsOpen() {
-    if (!data) return;
-    await saveSettings({ submissions_open: !data.settings.submissions_open }, setSavingSettings);
+  function startNewFaq() {
+    setFaqEditingId("new");
+    setFaqDraft({ ...EMPTY_FAQ_DRAFT, sort_order: String((faqItems?.length || 0) + 1) });
+  }
+
+  async function saveFaqDraft() {
+    if (!faqEditingId || savingFaq) return;
+    if (!faqDraft.question.trim() || !faqDraft.answer.trim()) return;
+    setSavingFaq(true);
+    const payload = {
+      question: faqDraft.question.trim(),
+      answer: faqDraft.answer.trim(),
+      link_url: faqDraft.link_url.trim() || null,
+      link_label: faqDraft.link_label.trim() || null,
+      sort_order: Number(faqDraft.sort_order) || 0,
+    };
+    try {
+      if (faqEditingId === "new") {
+        const res = await fetch("/admin/api/dashboard-v2/projects/irene-fitness/faq", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const created = await res.json();
+        if (!res.ok) throw new Error(created.error || "Failed to save");
+        setFaqItems((items) => [...(items || []), created.item]);
+      } else {
+        const res = await fetch(`/admin/api/dashboard-v2/projects/irene-fitness/faq/${faqEditingId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error("Failed to save");
+        setFaqItems((items) => (items || []).map((it) => (it.id === faqEditingId ? { ...it, ...payload } : it)));
+      }
+      setFaqEditingId(null);
+    } catch {
+      // Left in edit mode with the draft intact so nothing typed is lost -
+      // the admin can just retry Save.
+    } finally {
+      setSavingFaq(false);
+    }
+  }
+
+  async function toggleFaqArchived(item: FaqItem) {
+    const nextArchived = !item.archived;
+    setFaqItems((items) => (items || []).map((it) => (it.id === item.id ? { ...it, archived: nextArchived } : it)));
+    try {
+      const res = await fetch(`/admin/api/dashboard-v2/projects/irene-fitness/faq/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: nextArchived }),
+      });
+      if (!res.ok) throw new Error("Failed to save");
+    } catch {
+      setFaqItems((items) => (items || []).map((it) => (it.id === item.id ? { ...it, archived: item.archived } : it)));
+    }
   }
 
   // Neither wa.me nor api.whatsapp.com reliably carries ?text= through to
@@ -283,6 +446,7 @@ function IreneFitnessDashboardInner() {
             <LightStatTile onClick={() => setFilter("all")} label="Total Responses" value={summary.total_responses} icon={Users} color="text-blue-600" />
             <LightStatTile onClick={() => setFilter("all")} label="Children Registered" value={summary.total_children} icon={GraduationCap} color="text-violet-600" />
             <LightStatTile onClick={() => setFilter("public_display")} label="Public Display Consent" value={summary.consent_public_display} icon={Eye} color="text-emerald-600" />
+            <LightStatTile onClick={() => setFilter("qa_pending")} label="Pending QA" value={summary.qa_pending} icon={ShieldAlert} color="text-amber-600" />
             <LightStatTile onClick={() => setFilter("updates")} label="Community Updates Opt-in" value={summary.consent_updates} icon={Bell} color="text-amber-600" />
             <LightStatTile onClick={() => setFilter("marketing")} label="Marketing Guide Opt-in" value={summary.consent_marketing} icon={Gift} color="text-rose-600" />
             <LightStatTile onClick={() => setFilter("whatsapp")} label="WhatsApp Provided" value={summary.whatsapp_provided} icon={MessageCircle} color="text-teal-600" />
@@ -401,56 +565,108 @@ function IreneFitnessDashboardInner() {
 
         {/* FAQ content - read by the public page's FAQ modal, no redeploy needed to change */}
         <section>
-          <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400 mb-4">FAQ Content</h2>
-          <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm p-6 space-y-5">
-            <div>
-              <label className="block text-[11px] font-black uppercase tracking-widest text-stone-500 mb-2">
-                Results announcement date{" "}
-                <span className="text-stone-300 normal-case font-medium">(optional, cosmetic only)</span>
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={resultsDateDraft}
-                  onChange={(e) => {
-                    setResultsDateDraft(e.target.value);
-                    setResultsDateDirty(true);
-                  }}
-                  placeholder="e.g. Week of 15 September"
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300"
-                />
-                <button
-                  onClick={saveResultsDate}
-                  disabled={!resultsDateDirty || savingSettings}
-                  className="px-4 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-900 text-white disabled:opacity-40 transition-opacity"
-                >
-                  Save
-                </button>
-              </div>
-              <p className="text-[11px] text-stone-400 mt-1.5">
-                Shown in the FAQ&apos;s &quot;when are winners announced&quot; answer. Leave blank to show a generic
-                &quot;we&apos;ll confirm soon&quot; line instead.
-              </p>
-            </div>
-            <div className="flex items-center justify-between pt-1">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">Submissions still open</p>
-                <p className="text-[11px] text-stone-400 mt-1">
-                  Controls the FAQ&apos;s &quot;can I still submit my story&quot; answer.
-                </p>
-              </div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400">FAQ Content</h2>
+            {faqEditingId !== "new" && (
               <button
-                onClick={toggleSubmissionsOpen}
-                disabled={savingSettings}
-                className={`px-4 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all disabled:opacity-60 ${
-                  data.settings.submissions_open
-                    ? "bg-emerald-600 text-white"
-                    : "bg-stone-50 text-stone-500 hover:text-stone-900"
-                }`}
+                onClick={startNewFaq}
+                className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest text-stone-500 hover:text-stone-900"
               >
-                {data.settings.submissions_open ? "Open" : "Closed"}
+                <Plus size={14} />
+                Add question
               </button>
-            </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm divide-y divide-stone-100">
+            {faqEditingId === "new" && (
+              <div className="p-5">
+                <FaqEditForm draft={faqDraft} onChange={setFaqDraft} />
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={saveFaqDraft}
+                    disabled={savingFaq || !faqDraft.question.trim() || !faqDraft.answer.trim()}
+                    className="px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-900 text-white disabled:opacity-40"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setFaqEditingId(null)}
+                    className="px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-50 text-stone-500"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {faqItems === null && <p className="p-6 text-sm text-stone-400">Loading…</p>}
+            {faqItems?.length === 0 && faqEditingId !== "new" && (
+              <p className="p-6 text-sm text-stone-400">No FAQ items yet.</p>
+            )}
+
+            {faqItems
+              ?.slice()
+              .sort((a, b) => a.sort_order - b.sort_order)
+              .map((item) => (
+                <div key={item.id} className={`p-5 ${item.archived ? "opacity-50" : ""}`}>
+                  {faqEditingId === item.id ? (
+                    <>
+                      <FaqEditForm draft={faqDraft} onChange={setFaqDraft} />
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          onClick={saveFaqDraft}
+                          disabled={savingFaq || !faqDraft.question.trim() || !faqDraft.answer.trim()}
+                          className="px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-900 text-white disabled:opacity-40"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setFaqEditingId(null)}
+                          className="px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-50 text-stone-500"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="font-bold text-stone-800 text-sm">
+                          {item.archived && (
+                            <span className="mr-2 text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-stone-100 text-stone-400">
+                              Archived
+                            </span>
+                          )}
+                          {item.question}
+                        </p>
+                        <p className="text-stone-500 text-sm mt-1">{item.answer}</p>
+                        {item.link_url && (
+                          <p className="text-[11px] text-stone-400 mt-1">
+                            Link: {item.link_label || item.link_url} → {item.link_url}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => startEditFaq(item)}
+                          title="Edit"
+                          className="p-2 rounded-lg text-stone-400 hover:text-stone-900 hover:bg-stone-50"
+                        >
+                          <Pencil size={15} />
+                        </button>
+                        <button
+                          onClick={() => toggleFaqArchived(item)}
+                          title={item.archived ? "Unarchive" : "Archive"}
+                          className="p-2 rounded-lg text-stone-400 hover:text-stone-900 hover:bg-stone-50"
+                        >
+                          {item.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
           </div>
         </section>
 
@@ -482,6 +698,7 @@ function IreneFitnessDashboardInner() {
                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Family</th>
                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Children</th>
                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Consent</th>
+                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">QA</th>
                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Submitted</th>
                   <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Guide</th>
                 </tr>
@@ -516,6 +733,25 @@ function IreneFitnessDashboardInner() {
                           <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-rose-100 text-rose-700">Marketing</span>
                         )}
                       </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      {row.response_id ? (
+                        <button
+                          onClick={() => toggleQa(row.response_id!, !row.qa_confirmed)}
+                          disabled={savingQa === row.response_id}
+                          title={row.qa_confirmed ? "QA confirmed - click to mark pending" : "Pending QA - click to confirm"}
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                            row.qa_confirmed
+                              ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                          }`}
+                        >
+                          {row.qa_confirmed ? <ShieldCheck size={13} /> : <ShieldAlert size={13} />}
+                          {row.qa_confirmed ? "Confirmed" : "Pending"}
+                        </button>
+                      ) : (
+                        <span className="text-stone-300 text-xs">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-xs text-stone-500">
                       {new Date(row.created_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })}
@@ -556,7 +792,7 @@ function IreneFitnessDashboardInner() {
                 ))}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-stone-400 text-sm">
+                    <td colSpan={6} className="px-6 py-12 text-center text-stone-400 text-sm">
                       No responses match this filter.
                     </td>
                   </tr>

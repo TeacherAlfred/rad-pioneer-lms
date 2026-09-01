@@ -4,8 +4,14 @@ import { useEffect, useState } from 'react';
 import { HelpCircle, MessageCircle, ChevronDown } from 'lucide-react';
 import { BottomSheetModal } from './BottomSheetModal';
 
-type Settings = { results_announcement_date: string | null; submissions_open: boolean };
 type Panel = 'none' | 'faq' | 'contact' | 'optout';
+type FaqItem = {
+  id: string;
+  question: string;
+  answer: string;
+  link_url: string | null;
+  link_label: string | null;
+};
 
 const ICON_BTN_CLS =
   'w-9 h-9 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center transition-colors shrink-0';
@@ -15,67 +21,23 @@ const LABEL_CLS = 'block text-xs font-bold text-slate-700 mb-1';
 const PRIMARY_BTN_CLS =
   'w-full py-4 rounded-2xl font-black uppercase tracking-widest text-xs bg-[#0066cc] text-white disabled:bg-slate-200 disabled:text-slate-400 transition-colors';
 
-type FaqItem = { q: string; a: React.ReactNode; action?: { label: string; panel: Panel } };
-
-function faqItems(settings: Settings | null): FaqItem[] {
-  return [
-    {
-      q: 'Who can vote, and how many times a day?',
-      a: "Anyone can — no account or sign-in needed. You can vote once per category, per entry, per day. It resets every night, so you can vote for your favourites again tomorrow.",
-    },
-    {
-      q: 'Is my vote actually anonymous?',
-      a: "Yes. We don't ask who's voting — just enough to stop the same device voting twice on the same entry on the same day.",
-    },
-    {
-      q: 'Can I still submit my own story, or has that closed?',
-      a:
-        settings?.submissions_open === false
-          ? 'Submissions have closed for this round.'
-          : 'Yes — submissions are still open. Head back to the start of this page to add or update your family\'s entry.',
-    },
-    {
-      q: 'When are winners announced?',
-      a: settings?.results_announcement_date
-        ? `${settings.results_announcement_date}. We'll also post it here and via WhatsApp.`
-        : "We'll confirm a date soon and share it here and via WhatsApp.",
-    },
-    {
-      q: "What happens to my child's information, and can I opt out?",
-      a: (
-        <>
-          We never show your child&apos;s name, grade, or class publicly — we only use grade/class privately to work
-          out the class prize. You can opt out any time.
-        </>
-      ),
-      action: { label: 'Remove my family from the public feed', panel: 'optout' as const },
-    },
-    {
-      q: "Who's actually running this — is it the school or RAD Academy?",
-      a: 'RAD Academy developed, hosts, and runs this platform on behalf of, and at no cost to, Irene Primary School — our way of giving back to the Irene Primary community.',
-    },
-    {
-      q: "My entry or vote isn't showing — who do I contact?",
-      a: "Message us and we'll sort it out, usually within 24 hours.",
-      action: { label: 'Ask us', panel: 'contact' as const },
-    },
-  ];
-}
-
-function FaqAccordion({ settings, onOpenPanel }: { settings: Settings | null; onOpenPanel: (p: Panel) => void }) {
+// Admin-editable question/answer content, fetched from /api/irene-fitness/faq
+// (source: irene_fitness_faq_items). "Opt out" below is deliberately NOT one
+// of these items - it's a fixed line in the modal shell itself, so it can
+// never be edited or archived away by mistake.
+function FaqAccordion({ items, onOpenPanel }: { items: FaqItem[]; onOpenPanel: (p: Panel) => void }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const items = faqItems(settings);
   return (
     <div>
       {items.map((item, i) => {
         const open = openIndex === i;
         return (
-          <div key={i} className="border-b border-black/5 last:border-0">
+          <div key={item.id} className="border-b border-black/5 last:border-0">
             <button
               onClick={() => setOpenIndex(open ? null : i)}
               className="w-full flex items-center justify-between gap-3 py-4 text-left"
             >
-              <span className="text-sm font-bold text-slate-800">{item.q}</span>
+              <span className="text-sm font-bold text-slate-800">{item.question}</span>
               <ChevronDown
                 size={16}
                 className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
@@ -83,22 +45,31 @@ function FaqAccordion({ settings, onOpenPanel }: { settings: Settings | null; on
             </button>
             {open && (
               <div className="pb-4 -mt-1">
-                <p className="text-sm text-slate-600 leading-relaxed">{item.a}</p>
-                {item.action && (
-                  <button
-                    onClick={() => onOpenPanel(item.action!.panel)}
-                    className="mt-2 text-xs font-bold text-[#0066cc] hover:underline"
+                <p className="text-sm text-slate-600 leading-relaxed">{item.answer}</p>
+                {item.link_url && (
+                  <a
+                    href={item.link_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-block text-xs font-bold text-[#0066cc] hover:underline"
                   >
-                    {item.action.label}
-                  </button>
+                    {item.link_label || item.link_url}
+                  </a>
                 )}
               </div>
             )}
           </div>
         );
       })}
-      <div className="pt-5 text-center">
-        <p className="text-xs text-slate-400 mb-2">Still stuck?</p>
+
+      <div className="pt-5 mt-2 border-t border-black/5 text-center">
+        <p className="text-xs text-slate-500 mb-2">
+          Want your family&apos;s entry off the public feed?{' '}
+          <button onClick={() => onOpenPanel('optout')} className="font-bold text-[#0066cc] hover:underline">
+            Opt out
+          </button>
+        </p>
+        <p className="text-xs text-slate-400 mt-4 mb-2">Still stuck?</p>
         <button
           onClick={() => onOpenPanel('contact')}
           className="px-5 py-2.5 rounded-full text-xs font-black uppercase tracking-widest bg-slate-900 text-white"
@@ -279,13 +250,13 @@ function OptOutForm({ onRequestDeletion }: { onRequestDeletion: () => void }) {
 
 export function HeaderActions() {
   const [panel, setPanel] = useState<Panel>('none');
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const [faqItems, setFaqItems] = useState<FaqItem[]>([]);
   const [contactPrefill, setContactPrefill] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    fetch('/api/irene-fitness/settings')
+    fetch('/api/irene-fitness/faq')
       .then((r) => r.json())
-      .then((d) => setSettings(d))
+      .then((d) => setFaqItems(d.items || []))
       .catch(() => {});
   }, []);
 
@@ -305,7 +276,7 @@ export function HeaderActions() {
 
       {panel === 'faq' && (
         <BottomSheetModal title="Frequently asked questions" onClose={() => setPanel('none')}>
-          <FaqAccordion settings={settings} onOpenPanel={(p) => (p === 'contact' ? openContact(undefined) : setPanel(p))} />
+          <FaqAccordion items={faqItems} onOpenPanel={(p) => (p === 'contact' ? openContact(undefined) : setPanel(p))} />
         </BottomSheetModal>
       )}
 

@@ -149,10 +149,14 @@ export async function POST(request: Request) {
     }
 
     // Upsert the one public response for this family (unique on family_id).
+    // qa_confirmed is reset to false on every submit, new or edited - any
+    // content change (including a first-time typo fix) needs a fresh admin
+    // sign-off before it's shown/voteable publicly again (see api/irene-
+    // fitness/feed and api/irene-fitness/vote's qa_confirmed gate).
     const { data: response, error: responseError } = await supabase
       .from('irene_fitness_responses')
       .upsert(
-        { family_id: family.id, display_name: name, updated_at: now },
+        { family_id: family.id, display_name: name, updated_at: now, qa_confirmed: false, qa_confirmed_at: null },
         { onConflict: 'family_id' }
       )
       .select()
