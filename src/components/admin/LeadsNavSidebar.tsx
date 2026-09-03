@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
-  BookOpen, Bell, FileText, CalendarClock, Gauge,
+  BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban,
 } from "lucide-react";
 
 const PENDING_POLL_MS = 30000;
@@ -50,6 +50,7 @@ const GROUPS: NavGroup[] = [
       { href: '/admin/lead-funnel/list', label: 'Lead Funnel', icon: Users },
       { href: '/admin/lead-funnel/stages', label: 'Funnel Stages', icon: GitBranch },
       { href: '/admin/warm-list', label: 'Warm List', icon: ClipboardList },
+      { href: '/admin/dashboard-v2/lead-journey', label: 'Lead Journey', icon: Kanban },
     ],
   },
   {

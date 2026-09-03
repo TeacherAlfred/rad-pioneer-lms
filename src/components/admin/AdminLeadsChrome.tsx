@@ -17,6 +17,7 @@ const LEADS_SECTION_PREFIXES = [
   '/admin/warm-list',
   '/admin/kids',
   '/admin/sessions',
+  '/admin/dashboard-v2/lead-journey',
 ];
 
 function isLeadsSection(pathname: string): boolean {
