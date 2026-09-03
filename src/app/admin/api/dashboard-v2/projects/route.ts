@@ -14,6 +14,12 @@ async function teaserFor(supabase: ReturnType<typeof supabaseAdmin>, key: string
         .select('id', { count: 'exact', head: true });
       return { teaser_label: 'Responses', teaser_value: count || 0 };
     }
+    case 'fitness': {
+      const { count } = await supabase
+        .from('fitness_activities')
+        .select('id', { count: 'exact', head: true });
+      return { teaser_label: 'Activities Synced', teaser_value: count || 0 };
+    }
     default:
       return { teaser_label: null, teaser_value: null };
   }
