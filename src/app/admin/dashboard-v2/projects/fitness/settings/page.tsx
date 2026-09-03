@@ -16,6 +16,9 @@ type SyncResult = {
   gear_refreshed?: number;
   details_fetched?: number;
   signals_parsed?: number;
+  best_efforts_synced?: number;
+  backfilled?: number;
+  backfill_remaining?: number;
 };
 
 function FitnessSettingsInner() {
@@ -127,7 +130,13 @@ function FitnessSettingsInner() {
                     ) : (
                       <>
                         Synced {syncResult.activities_synced} activities · refreshed {syncResult.gear_refreshed} gear ·{" "}
-                        parsed {syncResult.signals_parsed} training-load signals.
+                        parsed {syncResult.signals_parsed} training-load signals · found {syncResult.best_efforts_synced} best efforts.
+                        {(syncResult.backfilled ?? 0) > 0 && (
+                          <p className="mt-1">
+                            Backfilled race data on {syncResult.backfilled} older activities
+                            {(syncResult.backfill_remaining ?? 0) > 0 ? ` — ${syncResult.backfill_remaining} still to go, click Sync Now again.` : " — all caught up."}
+                          </p>
+                        )}
                         {syncResult.warning && <p className="mt-1 text-amber-700">{syncResult.warning}</p>}
                       </>
                     )}

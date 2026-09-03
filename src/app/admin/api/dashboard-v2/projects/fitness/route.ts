@@ -1,18 +1,10 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import { startOfWeek } from '@/lib/fitness/week';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const RECENT_WEEKS_FOR_BASELINE = 8;
 const RECENT_ACTIVITIES_LIMIT = 15;
-
-function startOfWeek(d: Date): Date {
-  const date = new Date(d);
-  const day = date.getUTCDay(); // 0 = Sunday
-  const diff = (day + 6) % 7; // days since Monday
-  date.setUTCDate(date.getUTCDate() - diff);
-  date.setUTCHours(0, 0, 0, 0);
-  return date;
-}
 
 export async function GET() {
   const sb = supabaseAdmin();
@@ -48,16 +40,40 @@ export async function GET() {
     return t >= weekStart.getTime() && t < weekStart.getTime() + WEEK_MS;
   };
 
-  const thisWeekRows = rows.filter((r) => inWeek(r, thisWeekStart));
-  const weekDistanceKm = thisWeekRows.reduce((sum, r) => sum + (r.distance_m || 0), 0) / 1000;
-  const weekRuns = thisWeekRows.length;
-
+  // Rolling last-7-days vs. the 7 days before that - not calendar Mon-Sun
+  // weeks. A calendar-week comparison is misleading for most of the week
+  // (a Tuesday "this week" total is 1-2 days of data compared against a
+  // full 7-day prior week), so every headline delta here uses a rolling
+  // window instead. The weekly_volume trend chart further down still
+  // buckets by calendar week - that's a different concern (a readable
+  // trend chart) where calendar weeks are the right unit.
   const last7dCutoff = now.getTime() - 7 * 24 * 60 * 60 * 1000;
   const last7dRows = rows.filter((r) => new Date(r.start_local).getTime() >= last7dCutoff);
+  const last7dDistanceKm = last7dRows.reduce((sum, r) => sum + (r.distance_m || 0), 0) / 1000;
+  const last7dRuns = last7dRows.length;
   const effortRows = last7dRows.filter((r) => r.relative_effort != null);
   const avgRelativeEffort7d = effortRows.length
     ? Math.round(effortRows.reduce((s, r) => s + (r.relative_effort || 0), 0) / effortRows.length)
     : null;
+
+  const prev7dStart = now.getTime() - 14 * 24 * 60 * 60 * 1000;
+  const prev7dRows = rows.filter((r) => {
+    const t = new Date(r.start_local).getTime();
+    return t >= prev7dStart && t < last7dCutoff;
+  });
+  const prev7dDistanceKm = prev7dRows.reduce((sum, r) => sum + (r.distance_m || 0), 0) / 1000;
+  const prev7dRuns = prev7dRows.length;
+  const last7dDistanceDeltaPct = prev7dDistanceKm > 0 ? Math.round(((last7dDistanceKm - prev7dDistanceKm) / prev7dDistanceKm) * 100) : null;
+  const last7dRunsDelta = last7dRuns - prev7dRuns;
+
+  const prevEffortRows = prev7dRows.filter((r) => r.relative_effort != null);
+  const prevAvgRelativeEffort7d = prevEffortRows.length
+    ? Math.round(prevEffortRows.reduce((s, r) => s + (r.relative_effort || 0), 0) / prevEffortRows.length)
+    : null;
+  const avgEffortDeltaPct =
+    avgRelativeEffort7d != null && prevAvgRelativeEffort7d != null && prevAvgRelativeEffort7d > 0
+      ? Math.round(((avgRelativeEffort7d - prevAvgRelativeEffort7d) / prevAvgRelativeEffort7d) * 100)
+      : null;
 
   // Weekly volume trend: last N weeks, oldest first, for the chart; the
   // trailing average (excluding the current, possibly-incomplete week)
@@ -72,7 +88,7 @@ export async function GET() {
   }
   const priorWeeks = weeklyVolume.slice(0, -1).map((w) => w.distance_km);
   const baselineWeeklyKm = priorWeeks.length ? priorWeeks.reduce((s, v) => s + v, 0) / priorWeeks.length : null;
-  const weeklyVolumeRatio = baselineWeeklyKm && baselineWeeklyKm > 0 ? weekDistanceKm / baselineWeeklyKm : null;
+  const weeklyVolumeRatio = baselineWeeklyKm && baselineWeeklyKm > 0 ? last7dDistanceKm / baselineWeeklyKm : null;
 
   const gearRows = gear ?? [];
   const shoeAlerts = gearRows
@@ -103,9 +119,12 @@ export async function GET() {
     connected,
     last_synced_at: lastSyncedAt,
     stats: {
-      week_distance_km: Math.round(weekDistanceKm * 10) / 10,
-      week_runs: weekRuns,
+      last7d_distance_km: Math.round(last7dDistanceKm * 10) / 10,
+      last7d_distance_delta_pct: last7dDistanceDeltaPct,
+      last7d_runs: last7dRuns,
+      last7d_runs_delta: last7dRunsDelta,
       avg_relative_effort_7d: avgRelativeEffort7d,
+      avg_relative_effort_7d_delta_pct: avgEffortDeltaPct,
       baseline_weekly_km: baselineWeeklyKm ? Math.round(baselineWeeklyKm * 10) / 10 : null,
       weekly_volume_ratio: weeklyVolumeRatio,
       active_shoe_alerts: shoeAlerts.length,

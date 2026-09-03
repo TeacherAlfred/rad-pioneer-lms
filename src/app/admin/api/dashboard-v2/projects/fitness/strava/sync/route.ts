@@ -1,58 +1,32 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { getValidAccessToken, stravaFetch, StravaNotConnectedError, StravaApiError } from '@/lib/fitness/strava';
-import { parseTrainingLoadSignal } from '@/lib/fitness/parseTrainingLoad';
+import { normalizeWorkoutType, RUN_SPORT_TYPES } from '@/lib/fitness/workoutType';
+import { processActivityDetail } from '@/lib/fitness/activityDetailSync';
+import type { StravaSummaryActivity, StravaGear } from '@/lib/fitness/stravaTypes';
 
 // Strava's list endpoint (/athlete/activities) returns "summary" activities
-// - it does NOT include `description` or `calories`. Those two fields (the
-// ones the myTF.run training-load parser actually needs) only come back
-// from the per-activity detail endpoint (/activities/{id}). So this route:
-//   1. pages the summary list,
+// - it does NOT include `description`, `calories`, `splits_metric`, or
+// `best_efforts`. Those only come back from the per-activity detail
+// endpoint (/activities/{id}). `workout_type` (used for race auto-detection)
+// IS on the summary list, so it's captured in the cheaper first pass and
+// survives even if the sync gets rate-limited before the detail pass runs.
+// So this route:
+//   1. pages the summary list (only activities since the last sync),
 //   2. resolves/upserts gear first (fitness_activities.gear_id is a FK into
 //      fitness_gear, so gear rows must exist before activities can point at
 //      them - any gear id that fails to resolve just falls back to null on
 //      the activity instead of blocking the sync),
-//   3. upserts activities,
-//   4. does a per-activity detail fetch for description_raw/calories and
-//      runs the training-load parser.
-
-type StravaSummaryActivity = {
-  id: number;
-  name: string;
-  type: string;
-  sport_type: string;
-  start_date_local: string;
-  distance: number;
-  moving_time: number;
-  elapsed_time: number;
-  total_elevation_gain: number | null;
-  average_speed: number | null;
-  max_speed: number | null;
-  average_cadence: number | null;
-  average_heartrate: number | null;
-  max_heartrate: number | null;
-  suffer_score: number | null;
-  kudos_count: number | null;
-  achievement_count: number | null;
-  pr_count: number | null;
-  gear_id: string | null;
-};
-
-type StravaDetailedActivity = StravaSummaryActivity & {
-  description: string | null;
-  calories: number | null;
-};
-
-type StravaGear = {
-  id: string;
-  brand_name: string | null;
-  model_name: string | null;
-  name: string | null;
-  distance: number;
-  retired: boolean;
-};
+//   3. upserts activities (incl. workout_type from the summary),
+//   4. does a per-activity detail fetch for description_raw/calories/
+//      splits_metric/best_efforts and runs the training-load parser,
+//   5. backfills a batch of OLDER run activities that were synced before
+//      this feature existed (their workout_type/splits_metric/best_efforts
+//      were never captured, since step 1's `after` cursor only looks
+//      forward from the last sync - see BACKFILL_BATCH_SIZE below).
 
 const PER_PAGE = 100;
+const BACKFILL_BATCH_SIZE = 40; // per click, to stay well under Strava's rate limit alongside the incremental passes above; ordered newest-first so the ~12-week prediction window fills in within 1-2 syncs even though full-history backfill takes many
 
 export async function POST() {
   let accessToken: string;
@@ -163,6 +137,7 @@ export async function POST() {
       // Fall back to null for any gear id we couldn't resolve above (e.g.
       // rate-limited mid gear-pass) instead of violating the FK constraint.
       gear_id: a.gear_id && knownGearIds.has(a.gear_id) ? a.gear_id : null,
+      workout_type: normalizeWorkoutType(a.sport_type || a.type, a.workout_type),
       source: 'strava',
       synced_at: new Date().toISOString(),
     }));
@@ -172,31 +147,22 @@ export async function POST() {
     }
   }
 
-  // ---- Pass 3: per-activity detail fetch for description_raw/calories + parser ----
+  // ---- Pass 3: per-activity detail fetch for description_raw/calories/
+  // splits_metric/best_efforts + parser. best_efforts is a child table of
+  // fitness_activities, same FK-safety reasoning as fitness_training_load_
+  // signals: this loop only iterates `summaries`, all of which were already
+  // upserted as one batch into fitness_activities above (with an early
+  // return on failure), so the parent row always exists before this runs.
   let signalsParsed = 0;
   let detailsFetched = 0;
+  let bestEffortsSynced = 0;
   if (!rateLimited) {
     for (const a of summaries) {
       try {
-        const detail = await stravaFetch<StravaDetailedActivity>(`/activities/${a.id}`, accessToken);
+        const result = await processActivityDetail(accessToken, a.id);
         detailsFetched++;
-        await sb
-          .from('fitness_activities')
-          .update({ description_raw: detail.description ?? null, calories: detail.calories ?? null })
-          .eq('id', String(a.id));
-
-        const parsed = parseTrainingLoadSignal(detail.description);
-        if (parsed) {
-          const { error } = await sb.from('fitness_training_load_signals').upsert(
-            {
-              activity_id: String(a.id),
-              ...parsed,
-              parsed_at: new Date().toISOString(),
-            },
-            { onConflict: 'activity_id' }
-          );
-          if (!error) signalsParsed++;
-        }
+        if (result.signalParsed) signalsParsed++;
+        bestEffortsSynced += result.bestEffortsCount;
       } catch (err) {
         if (err instanceof StravaApiError && err.status === 429) {
           rateLimited = true;
@@ -207,15 +173,60 @@ export async function POST() {
     }
   }
 
+  // ---- Pass 4: backfill older run activities synced before workout_type/
+  // splits_metric/best_efforts existed. The list pass above only ever looks
+  // forward from the last sync, so these would otherwise never get the new
+  // fields. Ordered newest-first so the prediction's 12-week window fills in
+  // fast even though a full historical backfill takes many syncs.
+  let backfilled = 0;
+  let backfillRemaining = 0;
+  if (!rateLimited) {
+    const { data: needsBackfill } = await sb
+      .from('fitness_activities')
+      .select('id')
+      .in('sport_type', Array.from(RUN_SPORT_TYPES))
+      .is('workout_type', null)
+      .order('start_local', { ascending: false })
+      .limit(BACKFILL_BATCH_SIZE);
+
+    for (const a of needsBackfill ?? []) {
+      try {
+        await processActivityDetail(accessToken, a.id);
+        backfilled++;
+      } catch (err) {
+        if (err instanceof StravaApiError && err.status === 429) {
+          rateLimited = true;
+          break;
+        }
+        // Non-rate-limit errors here are non-fatal too - that activity stays
+        // in the backfill queue and gets retried on the next sync.
+      }
+    }
+
+    if (!rateLimited) {
+      const { count } = await sb
+        .from('fitness_activities')
+        .select('id', { count: 'exact', head: true })
+        .in('sport_type', Array.from(RUN_SPORT_TYPES))
+        .is('workout_type', null);
+      backfillRemaining = count ?? 0;
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     activities_synced: summaries.length,
     gear_refreshed: gearRefreshed,
     details_fetched: detailsFetched,
     signals_parsed: signalsParsed,
+    best_efforts_synced: bestEffortsSynced,
+    backfilled,
+    backfill_remaining: backfillRemaining,
     synced_through: summaries[0]?.start_date_local ?? latest?.start_local ?? null,
     ...(rateLimited
-      ? { warning: 'Strava rate limit hit partway through — activity list is up to date, but some gear/details may be incomplete. Safe to click Sync Now again shortly.' }
-      : {}),
+      ? { warning: 'Strava rate limit hit partway through — activity list is up to date, but some gear/details/backfill may be incomplete. Safe to click Sync Now again shortly.' }
+      : backfillRemaining > 0
+        ? { warning: `Backfilled ${backfilled} older activities' race data — ${backfillRemaining} still to go. Click Sync Now again to continue.` }
+        : {}),
   });
 }

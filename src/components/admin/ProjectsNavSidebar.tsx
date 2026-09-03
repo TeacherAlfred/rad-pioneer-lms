@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { FolderKanban, HeartPulse, LayoutDashboard, Gauge, Vote, ClipboardList, Settings, Footprints, NotebookPen, Shirt } from "lucide-react";
+import { FolderKanban, HeartPulse, LayoutDashboard, Gauge, Vote, ClipboardList, Settings, Footprints, NotebookPen, Shirt, Flag, ListChecks } from "lucide-react";
 
 // Same slim hover-flyout rail as FinanceNavSidebar/LeadsNavSidebar
 // (src/components/admin/FinanceNavSidebar.tsx), mounted once via
@@ -37,6 +37,8 @@ const GROUPS: NavGroup[] = [
     id: 'fitness', label: 'Personal Fitness', icon: Footprints, colorKey: 'green',
     items: [
       { href: '/admin/dashboard-v2/projects/fitness', label: 'Overview', icon: Gauge },
+      { href: '/admin/dashboard-v2/projects/fitness/activities', label: 'Activities', icon: ListChecks },
+      { href: '/admin/dashboard-v2/projects/fitness/races', label: 'Races', icon: Flag },
       { href: '/admin/dashboard-v2/projects/fitness/log', label: 'Log', icon: NotebookPen },
       { href: '/admin/dashboard-v2/projects/fitness/gear', label: 'Gear', icon: Shirt },
       { href: '/admin/dashboard-v2/projects/fitness/settings', label: 'Settings', icon: Settings },
