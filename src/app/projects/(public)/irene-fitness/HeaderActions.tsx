@@ -23,6 +23,15 @@ export function openIreneFitnessFaq(question?: string) {
   window.dispatchEvent(new CustomEvent(OPEN_FAQ_EVENT, { detail: { question } }));
 }
 
+// Same idea again: the feed's micro-ad cards (community/page.tsx) need to
+// open the "Ask us" contact form pre-filled with ad-specific interest text -
+// no separate webinar page or modal, just the existing Contact flow with a
+// different starting message.
+export const OPEN_CONTACT_EVENT = 'irene-fitness:open-contact';
+export function openIreneFitnessContact(prefillMessage?: string) {
+  window.dispatchEvent(new CustomEvent(OPEN_CONTACT_EVENT, { detail: { prefillMessage } }));
+}
+
 // Same idea, the other direction: the FAQ's "Replay the guide" link needs to
 // start the tour that lives in community/page.tsx. Not a real URL - a
 // sentinel link_url value (see REPLAY_TOUR_LINK below) tells FaqAccordion to
@@ -320,6 +329,15 @@ export function HeaderActions() {
     }
     window.addEventListener(OPEN_FAQ_EVENT, onOpenFaq);
     return () => window.removeEventListener(OPEN_FAQ_EVENT, onOpenFaq);
+  }, []);
+
+  useEffect(() => {
+    function onOpenContact(e: Event) {
+      openContact((e as CustomEvent<{ prefillMessage?: string }>).detail?.prefillMessage);
+    }
+    window.addEventListener(OPEN_CONTACT_EVENT, onOpenContact);
+    return () => window.removeEventListener(OPEN_CONTACT_EVENT, onOpenContact);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function openContact(prefill?: string) {

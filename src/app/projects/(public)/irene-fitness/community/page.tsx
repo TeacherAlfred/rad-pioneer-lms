@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { Smile, Sparkles, FlaskConical, Footprints, Mountain, Target, ChevronDown, Check, X } from 'lucide-react';
 import { BottomSheetModal } from '../BottomSheetModal';
 import { TourOverlay, type TourStep } from '../TourOverlay';
-import { START_TOUR_EVENT } from '../HeaderActions';
+import { START_TOUR_EVENT, openIreneFitnessContact } from '../HeaderActions';
 
 type VoteCategory = 'funniest' | 'most_inspiring' | 'mad_scientist';
 type Phase = 'locked' | 'open' | 'standings_only';
@@ -27,6 +28,15 @@ type FeedResponse = {
   story: Story;
   votes: Record<VoteCategory, number>;
 };
+
+type FeedAd = {
+  id: string;
+  image_url: string;
+  cta_label: string;
+  contact_prefill: string;
+};
+
+type FeedItem = { type: 'response'; response: FeedResponse } | { type: 'ad'; ad: FeedAd };
 
 // Real labels + a distinct colour per category so which button does what is
 // legible at a glance, not something to guess at from an unlabelled icon.
@@ -170,6 +180,24 @@ function totalVotes(v: Record<VoteCategory, number>) {
   return v.funniest + v.most_inspiring + v.mad_scientist;
 }
 
+// Native content in the scroll, same mechanic as any other card - not a
+// separate banner/takeover. First ad lands after 6-8 real entries (never in
+// the first 5-6), then repeats every 8-10 entries after that, so it reads as
+// occasional and in-context rather than front-loaded or relentless.
+function interleaveAds(cards: FeedResponse[], ads: FeedAd[]): FeedItem[] {
+  const items: FeedItem[] = cards.map((response) => ({ type: 'response', response }));
+  if (ads.length === 0) return items;
+
+  let nextAdIndex = 8 + Math.floor(Math.random() * 3); // 8, 9, or 10 real cards before the first ad
+  let adCursor = 0;
+  while (nextAdIndex < items.length) {
+    items.splice(nextAdIndex, 0, { type: 'ad', ad: ads[adCursor % ads.length] });
+    adCursor++;
+    nextAdIndex += 9 + Math.floor(Math.random() * 3); // then another 8-10 real cards (+1 for the ad slot itself)
+  }
+  return items;
+}
+
 // flex-1 on each button (rather than flex-wrap) guarantees the three
 // categories share one row instead of wrapping/overlapping - label size and
 // padding are tuned to fit "Craziest Diet", the longest of the three, down
@@ -297,6 +325,28 @@ function ResponseCard({
         <VoteButtons votes={response.votes} tapped={tapped} interactive={interactive} onVote={onVote} />
       </div>
     </div>
+  );
+}
+
+// A native promotional card, same footprint as a story card so it reads as
+// "content in the scroll" rather than a banner takeover - no separate guide,
+// no consolidated web page, just a tap straight into the existing "Ask us"
+// contact form, pre-filled for this ad's specific interest.
+function AdCard({ ad }: { ad: FeedAd }) {
+  return (
+    <button
+      onClick={() => openIreneFitnessContact(ad.contact_prefill)}
+      className="block w-full text-left rounded-2xl bg-white border border-black/5 shadow-sm mb-4 overflow-hidden"
+    >
+      <div className="relative w-full aspect-[9/16] bg-slate-100">
+        <Image src={ad.image_url} alt={ad.cta_label} fill className="object-cover" sizes="(max-width: 672px) 100vw, 672px" />
+      </div>
+      <div className="p-4">
+        <span className="inline-block w-full text-center py-3 rounded-2xl font-black uppercase tracking-widest text-xs bg-[#0066cc] text-white">
+          {ad.cta_label}
+        </span>
+      </div>
+    </button>
   );
 }
 
@@ -482,6 +532,7 @@ export default function IreneFitnessCommunityPage() {
   const [phase, setPhase] = useState<Phase | null>(null);
   const [responses, setResponses] = useState<FeedResponse[]>([]);
   const [order, setOrder] = useState<string[]>([]);
+  const [ads, setAds] = useState<FeedAd[]>([]);
   const [tappedByResponse, setTappedByResponse] = useState<Map<string, Set<VoteCategory>>>(new Map());
   const [everVotedIds, setEverVotedIds] = useState<Set<string>>(new Set());
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -520,6 +571,13 @@ export default function IreneFitnessCommunityPage() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/irene-fitness/feed-ads')
+      .then((r) => r.json())
+      .then((d) => setAds(d.ads || []))
+      .catch(() => {});
   }, []);
 
   // "Replay the guide" in the FAQ (HeaderActions.tsx's FaqAccordion, via its
@@ -625,6 +683,11 @@ export default function IreneFitnessCommunityPage() {
 
   const openStoryResponse = openStoryId ? responses.find((r) => r.id === openStoryId) || null : null;
 
+  // Ads only rotate into the main story scroll, never the Cheer Squad strip
+  // or the tour's dummy card - "native content in the scroll" means the real
+  // scroll, not every list on the page.
+  const feedItems = interleaveAds(filteredResponses, ads);
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 sm:py-16">
       <h2 className="text-2xl font-black tracking-tight mb-1">Fit Fam Community</h2>
@@ -664,17 +727,21 @@ export default function IreneFitnessCommunityPage() {
         />
       )}
 
-      {filteredResponses.map((r) => (
-        <ResponseCard
-          key={r.id}
-          response={r}
-          tapped={tappedByResponse.get(r.id) || new Set()}
-          votedBefore={everVotedIds.has(r.id)}
-          interactive={interactive}
-          onVote={(category) => handleVote(r.id, category)}
-          onReadStory={() => setOpenStoryId(r.id)}
-        />
-      ))}
+      {feedItems.map((item, i) =>
+        item.type === 'ad' ? (
+          <AdCard key={`ad-${item.ad.id}-${i}`} ad={item.ad} />
+        ) : (
+          <ResponseCard
+            key={item.response.id}
+            response={item.response}
+            tapped={tappedByResponse.get(item.response.id) || new Set()}
+            votedBefore={everVotedIds.has(item.response.id)}
+            interactive={interactive}
+            onVote={(category) => handleVote(item.response.id, category)}
+            onReadStory={() => setOpenStoryId(item.response.id)}
+          />
+        )
+      )}
 
       {openStoryResponse && (
         <StoryModal
