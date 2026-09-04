@@ -165,6 +165,46 @@ function teaserLine(story: Story): { label: string; value: string } | null {
   return null;
 }
 
+// Which field reads as "what they wrote for this category" - same mapping
+// the admin vote-leaderboard uses (see vote-leaderboard/route.ts's
+// excerptFor), kept in sync so "top voted" means the same story on both the
+// public carousel and the admin leaderboard.
+function categoryExcerpt(category: VoteCategory, story: Story): { label: string; value: string } | null {
+  if (!story) return null;
+  if (category === 'funniest') {
+    return story.funniest_fail ? { label: 'Funniest fitness fail', value: story.funniest_fail } : null;
+  }
+  if (category === 'most_inspiring') {
+    if (story.proudest_moment) return { label: 'Proudest moment', value: story.proudest_moment };
+    if (story.motivation) return { label: 'Why I started', value: story.motivation };
+    return null;
+  }
+  if (story.weirdest_fuel) return { label: 'Weirdest training fuel', value: story.weirdest_fuel };
+  if (story.toughest_challenge) return { label: 'Toughest challenge yet', value: story.toughest_challenge };
+  return null;
+}
+
+// Highest-voted entry that actually wrote something for this category - ties
+// (including the common "everyone's at 0 votes, voting just opened" case)
+// resolve to whichever comes first in the list passed in, same as any other
+// unranked tie.
+function topCategoryHighlight(
+  responses: FeedResponse[],
+  category: VoteCategory
+): { response: FeedResponse; excerpt: { label: string; value: string } } | null {
+  let best: FeedResponse | null = null;
+  let bestExcerpt: { label: string; value: string } | null = null;
+  for (const r of responses) {
+    const excerpt = categoryExcerpt(category, r.story);
+    if (!excerpt) continue;
+    if (!best || r.votes[category] > best.votes[category]) {
+      best = r;
+      bestExcerpt = excerpt;
+    }
+  }
+  return best && bestExcerpt ? { response: best, excerpt: bestExcerpt } : null;
+}
+
 // Fisher-Yates, run once per page load - keeps the feed from always
 // favouring whoever submitted first (§0: feed, not leaderboard).
 function shuffle<T>(arr: T[]): T[] {
@@ -409,6 +449,89 @@ function CheerSquad({ responses }: { responses: FeedResponse[] }) {
   );
 }
 
+// Text-only tint per category, matching the admin leaderboard's
+// VOTE_CATEGORY_COLORS - CATEGORY_CONFIG's activeClass/idleClass are tuned
+// for full pill buttons, not a small icon swatch.
+const CATEGORY_TEXT_COLOR: Record<VoteCategory, string> = {
+  funniest: 'text-teal-700',
+  most_inspiring: 'text-[#0066cc]',
+  mad_scientist: 'text-violet-700',
+};
+
+// Shows only the single category excerpt tapped, not the full story - a
+// narrower sibling of StoryModal for "Read more" on a carousel card.
+function CategoryHighlightModal({
+  name,
+  label,
+  value,
+  onClose,
+}: {
+  name: string;
+  label: string;
+  value: string;
+  onClose: () => void;
+}) {
+  return (
+    <BottomSheetModal title={name} onClose={onClose}>
+      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</p>
+      <p className="text-sm text-slate-700">{value}</p>
+    </BottomSheetModal>
+  );
+}
+
+// Top entry per category, one line each, right after the Cheer Squad strip -
+// a quick "who's leading" glance before the full scroll. "Read more" opens
+// only that one category's excerpt (CategoryHighlightModal), never the full
+// multi-field story.
+function CategoryHighlightsCarousel({
+  responses,
+  onReadMore,
+}: {
+  responses: FeedResponse[];
+  onReadMore: (highlight: { name: string; label: string; value: string }) => void;
+}) {
+  const highlights = CATEGORY_CONFIG.map((config) => ({
+    config,
+    highlight: topCategoryHighlight(responses, config.key),
+  })).filter((h): h is { config: (typeof CATEGORY_CONFIG)[number]; highlight: NonNullable<typeof h.highlight> } => h.highlight !== null);
+
+  if (highlights.length === 0) return null;
+
+  return (
+    <div className="-mx-4 px-4 mb-4 overflow-x-auto">
+      <div className="flex gap-3 pb-1">
+        {highlights.map(({ config, highlight }) => (
+          <div
+            key={config.key}
+            className="shrink-0 w-64 p-4 rounded-2xl bg-white border border-black/5 shadow-sm"
+          >
+            <div className="flex items-center gap-1.5 mb-2">
+              <config.icon size={13} className={CATEGORY_TEXT_COLOR[config.key]} />
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                Top {config.label}
+              </span>
+            </div>
+            <p className="font-black text-sm truncate mb-1">{highlight.response.display_name}</p>
+            <p className="text-xs text-slate-600 truncate mb-2">{highlight.excerpt.value}</p>
+            <button
+              onClick={() =>
+                onReadMore({
+                  name: highlight.response.display_name,
+                  label: highlight.excerpt.label,
+                  value: highlight.excerpt.value,
+                })
+              }
+              className="text-xs font-bold text-[#0066cc] hover:underline"
+            >
+              Read more
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 type CardFilter = 'all' | 'new' | 'favourites';
 
 const FILTER_OPTIONS: { key: CardFilter; label: string }[] = [
@@ -538,6 +661,11 @@ export default function IreneFitnessCommunityPage() {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [openStoryId, setOpenStoryId] = useState<string | null>(null);
+  const [categoryHighlightModal, setCategoryHighlightModal] = useState<{
+    name: string;
+    label: string;
+    value: string;
+  } | null>(null);
   const [filter, setFilter] = useState<CardFilter>('all');
   const [tourStep, setTourStep] = useState<number | null>(null);
 
@@ -701,6 +829,8 @@ export default function IreneFitnessCommunityPage() {
 
       <CheerSquad responses={cheerSquad} />
 
+      <CategoryHighlightsCarousel responses={storiedResponses} onReadMore={setCategoryHighlightModal} />
+
       {storiedResponses.length > 0 && <FilterPills value={filter} onChange={setFilter} />}
 
       {storiedResponses.length === 0 && cheerSquad.length === 0 && (
@@ -748,6 +878,15 @@ export default function IreneFitnessCommunityPage() {
           name={openStoryResponse.display_name}
           story={openStoryResponse.story}
           onClose={() => setOpenStoryId(null)}
+        />
+      )}
+
+      {categoryHighlightModal && (
+        <CategoryHighlightModal
+          name={categoryHighlightModal.name}
+          label={categoryHighlightModal.label}
+          value={categoryHighlightModal.value}
+          onClose={() => setCategoryHighlightModal(null)}
         />
       )}
 
