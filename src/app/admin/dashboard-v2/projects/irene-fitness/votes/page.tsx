@@ -66,6 +66,36 @@ function RankBadge({ rank }: { rank: number }) {
   );
 }
 
+// Quick-glance "category champion" strip - who's leading each category
+// right now, at a glance, before the full ranked-by-total list below. Shows
+// only that category's count for that response, not the full per-category
+// breakdown OverallLeaderboard's rows show.
+function CategoryChampionCard({ category, entry }: { category: VoteCategory; entry: CategoryEntry | null }) {
+  const Icon = VOTE_CATEGORY_ICONS[category];
+  const colors = VOTE_CATEGORY_COLORS[category];
+  return (
+    <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <span className={`p-1.5 rounded-lg ${colors.bgTint} ${colors.text}`}>
+          <Icon size={14} />
+        </span>
+        <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">
+          {VOTE_CATEGORY_LABELS[category]}
+        </p>
+      </div>
+      {entry ? (
+        <div className="flex items-center gap-3">
+          <RankBadge rank={1} />
+          <p className="text-sm font-bold text-stone-800 flex-1 min-w-0 truncate">{entry.display_name}</p>
+          <p className="text-sm font-black text-stone-900 shrink-0">{entry.votes}</p>
+        </div>
+      ) : (
+        <p className="text-sm text-stone-400">No votes yet.</p>
+      )}
+    </div>
+  );
+}
+
 function OverallLeaderboard({ entries }: { entries: OverallEntry[] }) {
   if (entries.length === 0) {
     return <p className="text-sm text-stone-400 p-6">No votes cast yet.</p>;
@@ -191,6 +221,13 @@ export default function IreneFitnessVotesPage() {
         {/* Leaderboards - where the votes have actually gone, not just how many */}
         <section>
           <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400 mb-4">Overall Leaderboard</h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+            {VOTE_CATEGORIES.map((cat) => (
+              <CategoryChampionCard key={cat} category={cat} entry={leaderboard?.by_category[cat]?.[0] || null} />
+            ))}
+          </div>
+
           <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm overflow-hidden">
             <div className="flex items-center gap-2 px-6 py-4 border-b border-stone-100">
               <Trophy size={16} className="text-amber-500" />
