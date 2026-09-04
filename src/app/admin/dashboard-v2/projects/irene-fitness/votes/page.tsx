@@ -16,7 +16,7 @@ type OverallEntry = {
   most_inspiring: number;
   mad_scientist: number;
 };
-type CategoryEntry = { response_id: string; display_name: string; votes: number };
+type CategoryEntry = { response_id: string; display_name: string; votes: number; excerpt: string | null };
 type LeaderboardData = { overall: OverallEntry[]; by_category: Record<VoteCategory, CategoryEntry[]> };
 
 const VOTE_CATEGORIES: VoteCategory[] = ["funniest", "most_inspiring", "mad_scientist"];
@@ -71,10 +71,15 @@ function RankBadge({ rank }: { rank: number }) {
 // only that category's count for that response, not the full per-category
 // breakdown OverallLeaderboard's rows show.
 function CategoryChampionCard({ category, entry }: { category: VoteCategory; entry: CategoryEntry | null }) {
+  const [expanded, setExpanded] = useState(false);
   const Icon = VOTE_CATEGORY_ICONS[category];
   const colors = VOTE_CATEGORY_COLORS[category];
   return (
-    <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm p-5">
+    // h-full + grid's default row-stretch keeps all three cards the same
+    // height regardless of how long any one parent's excerpt runs -
+    // line-clamp-3 below caps the excerpt itself so a long answer doesn't
+    // still blow the row out to essay length.
+    <div className="h-full flex flex-col bg-white border border-stone-200 rounded-[24px] shadow-sm p-5">
       <div className="flex items-center gap-2 mb-4">
         <span className={`p-1.5 rounded-lg ${colors.bgTint} ${colors.text}`}>
           <Icon size={14} />
@@ -84,11 +89,26 @@ function CategoryChampionCard({ category, entry }: { category: VoteCategory; ent
         </p>
       </div>
       {entry ? (
-        <div className="flex items-center gap-3">
-          <RankBadge rank={1} />
-          <p className="text-sm font-bold text-stone-800 flex-1 min-w-0 truncate">{entry.display_name}</p>
-          <p className="text-sm font-black text-stone-900 shrink-0">{entry.votes}</p>
-        </div>
+        <>
+          <div className="flex items-center gap-3">
+            <RankBadge rank={1} />
+            <p className="text-sm font-bold text-stone-800 flex-1 min-w-0 truncate">{entry.display_name}</p>
+            <p className="text-sm font-black text-stone-900 shrink-0">{entry.votes}</p>
+          </div>
+          {entry.excerpt && (
+            <div className="mt-3 pt-3 border-t border-stone-100 flex-1 flex flex-col">
+              <p className={`text-sm text-stone-600 leading-relaxed ${expanded ? '' : 'line-clamp-3'}`}>
+                {entry.excerpt}
+              </p>
+              <button
+                onClick={() => setExpanded((e) => !e)}
+                className="text-xs font-bold text-[#0066cc] mt-1 self-start"
+              >
+                {expanded ? 'Show less' : 'Read more'}
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <p className="text-sm text-stone-400">No votes yet.</p>
       )}

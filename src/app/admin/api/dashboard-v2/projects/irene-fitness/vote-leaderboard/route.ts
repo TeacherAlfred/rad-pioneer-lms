@@ -48,6 +48,30 @@ export async function GET() {
 
   const tallies = [...tallyByResponse.values()];
 
+  const responseIds = tallies.map((t) => t.response_id);
+  const { data: stories, error: storiesError } =
+    responseIds.length > 0
+      ? await supabase
+          .from('irene_fitness_response_story')
+          .select('response_id, funniest_fail, proudest_moment, motivation, weirdest_fuel, toughest_challenge')
+          .in('response_id', responseIds)
+      : { data: [], error: null };
+  if (storiesError) return NextResponse.json({ error: storiesError.message }, { status: 500 });
+  const storyByResponse = new Map((stories || []).map((s) => [s.response_id, s]));
+
+  // Which field actually reads as "what they wrote for this category" - the
+  // same rough association the public feed's category theming already uses
+  // (funny -> the fail story, inspiring -> the proud moment, "mad
+  // scientist"/craziest diet -> the odd fuel), each falling back to the
+  // next-closest field when the first-choice one is blank.
+  function excerptFor(category: VoteCategory, responseId: string): string | null {
+    const s = storyByResponse.get(responseId);
+    if (!s) return null;
+    if (category === 'funniest') return s.funniest_fail || null;
+    if (category === 'most_inspiring') return s.proudest_moment || s.motivation || null;
+    return s.weirdest_fuel || s.toughest_challenge || null;
+  }
+
   const overall = tallies
     .map((t) => ({
       response_id: t.response_id,
@@ -65,11 +89,16 @@ export async function GET() {
       cat,
       tallies
         .filter((t) => t[cat] > 0)
-        .map((t) => ({ response_id: t.response_id, display_name: t.display_name, votes: t[cat] }))
+        .map((t) => ({
+          response_id: t.response_id,
+          display_name: t.display_name,
+          votes: t[cat],
+          excerpt: excerptFor(cat, t.response_id),
+        }))
         .sort((a, b) => b.votes - a.votes)
         .slice(0, TOP_N),
     ])
-  ) as Record<VoteCategory, { response_id: string; display_name: string; votes: number }[]>;
+  ) as Record<VoteCategory, { response_id: string; display_name: string; votes: number; excerpt: string | null }[]>;
 
   return NextResponse.json({ overall, by_category });
 }
