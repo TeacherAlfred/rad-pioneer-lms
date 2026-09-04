@@ -388,12 +388,20 @@ function ResponseCard({
 
 // A native promotional card, same footprint as a story card so it reads as
 // "content in the scroll" rather than a banner takeover - no separate guide,
-// no consolidated web page, just a tap straight into the existing "Ask us"
-// contact form, pre-filled for this ad's specific interest.
+// no consolidated web page, just a tap straight into the existing contact
+// form. Title/intro are set to match what was actually tapped (the CTA
+// label itself, plus webinar-specific framing) rather than falling through
+// to the generic "Ask us" / "drop your question" copy that fits a real
+// question, not a registration.
 function AdCard({ ad }: { ad: FeedAd }) {
   return (
     <button
-      onClick={() => openIreneFitnessContact(ad.contact_prefill)}
+      onClick={() =>
+        openIreneFitnessContact(ad.contact_prefill, {
+          title: ad.cta_label,
+          intro: "Pop your details below and we'll confirm your spot and send the webinar link.",
+        })
+      }
       className="block w-full text-left rounded-2xl bg-white border border-black/5 shadow-sm mb-4 overflow-hidden"
     >
       <div className="relative w-full aspect-[9/16] bg-slate-100">

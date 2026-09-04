@@ -25,11 +25,17 @@ export function openIreneFitnessFaq(question?: string) {
 
 // Same idea again: the feed's micro-ad cards (community/page.tsx) need to
 // open the "Ask us" contact form pre-filled with ad-specific interest text -
-// no separate webinar page or modal, just the existing Contact flow with a
-// different starting message.
+// no separate webinar page or modal, just the existing Contact flow. title/
+// intro let a specific entry point (e.g. "Register for the Free Webinar")
+// replace the generic "Ask us" framing so the popup actually talks to what
+// was tapped, instead of every entry point reading like a stray question.
 export const OPEN_CONTACT_EVENT = 'irene-fitness:open-contact';
-export function openIreneFitnessContact(prefillMessage?: string) {
-  window.dispatchEvent(new CustomEvent(OPEN_CONTACT_EVENT, { detail: { prefillMessage } }));
+export function openIreneFitnessContact(prefillMessage?: string, options?: { title?: string; intro?: string }) {
+  window.dispatchEvent(
+    new CustomEvent(OPEN_CONTACT_EVENT, {
+      detail: { prefillMessage, title: options?.title, intro: options?.intro },
+    })
+  );
 }
 
 // Same idea, the other direction: the FAQ's "Replay the guide" link needs to
@@ -142,7 +148,9 @@ function FaqAccordion({
   );
 }
 
-function ContactForm({ prefillMessage }: { prefillMessage?: string }) {
+const DEFAULT_CONTACT_INTRO = "Not a live chat — drop your question here and we'll reply within 24 hours.";
+
+function ContactForm({ prefillMessage, intro }: { prefillMessage?: string; intro?: string }) {
   const [name, setName] = useState('');
   const [channel, setChannel] = useState<'whatsapp' | 'email'>('whatsapp');
   const [contact, setContact] = useState('');
@@ -187,9 +195,7 @@ function ContactForm({ prefillMessage }: { prefillMessage?: string }) {
 
   return (
     <div>
-      <p className="text-sm text-slate-500 mb-4">
-        Not a live chat — drop your question here and we&apos;ll reply within 24 hours.
-      </p>
+      <p className="text-sm text-slate-500 mb-4">{intro || DEFAULT_CONTACT_INTRO}</p>
       <label className={LABEL_CLS}>Your name</label>
       <input
         type="text"
@@ -313,6 +319,8 @@ export function HeaderActions() {
   const [panel, setPanel] = useState<Panel>('none');
   const [faqItems, setFaqItems] = useState<FaqItem[]>([]);
   const [contactPrefill, setContactPrefill] = useState<string | undefined>(undefined);
+  const [contactTitle, setContactTitle] = useState<string>('Ask us');
+  const [contactIntro, setContactIntro] = useState<string | undefined>(undefined);
   const [faqQuestion, setFaqQuestion] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -321,6 +329,13 @@ export function HeaderActions() {
       .then((d) => setFaqItems(d.items || []))
       .catch(() => {});
   }, []);
+
+  function openContact(prefill?: string, title?: string, intro?: string) {
+    setContactPrefill(prefill);
+    setContactTitle(title || 'Ask us');
+    setContactIntro(intro);
+    setPanel('contact');
+  }
 
   useEffect(() => {
     function onOpenFaq(e: Event) {
@@ -333,17 +348,12 @@ export function HeaderActions() {
 
   useEffect(() => {
     function onOpenContact(e: Event) {
-      openContact((e as CustomEvent<{ prefillMessage?: string }>).detail?.prefillMessage);
+      const detail = (e as CustomEvent<{ prefillMessage?: string; title?: string; intro?: string }>).detail;
+      openContact(detail?.prefillMessage, detail?.title, detail?.intro);
     }
     window.addEventListener(OPEN_CONTACT_EVENT, onOpenContact);
     return () => window.removeEventListener(OPEN_CONTACT_EVENT, onOpenContact);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  function openContact(prefill?: string) {
-    setContactPrefill(prefill);
-    setPanel('contact');
-  }
 
   return (
     <>
@@ -365,8 +375,8 @@ export function HeaderActions() {
       )}
 
       {panel === 'contact' && (
-        <BottomSheetModal title="Ask us" onClose={() => setPanel('none')}>
-          <ContactForm prefillMessage={contactPrefill} />
+        <BottomSheetModal title={contactTitle} onClose={() => setPanel('none')}>
+          <ContactForm prefillMessage={contactPrefill} intro={contactIntro} />
         </BottomSheetModal>
       )}
 
