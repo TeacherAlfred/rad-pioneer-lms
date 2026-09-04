@@ -2,7 +2,19 @@
 
 import React, { useEffect, useState } from 'react';
 import Image from 'next/image';
-import { Smile, Sparkles, FlaskConical, Footprints, Mountain, Target, ChevronDown, Check, X } from 'lucide-react';
+import {
+  Smile,
+  Sparkles,
+  FlaskConical,
+  Footprints,
+  Mountain,
+  Target,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  X,
+} from 'lucide-react';
 import { BottomSheetModal } from '../BottomSheetModal';
 import { TourOverlay, type TourStep } from '../TourOverlay';
 import { START_TOUR_EVENT, openIreneFitnessContact } from '../HeaderActions';
@@ -223,16 +235,22 @@ function totalVotes(v: Record<VoteCategory, number>) {
 // Native content in the scroll, same mechanic as any other card - not a
 // separate banner/takeover. First ad lands after 6-8 real entries (never in
 // the first 5-6), then repeats every 8-10 entries after that, so it reads as
-// occasional and in-context rather than front-loaded or relentless.
+// occasional and in-context rather than front-loaded or relentless. Capped
+// at MAX_AD_INSERTIONS total appearances so a long scroll doesn't keep
+// resurfacing the same ad indefinitely.
+const MAX_AD_INSERTIONS = 2;
+
 function interleaveAds(cards: FeedResponse[], ads: FeedAd[]): FeedItem[] {
   const items: FeedItem[] = cards.map((response) => ({ type: 'response', response }));
   if (ads.length === 0) return items;
 
   let nextAdIndex = 8 + Math.floor(Math.random() * 3); // 8, 9, or 10 real cards before the first ad
   let adCursor = 0;
-  while (nextAdIndex < items.length) {
+  let inserted = 0;
+  while (nextAdIndex < items.length && inserted < MAX_AD_INSERTIONS) {
     items.splice(nextAdIndex, 0, { type: 'ad', ad: ads[adCursor % ads.length] });
     adCursor++;
+    inserted++;
     nextAdIndex += 9 + Math.floor(Math.random() * 3); // then another 8-10 real cards (+1 for the ad slot itself)
   }
   return items;
@@ -479,10 +497,12 @@ function CategoryHighlightModal({
   );
 }
 
-// Top entry per category, one line each, right after the Cheer Squad strip -
-// a quick "who's leading" glance before the full scroll. "Read more" opens
-// only that one category's excerpt (CategoryHighlightModal), never the full
-// multi-field story.
+// Top entry per category, one card at a time with left/right nav, right
+// after the Cheer Squad strip - a quick "who's leading" glance before the
+// full scroll. A horizontal-scroll strip here read as a stray scrollbar
+// rather than a deliberate carousel, so this steps through one card per tap
+// instead. "Read more" opens only that one category's excerpt
+// (CategoryHighlightModal), never the full multi-field story.
 function CategoryHighlightsCarousel({
   responses,
   onReadMore,
@@ -495,39 +515,73 @@ function CategoryHighlightsCarousel({
     highlight: topCategoryHighlight(responses, config.key),
   })).filter((h): h is { config: (typeof CATEGORY_CONFIG)[number]; highlight: NonNullable<typeof h.highlight> } => h.highlight !== null);
 
+  const [index, setIndex] = useState(0);
+
   if (highlights.length === 0) return null;
 
+  // Guards against a stale index after `responses` changes shrink the list
+  // (e.g. a category briefly has no entries with story content yet).
+  const current = Math.min(index, highlights.length - 1);
+  const { config, highlight } = highlights[current];
+  const canNavigate = highlights.length > 1;
+
   return (
-    <div className="-mx-4 px-4 mb-4 overflow-x-auto">
-      <div className="flex gap-3 pb-1">
-        {highlights.map(({ config, highlight }) => (
-          <div
-            key={config.key}
-            className="shrink-0 w-64 p-4 rounded-2xl bg-white border border-black/5 shadow-sm"
-          >
-            <div className="flex items-center gap-1.5 mb-2">
-              <config.icon size={13} className={CATEGORY_TEXT_COLOR[config.key]} />
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                Top {config.label}
-              </span>
-            </div>
-            <p className="font-black text-sm truncate mb-1">{highlight.response.display_name}</p>
-            <p className="text-xs text-slate-600 truncate mb-2">{highlight.excerpt.value}</p>
-            <button
-              onClick={() =>
-                onReadMore({
-                  name: highlight.response.display_name,
-                  label: highlight.excerpt.label,
-                  value: highlight.excerpt.value,
-                })
-              }
-              className="text-xs font-bold text-[#0066cc] hover:underline"
-            >
-              Read more
-            </button>
+    <div className="mb-4">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setIndex((i) => (Math.min(i, highlights.length - 1) - 1 + highlights.length) % highlights.length)}
+          disabled={!canNavigate}
+          aria-label="Previous category highlight"
+          className="shrink-0 w-8 h-8 rounded-full bg-white border border-black/5 shadow-sm flex items-center justify-center text-slate-500 disabled:opacity-30 disabled:cursor-default"
+        >
+          <ChevronLeft size={16} />
+        </button>
+
+        <div className="flex-1 min-w-0 p-4 rounded-2xl bg-white border border-black/5 shadow-sm">
+          <div className="flex items-center gap-1.5 mb-2">
+            <config.icon size={13} className={CATEGORY_TEXT_COLOR[config.key]} />
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+              Top {config.label}
+            </span>
           </div>
-        ))}
+          <p className="font-black text-sm truncate mb-1">{highlight.response.display_name}</p>
+          <p className="text-xs text-slate-600 truncate mb-2">{highlight.excerpt.value}</p>
+          <button
+            onClick={() =>
+              onReadMore({
+                name: highlight.response.display_name,
+                label: highlight.excerpt.label,
+                value: highlight.excerpt.value,
+              })
+            }
+            className="text-xs font-bold text-[#0066cc] hover:underline"
+          >
+            Read more
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIndex((i) => (Math.min(i, highlights.length - 1) + 1) % highlights.length)}
+          disabled={!canNavigate}
+          aria-label="Next category highlight"
+          className="shrink-0 w-8 h-8 rounded-full bg-white border border-black/5 shadow-sm flex items-center justify-center text-slate-500 disabled:opacity-30 disabled:cursor-default"
+        >
+          <ChevronRight size={16} />
+        </button>
       </div>
+
+      {canNavigate && (
+        <div className="flex justify-center gap-1 mt-2">
+          {highlights.map((h, i) => (
+            <span
+              key={h.config.key}
+              className={`h-1.5 rounded-full transition-all ${i === current ? 'w-4 bg-[#0066cc]' : 'w-1.5 bg-slate-200'}`}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
