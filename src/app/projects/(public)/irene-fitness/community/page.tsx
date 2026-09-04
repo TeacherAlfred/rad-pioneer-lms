@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
+import { useSearchParams } from 'next/navigation';
 import {
   Smile,
   Sparkles,
@@ -14,6 +15,8 @@ import {
   ChevronRight,
   Check,
   X,
+  Copy,
+  Share2,
 } from 'lucide-react';
 import { BottomSheetModal } from '../BottomSheetModal';
 import { TourOverlay, type TourStep } from '../TourOverlay';
@@ -21,6 +24,17 @@ import { START_TOUR_EVENT, openIreneFitnessContact } from '../HeaderActions';
 
 type VoteCategory = 'funniest' | 'most_inspiring' | 'mad_scientist';
 type Phase = 'locked' | 'open' | 'standings_only';
+
+// The written fields an admin can pick between as a category's public
+// stand-in (Responses admin page) - excludes the fact fields (club_member/
+// club_names/shoe_count), which are pills, not narrative teasers.
+type StoryFieldKey =
+  | 'motivation'
+  | 'toughest_challenge'
+  | 'proudest_moment'
+  | 'weirdest_fuel'
+  | 'funniest_fail'
+  | 'boss_level_challenge_2026';
 
 type Story = {
   motivation: string | null;
@@ -32,6 +46,8 @@ type Story = {
   proudest_moment: string | null;
   weirdest_fuel: string | null;
   funniest_fail: string | null;
+  category_overrides: Partial<Record<VoteCategory, StoryFieldKey>> | null;
+  featured_category: VoteCategory | null;
 } | null;
 
 type FeedResponse = {
@@ -117,12 +133,23 @@ function initials(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-function Avatar({ name, size = 36, className = '' }: { name: string; size?: number; className?: string }) {
+function Avatar({
+  name,
+  size = 36,
+  className = '',
+  id,
+}: {
+  name: string;
+  size?: number;
+  className?: string;
+  id?: string;
+}) {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
   const { bg, text } = AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
   return (
     <div
+      id={id}
       title={name}
       className={`shrink-0 rounded-full flex items-center justify-center font-black ${bg} ${text} ${className}`}
       style={{ width: size, height: size, fontSize: size * 0.4 }}
@@ -170,19 +197,35 @@ function factPills(story: Story): { icon: typeof Footprints; text: string }[] {
 // One narrative teaser line - funniest fail first (humour is the most
 // scroll-stopping content type in a casual feed), falling back to proudest
 // moment. Everything else lives behind "Read full story."
-function teaserLine(story: Story): { label: string; value: string } | null {
+const STORY_FIELD_LABELS: Record<StoryFieldKey, string> = {
+  motivation: 'Why I started',
+  toughest_challenge: 'Toughest challenge yet',
+  proudest_moment: 'Proudest moment',
+  weirdest_fuel: 'Weirdest training fuel',
+  funniest_fail: 'Funniest fitness fail',
+  boss_level_challenge_2026: '2026 "Boss Level" goal',
+};
+
+function storyFieldValue(story: Story, key: StoryFieldKey): string | null {
   if (!story) return null;
-  if (story.funniest_fail) return { label: 'Funniest fitness fail', value: story.funniest_fail };
-  if (story.proudest_moment) return { label: 'Proudest moment', value: story.proudest_moment };
-  return null;
+  const v = story[key];
+  return typeof v === 'string' && v ? v : null;
 }
 
 // Which field reads as "what they wrote for this category" - same mapping
 // the admin vote-leaderboard uses (see vote-leaderboard/route.ts's
 // excerptFor), kept in sync so "top voted" means the same story on both the
-// public carousel and the admin leaderboard.
+// public carousel and the admin leaderboard. An admin-set override (Responses
+// page, for when the default field is blank or just says "N/A") always wins.
 function categoryExcerpt(category: VoteCategory, story: Story): { label: string; value: string } | null {
   if (!story) return null;
+
+  const overrideKey = story.category_overrides?.[category];
+  if (overrideKey) {
+    const value = storyFieldValue(story, overrideKey);
+    if (value) return { label: STORY_FIELD_LABELS[overrideKey], value };
+  }
+
   if (category === 'funniest') {
     return story.funniest_fail ? { label: 'Funniest fitness fail', value: story.funniest_fail } : null;
   }
@@ -193,6 +236,31 @@ function categoryExcerpt(category: VoteCategory, story: Story): { label: string;
   }
   if (story.weirdest_fuel) return { label: 'Weirdest training fuel', value: story.weirdest_fuel };
   if (story.toughest_challenge) return { label: 'Toughest challenge yet', value: story.toughest_challenge };
+  return null;
+}
+
+// The card's single teaser line is conceptually "the funny bit", so it
+// shares the funniest-category override too - the same admin fix that keeps
+// "N/A" off the leaderboard also keeps it off every card in the scroll.
+function teaserLine(story: Story): { label: string; value: string } | null {
+  if (!story) return null;
+
+  // An admin-picked featured category (Responses page, for when the default
+  // "funniest first" pick is blank or literally "N/A") always wins - reuses
+  // categoryExcerpt so it's already override-aware for that category too.
+  if (story.featured_category) {
+    const featured = categoryExcerpt(story.featured_category, story);
+    if (featured) return featured;
+  }
+
+  const overrideKey = story.category_overrides?.funniest;
+  if (overrideKey) {
+    const value = storyFieldValue(story, overrideKey);
+    if (value) return { label: STORY_FIELD_LABELS[overrideKey], value };
+  }
+
+  if (story.funniest_fail) return { label: 'Funniest fitness fail', value: story.funniest_fail };
+  if (story.proudest_moment) return { label: 'Proudest moment', value: story.proudest_moment };
   return null;
 }
 
@@ -319,6 +387,7 @@ function ResponseCard({
   onReadStory,
   isExample,
   voteButtonsId,
+  highlighted,
 }: {
   response: FeedResponse;
   tapped: Set<VoteCategory>;
@@ -328,12 +397,18 @@ function ResponseCard({
   onReadStory?: () => void;
   isExample?: boolean;
   voteButtonsId?: string;
+  highlighted?: boolean;
 }) {
   const pills = factPills(response.story);
   const teaser = teaserLine(response.story);
 
   return (
-    <div className="p-5 rounded-2xl bg-white border border-black/5 shadow-sm mb-4">
+    <div
+      id={`response-${response.id}`}
+      className={`p-5 rounded-2xl bg-white border shadow-sm mb-4 transition-shadow duration-500 ${
+        highlighted ? 'border-[#0066cc]/30 ring-4 ring-[#0066cc]/30' : 'border-black/5'
+      }`}
+    >
       <div className="flex items-center gap-3 mb-3">
         <Avatar name={response.display_name} size={36} />
         <p className="font-black text-lg">{response.display_name}</p>
@@ -429,6 +504,8 @@ const TOUR_DUMMY_RESPONSE: FeedResponse = {
     motivation: null,
     club_member: null,
     club_names: null,
+    category_overrides: null,
+    featured_category: null,
     shoe_count: 2,
     boss_level_challenge_2026: null,
     toughest_challenge: null,
@@ -450,7 +527,7 @@ const CHEER_SQUAD_VISIBLE = 8;
 // avatars, it reads as one lively show-of-support moment instead - same
 // underlying fact, better framing. They're here to cheer, not to compete,
 // so unlike every other entry, these don't carry vote buttons at all.
-function CheerSquad({ responses }: { responses: FeedResponse[] }) {
+function CheerSquad({ responses, highlightId }: { responses: FeedResponse[]; highlightId?: string | null }) {
   if (responses.length === 0) return null;
   const visible = responses.slice(0, CHEER_SQUAD_VISIBLE);
   const remaining = responses.length - visible.length;
@@ -462,9 +539,12 @@ function CheerSquad({ responses }: { responses: FeedResponse[] }) {
         {visible.map((r, i) => (
           <Avatar
             key={r.id}
+            id={`response-${r.id}`}
             name={r.display_name}
             size={32}
-            className={`ring-2 ring-white ${i > 0 ? '-ml-3' : ''}`}
+            className={`ring-2 transition-shadow duration-500 ${
+              r.id === highlightId ? 'ring-[#0066cc] ring-[3px]' : 'ring-white'
+            } ${i > 0 ? '-ml-3' : ''}`}
           />
         ))}
         {remaining > 0 && (
@@ -713,7 +793,78 @@ function TourPrompt({ onStart }: { onStart: () => void }) {
   );
 }
 
-export default function IreneFitnessCommunityPage() {
+// Shown only when a family previews their own "share for votes" link
+// (?preview=1, from the my-link chooser page) - never to an actual
+// recipient. shareUrl is this same page's URL minus &preview=1, so what the
+// family copies/sends is exactly the page they're looking at right now.
+// Fixed/hovering rather than in-flow, so it stays reachable while scrolling
+// instead of sliding away with the rest of the page - topOffset (measured
+// from the real <nav> height, see IreneFitnessCommunityInner) keeps it
+// pinned just under the site header rather than guessing a pixel value.
+function SharePreviewBanner({
+  displayName,
+  shareUrl,
+  topOffset,
+  bannerRef,
+}: {
+  displayName: string | null;
+  shareUrl: string;
+  topOffset: number;
+  bannerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // Clipboard API can fail (permissions, insecure context) - the link is
+      // still visible/selectable in the WhatsApp share text as a fallback.
+    }
+  }
+
+  function shareViaWhatsapp() {
+    const text = displayName
+      ? `Vote for ${displayName} in the Irene Primary Fit Fam! ${shareUrl}`
+      : `Vote for us in the Irene Primary Fit Fam! ${shareUrl}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  }
+
+  return (
+    <div ref={bannerRef} style={{ top: topOffset }} className="fixed left-1/2 -translate-x-1/2 z-40 w-full max-w-2xl px-4">
+      <div className="rounded-2xl px-4 py-3 mt-3 bg-[#0066cc] text-white shadow-lg">
+        <div className="flex items-center gap-3 flex-wrap">
+          <p className="text-xs font-bold flex-1 min-w-[180px]">
+            This is what friends & family will see — your card&apos;s just below.
+          </p>
+          <button
+            onClick={copyLink}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-widest bg-white/15 hover:bg-white/25 transition-colors"
+          >
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+            {copied ? 'Copied' : 'Copy link'}
+          </button>
+          <button
+            onClick={shareViaWhatsapp}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-widest bg-white text-[#0066cc] hover:bg-white/90 transition-colors"
+          >
+            <Share2 size={13} />
+            Send via WhatsApp
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IreneFitnessCommunityInner() {
+  const searchParams = useSearchParams();
+  const highlightId = searchParams.get('highlight');
+  const isPreview = searchParams.get('preview') === '1';
+  const showBanner = isPreview && !!highlightId;
+
   const [phase, setPhase] = useState<Phase | null>(null);
   const [responses, setResponses] = useState<FeedResponse[]>([]);
   const [order, setOrder] = useState<string[]>([]);
@@ -723,6 +874,11 @@ export default function IreneFitnessCommunityPage() {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [openStoryId, setOpenStoryId] = useState<string | null>(null);
+  const [scrolledToHighlight, setScrolledToHighlight] = useState(false);
+  const [showHighlightRing, setShowHighlightRing] = useState(false);
+  const bannerRef = useRef<HTMLDivElement>(null);
+  const [navHeight, setNavHeight] = useState(0);
+  const [bannerHeight, setBannerHeight] = useState(0);
   const [categoryHighlightModal, setCategoryHighlightModal] = useState<{
     name: string;
     label: string;
@@ -784,6 +940,79 @@ export default function IreneFitnessCommunityPage() {
     window.addEventListener(START_TOUR_EVENT, onStartTour);
     return () => window.removeEventListener(START_TOUR_EVENT, onStartTour);
   }, []);
+
+  // Measures the real <nav> height (layout.tsx's sticky header) so the
+  // preview banner can pin itself just beneath it instead of guessing a
+  // pixel offset - re-measures on resize since the header can wrap to a
+  // second line on a narrow phone.
+  useEffect(() => {
+    if (!showBanner) return;
+    const nav = document.querySelector('nav');
+    if (!nav) return;
+    const measure = () => setNavHeight(nav.getBoundingClientRect().height);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(nav);
+    return () => ro.disconnect();
+  }, [showBanner]);
+
+  // Same idea for the banner's own height (it can wrap to two lines too) -
+  // needed both for the in-flow spacer beneath it and to offset where the
+  // highlighted card scrolls to. Depends on `loading` too, not just
+  // `showBanner`: the banner (and bannerRef.current) only actually mounts
+  // once loading flips false - while loading, this page renders nothing but
+  // a "Loading…" placeholder, so bannerRef.current is still null and this
+  // effect would otherwise never get a second chance to measure it once it
+  // exists, permanently stalling bannerHeight at 0 (which was silently
+  // blocking the highlight auto-scroll below).
+  useEffect(() => {
+    if (!showBanner || loading || !bannerRef.current) return;
+    const el = bannerRef.current;
+    const measure = () => setBannerHeight(el.getBoundingClientRect().height);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [showBanner, loading]);
+
+  // Deep-link support for shared "vote for us" links (my-link chooser page's
+  // "Share our entry for votes" -> ?highlight={response_id}): once the feed
+  // has actually loaded, scroll to and briefly ring-highlight that card -
+  // works for both a real story card and a Cheer Squad avatar, since both
+  // share the same id={`response-${id}`} convention. Runs once per page
+  // load; if the id isn't found (e.g. the response was since un-published),
+  // it's a silent no-op.
+  //
+  // In preview mode, the actual scroll-margin-top offset is measured fresh
+  // (via getBoundingClientRect, not the navHeight/bannerHeight *state*)
+  // right before scrolling, on a short delay - mobile browsers reflow the
+  // header after first paint (address-bar collapse, webfont swap, the
+  // logo's intrinsic size loading in), so a state value that looked correct
+  // a render or two ago can already be stale by the time this fires. This
+  // was previously landing the card partly behind the banner on mobile even
+  // though the same offset looked right on desktop.
+  useEffect(() => {
+    if (!highlightId || loading || scrolledToHighlight) return;
+    const el = document.getElementById(`response-${highlightId}`);
+    if (!el) return;
+
+    const t = setTimeout(() => {
+      if (showBanner) {
+        const nav = document.querySelector('nav');
+        const navH = nav?.getBoundingClientRect().height || 0;
+        const bannerH = bannerRef.current?.getBoundingClientRect().height || 0;
+        el.style.scrollMarginTop = `${navH + bannerH + 16}px`;
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      setScrolledToHighlight(true);
+      setShowHighlightRing(true);
+      setTimeout(() => setShowHighlightRing(false), 3000);
+    }, 350); // let mobile layout (address bar, fonts, images) settle first
+
+    return () => clearTimeout(t);
+  }, [highlightId, loading, scrolledToHighlight, showBanner]);
 
   const interactive = phase === 'open';
 
@@ -878,8 +1107,30 @@ export default function IreneFitnessCommunityPage() {
   // scroll, not every list on the page.
   const feedItems = interleaveAds(filteredResponses, ads);
 
+  const highlightedResponse = highlightId ? responses.find((r) => r.id === highlightId) || null : null;
+  const shareUrl = (() => {
+    if (typeof window === 'undefined') return '';
+    const u = new URL(window.location.href);
+    u.searchParams.delete('preview');
+    return u.toString();
+  })();
   return (
     <div className="max-w-2xl mx-auto px-4 py-10 sm:py-16">
+      {showBanner && (
+        <>
+          <SharePreviewBanner
+            displayName={highlightedResponse?.display_name || null}
+            shareUrl={shareUrl}
+            topOffset={navHeight}
+            bannerRef={bannerRef}
+          />
+          {/* Flow spacer - the banner itself is `fixed` and out of flow, so
+              this holds its place to keep everything below from jumping up
+              underneath it. */}
+          <div style={{ height: bannerHeight ? bannerHeight + 12 : 0 }} />
+        </>
+      )}
+
       <h2 className="text-2xl font-black tracking-tight mb-1">Fit Fam Community</h2>
       <p className="text-sm text-slate-500 mb-6">
         {phase === 'standings_only'
@@ -889,7 +1140,7 @@ export default function IreneFitnessCommunityPage() {
 
       {phase === 'open' && <TourPrompt onStart={() => setTourStep(0)} />}
 
-      <CheerSquad responses={cheerSquad} />
+      <CheerSquad responses={cheerSquad} highlightId={showHighlightRing ? highlightId : null} />
 
       <CategoryHighlightsCarousel responses={storiedResponses} onReadMore={setCategoryHighlightModal} />
 
@@ -931,6 +1182,7 @@ export default function IreneFitnessCommunityPage() {
             interactive={interactive}
             onVote={(category) => handleVote(item.response.id, category)}
             onReadStory={() => setOpenStoryId(item.response.id)}
+            highlighted={showHighlightRing && item.response.id === highlightId}
           />
         )
       )}
@@ -962,5 +1214,13 @@ export default function IreneFitnessCommunityPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function IreneFitnessCommunityPage() {
+  return (
+    <Suspense fallback={<div className="max-w-2xl mx-auto px-4 py-24 text-center text-slate-400 text-sm">Loading…</div>}>
+      <IreneFitnessCommunityInner />
+    </Suspense>
   );
 }

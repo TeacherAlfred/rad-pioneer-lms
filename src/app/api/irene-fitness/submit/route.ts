@@ -19,6 +19,22 @@ function supabaseAdmin() {
   return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 }
 
+// The durable "my link" token (/projects/irene-fitness/me/{token}) - only
+// generated once, on first creation, and never touched again on edit, since
+// the whole point is a link that stays valid across every future visit. The
+// slug half is cosmetic (readable, easy to say over WhatsApp); the random
+// suffix is the actual security boundary.
+function generateAccessToken(name: string): string {
+  const slug =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'family';
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return `${slug}-${suffix}`;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -96,6 +112,7 @@ export async function POST(request: Request) {
       ...familyPayload,
       consent_public_display: true,
       consent_public_display_timestamp: now,
+      access_token: generateAccessToken(name),
     };
 
     let family: any = null;

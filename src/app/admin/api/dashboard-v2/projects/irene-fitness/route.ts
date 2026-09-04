@@ -25,7 +25,7 @@ export async function GET() {
   ] = await Promise.all([
     supabase
       .from('irene_fitness_families')
-      .select('id, whatsapp, email, consent_public_display, consent_updates, consent_marketing, created_at'),
+      .select('id, whatsapp, email, consent_public_display, consent_updates, consent_marketing, created_at, access_token'),
     supabase.from('irene_fitness_responses').select('id, family_id, display_name, qa_confirmed, qa_confirmed_at'),
     supabase.from('irene_fitness_children').select('family_id, grade, class'),
     supabase.from('irene_fitness_votes').select('response_id, category'),
@@ -54,6 +54,7 @@ export async function GET() {
         display_name: response?.display_name || '(no response yet)',
         whatsapp: f.whatsapp,
         email: f.email,
+        access_token: f.access_token,
         consent_public_display: !!f.consent_public_display,
         consent_updates: !!f.consent_updates,
         consent_marketing: !!f.consent_marketing,

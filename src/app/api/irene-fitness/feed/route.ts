@@ -44,7 +44,7 @@ export async function GET() {
       ? await supabase
           .from('irene_fitness_response_story')
           .select(
-            'response_id, motivation, club_member, club_names, shoe_count, boss_level_challenge_2026, toughest_challenge, proudest_moment, weirdest_fuel, funniest_fail'
+            'response_id, motivation, club_member, club_names, shoe_count, boss_level_challenge_2026, toughest_challenge, proudest_moment, weirdest_fuel, funniest_fail, category_overrides, featured_category'
           )
           .in('response_id', responseIds)
       : { data: [], error: null };
@@ -76,6 +76,8 @@ export async function GET() {
             proudest_moment: story.proudest_moment,
             weirdest_fuel: story.weirdest_fuel,
             funniest_fail: story.funniest_fail,
+            category_overrides: story.category_overrides || null,
+            featured_category: story.featured_category || null,
           }
         : null,
       votes: votesByResponse.get(r.id) || { funniest: 0, most_inspiring: 0, mad_scientist: 0 },
