@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, ArrowLeft, Lock, Unlock, BarChart3, EyeOff, Pencil, Archive, ArchiveRestore, Plus } from "lucide-react";
+import { Loader2, ArrowLeft, Lock, Unlock, BarChart3, EyeOff, Pencil, Archive, ArchiveRestore, Plus, DatabaseBackup, Download } from "lucide-react";
 import { DashboardV2Nav } from "../../../_components/DashboardV2Nav";
 import { IreneFitnessBreadcrumb } from "../_components/IreneFitnessBreadcrumb";
 
@@ -20,6 +20,14 @@ type FaqItem = {
 type FaqDraft = { question: string; answer: string; link_url: string; link_label: string; sort_order: string };
 
 const EMPTY_FAQ_DRAFT: FaqDraft = { question: "", answer: "", link_url: "", link_label: "", sort_order: "0" };
+
+type BackupItem = { key: string; size_bytes: number; created_at: string | null; download_url: string };
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 const PHASES: { key: Phase; label: string; icon: typeof Lock; description: string }[] = [
   { key: "locked", label: "Locked", icon: Lock, description: "Voting page hidden entirely" },
@@ -100,6 +108,16 @@ export default function IreneFitnessSettingsPage() {
   const [faqDraft, setFaqDraft] = useState<FaqDraft>(EMPTY_FAQ_DRAFT);
   const [savingFaq, setSavingFaq] = useState(false);
 
+  const [backups, setBackups] = useState<BackupItem[] | null>(null);
+  const [runningBackup, setRunningBackup] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
+
+  function loadBackups() {
+    fetch("/admin/api/dashboard-v2/projects/irene-fitness/backup")
+      .then((r) => r.json())
+      .then((d) => setBackups(d.items || []));
+  }
+
   useEffect(() => {
     fetch("/admin/api/dashboard-v2/projects/irene-fitness")
       .then((r) => r.json())
@@ -108,7 +126,24 @@ export default function IreneFitnessSettingsPage() {
     fetch("/admin/api/dashboard-v2/projects/irene-fitness/faq")
       .then((r) => r.json())
       .then((d) => setFaqItems(d.items || []));
+    loadBackups();
   }, []);
+
+  async function runBackup() {
+    if (runningBackup) return;
+    setRunningBackup(true);
+    setBackupError(null);
+    try {
+      const res = await fetch("/admin/api/dashboard-v2/projects/irene-fitness/backup", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Backup failed");
+      loadBackups();
+    } catch (err) {
+      setBackupError(err instanceof Error ? err.message : "Backup failed");
+    } finally {
+      setRunningBackup(false);
+    }
+  }
 
   async function setPhase(phase: Phase) {
     if (!settings || savingPhase || settings.phase === phase) return;
@@ -257,6 +292,72 @@ export default function IreneFitnessSettingsPage() {
               <EyeOff size={14} />
               View as Anonymous
             </a>
+          </div>
+        </section>
+
+        {/* Backups - on-demand snapshots of every Irene Fitness table to R2, so a bad
+            change to live data (or an over-eager QA pass) can be recovered from. */}
+        <section>
+          <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400 mb-4">Backups</h2>
+          <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:justify-between mb-5">
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-2xl bg-stone-50 text-stone-600">
+                  <DatabaseBackup size={22} />
+                </div>
+                <div>
+                  <p className="font-black text-stone-900">Back up every Irene Fitness table</p>
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    Families, responses, children, stories, votes, settings and FAQ - one JSON snapshot, stored
+                    privately. Restoring from one is a manual process, not automatic.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={runBackup}
+                disabled={runningBackup}
+                className="px-5 py-3 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-900 text-white disabled:opacity-50 transition-opacity shrink-0"
+              >
+                {runningBackup ? "Backing up…" : "Back up now"}
+              </button>
+            </div>
+
+            {backupError && <p className="text-sm text-red-600 mb-4">{backupError}</p>}
+
+            {backups === null ? (
+              <p className="text-sm text-stone-400">Loading…</p>
+            ) : backups.length === 0 ? (
+              <p className="text-sm text-stone-400">No backups yet.</p>
+            ) : (
+              <div className="border border-stone-100 rounded-2xl divide-y divide-stone-100">
+                {backups.map((b) => (
+                  <div key={b.key} className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-stone-800">
+                        {b.created_at
+                          ? new Date(b.created_at).toLocaleString("en-ZA", {
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : b.key}
+                      </p>
+                      <p className="text-[11px] text-stone-400">{formatBytes(b.size_bytes)}</p>
+                    </div>
+                    <a
+                      href={b.download_url}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-stone-500 hover:text-stone-900 hover:bg-stone-50 transition-colors shrink-0"
+                      title="Link expires in 10 minutes"
+                    >
+                      <Download size={14} />
+                      Download
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 
