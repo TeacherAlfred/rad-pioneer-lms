@@ -7,6 +7,7 @@ import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
   BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban,
 } from "lucide-react";
+import AdminMobileNav from "./AdminMobileNav";
 
 const PENDING_POLL_MS = 30000;
 // Pages whose icon should carry the pending-buffer badge - the group icon
@@ -125,8 +126,23 @@ export default function LeadsNavSidebar() {
   const guideActive = isActive(pathname, GUIDE_LINK.item.href);
   const guideColors = RAD_COLORS[GUIDE_LINK.colorKey];
   const pendingCount = usePendingBufferCount();
+  const mobileGroups = GROUPS.map(group => ({
+    ...group,
+    badge: group.id === 'messages' ? pendingCount : 0,
+    items: group.items.map(item => ({
+      ...item,
+      badge: BADGE_HREFS.has(item.href) ? pendingCount : 0,
+    })),
+  }));
 
   return (
+    <>
+    <AdminMobileNav
+      sectionLabel="Leads"
+      topLink={OVERVIEW_LINK}
+      groups={mobileGroups}
+      singleLinks={[{ ...GUIDE_LINK.item, colorKey: GUIDE_LINK.colorKey }]}
+    />
     <nav className="hidden md:flex fixed left-0 top-0 h-full w-14 bg-white border-r border-slate-200 z-40 flex-col items-center py-4">
       <div className="flex-1 flex flex-col items-center gap-2">
         {/* Overview - always black, never "clear" like the groups below,
@@ -200,5 +216,6 @@ export default function LeadsNavSidebar() {
         </Link>
       </div>
     </nav>
+    </>
   );
 }

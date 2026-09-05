@@ -6,6 +6,7 @@ import {
   Gauge, LayoutDashboard, FileSignature, Layers, Receipt, HandCoins,
   Wallet, Landmark, PackageSearch,
 } from "lucide-react";
+import AdminMobileNav from "./AdminMobileNav";
 
 // Same slim hover-flyout rail as LeadsNavSidebar (src/components/admin/LeadsNavSidebar.tsx)
 // - grouped destinations behind a color-coded icon, mounted once via
@@ -67,6 +68,8 @@ export default function FinanceNavSidebar() {
   const homeActive = isActive(pathname, HOME_LINK.href);
 
   return (
+    <>
+    <AdminMobileNav sectionLabel="Money & Admin" topLink={HOME_LINK} groups={GROUPS} />
     <nav className="hidden md:flex fixed left-0 top-0 h-full w-14 bg-white border-r border-slate-200 z-40 flex-col items-center py-4">
       <div className="flex-1 flex flex-col items-center gap-2">
         <Link
@@ -121,5 +124,6 @@ export default function FinanceNavSidebar() {
         </Link>
       </div>
     </nav>
+    </>
   );
 }

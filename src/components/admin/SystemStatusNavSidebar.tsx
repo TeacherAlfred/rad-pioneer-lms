@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, LayoutList, AlertTriangle } from "lucide-react";
+import AdminMobileNav from "./AdminMobileNav";
 
 // Same slim hover-flyout rail shell as LeadsNavSidebar/FinanceNavSidebar/
 // ProjectsNavSidebar, mounted once via AdminSystemStatusChrome. Only two
@@ -32,6 +33,12 @@ export default function SystemStatusNavSidebar() {
   const landminesColors = RAD_COLORS[LANDMINES_LINK.colorKey];
 
   return (
+    <>
+    <AdminMobileNav
+      sectionLabel="System Status"
+      topLink={HOME_LINK}
+      singleLinks={[{ ...LANDMINES_LINK }]}
+    />
     <nav className="hidden md:flex fixed left-0 top-0 h-full w-14 bg-white border-r border-slate-200 z-40 flex-col items-center py-4">
       <div className="flex-1 flex flex-col items-center gap-2">
         <Link
@@ -63,5 +70,6 @@ export default function SystemStatusNavSidebar() {
         </Link>
       </div>
     </nav>
+    </>
   );
 }

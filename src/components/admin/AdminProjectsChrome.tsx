@@ -25,7 +25,7 @@ export default function AdminProjectsChrome({ children }: { children: React.Reac
   return (
     <>
       <ProjectsNavSidebar />
-      <div className="md:pl-14">{children}</div>
+      <div className="pt-14 md:pt-0 md:pl-14">{children}</div>
     </>
   );
 }

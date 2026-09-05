@@ -26,7 +26,7 @@ export default function AdminSystemStatusChrome({ children }: { children: React.
   return (
     <>
       <SystemStatusNavSidebar />
-      <div className="md:pl-14">{children}</div>
+      <div className="pt-14 md:pt-0 md:pl-14">{children}</div>
     </>
   );
 }

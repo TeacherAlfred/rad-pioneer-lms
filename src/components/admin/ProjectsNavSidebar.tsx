@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FolderKanban, HeartPulse, LayoutDashboard, Gauge, Vote, ClipboardList, Settings, Footprints, NotebookPen, Shirt, Flag, ListChecks } from "lucide-react";
+import AdminMobileNav from "./AdminMobileNav";
 
 // Same slim hover-flyout rail as FinanceNavSidebar/LeadsNavSidebar
 // (src/components/admin/FinanceNavSidebar.tsx), mounted once via
@@ -55,6 +56,8 @@ export default function ProjectsNavSidebar() {
   const homeActive = pathname === HOME_LINK.href;
 
   return (
+    <>
+    <AdminMobileNav sectionLabel="Projects" topLink={HOME_LINK} groups={GROUPS} />
     <nav className="hidden md:flex fixed left-0 top-0 h-full w-14 bg-white border-r border-slate-200 z-40 flex-col items-center py-4">
       <div className="flex-1 flex flex-col items-center gap-2">
         <Link
@@ -109,5 +112,6 @@ export default function ProjectsNavSidebar() {
         </Link>
       </div>
     </nav>
+    </>
   );
 }

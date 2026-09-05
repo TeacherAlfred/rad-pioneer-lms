@@ -34,7 +34,7 @@ export default function AdminLeadsChrome({ children }: { children: React.ReactNo
   return (
     <>
       <LeadsNavSidebar />
-      <div className="md:pl-14">{children}</div>
+      <div className="pt-14 md:pt-0 md:pl-14">{children}</div>
     </>
   );
 }
