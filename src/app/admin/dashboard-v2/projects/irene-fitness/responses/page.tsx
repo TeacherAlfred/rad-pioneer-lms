@@ -6,7 +6,7 @@ import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import {
   Loader2, ArrowLeft, Check, MessageCircle, Mail, ShieldCheck, ShieldAlert, ClipboardCheck, PartyPopper, SkipForward,
-  ChevronDown, Layers, PencilLine,
+  ChevronDown, Layers, PencilLine, Search, X,
 } from "lucide-react";
 import { DashboardV2Nav } from "../../../_components/DashboardV2Nav";
 import { IreneFitnessBreadcrumb } from "../_components/IreneFitnessBreadcrumb";
@@ -54,7 +54,7 @@ type ResponseRow = {
 type Summary = { qa_pending: number };
 type DashboardData = { summary: Summary; rows: ResponseRow[] };
 
-type QaStory = {
+type QaStorySnapshot = {
   motivation: string | null;
   club_member: boolean | null;
   club_names: string | null;
@@ -64,7 +64,16 @@ type QaStory = {
   proudest_moment: string | null;
   weirdest_fuel: string | null;
   funniest_fail: string | null;
-} | null;
+};
+type QaStory =
+  | (QaStorySnapshot & {
+      // What was on record immediately before the edit that's now pending
+      // review - set by api/irene-fitness/story/route.ts, cleared once an
+      // admin re-confirms. Null means either nothing's changed since the
+      // last approval, or this is a first-time submission.
+      previous_snapshot: QaStorySnapshot | null;
+    })
+  | null;
 type QaQueueItem = {
   response_id: string;
   display_name: string;
@@ -109,7 +118,7 @@ function matchesFilter(row: ResponseRow, filter: string) {
 // Same label set as the public feed's own full-story view
 // (community/page.tsx's storyAnswers) - the admin should see exactly what a
 // visitor would see, not a differently-worded version of it.
-function qaStoryAnswers(story: QaStory): { label: string; value: string }[] {
+function qaStoryAnswers(story: QaStorySnapshot | null): { label: string; value: string }[] {
   if (!story) return [];
   const answers: { label: string; value: string }[] = [];
   if (story.motivation) answers.push({ label: "Why I started", value: story.motivation });
@@ -123,6 +132,60 @@ function qaStoryAnswers(story: QaStory): { label: string; value: string }[] {
   if (story.weirdest_fuel) answers.push({ label: "Weirdest training fuel", value: story.weirdest_fuel });
   if (story.funniest_fail) answers.push({ label: "Funniest fitness fail", value: story.funniest_fail });
   return answers;
+}
+
+// Same per-field labels/rules as qaStoryAnswers, just returning a display
+// string (or null when that field is blank/not applicable) so it can be
+// compared across two snapshots rather than only ever rendering the current
+// one.
+const QA_STORY_FIELD_ORDER: { key: string; label: string }[] = [
+  { key: "motivation", label: "Why I started" },
+  { key: "club", label: "Fitness club" },
+  { key: "shoe_count", label: "Pairs of shoes owned" },
+  { key: "boss_level_challenge_2026", label: '2026 "Boss Level" goal' },
+  { key: "toughest_challenge", label: "Toughest challenge yet" },
+  { key: "proudest_moment", label: "Proudest moment" },
+  { key: "weirdest_fuel", label: "Weirdest training fuel" },
+  { key: "funniest_fail", label: "Funniest fitness fail" },
+];
+
+function qaFieldDisplayValue(snapshot: QaStorySnapshot | null, key: string): string | null {
+  if (!snapshot) return null;
+  switch (key) {
+    case "motivation":
+      return snapshot.motivation || null;
+    case "club":
+      return snapshot.club_member === true ? snapshot.club_names || "Yes" : null;
+    case "shoe_count":
+      return snapshot.shoe_count !== null && snapshot.shoe_count !== undefined ? String(snapshot.shoe_count) : null;
+    case "boss_level_challenge_2026":
+      return snapshot.boss_level_challenge_2026 || null;
+    case "toughest_challenge":
+      return snapshot.toughest_challenge || null;
+    case "proudest_moment":
+      return snapshot.proudest_moment || null;
+    case "weirdest_fuel":
+      return snapshot.weirdest_fuel || null;
+    case "funniest_fail":
+      return snapshot.funniest_fail || null;
+    default:
+      return null;
+  }
+}
+
+// Compares current content against previous_snapshot (set by
+// api/irene-fitness/story/route.ts the first time an edit changes
+// something) so the QA drawer can show "what was on record -> what it is
+// now" per field, instead of only ever showing the new text with no way to
+// tell what actually changed.
+function qaStoryDiff(story: QaStory): { label: string; current: string | null; previous: string | null; changed: boolean }[] {
+  if (!story) return [];
+  const previous = story.previous_snapshot;
+  return QA_STORY_FIELD_ORDER.map(({ key, label }) => {
+    const current = qaFieldDisplayValue(story, key);
+    const previousValue = qaFieldDisplayValue(previous, key);
+    return { label, current, previous: previousValue, changed: !!previous && current !== previousValue };
+  }).filter((f) => f.current !== null || f.previous !== null);
 }
 
 type MessageTemplateRecord = { whatsapp_body: string; email_subject: string | null; email_body: string | null };
@@ -242,7 +305,7 @@ function QaReviewDrawer({
     );
   }
 
-  const answers = qaStoryAnswers(item.story);
+  const diff = qaStoryDiff(item.story);
 
   return (
     <SidePanelDrawer
@@ -312,13 +375,22 @@ function QaReviewDrawer({
           ← Back to previous
         </button>
       )}
-      {answers.length === 0 && (
+      {diff.length === 0 && (
         <p className="text-sm text-stone-400 italic">No story shared — just a display name entry.</p>
       )}
-      {answers.map((a, i) => (
+      {diff.map((a, i) => (
         <div key={i} className="mb-5 last:mb-0">
           <p className="text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">{a.label}</p>
-          <p className="text-sm text-stone-700 leading-relaxed">{a.value}</p>
+          {a.changed ? (
+            <div className="space-y-1">
+              <p className="text-sm text-stone-400 line-through decoration-red-300">{a.previous || "(left blank)"}</p>
+              <p className="text-sm text-emerald-800 font-medium bg-emerald-50 rounded-lg px-2 py-1 -mx-2">
+                {a.current || "(left blank)"}
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-stone-700 leading-relaxed">{a.current}</p>
+          )}
         </div>
       ))}
     </SidePanelDrawer>
@@ -990,7 +1062,22 @@ function IreneFitnessResponsesInner() {
   }, []);
 
   const rows = data?.rows;
-  const filtered = useMemo(() => (rows || []).filter((r) => matchesFilter(r, filter)), [rows, filter]);
+  const [search, setSearch] = useState("");
+  // Digit-normalized on both sides so a search like "082 123 4567" or
+  // "+27821234567" still matches a number stored/typed differently -
+  // same idea as toWaPhone's own digit-stripping elsewhere in this file.
+  const filtered = useMemo(() => {
+    const base = (rows || []).filter((r) => matchesFilter(r, filter));
+    const query = search.trim().toLowerCase();
+    if (!query) return base;
+    const digitsQuery = query.replace(/\D/g, "");
+    return base.filter((r) => {
+      const nameMatch = r.display_name.toLowerCase().includes(query);
+      const emailMatch = (r.email || "").toLowerCase().includes(query);
+      const phoneMatch = digitsQuery.length > 0 && (r.whatsapp || "").replace(/\D/g, "").includes(digitsQuery);
+      return nameMatch || emailMatch || phoneMatch;
+    });
+  }, [rows, filter, search]);
 
   const [groupByGrade, setGroupByGrade] = useState(false);
   const [collapsedGrades, setCollapsedGrades] = useState<Set<string>>(new Set());
@@ -1250,6 +1337,24 @@ function IreneFitnessResponsesInner() {
               <Layers size={13} />
               {groupByGrade ? "Grouped by grade" : "Group by grade"}
             </button>
+          </div>
+          <div className="relative w-full sm:w-80 mb-4">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={14} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search family, phone, or email…"
+              className="w-full bg-white border border-stone-200 rounded-xl pl-9 pr-9 py-2.5 text-sm outline-none focus:border-stone-400"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-300 hover:text-stone-600"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
           <div className="flex flex-wrap gap-2 mb-4">
             {FILTERS.map((f) => (

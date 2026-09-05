@@ -86,6 +86,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       })
       .eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // Same reasoning for the before/after story diff (previous_snapshot,
+    // api/irene-fitness/story/route.ts) - admin has now seen the change, so
+    // the next edit should snapshot fresh from what's on record now, not
+    // keep comparing against whatever was there before this approval.
+    if (qa_confirmed) {
+      const { error: snapshotError } = await supabase
+        .from('irene_fitness_response_story')
+        .update({ previous_snapshot: null })
+        .eq('response_id', id);
+      if (snapshotError) return NextResponse.json({ error: snapshotError.message }, { status: 500 });
+    }
   }
 
   if (category_overrides) {
