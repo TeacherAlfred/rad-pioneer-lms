@@ -6,6 +6,7 @@ import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import {
   Loader2, ArrowLeft, Check, MessageCircle, Mail, ShieldCheck, ShieldAlert, ClipboardCheck, PartyPopper, SkipForward,
+  ChevronDown, Layers,
 } from "lucide-react";
 import { DashboardV2Nav } from "../../../_components/DashboardV2Nav";
 import { IreneFitnessBreadcrumb } from "../_components/IreneFitnessBreadcrumb";
@@ -522,6 +523,272 @@ function ResponseDetailDrawer({
   );
 }
 
+// One row's worth of the Responses table - extracted to a top-level
+// component (rather than a closure defined inside the page) so it isn't
+// recreated on every render, and reused both by the flat table and by each
+// collapsible grade-group's own mini table when "Group by grade" is on.
+function ResponseTableRow({
+  row,
+  savingQa,
+  copiedKey,
+  onOpenDetail,
+  onToggleQa,
+  onSendGuideWhatsapp,
+  onSendGuideEmail,
+  onSendMyLinkWhatsapp,
+  onSendMyLinkEmail,
+}: {
+  row: ResponseRow;
+  savingQa: string | null;
+  copiedKey: string | null;
+  onOpenDetail: (row: ResponseRow) => void;
+  onToggleQa: (responseId: string, next: boolean) => void;
+  onSendGuideWhatsapp: (row: ResponseRow) => void;
+  onSendGuideEmail: (row: ResponseRow) => void;
+  onSendMyLinkWhatsapp: (row: ResponseRow) => void;
+  onSendMyLinkEmail: (row: ResponseRow) => void;
+}) {
+  return (
+    <tr className="border-b border-stone-50 last:border-0 hover:bg-stone-50/60">
+      <td className="px-6 py-4">
+        {row.response_id ? (
+          <button
+            onClick={() => onOpenDetail(row)}
+            className="font-bold text-stone-800 hover:text-[#0066cc] hover:underline text-left"
+          >
+            {row.display_name}
+          </button>
+        ) : (
+          <p className="font-bold text-stone-800">{row.display_name}</p>
+        )}
+        <p className="text-[11px] text-stone-400">{row.whatsapp || row.email || "No contact on file"}</p>
+      </td>
+      <td className="px-6 py-4">
+        <div className="flex flex-wrap gap-1">
+          {row.children.length === 0 && <span className="text-stone-300 text-xs">—</span>}
+          {row.children.map((c, i) => (
+            <span key={i} className="text-[10px] font-bold bg-stone-100 text-stone-600 px-2 py-1 rounded-full">
+              Grade {c.grade}
+              {c.class ? ` ${c.class}` : ""}
+            </span>
+          ))}
+        </div>
+      </td>
+      <td className="px-6 py-4">
+        <div className="flex flex-wrap gap-1">
+          {row.consent_public_display && (
+            <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">Public</span>
+          )}
+          {row.consent_updates && (
+            <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">Updates</span>
+          )}
+          {row.consent_marketing && (
+            <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-rose-100 text-rose-700">Marketing</span>
+          )}
+        </div>
+      </td>
+      <td className="px-6 py-4">
+        {row.response_id ? (
+          <button
+            onClick={() => onToggleQa(row.response_id!, !row.qa_confirmed)}
+            disabled={savingQa === row.response_id}
+            title={row.qa_confirmed ? "QA confirmed - click to mark pending" : "Pending QA - click to confirm"}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+              row.qa_confirmed
+                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+            }`}
+          >
+            {row.qa_confirmed ? <ShieldCheck size={13} /> : <ShieldAlert size={13} />}
+            {row.qa_confirmed ? "Confirmed" : "Pending"}
+          </button>
+        ) : (
+          <span className="text-stone-300 text-xs">—</span>
+        )}
+      </td>
+      <td className="px-6 py-4 text-xs text-stone-500">
+        {new Date(row.created_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })}
+      </td>
+      <td className="px-6 py-4">
+        {!row.consent_updates ? (
+          <span className="text-stone-300 text-xs" title="Family did not opt in to Community Updates">
+            No updates consent
+          </span>
+        ) : row.consent_marketing ? (
+          <div className="flex items-center gap-2">
+            {row.whatsapp && (
+              <div className="flex flex-col items-center gap-0.5">
+                <button
+                  onClick={() => onSendGuideWhatsapp(row)}
+                  title={
+                    row.last_sent.guide_whatsapp
+                      ? `Sent ${relativeSentLabel(row.last_sent.guide_whatsapp)} - click to send again`
+                      : "Copy guide message & open WhatsApp"
+                  }
+                  className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                    copiedKey === `${row.family_id}-wa`
+                      ? "bg-emerald-100 text-emerald-700"
+                      : row.last_sent.guide_whatsapp
+                        ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
+                        : "bg-teal-50 text-teal-600 hover:bg-teal-100"
+                  }`}
+                >
+                  {copiedKey === `${row.family_id}-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
+                  {copiedKey === `${row.family_id}-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
+                </button>
+                {row.last_sent.guide_whatsapp && copiedKey !== `${row.family_id}-wa` && (
+                  <span className="text-[9px] text-stone-400 whitespace-nowrap">
+                    Sent {relativeSentLabel(row.last_sent.guide_whatsapp)}
+                  </span>
+                )}
+              </div>
+            )}
+            {row.email && (
+              <div className="flex flex-col items-center gap-0.5">
+                <button
+                  onClick={() => onSendGuideEmail(row)}
+                  title={
+                    row.last_sent.guide_email
+                      ? `Sent ${relativeSentLabel(row.last_sent.guide_email)} - click to send again`
+                      : "Copy guide message & open email"
+                  }
+                  className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                    copiedKey === `${row.family_id}-email`
+                      ? "bg-emerald-100 text-emerald-700"
+                      : row.last_sent.guide_email
+                        ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
+                        : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {copiedKey === `${row.family_id}-email` ? <Check size={16} /> : <Mail size={16} />}
+                  {copiedKey === `${row.family_id}-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
+                </button>
+                {row.last_sent.guide_email && copiedKey !== `${row.family_id}-email` && (
+                  <span className="text-[9px] text-stone-400 whitespace-nowrap">
+                    Sent {relativeSentLabel(row.last_sent.guide_email)}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <span className="text-stone-300 text-xs">Not opted in</span>
+        )}
+      </td>
+      <td className="px-6 py-4">
+        {!row.consent_updates ? (
+          <span className="text-stone-300 text-xs" title="Family did not opt in to Community Updates">
+            No updates consent
+          </span>
+        ) : row.whatsapp || row.email ? (
+          <div className="flex items-center gap-2">
+            {row.whatsapp && (
+              <div className="flex flex-col items-center gap-0.5">
+                <button
+                  onClick={() => onSendMyLinkWhatsapp(row)}
+                  title={
+                    row.last_sent.my_link_whatsapp
+                      ? `Sent ${relativeSentLabel(row.last_sent.my_link_whatsapp)} - click to send again`
+                      : "Copy my-link message & open WhatsApp"
+                  }
+                  className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                    copiedKey === `${row.family_id}-mylink-wa`
+                      ? "bg-emerald-100 text-emerald-700"
+                      : row.last_sent.my_link_whatsapp
+                        ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
+                        : "bg-teal-50 text-teal-600 hover:bg-teal-100"
+                  }`}
+                >
+                  {copiedKey === `${row.family_id}-mylink-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
+                  {copiedKey === `${row.family_id}-mylink-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
+                </button>
+                {row.last_sent.my_link_whatsapp && copiedKey !== `${row.family_id}-mylink-wa` && (
+                  <span className="text-[9px] text-stone-400 whitespace-nowrap">
+                    Sent {relativeSentLabel(row.last_sent.my_link_whatsapp)}
+                  </span>
+                )}
+              </div>
+            )}
+            {row.email && (
+              <div className="flex flex-col items-center gap-0.5">
+                <button
+                  onClick={() => onSendMyLinkEmail(row)}
+                  title={
+                    row.last_sent.my_link_email
+                      ? `Sent ${relativeSentLabel(row.last_sent.my_link_email)} - click to send again`
+                      : "Copy my-link message & open email"
+                  }
+                  className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                    copiedKey === `${row.family_id}-mylink-email`
+                      ? "bg-emerald-100 text-emerald-700"
+                      : row.last_sent.my_link_email
+                        ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
+                        : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {copiedKey === `${row.family_id}-mylink-email` ? <Check size={16} /> : <Mail size={16} />}
+                  {copiedKey === `${row.family_id}-mylink-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
+                </button>
+                {row.last_sent.my_link_email && copiedKey !== `${row.family_id}-mylink-email` && (
+                  <span className="text-[9px] text-stone-400 whitespace-nowrap">
+                    Sent {relativeSentLabel(row.last_sent.my_link_email)}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <span className="text-stone-300 text-xs">No contact on file</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+type ResponsesTableProps = {
+  rows: ResponseRow[];
+  savingQa: string | null;
+  copiedKey: string | null;
+  onOpenDetail: (row: ResponseRow) => void;
+  onToggleQa: (responseId: string, next: boolean) => void;
+  onSendGuideWhatsapp: (row: ResponseRow) => void;
+  onSendGuideEmail: (row: ResponseRow) => void;
+  onSendMyLinkWhatsapp: (row: ResponseRow) => void;
+  onSendMyLinkEmail: (row: ResponseRow) => void;
+};
+
+function ResponsesTable({ rows, ...rowProps }: ResponsesTableProps) {
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-stone-100 text-left">
+          <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Family</th>
+          <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Children</th>
+          <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Consent</th>
+          <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">QA</th>
+          <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Submitted</th>
+          <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Guide</th>
+          <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">My Link</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <ResponseTableRow key={row.family_id} row={row} {...rowProps} />
+        ))}
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={7} className="px-6 py-12 text-center text-stone-400 text-sm">
+              No responses match this filter.
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+const GRADE_ORDER = ["R", "1", "2", "3", "4", "5", "6", "7"];
+
 function IreneFitnessResponsesInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -631,6 +898,45 @@ function IreneFitnessResponsesInner() {
 
   const rows = data?.rows;
   const filtered = useMemo(() => (rows || []).filter((r) => matchesFilter(r, filter)), [rows, filter]);
+
+  const [groupByGrade, setGroupByGrade] = useState(false);
+  const [collapsedGrades, setCollapsedGrades] = useState<Set<string>>(new Set());
+
+  function toggleGradeCollapsed(grade: string) {
+    setCollapsedGrades((prev) => {
+      const next = new Set(prev);
+      if (next.has(grade)) next.delete(grade);
+      else next.add(grade);
+      return next;
+    });
+  }
+
+  // A family with children in more than one grade appears once per distinct
+  // grade it touches - same "counts toward every grade" convention the
+  // grade-stats panel and class podiums already use elsewhere in this
+  // project, so a response isn't silently hidden from a grade it's actually
+  // part of just because it's also part of another one.
+  const gradeGroups = useMemo(() => {
+    if (!groupByGrade) return null;
+    const byGrade = new Map<string, ResponseRow[]>();
+    filtered.forEach((row) => {
+      if (row.children.length === 0) {
+        const list = byGrade.get("ungraded") || [];
+        list.push(row);
+        byGrade.set("ungraded", list);
+        return;
+      }
+      const gradesTouched = new Set(row.children.map((c) => c.grade));
+      gradesTouched.forEach((grade) => {
+        const list = byGrade.get(grade) || [];
+        list.push(row);
+        byGrade.set(grade, list);
+      });
+    });
+    return [...GRADE_ORDER, "ungraded"]
+      .filter((g) => byGrade.has(g))
+      .map((grade) => ({ grade, rows: byGrade.get(grade)! }));
+  }, [groupByGrade, filtered]);
 
   function setFilter(key: string) {
     router.push(`/admin/dashboard-v2/projects/irene-fitness/responses?filter=${key}`);
@@ -838,9 +1144,20 @@ function IreneFitnessResponsesInner() {
 
         {/* Response table */}
         <section>
-          <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400 mb-4">
-            Responses ({filtered.length} of {data.rows.length})
-          </h2>
+          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+            <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400">
+              Responses ({filtered.length} of {data.rows.length})
+            </h2>
+            <button
+              onClick={() => setGroupByGrade((g) => !g)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors ${
+                groupByGrade ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-500 hover:text-stone-900"
+              }`}
+            >
+              <Layers size={13} />
+              {groupByGrade ? "Grouped by grade" : "Group by grade"}
+            </button>
+          </div>
           <div className="flex flex-wrap gap-2 mb-4">
             {FILTERS.map((f) => (
               <button
@@ -857,225 +1174,63 @@ function IreneFitnessResponsesInner() {
             ))}
           </div>
 
-          <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-stone-100 text-left">
-                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Family</th>
-                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Children</th>
-                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Consent</th>
-                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">QA</th>
-                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Submitted</th>
-                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">Guide</th>
-                  <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-stone-400">My Link</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((row) => (
-                  <tr key={row.family_id} className="border-b border-stone-50 last:border-0 hover:bg-stone-50/60">
-                    <td className="px-6 py-4">
-                      {row.response_id ? (
-                        <button
-                          onClick={() => openResponseDetail(row)}
-                          className="font-bold text-stone-800 hover:text-[#0066cc] hover:underline text-left"
-                        >
-                          {row.display_name}
-                        </button>
-                      ) : (
-                        <p className="font-bold text-stone-800">{row.display_name}</p>
-                      )}
-                      <p className="text-[11px] text-stone-400">{row.whatsapp || row.email || "No contact on file"}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {row.children.length === 0 && <span className="text-stone-300 text-xs">—</span>}
-                        {row.children.map((c, i) => (
-                          <span key={i} className="text-[10px] font-bold bg-stone-100 text-stone-600 px-2 py-1 rounded-full">
-                            Grade {c.grade}
-                            {c.class ? ` ${c.class}` : ""}
-                          </span>
-                        ))}
+          {groupByGrade && gradeGroups ? (
+            <div className="space-y-3">
+              {gradeGroups.length === 0 && (
+                <p className="text-sm text-stone-400 p-6 bg-white border border-stone-200 rounded-[24px] shadow-sm">
+                  No responses match this filter.
+                </p>
+              )}
+              {gradeGroups.map(({ grade, rows: groupRows }) => {
+                const collapsed = collapsedGrades.has(grade);
+                return (
+                  <div key={grade} className="bg-white border border-stone-200 rounded-[24px] shadow-sm overflow-hidden">
+                    <button
+                      onClick={() => toggleGradeCollapsed(grade)}
+                      className="w-full flex items-center justify-between px-6 py-4 hover:bg-stone-50/60 transition-colors"
+                    >
+                      <span className="text-[11px] font-black uppercase tracking-widest text-stone-600">
+                        {grade === "ungraded" ? "No grade on file" : `Grade ${grade}`} · {groupRows.length}
+                      </span>
+                      <ChevronDown
+                        size={16}
+                        className={`text-stone-400 transition-transform ${collapsed ? "" : "rotate-180"}`}
+                      />
+                    </button>
+                    {!collapsed && (
+                      <div className="overflow-x-auto border-t border-stone-100">
+                        <ResponsesTable
+                          rows={groupRows}
+                          savingQa={savingQa}
+                          copiedKey={copiedKey}
+                          onOpenDetail={openResponseDetail}
+                          onToggleQa={toggleQa}
+                          onSendGuideWhatsapp={sendGuideWhatsapp}
+                          onSendGuideEmail={sendGuideEmail}
+                          onSendMyLinkWhatsapp={sendMyLinkWhatsapp}
+                          onSendMyLinkEmail={sendMyLinkEmail}
+                        />
                       </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {row.consent_public_display && (
-                          <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">Public</span>
-                        )}
-                        {row.consent_updates && (
-                          <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-amber-100 text-amber-700">Updates</span>
-                        )}
-                        {row.consent_marketing && (
-                          <span className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-rose-100 text-rose-700">Marketing</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      {row.response_id ? (
-                        <button
-                          onClick={() => toggleQa(row.response_id!, !row.qa_confirmed)}
-                          disabled={savingQa === row.response_id}
-                          title={row.qa_confirmed ? "QA confirmed - click to mark pending" : "Pending QA - click to confirm"}
-                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-                            row.qa_confirmed
-                              ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                              : "bg-amber-50 text-amber-700 hover:bg-amber-100"
-                          }`}
-                        >
-                          {row.qa_confirmed ? <ShieldCheck size={13} /> : <ShieldAlert size={13} />}
-                          {row.qa_confirmed ? "Confirmed" : "Pending"}
-                        </button>
-                      ) : (
-                        <span className="text-stone-300 text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-xs text-stone-500">
-                      {new Date(row.created_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })}
-                    </td>
-                    <td className="px-6 py-4">
-                      {!row.consent_updates ? (
-                        <span className="text-stone-300 text-xs" title="Family did not opt in to Community Updates">
-                          No updates consent
-                        </span>
-                      ) : row.consent_marketing ? (
-                        <div className="flex items-center gap-2">
-                          {row.whatsapp && (
-                            <div className="flex flex-col items-center gap-0.5">
-                              <button
-                                onClick={() => sendGuideWhatsapp(row)}
-                                title={
-                                  row.last_sent.guide_whatsapp
-                                    ? `Sent ${relativeSentLabel(row.last_sent.guide_whatsapp)} - click to send again`
-                                    : "Copy guide message & open WhatsApp"
-                                }
-                                className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
-                                  copiedKey === `${row.family_id}-wa`
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : row.last_sent.guide_whatsapp
-                                      ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
-                                      : "bg-teal-50 text-teal-600 hover:bg-teal-100"
-                                }`}
-                              >
-                                {copiedKey === `${row.family_id}-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
-                                {copiedKey === `${row.family_id}-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
-                              </button>
-                              {row.last_sent.guide_whatsapp && copiedKey !== `${row.family_id}-wa` && (
-                                <span className="text-[9px] text-stone-400 whitespace-nowrap">
-                                  Sent {relativeSentLabel(row.last_sent.guide_whatsapp)}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {row.email && (
-                            <div className="flex flex-col items-center gap-0.5">
-                              <button
-                                onClick={() => sendGuideEmail(row)}
-                                title={
-                                  row.last_sent.guide_email
-                                    ? `Sent ${relativeSentLabel(row.last_sent.guide_email)} - click to send again`
-                                    : "Copy guide message & open email"
-                                }
-                                className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
-                                  copiedKey === `${row.family_id}-email`
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : row.last_sent.guide_email
-                                      ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
-                                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
-                                }`}
-                              >
-                                {copiedKey === `${row.family_id}-email` ? <Check size={16} /> : <Mail size={16} />}
-                                {copiedKey === `${row.family_id}-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
-                              </button>
-                              {row.last_sent.guide_email && copiedKey !== `${row.family_id}-email` && (
-                                <span className="text-[9px] text-stone-400 whitespace-nowrap">
-                                  Sent {relativeSentLabel(row.last_sent.guide_email)}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-stone-300 text-xs">Not opted in</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      {!row.consent_updates ? (
-                        <span className="text-stone-300 text-xs" title="Family did not opt in to Community Updates">
-                          No updates consent
-                        </span>
-                      ) : row.whatsapp || row.email ? (
-                        <div className="flex items-center gap-2">
-                          {row.whatsapp && (
-                            <div className="flex flex-col items-center gap-0.5">
-                              <button
-                                onClick={() => sendMyLinkWhatsapp(row)}
-                                title={
-                                  row.last_sent.my_link_whatsapp
-                                    ? `Sent ${relativeSentLabel(row.last_sent.my_link_whatsapp)} - click to send again`
-                                    : "Copy my-link message & open WhatsApp"
-                                }
-                                className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
-                                  copiedKey === `${row.family_id}-mylink-wa`
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : row.last_sent.my_link_whatsapp
-                                      ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
-                                      : "bg-teal-50 text-teal-600 hover:bg-teal-100"
-                                }`}
-                              >
-                                {copiedKey === `${row.family_id}-mylink-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
-                                {copiedKey === `${row.family_id}-mylink-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
-                              </button>
-                              {row.last_sent.my_link_whatsapp && copiedKey !== `${row.family_id}-mylink-wa` && (
-                                <span className="text-[9px] text-stone-400 whitespace-nowrap">
-                                  Sent {relativeSentLabel(row.last_sent.my_link_whatsapp)}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {row.email && (
-                            <div className="flex flex-col items-center gap-0.5">
-                              <button
-                                onClick={() => sendMyLinkEmail(row)}
-                                title={
-                                  row.last_sent.my_link_email
-                                    ? `Sent ${relativeSentLabel(row.last_sent.my_link_email)} - click to send again`
-                                    : "Copy my-link message & open email"
-                                }
-                                className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
-                                  copiedKey === `${row.family_id}-mylink-email`
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : row.last_sent.my_link_email
-                                      ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
-                                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
-                                }`}
-                              >
-                                {copiedKey === `${row.family_id}-mylink-email` ? <Check size={16} /> : <Mail size={16} />}
-                                {copiedKey === `${row.family_id}-mylink-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
-                              </button>
-                              {row.last_sent.my_link_email && copiedKey !== `${row.family_id}-mylink-email` && (
-                                <span className="text-[9px] text-stone-400 whitespace-nowrap">
-                                  Sent {relativeSentLabel(row.last_sent.my_link_email)}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-stone-300 text-xs">No contact on file</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-12 text-center text-stone-400 text-sm">
-                      No responses match this filter.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm overflow-x-auto">
+              <ResponsesTable
+                rows={filtered}
+                savingQa={savingQa}
+                copiedKey={copiedKey}
+                onOpenDetail={openResponseDetail}
+                onToggleQa={toggleQa}
+                onSendGuideWhatsapp={sendGuideWhatsapp}
+                onSendGuideEmail={sendGuideEmail}
+                onSendMyLinkWhatsapp={sendMyLinkWhatsapp}
+                onSendMyLinkEmail={sendMyLinkEmail}
+              />
+            </div>
+          )}
         </section>
       </div>
 
