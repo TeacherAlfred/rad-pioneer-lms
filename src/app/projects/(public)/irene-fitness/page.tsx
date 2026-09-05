@@ -676,12 +676,9 @@ function IreneFitnessPageInner() {
             ✓
           </div>
           <h2 className="text-2xl font-black tracking-tight mb-3">Thanks, {confirmedName}!</h2>
-          <p className="text-sm text-slate-600 leading-relaxed mb-2">
+          <p className="text-sm text-slate-600 leading-relaxed mb-6">
             Your response has been saved. Don&apos;t forget — there are class prizes for Grade
             R–3 and Grade 4–7.
-          </p>
-          <p className="text-sm text-slate-600 leading-relaxed mb-6">
-            Voting hasn&apos;t opened yet — we&apos;ll share the link and date once it&apos;s live.
           </p>
           {!updatesOptIn && (
             <label className="flex items-start gap-3 p-4 rounded-2xl bg-white border border-black/5 shadow-sm mb-3 cursor-pointer text-left">
