@@ -1,6 +1,7 @@
 'use client';
 
 import React, { Suspense, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -308,7 +309,13 @@ function totalVotes(v: Record<VoteCategory, number>) {
 // resurfacing the same ad indefinitely.
 const MAX_AD_INSERTIONS = 2;
 
-function interleaveAds(cards: FeedResponse[], ads: FeedAd[]): FeedItem[] {
+// highlightId (the shared/auto-scrolled response, if any) never gets an ad
+// inserted directly above it: that would push its own position down and
+// make the auto-scroll landing spot feel wrong ("is this what I was sent
+// to look at, or is it the thing above it?"). When the normal rotation
+// would have landed there, the ad slides to right after that card instead
+// - still shows up in roughly the same place, just never displaces it.
+function interleaveAds(cards: FeedResponse[], ads: FeedAd[], highlightId?: string | null): FeedItem[] {
   const items: FeedItem[] = cards.map((response) => ({ type: 'response', response }));
   if (ads.length === 0) return items;
 
@@ -316,7 +323,11 @@ function interleaveAds(cards: FeedResponse[], ads: FeedAd[]): FeedItem[] {
   let adCursor = 0;
   let inserted = 0;
   while (nextAdIndex < items.length && inserted < MAX_AD_INSERTIONS) {
-    items.splice(nextAdIndex, 0, { type: 'ad', ad: ads[adCursor % ads.length] });
+    const targetItem = items[nextAdIndex];
+    const wouldPushDownHighlighted =
+      !!highlightId && targetItem.type === 'response' && targetItem.response.id === highlightId;
+    const insertAt = wouldPushDownHighlighted ? nextAdIndex + 1 : nextAdIndex;
+    items.splice(insertAt, 0, { type: 'ad', ad: ads[adCursor % ads.length] });
     adCursor++;
     inserted++;
     nextAdIndex += 9 + Math.floor(Math.random() * 3); // then another 8-10 real cards (+1 for the ad slot itself)
@@ -468,26 +479,71 @@ function ResponseCard({
 // label itself, plus webinar-specific framing) rather than falling through
 // to the generic "Ask us" / "drop your question" copy that fits a real
 // question, not a registration.
+// Full-size lightbox for a tapped ad image - portaled to document.body for
+// the same reason BottomSheetModal is (the header nav's backdrop-blur
+// establishes a new containing block for position:fixed descendants).
+function AdImageModal({ ad, onClose }: { ad: FeedAd; onClose: () => void }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={onClose}>
+      <button
+        onClick={onClose}
+        aria-label="Close"
+        className="absolute top-4 right-4 p-2.5 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+      >
+        <X size={20} />
+      </button>
+      <div className="relative w-full max-w-2xl aspect-[9/16] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+        <Image src={ad.image_url} alt={ad.cta_label} fill className="object-contain" sizes="100vw" />
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// Half the viewport's height (not full-bleed width like a story card's
+// avatar/text content) so the ad reads as "one native card among many" in
+// the scroll rather than dominating it - height-driven with an auto width
+// keeps the creative's real 9:16 aspect ratio intact. Tapping the image
+// opens it full-size (AdImageModal); the CTA underneath is a separate tap
+// target straight into the contact form, so a curious tap on the artwork
+// doesn't accidentally launch the registration flow.
 function AdCard({ ad }: { ad: FeedAd }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <button
-      onClick={() =>
-        openIreneFitnessContact(ad.contact_prefill, {
-          title: ad.cta_label,
-          intro: "Pop your details below and we'll confirm your spot and send the webinar link.",
-        })
-      }
-      className="block w-full text-left rounded-2xl bg-white border border-black/5 shadow-sm mb-4 overflow-hidden"
-    >
-      <div className="relative w-full aspect-[9/16] bg-slate-100">
-        <Image src={ad.image_url} alt={ad.cta_label} fill className="object-cover" sizes="(max-width: 672px) 100vw, 672px" />
-      </div>
+    <div className="rounded-2xl bg-white border border-black/5 shadow-sm mb-4 overflow-hidden">
+      <button onClick={() => setExpanded(true)} className="block w-full">
+        <div className="relative mx-auto w-auto h-[50vh] aspect-[9/16] bg-slate-100">
+          <Image src={ad.image_url} alt={ad.cta_label} fill className="object-cover" sizes="320px" />
+        </div>
+      </button>
       <div className="p-4">
-        <span className="inline-block w-full text-center py-3 rounded-2xl font-black uppercase tracking-widest text-xs bg-[#0066cc] text-white">
+        <button
+          onClick={() =>
+            openIreneFitnessContact(ad.contact_prefill, {
+              title: ad.cta_label,
+              intro: "Pop your details below and we'll confirm your spot and send the webinar link.",
+            })
+          }
+          className="block w-full text-center py-3 rounded-2xl font-black uppercase tracking-widest text-xs bg-[#0066cc] text-white"
+        >
           {ad.cta_label}
-        </span>
+        </button>
       </div>
-    </button>
+      {expanded && <AdImageModal ad={ad} onClose={() => setExpanded(false)} />}
+    </div>
   );
 }
 
@@ -801,14 +857,20 @@ function TourPrompt({ onStart }: { onStart: () => void }) {
 // instead of sliding away with the rest of the page - topOffset (measured
 // from the real <nav> height, see IreneFitnessCommunityInner) keeps it
 // pinned just under the site header rather than guessing a pixel value.
+// Default matches the seeded "share_vote" template exactly - only used for
+// the brief window before that template has loaded, or if the fetch fails.
+const DEFAULT_SHARE_TEMPLATE = 'Vote for {{name}} in the Irene Primary Fit Fam! {{link}}';
+
 function SharePreviewBanner({
   displayName,
   shareUrl,
+  shareTemplate,
   topOffset,
   bannerRef,
 }: {
   displayName: string | null;
   shareUrl: string;
+  shareTemplate: string;
   topOffset: number;
   bannerRef: React.RefObject<HTMLDivElement | null>;
 }) {
@@ -826,9 +888,11 @@ function SharePreviewBanner({
   }
 
   function shareViaWhatsapp() {
-    const text = displayName
-      ? `Vote for ${displayName} in the Irene Primary Fit Fam! ${shareUrl}`
-      : `Vote for us in the Irene Primary Fit Fam! ${shareUrl}`;
+    const text = shareTemplate
+      .split('{{name}}')
+      .join(displayName || 'us')
+      .split('{{link}}')
+      .join(shareUrl);
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   }
 
@@ -869,6 +933,7 @@ function IreneFitnessCommunityInner() {
   const [responses, setResponses] = useState<FeedResponse[]>([]);
   const [order, setOrder] = useState<string[]>([]);
   const [ads, setAds] = useState<FeedAd[]>([]);
+  const [shareTemplate, setShareTemplate] = useState(DEFAULT_SHARE_TEMPLATE);
   const [tappedByResponse, setTappedByResponse] = useState<Map<string, Set<VoteCategory>>>(new Map());
   const [everVotedIds, setEverVotedIds] = useState<Set<string>>(new Set());
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -925,6 +990,18 @@ function IreneFitnessCommunityInner() {
       .then((d) => setAds(d.ads || []))
       .catch(() => {});
   }, []);
+
+  // Only fetched for a preview/share visitor - most feed visits never need
+  // this admin-editable wording (Settings page's Message Templates).
+  useEffect(() => {
+    if (!showBanner) return;
+    fetch('/api/irene-fitness/message-templates/share_vote')
+      .then((r) => r.json())
+      .then((d) => {
+        if (typeof d.whatsapp_body === 'string') setShareTemplate(d.whatsapp_body);
+      })
+      .catch(() => {});
+  }, [showBanner]);
 
   // "Replay the guide" in the FAQ (HeaderActions.tsx's FaqAccordion, via its
   // REPLAY_TOUR_LINK sentinel) dispatches this instead of navigating - same
@@ -1105,7 +1182,7 @@ function IreneFitnessCommunityInner() {
   // Ads only rotate into the main story scroll, never the Cheer Squad strip
   // or the tour's dummy card - "native content in the scroll" means the real
   // scroll, not every list on the page.
-  const feedItems = interleaveAds(filteredResponses, ads);
+  const feedItems = interleaveAds(filteredResponses, ads, highlightId);
 
   const highlightedResponse = highlightId ? responses.find((r) => r.id === highlightId) || null : null;
   const shareUrl = (() => {
@@ -1121,6 +1198,7 @@ function IreneFitnessCommunityInner() {
           <SharePreviewBanner
             displayName={highlightedResponse?.display_name || null}
             shareUrl={shareUrl}
+            shareTemplate={shareTemplate}
             topOffset={navHeight}
             bannerRef={bannerRef}
           />

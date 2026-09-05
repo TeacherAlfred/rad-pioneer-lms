@@ -38,13 +38,33 @@ export async function POST(request: Request) {
   const waDigits = resolvedChannel === 'whatsapp' ? trimmedContact.replace(/\D/g, '') : '';
   const email = resolvedChannel === 'email' ? trimmedContact : null;
   // leads.phone is NOT NULL - an email-channel submission still needs a
-  // placeholder here, same guard register-interest/submit uses.
+  // placeholder here, same guard register-interest/submit uses. Left as ''
+  // exactly as before (not touched by this change) - leads.phone is a
+  // shared column read/displayed across the wider CRM (finance, lead
+  // journey, WhatsApp-reply buttons elsewhere), so it's not safe to start
+  // putting non-phone values in it from this one route.
   const phone = waDigits || '';
 
   const supabase = supabaseAdmin();
   const now = new Date().toISOString();
 
-  const { data: lead, error: leadError } = await supabase
+  // Race-safe insert-or-reuse, same idiom as submit/route.ts's marketing
+  // opt-in and register-interest/submit.ts: insert first and rely on
+  // leads.phone's UNIQUE constraint to reject a duplicate, then fall back to
+  // reusing the existing lead. Someone who already has a lead record (e.g.
+  // from an earlier webinar registration, or the original Irene Fitness
+  // sign-up) must still be able to raise their hand again here - failing on
+  // the unique constraint used to surface a raw 500 to them instead of
+  // actually capturing the renewed interest.
+  //
+  // Only attempted when a real WhatsApp number was actually submitted:
+  // every email-channel submission shares the same '' placeholder above, so
+  // a conflict there doesn't mean "this is the same person" - it'd just be
+  // whichever unrelated email-only lead happened to exist first. Silently
+  // attributing this message to a random stranger's lead would be worse
+  // than the original error, so that rare pre-existing edge case still
+  // falls through to a real error below rather than being guessed at.
+  const { data: newLead, error: insertError } = await supabase
     .from('leads')
     .insert([{
       phone,
@@ -56,11 +76,32 @@ export async function POST(request: Request) {
       school: 'Irene Primary',
       preferred_channel: resolvedChannel,
     }])
-    .select()
+    .select('id')
     .single();
-  if (leadError) return NextResponse.json({ error: leadError.message }, { status: 500 });
 
-  await recordStageChange(supabase, lead.id, { toStage: 'new' });
+  let lead = newLead;
+  let isExistingLead = false;
+
+  if (!newLead && waDigits) {
+    const { data: existing, error: findError } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('phone', waDigits)
+      .maybeSingle();
+    if (!findError && existing) {
+      lead = existing;
+      isExistingLead = true;
+    }
+  }
+  if (!lead) return NextResponse.json({ error: insertError?.message || 'Something went wrong' }, { status: 500 });
+
+  if (!isExistingLead) {
+    await recordStageChange(supabase, lead.id, { toStage: 'new' });
+  }
+  // Deliberately doesn't touch status/lifecycle_stage on an existing lead -
+  // same reasoning as submit/route.ts's marketing opt-in: don't regress a
+  // lead that's already progressed through the funnel. The activity log
+  // entry below is what actually records this renewed interest.
 
   await supabase.from('lead_activities').insert([{
     lead_id: lead.id,

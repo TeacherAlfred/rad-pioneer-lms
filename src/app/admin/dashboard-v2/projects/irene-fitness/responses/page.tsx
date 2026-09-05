@@ -107,19 +107,15 @@ function qaStoryAnswers(story: QaStory): { label: string; value: string }[] {
   return answers;
 }
 
-// The chat/email can't carry an attachment, so these just open pre-filled
-// with the guide copy - the admin still attaches the actual PDF by hand in
-// WhatsApp Business (desktop) or their mail client before sending.
-// Gated on consent_marketing: that's the specific opt-in this guide was
-// promised under, so it's the only group these actions show up for.
-function guideMessageBody(displayName: string, { markdown }: { markdown: boolean }) {
-  const communityLine = markdown
-    ? "Thanks for joining the _Irene Primary Health & Wellness community_!"
-    : "Thanks for joining the Irene Primary Health & Wellness community!";
-  return `Good afternoon ${displayName},\n\n${communityLine}\n\nAs promised, here's RAD Academy's free Parent's Guide to Hacking Screen Time - a quick read on turning screen time into a real skill (yes, even Minecraft - and applies to any kids who spend time on a screen).\n\nNext week we'll send a second free guide too - this one all about getting kids to understand how fitness devices work, a guide to go with the community you've just joined.\n\nNo strings attached, just something useful for your family 🙌`;
-}
-function guideEmailBody(displayName: string) {
-  return `${guideMessageBody(displayName, { markdown: false })}\n\nBest regards,\nThe RAD Academy Team`;
+type MessageTemplateRecord = { whatsapp_body: string; email_subject: string | null; email_body: string | null };
+
+// {{name}}/{{link}} are the only substitutions performed - everything else
+// in an admin-edited template (Settings page) is sent exactly as written.
+function fillTemplate(template: string, vars: { name?: string; link?: string }): string {
+  let out = template;
+  if (vars.name !== undefined) out = out.split("{{name}}").join(vars.name);
+  if (vars.link !== undefined) out = out.split("{{link}}").join(vars.link);
+  return out;
 }
 
 function toWaPhone(phone: string) {
@@ -135,9 +131,6 @@ function toWaPhone(phone: string) {
 function myLinkUrl(accessToken: string): string {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   return `${origin}/projects/irene-fitness/me/${accessToken}`;
-}
-function myLinkMessageBody(displayName: string, url: string) {
-  return `Hi ${displayName}! Here's your personal Fit Fam link - you can edit your entry or grab a link to share with friends & family for votes:\n\n${url}`;
 }
 
 function QaReviewDrawer({
@@ -488,6 +481,7 @@ function IreneFitnessResponsesInner() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [savingQa, setSavingQa] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<Record<string, MessageTemplateRecord> | null>(null);
 
   const [qaQueue, setQaQueue] = useState<QaQueueItem[] | null>(null);
   const [qaDrawerOpen, setQaDrawerOpen] = useState(false);
@@ -574,6 +568,15 @@ function IreneFitnessResponsesInner() {
       .then((d) => setData(d))
       .finally(() => setLoading(false));
     loadQaQueue();
+    fetch("/admin/api/dashboard-v2/projects/irene-fitness/message-templates")
+      .then((r) => r.json())
+      .then((d) => {
+        const map: Record<string, MessageTemplateRecord> = {};
+        (d.items || []).forEach((t: MessageTemplateRecord & { key: string }) => {
+          map[t.key] = t;
+        });
+        setTemplates(map);
+      });
   }, []);
 
   const rows = data?.rows;
@@ -668,29 +671,37 @@ function IreneFitnessResponsesInner() {
   }
 
   function sendGuideWhatsapp(row: ResponseRow) {
+    const template = templates?.guide;
+    if (!template) return;
     const digits = toWaPhone(row.whatsapp || "");
-    const message = guideMessageBody(row.display_name, { markdown: true });
+    const message = fillTemplate(template.whatsapp_body, { name: row.display_name });
     copyToClipboard(message, `${row.family_id}-wa`);
     window.open(`https://api.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(message)}`, "_blank");
   }
 
   function sendGuideEmail(row: ResponseRow) {
-    const subject = "Your Free Parent's Guide to Hacking Screen Time";
-    const body = guideEmailBody(row.display_name);
+    const template = templates?.guide;
+    if (!template || !template.email_body) return;
+    const subject = template.email_subject || "Your Free Parent's Guide to Hacking Screen Time";
+    const body = fillTemplate(template.email_body, { name: row.display_name });
     copyToClipboard(body, `${row.family_id}-email`);
     window.open(`mailto:${row.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
   }
 
   function sendMyLinkWhatsapp(row: ResponseRow) {
+    const template = templates?.my_link;
+    if (!template) return;
     const digits = toWaPhone(row.whatsapp || "");
-    const message = myLinkMessageBody(row.display_name, myLinkUrl(row.access_token));
+    const message = fillTemplate(template.whatsapp_body, { name: row.display_name, link: myLinkUrl(row.access_token) });
     copyToClipboard(message, `${row.family_id}-mylink-wa`);
     window.open(`https://api.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(message)}`, "_blank");
   }
 
   function sendMyLinkEmail(row: ResponseRow) {
-    const subject = "Your personal Fit Fam link";
-    const body = myLinkMessageBody(row.display_name, myLinkUrl(row.access_token));
+    const template = templates?.my_link;
+    if (!template || !template.email_body) return;
+    const subject = template.email_subject || "Your personal Fit Fam link";
+    const body = fillTemplate(template.email_body, { name: row.display_name, link: myLinkUrl(row.access_token) });
     copyToClipboard(body, `${row.family_id}-mylink-email`);
     window.open(`mailto:${row.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
   }

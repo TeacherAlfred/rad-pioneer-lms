@@ -21,6 +21,72 @@ type FaqDraft = { question: string; answer: string; link_url: string; link_label
 
 const EMPTY_FAQ_DRAFT: FaqDraft = { question: "", answer: "", link_url: "", link_label: "", sort_order: "0" };
 
+type MessageTemplate = {
+  key: string;
+  label: string;
+  whatsapp_body: string;
+  email_subject: string | null;
+  email_body: string | null;
+  updated_at: string;
+};
+type TemplateDraft = { whatsapp_body: string; email_subject: string; email_body: string };
+
+function TemplateEditForm({
+  draft,
+  hasEmail,
+  onChange,
+}: {
+  draft: TemplateDraft;
+  hasEmail: boolean;
+  onChange: (d: TemplateDraft) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">
+          WhatsApp message
+        </label>
+        <textarea
+          value={draft.whatsapp_body}
+          onChange={(e) => onChange({ ...draft, whatsapp_body: e.target.value })}
+          rows={6}
+          className="w-full px-3 py-2 rounded-lg border border-stone-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-stone-300"
+        />
+      </div>
+      {hasEmail && (
+        <>
+          <div>
+            <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">
+              Email subject
+            </label>
+            <input
+              type="text"
+              value={draft.email_subject}
+              onChange={(e) => onChange({ ...draft, email_subject: e.target.value })}
+              className="w-full px-3 py-2 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-black uppercase tracking-widest text-stone-400 mb-1">
+              Email message
+            </label>
+            <textarea
+              value={draft.email_body}
+              onChange={(e) => onChange({ ...draft, email_body: e.target.value })}
+              rows={6}
+              className="w-full px-3 py-2 rounded-lg border border-stone-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-stone-300"
+            />
+          </div>
+        </>
+      )}
+      <p className="text-[11px] text-stone-400">
+        {"{{name}}"} and {"{{link}}"} (where used) are filled in automatically for each family - everything else is
+        sent exactly as written.
+      </p>
+    </div>
+  );
+}
+
 type BackupItem = { key: string; size_bytes: number; created_at: string | null; download_url: string };
 
 function formatBytes(bytes: number): string {
@@ -112,6 +178,15 @@ export default function IreneFitnessSettingsPage() {
   const [runningBackup, setRunningBackup] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
 
+  const [templates, setTemplates] = useState<MessageTemplate[] | null>(null);
+  const [templateEditingKey, setTemplateEditingKey] = useState<string | null>(null);
+  const [templateDraft, setTemplateDraft] = useState<TemplateDraft>({
+    whatsapp_body: "",
+    email_subject: "",
+    email_body: "",
+  });
+  const [savingTemplate, setSavingTemplate] = useState(false);
+
   function loadBackups() {
     fetch("/admin/api/dashboard-v2/projects/irene-fitness/backup")
       .then((r) => r.json())
@@ -127,7 +202,47 @@ export default function IreneFitnessSettingsPage() {
       .then((r) => r.json())
       .then((d) => setFaqItems(d.items || []));
     loadBackups();
+    fetch("/admin/api/dashboard-v2/projects/irene-fitness/message-templates")
+      .then((r) => r.json())
+      .then((d) => setTemplates(d.items || []));
   }, []);
+
+  function startEditTemplate(t: MessageTemplate) {
+    setTemplateEditingKey(t.key);
+    setTemplateDraft({
+      whatsapp_body: t.whatsapp_body,
+      email_subject: t.email_subject || "",
+      email_body: t.email_body || "",
+    });
+  }
+
+  async function saveTemplateDraft() {
+    if (!templateEditingKey || savingTemplate || !templateDraft.whatsapp_body.trim()) return;
+    setSavingTemplate(true);
+    const hasEmail = (templates || []).find((t) => t.key === templateEditingKey)?.email_body !== null;
+    const payload = {
+      whatsapp_body: templateDraft.whatsapp_body,
+      ...(hasEmail
+        ? { email_subject: templateDraft.email_subject || null, email_body: templateDraft.email_body || null }
+        : {}),
+    };
+    try {
+      const res = await fetch(`/admin/api/dashboard-v2/projects/irene-fitness/message-templates/${templateEditingKey}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const updated = await res.json();
+      if (!res.ok) throw new Error(updated.error || "Failed to save");
+      setTemplates((items) => (items || []).map((it) => (it.key === templateEditingKey ? updated : it)));
+      setTemplateEditingKey(null);
+    } catch {
+      // Left in edit mode with the draft intact so nothing typed is lost -
+      // the admin can just retry Save.
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
 
   async function runBackup() {
     if (runningBackup) return;
@@ -465,6 +580,58 @@ export default function IreneFitnessSettingsPage() {
                   )}
                 </div>
               ))}
+          </div>
+        </section>
+
+        {/* Message templates - the actual wording behind every WhatsApp/email
+            "send" button in this project (guide, personal link, and the
+            public share-for-votes button on the community feed).
+            {{name}}/{{link}} are the only parts app code substitutes. */}
+        <section>
+          <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400 mb-4">Message Templates</h2>
+          <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm divide-y divide-stone-100">
+            {templates === null && <p className="p-6 text-sm text-stone-400">Loading…</p>}
+            {templates?.map((t) => {
+              const hasEmail = t.email_body !== null;
+              return (
+                <div key={t.key} className="p-5">
+                  {templateEditingKey === t.key ? (
+                    <>
+                      <TemplateEditForm draft={templateDraft} hasEmail={hasEmail} onChange={setTemplateDraft} />
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          onClick={saveTemplateDraft}
+                          disabled={savingTemplate || !templateDraft.whatsapp_body.trim()}
+                          className="px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-900 text-white disabled:opacity-40"
+                        >
+                          {savingTemplate ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          onClick={() => setTemplateEditingKey(null)}
+                          className="px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest bg-stone-50 text-stone-500"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="font-bold text-stone-800 text-sm">{t.label}</p>
+                        <p className="text-stone-500 text-sm mt-1 whitespace-pre-line line-clamp-3">{t.whatsapp_body}</p>
+                      </div>
+                      <button
+                        onClick={() => startEditTemplate(t)}
+                        title="Edit"
+                        className="p-2 rounded-lg text-stone-400 hover:text-stone-900 hover:bg-stone-50 shrink-0"
+                      >
+                        <Pencil size={15} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       </div>
