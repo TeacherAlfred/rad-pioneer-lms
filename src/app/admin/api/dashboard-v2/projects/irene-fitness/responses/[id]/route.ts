@@ -57,7 +57,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const body = await request.json().catch(() => ({}));
   const { qa_confirmed, category_overrides, featured_category } = body as {
     qa_confirmed?: boolean;
-    category_overrides?: Partial<Record<VoteCategory, StoryFieldKey | null>>;
+    // 'blank' marks a category as having nothing real to show (e.g. the
+    // family wrote "Nothing really") - distinct from `null`, which just
+    // clears back to auto-detect. Never falls through to another field.
+    category_overrides?: Partial<Record<VoteCategory, StoryFieldKey | 'blank' | null>>;
     featured_category?: VoteCategory | null;
   };
 
@@ -83,7 +86,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if (!VOTE_CATEGORIES.includes(cat as VoteCategory)) {
         return NextResponse.json({ error: `Invalid category: ${cat}` }, { status: 400 });
       }
-      if (field !== null && !STORY_FIELDS.includes(field as StoryFieldKey)) {
+      if (field !== null && field !== 'blank' && !STORY_FIELDS.includes(field as StoryFieldKey)) {
         return NextResponse.json({ error: `Invalid field: ${field}` }, { status: 400 });
       }
     }
@@ -96,7 +99,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
     if (!existing) return NextResponse.json({ error: 'No story on file for this response' }, { status: 400 });
 
-    const merged: Partial<Record<VoteCategory, StoryFieldKey>> = { ...(existing.category_overrides || {}) };
+    const merged: Partial<Record<VoteCategory, StoryFieldKey | 'blank'>> = { ...(existing.category_overrides || {}) };
     for (const [cat, field] of Object.entries(category_overrides)) {
       if (field === null) delete merged[cat as VoteCategory];
       else merged[cat as VoteCategory] = field;

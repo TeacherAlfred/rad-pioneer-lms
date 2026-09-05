@@ -287,7 +287,10 @@ type DetailStory = {
   proudest_moment: string | null;
   weirdest_fuel: string | null;
   funniest_fail: string | null;
-  category_overrides: Partial<Record<VoteCategory, StoryFieldKey>> | null;
+  // 'blank' marks a category as having nothing real to show (e.g. the
+  // family wrote "Nothing really") - distinct from no override at all,
+  // since it must never fall through to auto-detected content.
+  category_overrides: Partial<Record<VoteCategory, StoryFieldKey | "blank">> | null;
   featured_category: VoteCategory | null;
 };
 type ResponseDetail = { display_name: string; story: DetailStory | null };
@@ -342,8 +345,11 @@ function categoryExcerptPreview(
   category: VoteCategory
 ): { label: string; value: string } | null {
   if (!story) return null;
-  const overrideKey = story.category_overrides?.[category];
-  if (overrideKey && story[overrideKey]) return { label: STORY_FIELD_LABELS[overrideKey], value: story[overrideKey]! };
+  const overrideValue = story.category_overrides?.[category];
+  if (overrideValue === "blank") return null;
+  if (overrideValue && story[overrideValue]) {
+    return { label: STORY_FIELD_LABELS[overrideValue], value: story[overrideValue]! };
+  }
   if (category === "funniest") {
     return story.funniest_fail ? { label: "Funniest fitness fail", value: story.funniest_fail } : null;
   }
@@ -357,17 +363,13 @@ function categoryExcerptPreview(
   return null;
 }
 
+// Mirrors community/page.tsx's teaserLine exactly: just whichever category
+// is featured (Funny by default), resolved through categoryExcerptPreview
+// so there's exactly one place deciding what a category shows - no separate
+// fallback chain that could silently borrow a different category's content.
 function previewTeaser(story: DetailStory | null): { label: string; value: string } | null {
   if (!story) return null;
-  if (story.featured_category) {
-    const featured = categoryExcerptPreview(story, story.featured_category);
-    if (featured) return featured;
-  }
-  const overrideKey = story.category_overrides?.funniest;
-  if (overrideKey && story[overrideKey]) return { label: STORY_FIELD_LABELS[overrideKey], value: story[overrideKey]! };
-  if (story.funniest_fail) return { label: "Funniest fitness fail", value: story.funniest_fail };
-  if (story.proudest_moment) return { label: "Proudest moment", value: story.proudest_moment };
-  return null;
+  return categoryExcerptPreview(story, story.featured_category || "funniest");
 }
 
 // Lets the admin pick which written answer stands in for each category on
@@ -390,7 +392,7 @@ function ResponseDetailDrawer({
   loading: boolean;
   saving: VoteCategory | null;
   savingFeatured: boolean;
-  onSetOverride: (category: VoteCategory, field: StoryFieldKey | null) => void;
+  onSetOverride: (category: VoteCategory, field: StoryFieldKey | "blank" | null) => void;
   onSetFeatured: (category: VoteCategory | null) => void;
   onClose: () => void;
 }) {
@@ -460,7 +462,9 @@ function ResponseDetailDrawer({
             </h3>
             <p className="text-xs text-stone-400 mb-4 leading-relaxed">
               Choose which answer stands in for each category on the public feed - useful when the default answer is
-              blank or just says &quot;N/A&quot;.
+              blank or just says &quot;N/A&quot;. If the family genuinely left this category empty (in spirit, even
+              if the field itself isn&apos;t literally blank), mark it as such rather than leaving it on Auto -
+              Auto can otherwise land on a field that isn&apos;t really about this category.
             </p>
             {available.length === 0 ? (
               <p className="text-sm text-stone-400 italic">No story shared - nothing to choose from.</p>
@@ -477,16 +481,24 @@ function ResponseDetailDrawer({
                       <select
                         value={override}
                         disabled={saving === cat}
-                        onChange={(e) => onSetOverride(cat, (e.target.value || null) as StoryFieldKey | null)}
+                        onChange={(e) =>
+                          onSetOverride(cat, (e.target.value || null) as StoryFieldKey | "blank" | null)
+                        }
                         className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm bg-white disabled:opacity-50"
                       >
                         <option value="">Auto{fallback ? ` — ${STORY_FIELD_LABELS[fallback]}` : " — nothing to show"}</option>
+                        <option value="blank">Mark as blank — nothing to show</option>
                         {available.map((f) => (
                           <option key={f.key} value={f.key}>
                             {STORY_FIELD_LABELS[f.key]}
                           </option>
                         ))}
                       </select>
+                      {override === "blank" && (
+                        <p className="text-[11px] text-stone-400 mt-1">
+                          Nothing will show for {CATEGORY_LABELS[cat]} on the public feed or leaderboard.
+                        </p>
+                      )}
                     </div>
                   );
                 })}
@@ -546,7 +558,7 @@ function IreneFitnessResponsesInner() {
       .finally(() => setDetailLoading(false));
   }
 
-  async function setOverride(category: VoteCategory, field: StoryFieldKey | null) {
+  async function setOverride(category: VoteCategory, field: StoryFieldKey | "blank" | null) {
     if (!detailResponseId || savingOverride) return;
     setSavingOverride(category);
     const prevDetail = detail;

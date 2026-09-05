@@ -74,15 +74,19 @@ export async function GET() {
   // (funny -> the fail story, inspiring -> the proud moment, "mad
   // scientist"/craziest diet -> the odd fuel), each falling back to the
   // next-closest field when the first-choice one is blank. An admin-set
-  // override (Responses page, for when the default field is blank or just
-  // says "N/A") always wins - kept in sync with community/page.tsx's own
-  // categoryExcerpt so "top voted" reads the same story on both pages.
+  // override (Responses page) always wins: a real field name substitutes
+  // that field's text; 'blank' means the admin has explicitly marked this
+  // category as having nothing real to show, which returns null - never
+  // falls through to the default field-priority. Kept in sync with
+  // community/page.tsx's own categoryExcerpt so "top voted" reads the same
+  // story on both pages.
   function excerptFor(category: VoteCategory, responseId: string): string | null {
     const s = storyByResponse.get(responseId);
     if (!s) return null;
 
-    const overrideKey = s.category_overrides?.[category] as StoryFieldKey | undefined;
-    if (overrideKey && s[overrideKey]) return s[overrideKey];
+    const overrideValue = s.category_overrides?.[category] as StoryFieldKey | 'blank' | undefined;
+    if (overrideValue === 'blank') return null;
+    if (overrideValue && s[overrideValue]) return s[overrideValue];
 
     if (category === 'funniest') return s.funniest_fail || null;
     if (category === 'most_inspiring') return s.proudest_moment || s.motivation || null;

@@ -81,6 +81,8 @@ function IreneFitnessPageInner() {
           setWhatsapp(data.family.whatsapp || '');
           setEmail(data.family.email || '');
           setChildren(data.family.children?.length ? data.family.children : [emptyChild()]);
+          setUpdatesOptIn(!!data.family.consent_updates);
+          setMarketingOptIn(!!data.family.consent_marketing);
           setResponseId(data.family.response_id || null);
           if (data.family.story) {
             const s = data.family.story;
@@ -446,6 +448,13 @@ function IreneFitnessPageInner() {
               Also send me RAD Academy&apos;s free guide on turning screen time into a coding skill.
             </span>
           </label>
+
+          {isReturning && (
+            <p className="text-xs text-slate-400 -mt-3 mb-6">
+              Changed either of these from before? We&apos;ll be in touch to confirm your updated choice before it
+              takes effect.
+            </p>
+          )}
 
           {submitError && <p className="text-sm text-red-600 mb-4">{submitError}</p>}
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2, ArrowLeft, Vote, Smile, Sparkles, FlaskConical, Trophy } from "lucide-react";
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import { DashboardV2Nav } from "../../../_components/DashboardV2Nav";
 import { IreneFitnessBreadcrumb } from "../_components/IreneFitnessBreadcrumb";
 
@@ -18,6 +19,13 @@ type OverallEntry = {
 };
 type CategoryEntry = { response_id: string; display_name: string; votes: number; excerpt: string | null };
 type LeaderboardData = { overall: OverallEntry[]; by_category: Record<VoteCategory, CategoryEntry[]> };
+
+type DailyPoint = { date: string; votes: number; people: number };
+type ClassPodiumEntry = { grade: string; class: string; votes: number };
+type VotesInsights = {
+  daily: DailyPoint[];
+  class_podiums: { grade_r_to_3: ClassPodiumEntry[]; grade_4_to_7: ClassPodiumEntry[] };
+};
 
 const VOTE_CATEGORIES: VoteCategory[] = ["funniest", "most_inspiring", "mad_scientist"];
 
@@ -116,6 +124,90 @@ function CategoryChampionCard({ category, entry }: { category: VoteCategory; ent
   );
 }
 
+// "Votes cast" (bars) is every category tap, same convention as the Vote
+// Counts tiles above (a person voted for in all 3 categories counts 3
+// times) - "people voted for" (line) is distinct responses that received
+// at least one vote that day, so the two series read very differently on
+// a day with a few people getting swept in every category vs. many people
+// each getting just one tap.
+function VotesDailyChart({ data }: { data: DailyPoint[] }) {
+  if (data.length === 0) {
+    return <p className="text-sm text-stone-400 flex items-center justify-center h-full">No votes yet.</p>;
+  }
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f0eee9" vertical={false} />
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 11, fill: "#a8a29e" }}
+          tickFormatter={(v) => new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        />
+        {/* Two separate number lines, not one shared axis - votes and
+            people are different units and can sit at very different scales
+            once a full week of data is in. */}
+        <YAxis
+          yAxisId="votes"
+          tick={{ fontSize: 11, fill: "#0066cc" }}
+          width={30}
+          allowDecimals={false}
+        />
+        <YAxis
+          yAxisId="people"
+          orientation="right"
+          tick={{ fontSize: 11, fill: "#f59e0b" }}
+          width={30}
+          allowDecimals={false}
+        />
+        <Tooltip
+          labelFormatter={(v) => new Date(v).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+          contentStyle={{ borderRadius: 12, border: "1px solid #e7e5e4", fontSize: 12 }}
+        />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        {/* maxBarSize keeps bars from ballooning wide with only a few days
+            of data, so a full 7-day week fits the same footprint without
+            the chart needing to grow or the bars needing to shrink later. */}
+        <Bar yAxisId="votes" dataKey="votes" name="Votes cast" fill="#0066cc" radius={[4, 4, 0, 0]} maxBarSize={36} />
+        <Line
+          yAxisId="people"
+          type="monotone"
+          dataKey="people"
+          name="People voted for"
+          stroke="#f59e0b"
+          strokeWidth={2}
+          dot={{ r: 3 }}
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+function ClassPodium({ title, entries }: { title: string; entries: ClassPodiumEntry[] }) {
+  return (
+    <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm overflow-hidden">
+      <div className="flex items-center gap-2 px-5 py-4 border-b border-stone-100">
+        <Trophy size={14} className="text-amber-500" />
+        <p className="text-[11px] font-black uppercase tracking-widest text-stone-500">{title}</p>
+      </div>
+      {entries.length === 0 ? (
+        <p className="text-sm text-stone-400 p-5">No votes yet.</p>
+      ) : (
+        <div className="divide-y divide-stone-50">
+          {entries.map((e, i) => (
+            <div key={`${e.grade}-${e.class}`} className="flex items-center gap-3 px-5 py-3">
+              <RankBadge rank={i + 1} />
+              <p className="text-sm font-bold text-stone-800 flex-1 min-w-0 truncate">
+                Grade {e.grade} — {e.class}
+              </p>
+              <p className="text-sm font-black text-stone-900 shrink-0">{e.votes}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OverallLeaderboard({ entries }: { entries: OverallEntry[] }) {
   if (entries.length === 0) {
     return <p className="text-sm text-stone-400 p-6">No votes cast yet.</p>;
@@ -185,6 +277,7 @@ export default function IreneFitnessVotesPage() {
   const [loading, setLoading] = useState(true);
   const [votes, setVotes] = useState<VotesData | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardData | null>(null);
+  const [insights, setInsights] = useState<VotesInsights | null>(null);
 
   useEffect(() => {
     fetch("/admin/api/dashboard-v2/projects/irene-fitness")
@@ -194,6 +287,9 @@ export default function IreneFitnessVotesPage() {
     fetch("/admin/api/dashboard-v2/projects/irene-fitness/vote-leaderboard")
       .then((r) => r.json())
       .then((d) => setLeaderboard(d));
+    fetch("/admin/api/dashboard-v2/projects/irene-fitness/votes-insights")
+      .then((r) => r.json())
+      .then((d) => setInsights(d));
   }, []);
 
   if (loading || !votes) {
@@ -221,6 +317,26 @@ export default function IreneFitnessVotesPage() {
           <h1 className="text-3xl md:text-4xl font-black tracking-tight">Irene Primary Fitness Community</h1>
           <p className="text-stone-500 text-sm mt-1">{votes.total} votes cast</p>
         </div>
+
+        {/* Admin-only read on how voting is going - not shown on the public
+            feed/leaderboard. Daily trend on the left, top classes by grade
+            band on the right. */}
+        <section>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-white border border-stone-200 rounded-[24px] shadow-sm p-5">
+              <p className="text-[11px] font-black uppercase tracking-widest text-stone-400 mb-3">
+                Daily Votes &amp; People Voted For
+              </p>
+              <div className="h-52">
+                <VotesDailyChart data={insights?.daily || []} />
+              </div>
+            </div>
+            <div className="space-y-4">
+              <ClassPodium title="Top Classes — Grade R to 3" entries={insights?.class_podiums.grade_r_to_3 || []} />
+              <ClassPodium title="Top Classes — Grade 4 to 7" entries={insights?.class_podiums.grade_4_to_7 || []} />
+            </div>
+          </div>
+        </section>
 
         <section>
           <h2 className="text-[11px] font-black uppercase tracking-widest text-stone-400 mb-4">Vote Counts</h2>

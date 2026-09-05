@@ -70,7 +70,7 @@ export default function IreneFitnessMyLinkPage() {
           <Pencil size={18} />
         </span>
         <span>
-          <span className="block font-black text-slate-900">Edit our response</span>
+          <span className="block font-black text-slate-900">Edit Response</span>
           <span className="block text-xs text-slate-500">Update your story, details, or entry</span>
         </span>
       </a>

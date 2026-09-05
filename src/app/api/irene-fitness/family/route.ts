@@ -23,7 +23,7 @@ export async function GET(request: Request) {
 
   const { data: family } = await supabase
     .from('irene_fitness_families')
-    .select('id, whatsapp, email')
+    .select('id, whatsapp, email, consent_updates, consent_marketing')
     .eq('id', familyId)
     .single();
 
@@ -52,6 +52,8 @@ export async function GET(request: Request) {
     family: {
       whatsapp: family.whatsapp,
       email: family.email,
+      consent_updates: !!family.consent_updates,
+      consent_marketing: !!family.consent_marketing,
       response_id: response?.id || null,
       display_name: response?.display_name || '',
       children: children || [],

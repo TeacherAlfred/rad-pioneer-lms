@@ -47,7 +47,12 @@ type Story = {
   proudest_moment: string | null;
   weirdest_fuel: string | null;
   funniest_fail: string | null;
-  category_overrides: Partial<Record<VoteCategory, StoryFieldKey>> | null;
+  // 'blank' is a deliberate admin marking (Responses page) for when a
+  // family's answer for this category is content-free even though the
+  // field itself isn't empty (e.g. "Nothing really") - distinct from no
+  // override at all, since it must never fall through to auto-detected
+  // content, only to no display at all.
+  category_overrides: Partial<Record<VoteCategory, StoryFieldKey | 'blank'>> | null;
   featured_category: VoteCategory | null;
 } | null;
 
@@ -216,15 +221,20 @@ function storyFieldValue(story: Story, key: StoryFieldKey): string | null {
 // Which field reads as "what they wrote for this category" - same mapping
 // the admin vote-leaderboard uses (see vote-leaderboard/route.ts's
 // excerptFor), kept in sync so "top voted" means the same story on both the
-// public carousel and the admin leaderboard. An admin-set override (Responses
-// page, for when the default field is blank or just says "N/A") always wins.
+// public carousel and the admin leaderboard. An admin-set override
+// (Responses page) always wins: a real field name substitutes that field's
+// text for when the default is blank or just says "N/A"; 'blank' is the
+// admin explicitly saying this category has nothing real to show, which
+// must return null here - never fall through to the default field-priority
+// below, and never borrow a different category's content.
 function categoryExcerpt(category: VoteCategory, story: Story): { label: string; value: string } | null {
   if (!story) return null;
 
-  const overrideKey = story.category_overrides?.[category];
-  if (overrideKey) {
-    const value = storyFieldValue(story, overrideKey);
-    if (value) return { label: STORY_FIELD_LABELS[overrideKey], value };
+  const overrideValue = story.category_overrides?.[category];
+  if (overrideValue === 'blank') return null;
+  if (overrideValue) {
+    const value = storyFieldValue(story, overrideValue);
+    if (value) return { label: STORY_FIELD_LABELS[overrideValue], value };
   }
 
   if (category === 'funniest') {
@@ -240,29 +250,17 @@ function categoryExcerpt(category: VoteCategory, story: Story): { label: string;
   return null;
 }
 
-// The card's single teaser line is conceptually "the funny bit", so it
-// shares the funniest-category override too - the same admin fix that keeps
-// "N/A" off the leaderboard also keeps it off every card in the scroll.
+// The card's single teaser line is just whichever category is "featured"
+// (Responses page; defaults to Funny when nothing's picked) - always
+// resolved through categoryExcerpt so there is exactly one place that
+// decides what a category shows. Previously this had its own separate
+// funniest_fail -> proudest_moment fallback, which meant a blank funny
+// answer would silently surface an *inspiring* story under what read as the
+// humour slot - fixed by removing that fallback entirely rather than
+// teaching it about 'blank' too.
 function teaserLine(story: Story): { label: string; value: string } | null {
   if (!story) return null;
-
-  // An admin-picked featured category (Responses page, for when the default
-  // "funniest first" pick is blank or literally "N/A") always wins - reuses
-  // categoryExcerpt so it's already override-aware for that category too.
-  if (story.featured_category) {
-    const featured = categoryExcerpt(story.featured_category, story);
-    if (featured) return featured;
-  }
-
-  const overrideKey = story.category_overrides?.funniest;
-  if (overrideKey) {
-    const value = storyFieldValue(story, overrideKey);
-    if (value) return { label: STORY_FIELD_LABELS[overrideKey], value };
-  }
-
-  if (story.funniest_fail) return { label: 'Funniest fitness fail', value: story.funniest_fail };
-  if (story.proudest_moment) return { label: 'Proudest moment', value: story.proudest_moment };
-  return null;
+  return categoryExcerpt(story.featured_category || 'funniest', story);
 }
 
 // Highest-voted entry that actually wrote something for this category - ties
