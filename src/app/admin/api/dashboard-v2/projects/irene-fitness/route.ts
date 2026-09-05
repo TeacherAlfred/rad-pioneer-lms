@@ -22,6 +22,7 @@ export async function GET() {
     { data: children, error: childrenError },
     { data: votes, error: votesError },
     { data: settings, error: settingsError },
+    { data: messageSends, error: messageSendsError },
   ] = await Promise.all([
     supabase
       .from('irene_fitness_families')
@@ -30,12 +31,20 @@ export async function GET() {
     supabase.from('irene_fitness_children').select('family_id, grade, class'),
     supabase.from('irene_fitness_votes').select('response_id, category'),
     supabase.from('irene_fitness_voting_settings').select('phase, updated_at').eq('id', 1).single(),
+    // Ordered newest-first so the per-family/template/channel map below only
+    // ever keeps the most recent send - this is a log, a family can appear
+    // many times, only the latest one matters for the "Sent Xh ago" badge.
+    supabase
+      .from('irene_fitness_message_sends')
+      .select('family_id, template_key, channel, sent_at')
+      .order('sent_at', { ascending: false }),
   ]);
   if (familiesError) return NextResponse.json({ error: familiesError.message }, { status: 500 });
   if (responsesError) return NextResponse.json({ error: responsesError.message }, { status: 500 });
   if (childrenError) return NextResponse.json({ error: childrenError.message }, { status: 500 });
   if (votesError) return NextResponse.json({ error: votesError.message }, { status: 500 });
   if (settingsError) return NextResponse.json({ error: settingsError.message }, { status: 500 });
+  if (messageSendsError) return NextResponse.json({ error: messageSendsError.message }, { status: 500 });
 
   const responseByFamily = new Map((responses || []).map((r) => [r.family_id, r]));
   const childrenByFamily = new Map<string, { grade: string; class: string | null }[]>();
@@ -43,6 +52,12 @@ export async function GET() {
     const list = childrenByFamily.get(c.family_id) || [];
     list.push({ grade: c.grade, class: c.class });
     childrenByFamily.set(c.family_id, list);
+  });
+
+  const lastSentByFamily = new Map<string, string>();
+  (messageSends || []).forEach((s) => {
+    const key = `${s.family_id}:${s.template_key}:${s.channel}`;
+    if (!lastSentByFamily.has(key)) lastSentByFamily.set(key, s.sent_at);
   });
 
   const rows = (families || [])
@@ -61,6 +76,12 @@ export async function GET() {
         qa_confirmed: response ? !!response.qa_confirmed : null,
         created_at: f.created_at,
         children: childrenByFamily.get(f.id) || [],
+        last_sent: {
+          guide_whatsapp: lastSentByFamily.get(`${f.id}:guide:whatsapp`) || null,
+          guide_email: lastSentByFamily.get(`${f.id}:guide:email`) || null,
+          my_link_whatsapp: lastSentByFamily.get(`${f.id}:my_link:whatsapp`) || null,
+          my_link_email: lastSentByFamily.get(`${f.id}:my_link:email`) || null,
+        },
       };
     })
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());

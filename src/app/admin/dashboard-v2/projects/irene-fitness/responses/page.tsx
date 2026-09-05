@@ -34,6 +34,12 @@ type ResponseRow = {
   created_at: string;
   children: ChildRow[];
   access_token: string;
+  last_sent: {
+    guide_whatsapp: string | null;
+    guide_email: string | null;
+    my_link_whatsapp: string | null;
+    my_link_email: string | null;
+  };
 };
 type Summary = { qa_pending: number };
 type DashboardData = { summary: Summary; rows: ResponseRow[] };
@@ -122,6 +128,38 @@ function toWaPhone(phone: string) {
   let p = (phone || "").replace(/\D/g, "");
   if (p.startsWith("0")) p = "27" + p.substring(1);
   return p;
+}
+
+// "Sent 2d ago" under a send button - a soft nudge against an accidental
+// duplicate, not a hard block (a deliberate follow-up is still one click
+// away, same button, no confirmation dialog in the way).
+function relativeSentLabel(iso: string): string {
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+// Logs the click (fire-and-forget - a logging failure shouldn't block the
+// admin from actually sending the message) and optimistically stamps the
+// row so the badge/dimming appears immediately, no refetch needed.
+async function logMessageSend(
+  familyId: string,
+  templateKey: "guide" | "my_link",
+  channel: "whatsapp" | "email"
+) {
+  try {
+    await fetch("/admin/api/dashboard-v2/projects/irene-fitness/message-sends", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ family_id: familyId, template_key: templateKey, channel }),
+    });
+  } catch {
+    // Best-effort - the WhatsApp/email window still opens either way.
+  }
 }
 
 // The family's durable "my link" (/projects/irene-fitness/me/{access_token})
@@ -670,12 +708,28 @@ function IreneFitnessResponsesInner() {
     }
   }
 
+  function markSent(familyId: string, key: keyof ResponseRow["last_sent"], sentAt: string) {
+    setData((d) =>
+      d
+        ? {
+            ...d,
+            rows: d.rows.map((r) =>
+              r.family_id === familyId ? { ...r, last_sent: { ...r.last_sent, [key]: sentAt } } : r
+            ),
+          }
+        : d
+    );
+  }
+
   function sendGuideWhatsapp(row: ResponseRow) {
     const template = templates?.guide;
     if (!template) return;
     const digits = toWaPhone(row.whatsapp || "");
     const message = fillTemplate(template.whatsapp_body, { name: row.display_name });
     copyToClipboard(message, `${row.family_id}-wa`);
+    const sentAt = new Date().toISOString();
+    markSent(row.family_id, "guide_whatsapp", sentAt);
+    logMessageSend(row.family_id, "guide", "whatsapp");
     window.open(`https://api.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(message)}`, "_blank");
   }
 
@@ -685,6 +739,9 @@ function IreneFitnessResponsesInner() {
     const subject = template.email_subject || "Your Free Parent's Guide to Hacking Screen Time";
     const body = fillTemplate(template.email_body, { name: row.display_name });
     copyToClipboard(body, `${row.family_id}-email`);
+    const sentAt = new Date().toISOString();
+    markSent(row.family_id, "guide_email", sentAt);
+    logMessageSend(row.family_id, "guide", "email");
     window.open(`mailto:${row.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
   }
 
@@ -694,6 +751,9 @@ function IreneFitnessResponsesInner() {
     const digits = toWaPhone(row.whatsapp || "");
     const message = fillTemplate(template.whatsapp_body, { name: row.display_name, link: myLinkUrl(row.access_token) });
     copyToClipboard(message, `${row.family_id}-mylink-wa`);
+    const sentAt = new Date().toISOString();
+    markSent(row.family_id, "my_link_whatsapp", sentAt);
+    logMessageSend(row.family_id, "my_link", "whatsapp");
     window.open(`https://api.whatsapp.com/send?phone=${digits}&text=${encodeURIComponent(message)}`, "_blank");
   }
 
@@ -703,6 +763,9 @@ function IreneFitnessResponsesInner() {
     const subject = template.email_subject || "Your personal Fit Fam link";
     const body = fillTemplate(template.email_body, { name: row.display_name, link: myLinkUrl(row.access_token) });
     copyToClipboard(body, `${row.family_id}-mylink-email`);
+    const sentAt = new Date().toISOString();
+    markSent(row.family_id, "my_link_email", sentAt);
+    logMessageSend(row.family_id, "my_link", "email");
     window.open(`mailto:${row.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
   }
 
@@ -858,31 +921,65 @@ function IreneFitnessResponsesInner() {
                       {new Date(row.created_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })}
                     </td>
                     <td className="px-6 py-4">
-                      {row.consent_marketing ? (
+                      {!row.consent_updates ? (
+                        <span className="text-stone-300 text-xs" title="Family did not opt in to Community Updates">
+                          No updates consent
+                        </span>
+                      ) : row.consent_marketing ? (
                         <div className="flex items-center gap-2">
                           {row.whatsapp && (
-                            <button
-                              onClick={() => sendGuideWhatsapp(row)}
-                              title="Copy guide message & open WhatsApp"
-                              className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
-                                copiedKey === `${row.family_id}-wa` ? "bg-emerald-100 text-emerald-700" : "bg-teal-50 text-teal-600 hover:bg-teal-100"
-                              }`}
-                            >
-                              {copiedKey === `${row.family_id}-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
-                              {copiedKey === `${row.family_id}-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
-                            </button>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <button
+                                onClick={() => sendGuideWhatsapp(row)}
+                                title={
+                                  row.last_sent.guide_whatsapp
+                                    ? `Sent ${relativeSentLabel(row.last_sent.guide_whatsapp)} - click to send again`
+                                    : "Copy guide message & open WhatsApp"
+                                }
+                                className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                                  copiedKey === `${row.family_id}-wa`
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : row.last_sent.guide_whatsapp
+                                      ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
+                                      : "bg-teal-50 text-teal-600 hover:bg-teal-100"
+                                }`}
+                              >
+                                {copiedKey === `${row.family_id}-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
+                                {copiedKey === `${row.family_id}-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
+                              </button>
+                              {row.last_sent.guide_whatsapp && copiedKey !== `${row.family_id}-wa` && (
+                                <span className="text-[9px] text-stone-400 whitespace-nowrap">
+                                  Sent {relativeSentLabel(row.last_sent.guide_whatsapp)}
+                                </span>
+                              )}
+                            </div>
                           )}
                           {row.email && (
-                            <button
-                              onClick={() => sendGuideEmail(row)}
-                              title="Copy guide message & open email"
-                              className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
-                                copiedKey === `${row.family_id}-email` ? "bg-emerald-100 text-emerald-700" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
-                              }`}
-                            >
-                              {copiedKey === `${row.family_id}-email` ? <Check size={16} /> : <Mail size={16} />}
-                              {copiedKey === `${row.family_id}-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
-                            </button>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <button
+                                onClick={() => sendGuideEmail(row)}
+                                title={
+                                  row.last_sent.guide_email
+                                    ? `Sent ${relativeSentLabel(row.last_sent.guide_email)} - click to send again`
+                                    : "Copy guide message & open email"
+                                }
+                                className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                                  copiedKey === `${row.family_id}-email`
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : row.last_sent.guide_email
+                                      ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
+                                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                                }`}
+                              >
+                                {copiedKey === `${row.family_id}-email` ? <Check size={16} /> : <Mail size={16} />}
+                                {copiedKey === `${row.family_id}-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
+                              </button>
+                              {row.last_sent.guide_email && copiedKey !== `${row.family_id}-email` && (
+                                <span className="text-[9px] text-stone-400 whitespace-nowrap">
+                                  Sent {relativeSentLabel(row.last_sent.guide_email)}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       ) : (
@@ -890,31 +987,65 @@ function IreneFitnessResponsesInner() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      {row.whatsapp || row.email ? (
+                      {!row.consent_updates ? (
+                        <span className="text-stone-300 text-xs" title="Family did not opt in to Community Updates">
+                          No updates consent
+                        </span>
+                      ) : row.whatsapp || row.email ? (
                         <div className="flex items-center gap-2">
                           {row.whatsapp && (
-                            <button
-                              onClick={() => sendMyLinkWhatsapp(row)}
-                              title="Copy my-link message & open WhatsApp"
-                              className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
-                                copiedKey === `${row.family_id}-mylink-wa` ? "bg-emerald-100 text-emerald-700" : "bg-teal-50 text-teal-600 hover:bg-teal-100"
-                              }`}
-                            >
-                              {copiedKey === `${row.family_id}-mylink-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
-                              {copiedKey === `${row.family_id}-mylink-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
-                            </button>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <button
+                                onClick={() => sendMyLinkWhatsapp(row)}
+                                title={
+                                  row.last_sent.my_link_whatsapp
+                                    ? `Sent ${relativeSentLabel(row.last_sent.my_link_whatsapp)} - click to send again`
+                                    : "Copy my-link message & open WhatsApp"
+                                }
+                                className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                                  copiedKey === `${row.family_id}-mylink-wa`
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : row.last_sent.my_link_whatsapp
+                                      ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
+                                      : "bg-teal-50 text-teal-600 hover:bg-teal-100"
+                                }`}
+                              >
+                                {copiedKey === `${row.family_id}-mylink-wa` ? <Check size={16} /> : <MessageCircle size={16} />}
+                                {copiedKey === `${row.family_id}-mylink-wa` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
+                              </button>
+                              {row.last_sent.my_link_whatsapp && copiedKey !== `${row.family_id}-mylink-wa` && (
+                                <span className="text-[9px] text-stone-400 whitespace-nowrap">
+                                  Sent {relativeSentLabel(row.last_sent.my_link_whatsapp)}
+                                </span>
+                              )}
+                            </div>
                           )}
                           {row.email && (
-                            <button
-                              onClick={() => sendMyLinkEmail(row)}
-                              title="Copy my-link message & open email"
-                              className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
-                                copiedKey === `${row.family_id}-mylink-email` ? "bg-emerald-100 text-emerald-700" : "bg-slate-50 text-slate-600 hover:bg-slate-100"
-                              }`}
-                            >
-                              {copiedKey === `${row.family_id}-mylink-email` ? <Check size={16} /> : <Mail size={16} />}
-                              {copiedKey === `${row.family_id}-mylink-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
-                            </button>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <button
+                                onClick={() => sendMyLinkEmail(row)}
+                                title={
+                                  row.last_sent.my_link_email
+                                    ? `Sent ${relativeSentLabel(row.last_sent.my_link_email)} - click to send again`
+                                    : "Copy my-link message & open email"
+                                }
+                                className={`p-2 rounded-xl transition-colors flex items-center gap-1.5 ${
+                                  copiedKey === `${row.family_id}-mylink-email`
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : row.last_sent.my_link_email
+                                      ? "bg-stone-50 text-stone-400 hover:bg-stone-100"
+                                      : "bg-slate-50 text-slate-600 hover:bg-slate-100"
+                                }`}
+                              >
+                                {copiedKey === `${row.family_id}-mylink-email` ? <Check size={16} /> : <Mail size={16} />}
+                                {copiedKey === `${row.family_id}-mylink-email` && <span className="text-[10px] font-bold">Copied, paste it in</span>}
+                              </button>
+                              {row.last_sent.my_link_email && copiedKey !== `${row.family_id}-mylink-email` && (
+                                <span className="text-[9px] text-stone-400 whitespace-nowrap">
+                                  Sent {relativeSentLabel(row.last_sent.my_link_email)}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       ) : (
