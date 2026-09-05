@@ -13,7 +13,7 @@ export async function GET() {
 
   const { data: responses, error: responsesError } = await supabase
     .from('irene_fitness_responses')
-    .select('id, family_id, display_name, created_at')
+    .select('id, family_id, display_name, created_at, updated_at, edited_after_approval_at')
     .eq('qa_confirmed', false)
     .order('created_at', { ascending: true });
   if (responsesError) return NextResponse.json({ error: responsesError.message }, { status: 500 });
@@ -59,6 +59,8 @@ export async function GET() {
       response_id: r.id,
       display_name: r.display_name,
       created_at: r.created_at,
+      updated_at: r.updated_at,
+      edited_after_approval_at: r.edited_after_approval_at || null,
       whatsapp: family?.whatsapp || null,
       email: family?.email || null,
       children: childrenByFamily.get(r.family_id) || [],

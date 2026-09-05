@@ -6,7 +6,7 @@ import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
 import {
   Loader2, ArrowLeft, Check, MessageCircle, Mail, ShieldCheck, ShieldAlert, ClipboardCheck, PartyPopper, SkipForward,
-  ChevronDown, Layers,
+  ChevronDown, Layers, PencilLine,
 } from "lucide-react";
 import { DashboardV2Nav } from "../../../_components/DashboardV2Nav";
 import { IreneFitnessBreadcrumb } from "../_components/IreneFitnessBreadcrumb";
@@ -32,6 +32,15 @@ type ResponseRow = {
   consent_updates: boolean;
   consent_marketing: boolean;
   qa_confirmed: boolean | null;
+  // Set when this response was already approved/live and the family then
+  // edited it - distinct from a first-time submission, which also shows
+  // qa_confirmed=false but never had this set. Cleared again once an admin
+  // re-confirms it.
+  edited_after_approval_at: string | null;
+  // The response row's own updated_at - set on every submit, new or edited.
+  // Only meaningfully later than created_at (family's own created_at) once
+  // there's been a genuine edit; see wasUpdatedSinceCreation.
+  response_updated_at: string | null;
   created_at: string;
   children: ChildRow[];
   access_token: string;
@@ -60,6 +69,8 @@ type QaQueueItem = {
   response_id: string;
   display_name: string;
   created_at: string;
+  updated_at: string;
+  edited_after_approval_at: string | null;
   whatsapp: string | null;
   email: string | null;
   children: ChildRow[];
@@ -142,6 +153,26 @@ function relativeSentLabel(iso: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function formatFullDate(iso: string): string {
+  return new Date(iso).toLocaleString("en-ZA", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+// A response's created_at/updated_at land a fraction of a second apart even
+// on the very first save (the family row's created_at is captured slightly
+// after the response's own updated_at within the same request) - a
+// one-minute threshold filters that noise out so this only reports a
+// genuine later edit, not insert timing.
+function wasUpdatedSinceCreation(createdAt: string, updatedAt: string | null): boolean {
+  if (!updatedAt) return false;
+  return new Date(updatedAt).getTime() - new Date(createdAt).getTime() > 60_000;
 }
 
 // Logs the click (fire-and-forget - a logging failure shouldn't block the
@@ -227,6 +258,22 @@ function QaReviewDrawer({
       }
       subheader={
         <div className="px-6 md:px-8 py-3 bg-stone-50 border-b border-stone-100 flex flex-wrap gap-2">
+          {item.edited_after_approval_at ? (
+            <span className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 border border-orange-100 px-2 py-1 rounded-full w-full">
+              <PencilLine size={11} />
+              Was already approved - edited {relativeSentLabel(item.edited_after_approval_at)}
+            </span>
+          ) : (
+            wasUpdatedSinceCreation(item.created_at, item.updated_at) && (
+              <span
+                title={`Last edited ${formatFullDate(item.updated_at)}`}
+                className="flex items-center gap-1 text-[10px] font-bold bg-white text-stone-500 border border-stone-200 px-2 py-1 rounded-full"
+              >
+                <PencilLine size={11} />
+                Edited {relativeSentLabel(item.updated_at)}
+              </span>
+            )
+          )}
           {item.children.length === 0 && <span className="text-xs text-stone-400">No grade on file</span>}
           {item.children.map((c, i) => (
             <span key={i} className="text-[10px] font-bold bg-white text-stone-600 border border-stone-200 px-2 py-1 rounded-full">
@@ -380,6 +427,9 @@ function previewTeaser(story: DetailStory | null): { label: string; value: strin
 // already pick), overridable to any other answer the family actually wrote.
 function ResponseDetailDrawer({
   displayName,
+  editedAfterApprovalAt,
+  createdAt,
+  updatedAt,
   detail,
   loading,
   saving,
@@ -389,6 +439,9 @@ function ResponseDetailDrawer({
   onClose,
 }: {
   displayName: string;
+  editedAfterApprovalAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
   detail: ResponseDetail | null;
   loading: boolean;
   saving: VoteCategory | null;
@@ -413,6 +466,24 @@ function ResponseDetailDrawer({
         </div>
       }
     >
+      {editedAfterApprovalAt ? (
+        <p className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 border border-orange-100 px-3 py-2 rounded-xl mb-6">
+          <PencilLine size={12} />
+          Was already approved - edited {relativeSentLabel(editedAfterApprovalAt)}
+        </p>
+      ) : (
+        createdAt &&
+        wasUpdatedSinceCreation(createdAt, updatedAt) && (
+          <p
+            title={`Last edited ${formatFullDate(updatedAt!)}`}
+            className="flex items-center gap-1.5 text-[11px] font-bold text-stone-500 bg-stone-50 border border-stone-200 px-3 py-2 rounded-xl mb-6"
+          >
+            <PencilLine size={12} />
+            Last edited {relativeSentLabel(updatedAt!)}
+          </p>
+        )
+      )}
+
       {loading && <p className="text-sm text-stone-400 py-12 text-center">Loading…</p>}
 
       {!loading && (
@@ -589,25 +660,41 @@ function ResponseTableRow({
       </td>
       <td className="px-6 py-4">
         {row.response_id ? (
-          <button
-            onClick={() => onToggleQa(row.response_id!, !row.qa_confirmed)}
-            disabled={savingQa === row.response_id}
-            title={row.qa_confirmed ? "QA confirmed - click to mark pending" : "Pending QA - click to confirm"}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
-              row.qa_confirmed
-                ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                : "bg-amber-50 text-amber-700 hover:bg-amber-100"
-            }`}
-          >
-            {row.qa_confirmed ? <ShieldCheck size={13} /> : <ShieldAlert size={13} />}
-            {row.qa_confirmed ? "Confirmed" : "Pending"}
-          </button>
+          <div className="flex flex-col gap-1 items-start">
+            <button
+              onClick={() => onToggleQa(row.response_id!, !row.qa_confirmed)}
+              disabled={savingQa === row.response_id}
+              title={row.qa_confirmed ? "QA confirmed - click to mark pending" : "Pending QA - click to confirm"}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors disabled:opacity-50 ${
+                row.qa_confirmed
+                  ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                  : "bg-amber-50 text-amber-700 hover:bg-amber-100"
+              }`}
+            >
+              {row.qa_confirmed ? <ShieldCheck size={13} /> : <ShieldAlert size={13} />}
+              {row.qa_confirmed ? "Confirmed" : "Pending"}
+            </button>
+            {row.edited_after_approval_at && (
+              <span
+                title={`Was approved, then edited ${relativeSentLabel(row.edited_after_approval_at)}`}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-600"
+              >
+                <PencilLine size={11} />
+                Edited since approval
+              </span>
+            )}
+          </div>
         ) : (
           <span className="text-stone-300 text-xs">—</span>
         )}
       </td>
       <td className="px-6 py-4 text-xs text-stone-500">
         {new Date(row.created_at).toLocaleDateString("en-ZA", { day: "2-digit", month: "short", year: "numeric" })}
+        {wasUpdatedSinceCreation(row.created_at, row.response_updated_at) && (
+          <p className="text-[10px] text-stone-400 mt-0.5" title={`Last edited ${formatFullDate(row.response_updated_at!)}`}>
+            Edited {relativeSentLabel(row.response_updated_at!)}
+          </p>
+        )}
       </td>
       <td className="px-6 py-4">
         {!row.consent_updates ? (
@@ -807,6 +894,9 @@ function IreneFitnessResponsesInner() {
 
   const [detailResponseId, setDetailResponseId] = useState<string | null>(null);
   const [detailDisplayName, setDetailDisplayName] = useState("");
+  const [detailEditedAt, setDetailEditedAt] = useState<string | null>(null);
+  const [detailCreatedAt, setDetailCreatedAt] = useState<string | null>(null);
+  const [detailUpdatedAt, setDetailUpdatedAt] = useState<string | null>(null);
   const [detail, setDetail] = useState<ResponseDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [savingOverride, setSavingOverride] = useState<VoteCategory | null>(null);
@@ -817,6 +907,9 @@ function IreneFitnessResponsesInner() {
     const responseId = row.response_id;
     setDetailResponseId(responseId);
     setDetailDisplayName(row.display_name);
+    setDetailCreatedAt(row.created_at);
+    setDetailUpdatedAt(row.response_updated_at);
+    setDetailEditedAt(row.edited_after_approval_at);
     setDetail(null);
     setDetailLoading(true);
     fetch(`/admin/api/dashboard-v2/projects/irene-fitness/responses/${responseId}`)
@@ -1252,6 +1345,9 @@ function IreneFitnessResponsesInner() {
         {detailResponseId && (
           <ResponseDetailDrawer
             displayName={detailDisplayName}
+            editedAfterApprovalAt={detailEditedAt}
+            createdAt={detailCreatedAt}
+            updatedAt={detailUpdatedAt}
             detail={detail}
             loading={detailLoading}
             saving={savingOverride}

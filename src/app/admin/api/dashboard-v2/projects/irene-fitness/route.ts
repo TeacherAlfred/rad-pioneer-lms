@@ -27,7 +27,9 @@ export async function GET() {
     supabase
       .from('irene_fitness_families')
       .select('id, whatsapp, email, consent_public_display, consent_updates, consent_marketing, created_at, access_token'),
-    supabase.from('irene_fitness_responses').select('id, family_id, display_name, qa_confirmed, qa_confirmed_at'),
+    supabase
+      .from('irene_fitness_responses')
+      .select('id, family_id, display_name, qa_confirmed, qa_confirmed_at, edited_after_approval_at, updated_at'),
     supabase.from('irene_fitness_children').select('family_id, grade, class'),
     supabase.from('irene_fitness_votes').select('response_id, category'),
     supabase.from('irene_fitness_voting_settings').select('phase, updated_at').eq('id', 1).single(),
@@ -74,6 +76,8 @@ export async function GET() {
         consent_updates: !!f.consent_updates,
         consent_marketing: !!f.consent_marketing,
         qa_confirmed: response ? !!response.qa_confirmed : null,
+        edited_after_approval_at: response?.edited_after_approval_at || null,
+        response_updated_at: response?.updated_at || null,
         created_at: f.created_at,
         children: childrenByFamily.get(f.id) || [],
         last_sent: {

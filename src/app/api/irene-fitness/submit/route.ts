@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { recordStageChange } from '@/lib/leadStageHistory';
 import { notifyAdminOfRegistration } from '@/lib/registerInterest';
+import { isWithinDnd, type DndDay } from '@/lib/dndSchedule';
+import { sendWhatsAppMessage } from '@/lib/metaTemplate';
 
 // Bump whenever the consent copy on Step 1 of the Irene Fitness page changes,
 // so a stored consent record always reflects exactly what was agreed to.
@@ -165,20 +167,64 @@ export async function POST(request: Request) {
       }
     }
 
+    // Was this response already approved/live before this save? qa_confirmed
+    // is about to get reset to false either way (below), which would
+    // otherwise make "first-time submission" and "edit of a live response"
+    // indistinguishable in the QA queue - checked here, before the upsert
+    // wipes the evidence.
+    const { data: priorResponse } = await supabase
+      .from('irene_fitness_responses')
+      .select('qa_confirmed')
+      .eq('family_id', family.id)
+      .maybeSingle();
+    const wasLiveBeforeEdit = !!priorResponse?.qa_confirmed;
+
     // Upsert the one public response for this family (unique on family_id).
     // qa_confirmed is reset to false on every submit, new or edited - any
     // content change (including a first-time typo fix) needs a fresh admin
     // sign-off before it's shown/voteable publicly again (see api/irene-
     // fitness/feed and api/irene-fitness/vote's qa_confirmed gate).
+    // edited_after_approval_at is only set (not cleared) here - omitting it
+    // for a non-live edit leaves whatever value it already had untouched,
+    // since Supabase's upsert only updates the columns actually passed.
     const { data: response, error: responseError } = await supabase
       .from('irene_fitness_responses')
       .upsert(
-        { family_id: family.id, display_name: name, updated_at: now, qa_confirmed: false, qa_confirmed_at: null },
+        {
+          family_id: family.id,
+          display_name: name,
+          updated_at: now,
+          qa_confirmed: false,
+          qa_confirmed_at: null,
+          ...(wasLiveBeforeEdit ? { edited_after_approval_at: now } : {}),
+        },
         { onConflict: 'family_id' }
       )
       .select()
       .single();
     if (responseError) throw responseError;
+
+    // A family editing a response that was already live/approved is worth a
+    // heads-up - unlike a first-time submission, this can change content
+    // that's already public and been voted on. Plain WhatsApp text, not the
+    // lead-funnel's interactive-buttons alert (notifyAdminOfRegistration): a
+    // family isn't necessarily a lead, and admin_notification_buffer's
+    // lead_id column is NOT NULL, so there's no shared buffer to fall back
+    // into during DND - this simply skips sending in quiet hours, relying
+    // on the Responses page's "Edited since approval" badge
+    // (edited_after_approval_at) as the catch-up path admin will see next
+    // time they open it.
+    if (wasLiveBeforeEdit && process.env.ADMIN_PHONE_NUMBER) {
+      const { data: schedule } = await supabase.from('admin_dnd_schedule').select('*');
+      if (!isWithinDnd((schedule as DndDay[]) || [])) {
+        await sendWhatsAppMessage(process.env.ADMIN_PHONE_NUMBER, {
+          type: 'text',
+          text: {
+            body: `✏️ Fit Fam Edit — *${name}* just edited a response that was already approved/live. Contact: ${waDigits || emailTrimmed}. Worth a re-check on the Responses page.`,
+          },
+        });
+      }
+    }
 
     // Children are replaced wholesale each submit, not merged — they're never
     // shown publicly and votes attach to the response id, not to a child row.

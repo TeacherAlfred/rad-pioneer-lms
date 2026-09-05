@@ -74,9 +74,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const supabase = supabaseAdmin();
 
   if (typeof qa_confirmed === 'boolean') {
+    // Re-confirming clears edited_after_approval_at too - the admin has now
+    // seen and re-approved whatever the edit changed, so the "edited since
+    // approval" badge (submit/route.ts sets this flag) has done its job.
     const { error } = await supabase
       .from('irene_fitness_responses')
-      .update({ qa_confirmed, qa_confirmed_at: qa_confirmed ? new Date().toISOString() : null })
+      .update({
+        qa_confirmed,
+        qa_confirmed_at: qa_confirmed ? new Date().toISOString() : null,
+        ...(qa_confirmed ? { edited_after_approval_at: null } : {}),
+      })
       .eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   }
