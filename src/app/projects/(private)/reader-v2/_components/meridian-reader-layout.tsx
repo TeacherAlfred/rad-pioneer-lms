@@ -215,6 +215,15 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
     handleTextSelected(text, null, chapterTitle);
   };
 
+  // Clicking an already-made highlight removes it - the way to cancel one
+  // you didn't mean to make (wrong range, changed your mind, etc). Only
+  // removes the visual paint; any note already saved from it stays intact
+  // and is managed separately from the sidebar list.
+  const handleEpubHighlightClick = (cfiRange: string) => {
+    epubRef.current?.removeHighlight(cfiRange);
+    toast.success("Highlight removed.");
+  };
+
   const handleSaveNote = async () => {
     if (!draftComment.trim() && !activeExcerpt.trim()) return;
     setIsSavingNote(true);
@@ -393,6 +402,7 @@ export default function MeridianReaderLayout({ book, fileUrl }: MeridianReaderLa
               initialTheme={ambientEpubTheme}
               onLocationChange={handleEpubLocationChange}
               onHighlight={handleEpubHighlight}
+              onHighlightClick={handleEpubHighlightClick}
               cachedLocations={book.epub_locations ?? undefined}
               onLocationsGenerated={handleEpubLocationsGenerated}
               onProgressChange={handleEpubProgressChange}

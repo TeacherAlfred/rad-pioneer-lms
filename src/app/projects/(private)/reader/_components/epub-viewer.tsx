@@ -74,6 +74,7 @@ const THEME_ICON: Record<EpubTheme, typeof Sun> = { light: Sun, sepia: BookOpen,
 export interface EpubViewerHandle {
   nextPage: () => void;
   prevPage: () => void;
+  removeHighlight: (cfiRange: string) => void;
 }
 
 const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubViewer(
@@ -252,7 +253,18 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
             onProgressChangeRef.current?.(percentage);
           }
         } finally {
-          try { indexBook.destroy(); } catch (e) {}
+          // Same race as the main book's own cleanup: indexBook.ready
+          // resolves before its internal resource-URL replacement step
+          // necessarily finishes, and indexing itself is often quick enough
+          // to complete before that step does. Destroying immediately after
+          // indexing finished reproduced the exact "replaceCss" crash on
+          // this second instance instead of the main one. Wait for
+          // indexBook.opened first (bounded, in case it never resolves).
+          Promise.race([indexBook.opened.catch(() => {}), new Promise((resolve) => setTimeout(resolve, 3000))]).then(
+            () => {
+              try { indexBook.destroy(); } catch (e) {}
+            }
+          );
         }
       };
 
@@ -271,7 +283,36 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
       newRendition.themes.select(theme);
       newRendition.themes.fontSize(`${fontSize}%`);
 
-      // Inject custom CSS to prevent darker overlapping shades
+      // Finalizes a selection into a painted highlight + a note-composer
+      // prompt - deliberately NOT wired to epub.js's own "selected" event.
+      // That event fires off a plain 250ms debounce on every selectionchange
+      // inside the content iframe, with no concept of "the mouse button is
+      // still down" - any natural pause of more than a quarter-second while
+      // still dragging out a longer highlight fires it early, on whatever
+      // partial range exists at that moment. Reacting to mouseup/touchend
+      // instead only finalizes once the drag has actually ended.
+      const finalizeSelection = (contents: any) => {
+        const selection = contents.window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+        const range = selection.getRangeAt(0);
+        if (range.collapsed) return;
+        const text = range.toString().trim();
+        if (!text) return;
+
+        const cfiRange = contents.cfiFromRange(range);
+
+        newRendition.annotations.highlight(cfiRange, { color: currentColorRef.current }, () => {
+          // Click an existing highlight to remove it.
+          onHighlightClickRef.current?.(cfiRange);
+        });
+
+        selection.removeAllRanges();
+        onHighlightRef.current?.(text, cfiRange, currentColorRef.current, findChapterForHref(tocRef.current, currentHrefRef.current));
+      };
+
+      // Inject custom CSS to prevent darker overlapping shades, and attach
+      // the selection-finalize listeners - registered per section, since
+      // each gets its own iframe/document as you navigate.
       newRendition.hooks.content.register((contents: any) => {
         contents.addStylesheetRules([
           [".epubjs-hl", ["mix-blend-mode: multiply", "fill-opacity: 0.5"]],
@@ -280,6 +321,10 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
           [".epubjs-hl[data-color='blue']", ["fill: #93c5fd !important"]],
           [".epubjs-hl[data-color='pink']", ["fill: #f9a8d4 !important"]],
         ]);
+
+        const handleSelectionEnd = () => finalizeSelection(contents);
+        contents.document.addEventListener("mouseup", handleSelectionEnd);
+        contents.document.addEventListener("touchend", handleSelectionEnd);
       });
 
       newRendition.display(initialCfi || undefined).then(() => {
@@ -311,24 +356,6 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
         }
       });
 
-      // The Highlight Action Listener
-      newRendition.on("selected", (cfiRange: string, contents: any) => {
-        newBook.getRange(cfiRange).then((range) => {
-          const text = range.toString().trim();
-
-          if (text) {
-            // Paint the text with the currently active color
-            newRendition.annotations.highlight(cfiRange, { color: currentColor }, (e: any) => {
-              // Click listener for deletion
-              onHighlightClickRef.current?.(cfiRange);
-            });
-
-            contents.window.getSelection().removeAllRanges();
-
-            onHighlightRef.current?.(text, cfiRange, currentColor, findChapterForHref(tocRef.current, currentHrefRef.current));
-          }
-        });
-      });
     });
 
     return () => {
@@ -462,6 +489,9 @@ const EpubViewer = forwardRef<EpubViewerHandle, EpubViewerProps>(function EpubVi
   useImperativeHandle(ref, () => ({
     nextPage: () => changePage('next'),
     prevPage: () => changePage('prev'),
+    removeHighlight: (cfiRange: string) => {
+      rendition?.annotations.remove(cfiRange, "highlight");
+    },
   }));
 
   return (
