@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ArrowLeft, Eye, EyeOff, Sparkles, Copy } from "lucide-react";
+import { ArrowLeft, ChevronDown, Eye, EyeOff, Sparkles, Copy } from "lucide-react";
 import { getReaderSettings, updateVaultPin } from "../../reader/_actions/settings";
 import {
   getGenreCategorizationStats,
@@ -11,6 +11,7 @@ import {
   getGenreOptions,
   getBooksToCategorize,
   categorizeOneBook,
+  getParkedBooks,
   getDuplicateGroups,
   markBookForDeletion,
   type GenreCategorizationStats,
@@ -19,7 +20,9 @@ import {
 } from "../../reader/_actions/books";
 import { useAmbientBackground } from "../_lib/use-ambient-background";
 import GenreReviewRow from "../_components/genre-review-row";
+import ParkedBookRow from "../_components/parked-book-row";
 import DuplicateFinderModal from "../_components/duplicate-finder-modal";
+import BookVerificationCard from "../_components/book-verification-card";
 
 export default function SettingsPage() {
   const ambientBackground = useAmbientBackground();
@@ -28,6 +31,7 @@ export default function SettingsPage() {
   const [newPin, setNewPin] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPinExpanded, setIsPinExpanded] = useState(false);
 
   const [stats, setStats] = useState<GenreCategorizationStats | null>(null);
   const [loadingStats, setLoadingStats] = useState(true);
@@ -39,20 +43,27 @@ export default function SettingsPage() {
   const [genreOptions, setGenreOptions] = useState<{ id: string; name: string }[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
 
+  const [parkedBooks, setParkedBooks] = useState<GenreReviewBook[]>([]);
+  const [showParked, setShowParked] = useState(false);
+
   const [isDuplicatesOpen, setIsDuplicatesOpen] = useState(false);
   const [isScanningDuplicates, setIsScanningDuplicates] = useState(false);
   const [duplicateGroups, setDuplicateGroups] = useState<BookWithTags[][]>([]);
 
-  const refreshStats = () => {
-    setLoadingStats(true);
+  // `silent` skips the loading flag so a background refresh (after saving
+  // one row, or finishing a batch) doesn't collapse the whole card - incl.
+  // the Needs Review list still on screen - down to a skeleton and back.
+  // Only the very first load should show that skeleton.
+  const refreshStats = (silent = false) => {
+    if (!silent) setLoadingStats(true);
     getGenreCategorizationStats().then((s) => {
       setStats(s);
       setLoadingStats(false);
     });
   };
 
-  const refreshQueue = () => {
-    setLoadingQueue(true);
+  const refreshQueue = (silent = false) => {
+    if (!silent) setLoadingQueue(true);
     getGenreReviewQueue().then((q) => {
       setReviewQueue(q);
       setLoadingQueue(false);
@@ -67,11 +78,28 @@ export default function SettingsPage() {
     getGenreOptions().then(setGenreOptions);
     refreshStats();
     refreshQueue();
+    getParkedBooks().then(setParkedBooks);
   }, []);
 
   const handleBookSaved = (bookId: string) => {
     setReviewQueue((prev) => prev.filter((b) => b.id !== bookId));
-    refreshStats();
+    refreshStats(true);
+  };
+
+  const handleBookParked = (bookId: string) => {
+    setReviewQueue((prev) => {
+      const parked = prev.find((b) => b.id === bookId);
+      if (parked) setParkedBooks((p) => [...p, { ...parked, categorization_status: "parked" }]);
+      return prev.filter((b) => b.id !== bookId);
+    });
+  };
+
+  const handleBookUnparked = (bookId: string) => {
+    setParkedBooks((prev) => {
+      const unparked = prev.find((b) => b.id === bookId);
+      if (unparked) setReviewQueue((q) => [...q, { ...unparked, categorization_status: "needs_review" }]);
+      return prev.filter((b) => b.id !== bookId);
+    });
   };
 
   const handleOpenDuplicates = async () => {
@@ -136,8 +164,8 @@ export default function SettingsPage() {
         `Categorized ${targets.length} book${targets.length === 1 ? "" : "s"}` +
         (needsReview || failed ? ` — ${needsReview} need review, ${failed} failed.` : ".")
       );
-      refreshStats();
-      refreshQueue();
+      refreshStats(true);
+      refreshQueue(true);
     } catch (error) {
       console.error("Failed to categorize genres", error);
       toast.error(error instanceof Error ? error.message : "Failed to categorize genres.");
@@ -177,57 +205,73 @@ export default function SettingsPage() {
 
       <main className="max-w-2xl mx-auto px-8 pb-24">
         <section className="bg-white border border-slate-200 rounded-[20px] shadow-sm p-8">
-          <p className="font-data text-[10px] uppercase tracking-[0.2em] text-brass-600 mb-2">Private Collection</p>
-          <h2 className="font-display italic text-2xl text-slate-900 mb-2">Vault PIN</h2>
-          <p className="font-precision text-sm text-slate-500 mb-8 leading-relaxed">
-            The digit sequence you type anywhere on the library home to open your private collection. Shared between
-            this reader and the original dashboard — changing it here updates both.
-          </p>
+          <button
+            onClick={() => setIsPinExpanded((v) => !v)}
+            className="w-full flex items-center justify-between gap-4 text-left"
+          >
+            <div>
+              <p className="font-data text-[10px] uppercase tracking-[0.2em] text-brass-600 mb-2">Private Collection</p>
+              <h2 className="font-display italic text-2xl text-slate-900">Vault PIN</h2>
+            </div>
+            <ChevronDown
+              size={18}
+              className={`text-slate-400 flex-shrink-0 transition-transform ${isPinExpanded ? "rotate-180" : ""}`}
+            />
+          </button>
 
-          {loading ? (
-            <div className="h-24 bg-slate-50 rounded-xl animate-pulse" />
-          ) : (
-            <div className="space-y-6">
-              <div>
-                <label className="font-data text-[10px] uppercase tracking-widest text-slate-400 block mb-2">
-                  Current PIN
-                </label>
-                <div className="flex items-center gap-2">
-                  <span className="font-precision text-lg text-slate-900 tracking-[0.3em] bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 flex-1">
-                    {revealed ? currentPin : "•".repeat(currentPin.length)}
-                  </span>
+          {isPinExpanded && (
+            <>
+              <p className="font-precision text-sm text-slate-500 mt-2 mb-8 leading-relaxed">
+                The digit sequence you type anywhere on the library home to open your private collection. Shared
+                between this reader and the original dashboard — changing it here updates both.
+              </p>
+
+              {loading ? (
+                <div className="h-24 bg-slate-50 rounded-xl animate-pulse" />
+              ) : (
+                <div className="space-y-6">
+                  <div>
+                    <label className="font-data text-[10px] uppercase tracking-widest text-slate-400 block mb-2">
+                      Current PIN
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="font-precision text-lg text-slate-900 tracking-[0.3em] bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 flex-1">
+                        {revealed ? currentPin : "•".repeat(currentPin.length)}
+                      </span>
+                      <button
+                        onClick={() => setRevealed((v) => !v)}
+                        className="p-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                        title={revealed ? "Hide" : "Reveal"}
+                      >
+                        {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-data text-[10px] uppercase tracking-widest text-slate-400 block mb-2">
+                      New PIN
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={newPin}
+                      onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                      placeholder="4-10 digits"
+                      className="w-full font-precision text-lg tracking-[0.3em] bg-white border border-slate-200 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-4 focus:ring-brass-200 focus:border-brass-400 transition-all"
+                    />
+                  </div>
+
                   <button
-                    onClick={() => setRevealed((v) => !v)}
-                    className="p-2.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                    title={revealed ? "Hide" : "Reveal"}
+                    onClick={handleSave}
+                    disabled={isSaving || newPin.length < 4}
+                    className="px-6 py-2.5 bg-slate-900 text-white text-xs font-bold uppercase tracking-widest rounded-full shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-40"
                   >
-                    {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {isSaving ? "Saving..." : "Save PIN"}
                   </button>
                 </div>
-              </div>
-
-              <div>
-                <label className="font-data text-[10px] uppercase tracking-widest text-slate-400 block mb-2">
-                  New PIN
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={newPin}
-                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                  placeholder="4-10 digits"
-                  className="w-full font-precision text-lg tracking-[0.3em] bg-white border border-slate-200 rounded-lg px-4 py-2.5 focus:outline-none focus:ring-4 focus:ring-brass-200 focus:border-brass-400 transition-all"
-                />
-              </div>
-
-              <button
-                onClick={handleSave}
-                disabled={isSaving || newPin.length < 4}
-                className="px-6 py-2.5 bg-slate-900 text-white text-xs font-bold uppercase tracking-widest rounded-full shadow-sm hover:bg-slate-800 transition-colors disabled:opacity-40"
-              >
-                {isSaving ? "Saving..." : "Save PIN"}
-              </button>
-            </div>
+              )}
+            </>
           )}
         </section>
 
@@ -328,14 +372,36 @@ export default function SettingsPage() {
                         book={book}
                         genreOptions={genreOptions}
                         onSaved={handleBookSaved}
+                        onParked={handleBookParked}
                       />
                     ))}
                   </div>
                 </div>
               )}
+
+              {parkedBooks.length > 0 && (
+                <div className="pt-2 border-t border-slate-100">
+                  <button
+                    onClick={() => setShowParked((v) => !v)}
+                    className="flex items-center gap-1.5 font-data text-[10px] uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    <ChevronDown size={12} className={`transition-transform ${showParked ? "rotate-180" : ""}`} />
+                    {showParked ? "Hide" : "Show"} Parked · {parkedBooks.length}
+                  </button>
+                  {showParked && (
+                    <div className="mt-2">
+                      {parkedBooks.map((book) => (
+                        <ParkedBookRow key={book.id} book={book} onUnparked={handleBookUnparked} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>
+
+        <BookVerificationCard />
 
         <section className="bg-white border border-slate-200 rounded-[20px] shadow-sm p-8 mt-6">
           <p className="font-data text-[10px] uppercase tracking-[0.2em] text-brass-600 mb-2">Library Curation</p>

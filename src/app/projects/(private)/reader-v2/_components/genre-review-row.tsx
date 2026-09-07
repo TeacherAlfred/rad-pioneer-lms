@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { BookOpen, Link2, X } from "lucide-react";
+import { BookOpen, Link2, X, BookmarkX } from "lucide-react";
 import {
   setBookGenres,
   updateBookBasicInfo,
   applyOpenLibraryOverride,
+  parkBookForReview,
   type GenreReviewBook,
 } from "../../reader/_actions/books";
 import { syncExactOpenLibraryUrl } from "../../reader/_actions/metadata";
@@ -22,6 +23,7 @@ interface GenreReviewRowProps {
   book: GenreReviewBook;
   genreOptions: { id: string; name: string }[];
   onSaved: (bookId: string) => void;
+  onParked: (bookId: string) => void;
 }
 
 interface OverridePreview {
@@ -31,9 +33,10 @@ interface OverridePreview {
   coverId: number | null;
 }
 
-export default function GenreReviewRow({ book, genreOptions, onSaved }: GenreReviewRowProps) {
+export default function GenreReviewRow({ book, genreOptions, onSaved, onParked }: GenreReviewRowProps) {
   const [selected, setSelected] = useState<string[]>(book.genreTagIds);
   const [isSaving, setIsSaving] = useState(false);
+  const [isParking, setIsParking] = useState(false);
 
   const [title, setTitle] = useState(book.title);
   const [author, setAuthor] = useState(book.author || "");
@@ -56,6 +59,18 @@ export default function GenreReviewRow({ book, genreOptions, onSaved }: GenreRev
       console.error("Failed to save book", error);
       toast.error(error instanceof Error ? error.message : "Failed to save.");
       setIsSaving(false);
+    }
+  };
+
+  const handlePark = async () => {
+    setIsParking(true);
+    try {
+      await parkBookForReview(book.id);
+      onParked(book.id);
+    } catch (error) {
+      console.error("Failed to park book", error);
+      toast.error(error instanceof Error ? error.message : "Failed to park.");
+      setIsParking(false);
     }
   };
 
@@ -178,13 +193,24 @@ export default function GenreReviewRow({ book, genreOptions, onSaved }: GenreRev
         </div>
 
         {!urlOpen && (
-          <button
-            onClick={handleSave}
-            disabled={isSaving || !title.trim()}
-            className="self-start px-4 py-1.5 bg-slate-900 text-white text-[11px] font-bold uppercase tracking-widest rounded-full hover:bg-slate-800 transition-colors disabled:opacity-40 flex-shrink-0"
-          >
-            {isSaving ? "Saving…" : "Save"}
-          </button>
+          <div className="flex flex-col gap-1.5 flex-shrink-0">
+            <button
+              onClick={handleSave}
+              disabled={isSaving || isParking || !title.trim()}
+              className="px-4 py-1.5 bg-slate-900 text-white text-[11px] font-bold uppercase tracking-widest rounded-full hover:bg-slate-800 transition-colors disabled:opacity-40"
+            >
+              {isSaving ? "Saving…" : "Save"}
+            </button>
+            <button
+              onClick={handlePark}
+              disabled={isSaving || isParking}
+              title="Set aside until you have more information"
+              className="flex items-center justify-center gap-1 px-4 py-1.5 border border-slate-200 text-slate-500 text-[11px] font-bold uppercase tracking-widest rounded-full hover:bg-slate-50 hover:text-slate-700 transition-colors disabled:opacity-40"
+            >
+              <BookmarkX size={11} strokeWidth={2.5} />
+              {isParking ? "Parking…" : "Park"}
+            </button>
+          </div>
         )}
       </div>
 

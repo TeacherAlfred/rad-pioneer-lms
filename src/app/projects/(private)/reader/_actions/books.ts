@@ -106,12 +106,13 @@ export interface GenreCategorizationStats {
   needsReview: number;
   failed: number;
   pending: number;
+  parked: number;
 }
 
 /**
  * Counts of rad_books by categorization_status, for the progress readout on
  * the v2 Settings "Genre Categorization" card. Excludes books marked for
- * deletion, same scope as the /api/categorize-genres batch job.
+ * deletion, same scope as the categorization batch loop.
  */
 export async function getGenreCategorizationStats(): Promise<GenreCategorizationStats> {
   const supabase = await createClient();
@@ -122,7 +123,7 @@ export async function getGenreCategorizationStats(): Promise<GenreCategorization
 
   if (error) {
     console.error("Error fetching categorization stats:", error);
-    return { total: 0, success: 0, needsReview: 0, failed: 0, pending: 0 };
+    return { total: 0, success: 0, needsReview: 0, failed: 0, pending: 0, parked: 0 };
   }
 
   const rows = data || [];
@@ -132,6 +133,7 @@ export async function getGenreCategorizationStats(): Promise<GenreCategorization
     needsReview: rows.filter((r) => r.categorization_status === "needs_review").length,
     failed: rows.filter((r) => r.categorization_status === "failed").length,
     pending: rows.filter((r) => r.categorization_status === "pending").length,
+    parked: rows.filter((r) => r.categorization_status === "parked").length,
   };
 }
 
@@ -192,12 +194,7 @@ export interface GenreReviewBook {
   genreTagIds: string[];
 }
 
-/**
- * Books whose automated genre pass didn't land cleanly (no Open Library
- * match, or a transient failure), for the "Needs Review" list on the v2
- * Settings categorization card.
- */
-export async function getGenreReviewQueue(): Promise<GenreReviewBook[]> {
+async function getBooksByCategorizationStatus(statuses: string[]): Promise<GenreReviewBook[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("rad_books")
@@ -205,12 +202,12 @@ export async function getGenreReviewQueue(): Promise<GenreReviewBook[]> {
       id, title, author, cover_key, categorization_status, genre_metadata,
       rad_book_tags ( rad_tags (id, name, category) )
     `)
-    .in("categorization_status", ["needs_review", "failed"])
+    .in("categorization_status", statuses)
     .eq("marked_for_deletion", false)
     .order("title", { ascending: true });
 
   if (error) {
-    console.error("Error fetching genre review queue:", error);
+    console.error(`Error fetching books with status in [${statuses.join(", ")}]:`, error);
     return [];
   }
 
@@ -226,6 +223,43 @@ export async function getGenreReviewQueue(): Promise<GenreReviewBook[]> {
       .filter((t: any) => t && t.category === "genre")
       .map((t: any) => t.id),
   }));
+}
+
+/**
+ * Books whose automated genre pass didn't land cleanly (no Open Library
+ * match, or a transient failure), for the "Needs Review" list on the v2
+ * Settings categorization card. Excludes 'parked' books - they were already
+ * looked at and set aside deliberately, see parkBookForReview.
+ */
+export async function getGenreReviewQueue(): Promise<GenreReviewBook[]> {
+  return getBooksByCategorizationStatus(["needs_review", "failed"]);
+}
+
+/**
+ * Books set aside from the Needs Review queue until more information is
+ * available - still visible, but out of the way of active review.
+ */
+export async function getParkedBooks(): Promise<GenreReviewBook[]> {
+  return getBooksByCategorizationStatus(["parked"]);
+}
+
+/**
+ * Sets a book aside from the Needs Review queue without deciding a genre -
+ * for a book you can't categorize yet and don't want to keep scrolling past.
+ */
+export async function parkBookForReview(bookId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ categorization_status: "parked" }).eq("id", bookId);
+  if (error) throw new Error(`Failed to park book: ${error.message}`);
+}
+
+/**
+ * Moves a parked book back into the Needs Review queue.
+ */
+export async function unparkBook(bookId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ categorization_status: "needs_review" }).eq("id", bookId);
+  if (error) throw new Error(`Failed to move book back to review: ${error.message}`);
 }
 
 /**
@@ -322,6 +356,113 @@ export async function applyOpenLibraryOverride(
 ): Promise<void> {
   await applyReviewedMetadata(bookId, fields.title, fields.author, fields.synopsis, fields.coverId);
   await setBookGenres(bookId, fields.genreTagIds);
+}
+
+// --- BOOK VERIFICATION (cover/title/author sanity check, separate from
+// genre categorization) ---
+
+export interface VerifyBook {
+  id: string;
+  title: string;
+  author: string | null;
+  cover_key: string | null;
+  file_type: string | null;
+  created_at: string;
+}
+
+export interface VerificationStats {
+  total: number;
+  verified: number;
+  parked: number;
+  pending: number;
+}
+
+export type VerificationSort = "title" | "created_at" | "author";
+
+export async function getVerificationStats(): Promise<VerificationStats> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("rad_books")
+    .select("verification_status")
+    .eq("marked_for_deletion", false)
+    .neq("status", "wip");
+
+  if (error) {
+    console.error("Error fetching verification stats:", error);
+    return { total: 0, verified: 0, parked: 0, pending: 0 };
+  }
+
+  const rows = data || [];
+  return {
+    total: rows.length,
+    verified: rows.filter((r) => r.verification_status === "verified").length,
+    parked: rows.filter((r) => r.verification_status === "parked").length,
+    pending: rows.filter((r) => r.verification_status === "pending").length,
+  };
+}
+
+async function getBooksByVerificationStatus(status: string, sortBy: VerificationSort): Promise<VerifyBook[]> {
+  const supabase = await createClient();
+  const column = sortBy === "created_at" ? "created_at" : sortBy;
+  const { data, error } = await supabase
+    .from("rad_books")
+    .select("id, title, author, cover_key, file_type, created_at")
+    .eq("verification_status", status)
+    .eq("marked_for_deletion", false)
+    .neq("status", "wip")
+    .order(column, { ascending: true });
+
+  if (error) {
+    console.error(`Error fetching books with verification_status=${status}:`, error);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * The sequential review queue for the Settings "Verify Books" card - only
+ * books never looked at. Verified/parked books are excluded so a verified
+ * book never reappears, matching the "shouldn't reappear" requirement.
+ */
+export async function getBooksToVerify(sortBy: VerificationSort): Promise<VerifyBook[]> {
+  return getBooksByVerificationStatus("pending", sortBy);
+}
+
+export async function getParkedVerificationBooks(): Promise<VerifyBook[]> {
+  return getBooksByVerificationStatus("parked", "title");
+}
+
+export async function markBookVerified(bookId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ verification_status: "verified" }).eq("id", bookId);
+  if (error) throw new Error(`Failed to mark book verified: ${error.message}`);
+}
+
+export async function parkBookVerification(bookId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ verification_status: "parked" }).eq("id", bookId);
+  if (error) throw new Error(`Failed to park book: ${error.message}`);
+}
+
+export async function unparkBookVerification(bookId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ verification_status: "pending" }).eq("id", bookId);
+  if (error) throw new Error(`Failed to move book back to verification: ${error.message}`);
+}
+
+/**
+ * Resets every VERIFIED book back to 'pending' so the queue includes them
+ * again. Deliberately leaves 'parked' books untouched - parking is a
+ * separate, deliberate "not yet" decision that a blanket reverify shouldn't
+ * silently undo; a parked book is still reachable via its own unpark action.
+ */
+export async function reverifyAllBooks(): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("rad_books")
+    .update({ verification_status: "pending" })
+    .eq("verification_status", "verified");
+  if (error) throw new Error(`Failed to reset verification: ${error.message}`);
 }
 
 /**
