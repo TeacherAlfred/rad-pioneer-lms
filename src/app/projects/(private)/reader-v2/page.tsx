@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { Search, BookOpen, Lock, X, Settings, StickyNote, Inbox, UploadCloud } from "lucide-react";
+import { Search, BookOpen, Lock, X, Settings, StickyNote, Inbox, UploadCloud, LayoutGrid } from "lucide-react";
 import { getLibraryBooks, toggleBookStatus, type BookWithTags } from "../reader/_actions/books";
 import { getReaderSettings } from "../reader/_actions/settings";
 import ReadingGauge from "./_components/reading-gauge";
@@ -160,9 +160,21 @@ export default function MeridianHome() {
   return (
     <div className="min-h-screen transition-colors duration-[3000ms]" style={{ backgroundColor: ambientBackground }}>
       <header className="max-w-5xl mx-auto px-8 pt-10 pb-6 flex items-center justify-between gap-6">
-        <Link href="/projects/reader-v2" className="font-display italic text-2xl text-slate-900 tracking-tight">
-          Meridian
-        </Link>
+        <div className="flex items-center gap-3">
+          {/* Deliberately understated - an exit hatch back to the admin
+              project hub, not a nav element competing with the reader
+              itself. Near-invisible until you go looking for it. */}
+          <Link
+            href="/admin/dashboard-v2/projects"
+            title="Back to Projects"
+            className="text-slate-300 hover:text-slate-500 transition-colors"
+          >
+            <LayoutGrid size={14} strokeWidth={2} />
+          </Link>
+          <Link href="/projects/reader-v2" className="font-display italic text-2xl text-slate-900 tracking-tight">
+            Meridian
+          </Link>
+        </div>
         <div className="flex items-center gap-4 flex-1 justify-end">
           {!loading && <ReadingStreak activeDates={activeReadingDates} />}
           <div className="flex-1 max-w-sm relative">
