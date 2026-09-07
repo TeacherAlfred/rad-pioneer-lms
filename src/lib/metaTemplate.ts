@@ -43,6 +43,12 @@ export async function sendWhatsAppMessage(to: string, messagePayload: any): Prom
   return { ok: true, wamid: data?.messages?.[0]?.id };
 }
 
+// Template variables that auto-resolve against a matching column on the
+// lead's own row (see resolveVariable below) - shared by every "pick an
+// approved template" UI so a variable named after one of these gets
+// prefilled as {{token}} instead of asking the admin to type it manually.
+export const LEAD_AUTOFIELDS = ['name', 'phone', 'email', 'school', 'class', 'source'];
+
 // Generic per-lead personalization: {{name}}, {{school}}, {{class}}, etc.
 // resolve against that column on the lead's own row if it exists, rather
 // than special-casing a fixed list of fields - no schema alignment needed

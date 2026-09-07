@@ -12,6 +12,7 @@ import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
 import { ContactLogForm, type LoggedActivity } from "@/components/admin/ContactLogForm";
 import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
+import { LEAD_AUTOFIELDS } from "@/lib/metaTemplate";
 
 type Lead = {
   id: string;
@@ -151,10 +152,6 @@ type MetaTemplate = {
   quickReplyButtons: { text: string; index: number }[];
 };
 
-// Placeholder names that auto-fill from that column on the lead's own row
-// (see resolveVariable in the send-template route) instead of needing the
-// admin to type a token by hand. Anything else stays blank for manual entry.
-const LEAD_AUTOFIELDS = ['name', 'phone', 'email', 'school', 'class', 'source'];
 
 export default function LeadFunnelPage() {
   const [rows, setRows] = useState<Lead[]>([]);

@@ -10,6 +10,8 @@ import {
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
 import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
+import { LEAD_AUTOFIELDS } from "@/lib/metaTemplate";
+import { computeWindowState } from "@/lib/whatsappWindow";
 
 type MessageRow = {
   id: string;
@@ -51,6 +53,10 @@ type LeadGroup = {
   lastActivityAt: string | null;
   lastLabel: string;
   lastDirection: 'inbound' | 'outbound' | null;
+  windowExpiresAt: Date | null;
+  isWindowOpen: boolean;
+  msRemaining: number;
+  windowTotalHours: number | null;
 };
 
 type BotFlow = {
@@ -61,6 +67,40 @@ type BotFlow = {
   message_body: string | null;
   message_buttons: ButtonRef[] | null;
   active: boolean;
+  template_name: string | null;
+  template_language: string | null;
+  template_variables: string[];
+  template_variable_names: string[];
+  template_button_payloads: string[];
+};
+
+type MetaTemplate = {
+  name: string;
+  language: string;
+  category: string;
+  variableNames: string[];
+  bodyPreview: string;
+  quickReplyButtons: { text: string; index: number }[];
+};
+
+// One tagged entry per sendable approved template, whichever source it came
+// from - a template-linked bot-flow (pre-configured variables, no manual
+// fill needed, same resolution the automated trigger already uses) or a
+// plain approved template with no bot-flow wired to it yet (needs the same
+// manual variable-fill UX as the List page's Send Template modal). Merged
+// and de-duped by name+language so a bot-flow-linked template never also
+// shows up as a second, un-tagged "plain" entry.
+type TemplateOption = {
+  key: string;
+  label: string;
+  badge: 'Bot-flow Template' | 'Approved Template';
+  templateName: string;
+  languageCode: string;
+  bodyPreview?: string;
+  variableNames: string[];
+  presetVariables?: string[];
+  presetButtonPayloads?: string[];
+  quickReplyButtons?: { text: string; index: number }[];
 };
 
 // WhatsApp's own check-mark convention - only meaningful for outbound rows
@@ -137,6 +177,29 @@ function parseMessage(m: MessageRow): Parsed {
   return { kind: 'text', label: body };
 }
 
+// Glow intensity communicates urgency, not just "open vs closed" - a lead
+// with 60 hours left (a 72h ad-referral window) doesn't need the same visual
+// weight as one closing in 20 minutes. A soft, blurred full-row shadow plus a
+// faint background wash reads as a glow around the whole card; a hard ring
+// alone just looks like a border. Four tiers, most urgent (closing soon) to
+// calmest (just opened, plenty of time left) - independent of whether the
+// underlying window is 24h or the 72h ad-referral one.
+function windowGlowClass(msRemaining: number): string {
+  const hoursLeft = msRemaining / (60 * 60 * 1000);
+  if (hoursLeft <= 2) return 'bg-rose-50/70 shadow-[0_0_20px_4px_rgba(244,63,94,0.28)] animate-pulse';
+  if (hoursLeft <= 12) return 'bg-orange-50/60 shadow-[0_0_18px_3px_rgba(251,146,60,0.22)]';
+  if (hoursLeft <= 24) return 'bg-amber-50/50 shadow-[0_0_16px_3px_rgba(252,211,77,0.16)]';
+  return 'bg-emerald-50/40 shadow-[0_0_14px_2px_rgba(110,231,183,0.12)]';
+}
+
+function formatCountdown(msRemaining: number): string {
+  const totalMinutes = Math.max(0, Math.round(msRemaining / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours <= 0) return `${minutes}m left`;
+  return `${hours}h ${minutes}m left`;
+}
+
 const KIND_LABEL: Record<string, string> = {
   template: 'Template Send',
   bot_flow: 'Bot Flow',
@@ -191,17 +254,65 @@ export default function MessageActivityPage() {
   }
 
   const [botFlows, setBotFlows] = useState<BotFlow[]>([]);
+  const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   useEffect(() => {
     loadMessages();
     fetch('/admin/api/bot-flows').then(res => res.json()).then(data => setBotFlows((data.rows || []).filter((f: BotFlow) => f.active)));
+    fetch('/admin/api/lead-funnel/templates').then(res => res.json()).then(data => {
+      if (data.error) { setTemplatesError(data.error); return; }
+      setMetaTemplates(data.templates || []);
+    }).catch(err => setTemplatesError(err.message));
+  }, []);
+
+  // Merged, tagged picker: template-linked bot-flows first (pre-configured,
+  // no manual variable entry - resolved server-side against the lead row
+  // exactly like the automated trigger path), then any other approved
+  // template Meta returns that isn't already wired to a bot-flow.
+  const templateOptions = useMemo<TemplateOption[]>(() => {
+    const flowTemplates = botFlows.filter(f => f.action_type === 'template' && f.template_name && f.template_language);
+    const flowKeys = new Set(flowTemplates.map(f => `${f.template_name}|${f.template_language}`));
+    const fromFlows: TemplateOption[] = flowTemplates.map(f => ({
+      key: `flow:${f.id}`,
+      label: f.label,
+      badge: 'Bot-flow Template',
+      templateName: f.template_name!,
+      languageCode: f.template_language!,
+      variableNames: f.template_variable_names || [],
+      presetVariables: f.template_variables || [],
+      presetButtonPayloads: f.template_button_payloads || [],
+    }));
+    const fromMeta: TemplateOption[] = metaTemplates
+      .filter(t => !flowKeys.has(`${t.name}|${t.language}`))
+      .map(t => ({
+        key: `meta:${t.name}|${t.language}`,
+        label: t.name,
+        badge: 'Approved Template',
+        templateName: t.name,
+        languageCode: t.language,
+        bodyPreview: t.bodyPreview,
+        variableNames: t.variableNames,
+        quickReplyButtons: t.quickReplyButtons,
+      }));
+    return [...fromFlows, ...fromMeta];
+  }, [botFlows, metaTemplates]);
+
+  // Countdown labels/glow need to visibly tick down without a full refetch -
+  // this just forces a re-render every 60s so `computeWindowState`'s
+  // Date.now()-derived msRemaining recomputes on the next render.
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setClockTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
   }, []);
 
   // Free-form reply, sent from here since replying to a lead who just
-  // messaged in (24h customer-service window open) doesn't need an
-  // approved template - see /admin/api/lead-funnel/reply. Can optionally
+  // messaged in (messaging window open - 24h normally, 72h for a
+  // Click-to-WhatsApp ad-referral lead) doesn't need an approved template -
+  // see /admin/api/lead-funnel/reply. Can optionally
   // carry up to 3 buttons whose ids are existing bot_flows trigger words,
   // and/or start from an existing bot-flow message as an editable draft.
-  const [replyingTo, setReplyingTo] = useState<{ leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean } | null>(null);
+  const [replyingTo, setReplyingTo] = useState<{ leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean; isWindowOpen: boolean; windowExpiresAt: Date | null; windowTotalHours: number | null } | null>(null);
   const [replyText, setReplyText] = useState('');
   const [replyButtons, setReplyButtons] = useState<ButtonRef[]>([]);
   const [addButtonFlowId, setAddButtonFlowId] = useState('');
@@ -210,13 +321,78 @@ export default function MessageActivityPage() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const [pauseSaving, setPauseSaving] = useState(false);
 
-  function openReply(info: { leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean }) {
+  // Template send state, scoped to the open reply modal.
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState('');
+  const [templateVariables, setTemplateVariables] = useState<string[]>([]);
+  const [templateButtonPayloads, setTemplateButtonPayloads] = useState<Record<number, string>>({});
+  const [templateSending, setTemplateSending] = useState(false);
+  const [templateSendError, setTemplateSendError] = useState<string | null>(null);
+  const [templateSendOk, setTemplateSendOk] = useState(false);
+
+  const selectedTemplateOption = templateOptions.find(t => t.key === selectedTemplateKey) || null;
+
+  function openReply(info: { leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean; isWindowOpen: boolean; windowExpiresAt: Date | null; windowTotalHours: number | null }) {
     setReplyingTo(info);
     setReplyText('');
     setReplyButtons([]);
     setAddButtonFlowId('');
     setLoadFlowId('');
     setReplyError(null);
+    setSelectedTemplateKey('');
+    setTemplateVariables([]);
+    setTemplateButtonPayloads({});
+    setTemplateSendError(null);
+    setTemplateSendOk(false);
+  }
+
+  function selectTemplateOption(key: string) {
+    setSelectedTemplateKey(key);
+    setTemplateSendError(null);
+    setTemplateSendOk(false);
+    const t = templateOptions.find(o => o.key === key);
+    if (!t) return;
+    if (t.presetVariables) {
+      // Bot-flow-linked: already configured, no manual fill needed.
+      setTemplateVariables(t.presetVariables);
+    } else {
+      setTemplateVariables(t.variableNames.map(vn => LEAD_AUTOFIELDS.includes(vn.toLowerCase()) ? `{{${vn}}}` : ''));
+    }
+    setTemplateButtonPayloads({});
+  }
+
+  async function sendTemplateFromReply() {
+    if (!replyingTo || !selectedTemplateOption) return;
+    setTemplateSending(true);
+    setTemplateSendError(null);
+    setTemplateSendOk(false);
+    try {
+      const maxIndex = Math.max(-1, ...Object.keys(templateButtonPayloads).map(Number));
+      const buttonPayloads = selectedTemplateOption.presetButtonPayloads
+        || Array.from({ length: maxIndex + 1 }, (_, i) => templateButtonPayloads[i] || '');
+      const res = await fetch('/admin/api/lead-funnel/send-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leadIds: [replyingTo.leadId],
+          templateName: selectedTemplateOption.templateName,
+          languageCode: selectedTemplateOption.languageCode,
+          variables: templateVariables,
+          variableNames: selectedTemplateOption.variableNames,
+          buttonPayloads,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send.');
+      const result = (data.results || [])[0];
+      if (result && !result.ok) throw new Error(result.error || 'Meta rejected this template send.');
+      setTemplateSendOk(true);
+      setLoading(true);
+      await loadMessages();
+    } catch (err: any) {
+      setTemplateSendError(err.message);
+    } finally {
+      setTemplateSending(false);
+    }
   }
 
   function loadFlowIntoComposer(flowId: string) {
@@ -475,6 +651,7 @@ export default function MessageActivityPage() {
     return Array.from(byLead.entries()).map(([leadId, msgs]) => {
       const sorted = [...msgs].sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
       const last = sorted[sorted.length - 1] || null;
+      const windowState = computeWindowState(sorted);
       return {
         leadId,
         leadName: sorted[0]?.lead_name || null,
@@ -492,6 +669,10 @@ export default function MessageActivityPage() {
         lastActivityAt: last?.created_at || null,
         lastLabel: last ? parseMessage(last).label : '',
         lastDirection: last?.direction || null,
+        windowExpiresAt: windowState.expiresAt,
+        isWindowOpen: windowState.isOpen,
+        msRemaining: windowState.msRemaining,
+        windowTotalHours: windowState.totalHours,
       };
     });
   }, [rows, showInhouse, showBlocked]);
@@ -534,7 +715,14 @@ export default function MessageActivityPage() {
       setSortDirection('asc');
     }
   }
-  const sortedGroups = useMemo(() => sortRows(filteredGroups, sortColumn, sortDirection), [filteredGroups, sortColumn, sortDirection]);
+  // Leads still inside their messaging window are pinned to the top
+  // regardless of the chosen column sort - Array.sort is stable in Node/V8, so this only
+  // reorders across the open/closed boundary and leaves the user's chosen
+  // order intact within each bucket.
+  const sortedGroups = useMemo(() => {
+    const base = sortRows(filteredGroups, sortColumn, sortDirection);
+    return [...base].sort((a, b) => (b.isWindowOpen ? 1 : 0) - (a.isWindowOpen ? 1 : 0));
+  }, [filteredGroups, sortColumn, sortDirection]);
 
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -678,7 +866,9 @@ export default function MessageActivityPage() {
                         <Fragment key={g.leadId}>
                           <tr
                             onClick={() => toggleExpanded(g.leadId)}
-                            className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 cursor-pointer"
+                            className={`border-b border-slate-50 last:border-0 cursor-pointer transition-shadow duration-300 ${
+                              g.isWindowOpen ? `relative z-0 ${windowGlowClass(g.msRemaining)} hover:brightness-95` : 'hover:bg-slate-50/50'
+                            }`}
                           >
                             <td className="px-4 py-3 text-slate-300">
                               {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -686,6 +876,11 @@ export default function MessageActivityPage() {
                             <td className="px-4 py-3">
                               <div className="font-bold text-slate-800 flex items-center gap-1.5">
                                 {g.leadName || '(no name)'}
+                                {g.isWindowOpen && (
+                                  <span title={g.windowExpiresAt ? `${g.windowTotalHours ?? 24}h messaging window closes ${g.windowExpiresAt.toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' })}` : undefined} className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">
+                                    {formatCountdown(g.msRemaining)}
+                                  </span>
+                                )}
                                 {g.respondentIsParent !== null && (
                                   <span className={`inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full ${g.respondentIsParent ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
                                     {g.respondentIsParent ? 'Parent' : 'Child'}
@@ -727,8 +922,8 @@ export default function MessageActivityPage() {
                                   <Pencil size={12} /> Edit
                                 </button>
                                 <button
-                                  onClick={() => openReply({ leadId: g.leadId, leadName: g.leadName, leadPhone: g.leadPhone, botPaused: g.leadBotPaused })}
-                                  title="Send a free-form reply"
+                                  onClick={() => openReply({ leadId: g.leadId, leadName: g.leadName, leadPhone: g.leadPhone, botPaused: g.leadBotPaused, isWindowOpen: g.isWindowOpen, windowExpiresAt: g.windowExpiresAt, windowTotalHours: g.windowTotalHours })}
+                                  title={g.isWindowOpen ? 'Reply - free-form or an approved template' : 'Reply - messaging window closed, only approved templates can be sent'}
                                   className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
                                 >
                                   <Reply size={12} /> Reply
@@ -832,7 +1027,11 @@ export default function MessageActivityPage() {
             <div className="flex items-start justify-between px-6 pt-6 pb-1 shrink-0">
               <div>
                 <h3 className="text-[16px] font-semibold text-slate-900">Reply to {replyingTo.leadName || 'this lead'}</h3>
-                <p className="text-[13px] text-slate-400 mt-0.5">+{replyingTo.leadPhone} · sent as a free-form WhatsApp message</p>
+                <p className="text-[13px] text-slate-400 mt-0.5">
+                  +{replyingTo.leadPhone} · {replyingTo.isWindowOpen
+                    ? `${replyingTo.windowTotalHours ?? 24}h messaging window open - free-form or template`
+                    : 'Messaging window closed - approved templates only'}
+                </p>
               </div>
               <button onClick={() => setReplyingTo(null)} className="h-7 w-7 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500"><X size={13} /></button>
             </div>
@@ -858,76 +1057,137 @@ export default function MessageActivityPage() {
             </div>
 
             <div className="px-6 pt-4 pb-5 space-y-3 overflow-y-auto">
-              {botFlows.length > 0 && (
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1"><Sparkles size={11} /> Start from a bot-flow message (optional)</label>
-                  <select
-                    value={loadFlowId}
-                    onChange={e => loadFlowIntoComposer(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-700 outline-none focus:border-blue-400"
-                  >
-                    <option value="">Write from scratch...</option>
-                    {botFlows.filter(f => f.action_type === 'message').map(f => (
-                      <option key={f.id} value={f.id}>{f.label}</option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-slate-400 mt-1">Loads that flow's text and buttons here as a starting draft - edit or remove anything before sending, nothing about the original flow is changed.</p>
+              {replyingTo.isWindowOpen ? (
+                <>
+                  {botFlows.filter(f => f.action_type === 'message').length > 0 && (
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1"><Sparkles size={11} /> Start from a bot-flow message (optional)</label>
+                      <select
+                        value={loadFlowId}
+                        onChange={e => loadFlowIntoComposer(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-700 outline-none focus:border-blue-400"
+                      >
+                        <option value="">Write from scratch...</option>
+                        {botFlows.filter(f => f.action_type === 'message').map(f => (
+                          <option key={f.id} value={f.id}>{f.label}</option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-400 mt-1">Loads that flow's text and buttons here as a starting draft - edit or remove anything before sending, nothing about the original flow is changed.</p>
+                    </div>
+                  )}
+
+                  <textarea
+                    autoFocus
+                    rows={4}
+                    value={replyText}
+                    onChange={e => setReplyText(e.target.value)}
+                    placeholder="Type your reply..."
+                    className="w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 resize-none"
+                  />
+
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Buttons ({replyButtons.length}/3)</label>
+                    {replyButtons.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {replyButtons.map(b => (
+                          <span key={b.id} className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 text-[12px] font-medium px-2.5 py-1.5 rounded-lg">
+                            {b.title}
+                            <button onClick={() => removeButton(b.id)} className="text-blue-400 hover:text-blue-700"><X size={12} /></button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {replyButtons.length < 3 && botFlows.length > 0 && (
+                      <div className="relative">
+                        <select
+                          value={addButtonFlowId}
+                          onChange={e => addButtonFromFlow(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-[10px] pl-8 pr-3.5 py-2 text-[13px] text-slate-500 outline-none focus:border-blue-400 appearance-none cursor-pointer"
+                        >
+                          <option value="">Add a button (links to a trigger word)...</option>
+                          {botFlows.filter(f => !replyButtons.some(b => b.id === f.trigger_button_id)).map(f => (
+                            <option key={f.id} value={f.id}>{f.label} ({f.trigger_button_id})</option>
+                          ))}
+                        </select>
+                        <Plus size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      </div>
+                    )}
+                    <p className="text-[11px] text-slate-400 mt-1">Tapping a button re-enters that bot flow automatically, same as if the bot had sent it.</p>
+                  </div>
+
+                  <p className="text-[12px] text-slate-400">Only deliverable while the messaging window is open (i.e. this lead has messaged recently - {replyingTo.windowTotalHours ?? 24}h for this lead) - Meta will reject it otherwise.</p>
+                  {replyError && <div className="bg-rose-50 text-rose-600 text-[13px] rounded-xl px-4 py-2.5">{replyError}</div>}
+                </>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 text-amber-700 text-[13px] rounded-xl px-4 py-3">
+                  Messaging window closed - free-form text and bot-flow message drafts can't be delivered. Send an approved template below instead; sending one also re-opens the window.
                 </div>
               )}
 
-              <textarea
-                autoFocus
-                rows={4}
-                value={replyText}
-                onChange={e => setReplyText(e.target.value)}
-                placeholder="Type your reply..."
-                className="w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 resize-none"
-              />
+              <div className={replyingTo.isWindowOpen ? 'pt-2 mt-1 border-t border-slate-100' : ''}>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1"><ShieldCheck size={11} /> Send an approved template</label>
+                <select
+                  value={selectedTemplateKey}
+                  onChange={e => selectTemplateOption(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-700 outline-none focus:border-blue-400"
+                >
+                  <option value="">Choose a template...</option>
+                  {templateOptions.map(t => (
+                    <option key={t.key} value={t.key}>{t.label} · {t.badge} ({t.languageCode})</option>
+                  ))}
+                </select>
+                {templateOptions.length === 0 && (
+                  <p className="text-[11px] text-slate-400 mt-1">{templatesError || 'No approved templates found.'}</p>
+                )}
 
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Buttons ({replyButtons.length}/3)</label>
-                {replyButtons.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {replyButtons.map(b => (
-                      <span key={b.id} className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 text-[12px] font-medium px-2.5 py-1.5 rounded-lg">
-                        {b.title}
-                        <button onClick={() => removeButton(b.id)} className="text-blue-400 hover:text-blue-700"><X size={12} /></button>
-                      </span>
+                {selectedTemplateOption && (
+                  <div className="mt-2.5 space-y-2 bg-slate-50 rounded-[10px] p-3">
+                    <span className={`inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full ${selectedTemplateOption.badge === 'Bot-flow Template' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                      {selectedTemplateOption.badge}
+                    </span>
+                    {selectedTemplateOption.bodyPreview && (
+                      <p className="text-[12px] text-slate-500 italic">"{selectedTemplateOption.bodyPreview}"</p>
+                    )}
+                    {!selectedTemplateOption.presetVariables && selectedTemplateOption.variableNames.map((vn, i) => (
+                      <input
+                        key={i}
+                        value={templateVariables[i] || ''}
+                        onChange={e => setTemplateVariables(prev => { const next = [...prev]; next[i] = e.target.value; return next; })}
+                        placeholder={`{{${vn}}} or literal text`}
+                        className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-400"
+                      />
                     ))}
-                  </div>
-                )}
-                {replyButtons.length < 3 && botFlows.length > 0 && (
-                  <div className="relative">
-                    <select
-                      value={addButtonFlowId}
-                      onChange={e => addButtonFromFlow(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-[10px] pl-8 pr-3.5 py-2 text-[13px] text-slate-500 outline-none focus:border-blue-400 appearance-none cursor-pointer"
+                    {selectedTemplateOption.presetVariables && selectedTemplateOption.variableNames.length > 0 && (
+                      <p className="text-[11px] text-slate-400">Variables are pre-configured on this bot-flow and resolve automatically against the lead's own details.</p>
+                    )}
+                    <button
+                      onClick={sendTemplateFromReply}
+                      disabled={templateSending}
+                      className="w-full py-2 rounded-lg text-[13px] font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 flex items-center justify-center gap-1.5"
                     >
-                      <option value="">Add a button (links to a trigger word)...</option>
-                      {botFlows.filter(f => !replyButtons.some(b => b.id === f.trigger_button_id)).map(f => (
-                        <option key={f.id} value={f.id}>{f.label} ({f.trigger_button_id})</option>
-                      ))}
-                    </select>
-                    <Plus size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                      {templateSending ? <Loader2 size={13} className="animate-spin" /> : <><Send size={12} /> Send Template</>}
+                    </button>
+                    {templateSendError && <div className="bg-rose-50 text-rose-600 text-[12px] rounded-lg px-3 py-2">{templateSendError}</div>}
+                    {templateSendOk && <div className="bg-emerald-50 text-emerald-600 text-[12px] rounded-lg px-3 py-2">Template sent.</div>}
                   </div>
                 )}
-                <p className="text-[11px] text-slate-400 mt-1">Tapping a button re-enters that bot flow automatically, same as if the bot had sent it.</p>
               </div>
-
-              <p className="text-[12px] text-slate-400">Only deliverable while the 24h reply window is open (i.e. this lead has messaged recently) - Meta will reject it otherwise.</p>
-              {replyError && <div className="bg-rose-50 text-rose-600 text-[13px] rounded-xl px-4 py-2.5">{replyError}</div>}
             </div>
 
             <div className="shrink-0 border-t border-slate-100 px-6 py-4">
               <div className="flex gap-2">
-                <button onClick={() => setReplyingTo(null)} className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors duration-150">Cancel</button>
-                <button
-                  onClick={sendReply}
-                  disabled={replySending || !replyText.trim()}
-                  className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-1.5"
-                >
-                  {replySending ? <Loader2 size={14} className="animate-spin" /> : <><Send size={13} /> Send</>}
+                <button onClick={() => setReplyingTo(null)} className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors duration-150">
+                  {replyingTo.isWindowOpen ? 'Cancel' : 'Close'}
                 </button>
+                {replyingTo.isWindowOpen && (
+                  <button
+                    onClick={sendReply}
+                    disabled={replySending || !replyText.trim()}
+                    className="flex-1 py-2.5 rounded-xl text-[14px] font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 transition-colors duration-150 flex items-center justify-center gap-1.5"
+                  >
+                    {replySending ? <Loader2 size={14} className="animate-spin" /> : <><Send size={13} /> Send</>}
+                  </button>
+                )}
               </div>
             </div>
           </div>
