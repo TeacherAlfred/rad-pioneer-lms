@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -81,6 +81,14 @@ const emptyForm = {
 };
 
 export default function BotFlowsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
+      <BotFlowsPageInner />
+    </Suspense>
+  );
+}
+
+function BotFlowsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Hand-off from the Template Rollout Wizard's Lane B - both present means
