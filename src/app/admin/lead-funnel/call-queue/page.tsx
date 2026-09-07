@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, ArrowLeft, RefreshCcw, Phone, SkipForward, X, Pin, AlertTriangle, Target, Inbox, Clock, CheckCircle2, Pencil, Info } from "lucide-react";
+import { Loader2, ArrowLeft, RefreshCcw, Phone, SkipForward, X, Pin, AlertTriangle, Target, Inbox, Clock, CheckCircle2, Pencil, Info, Flame } from "lucide-react";
 import { LeadPicker, type PickerLead } from "@/components/admin/LeadPicker";
 import { ContactLogForm } from "@/components/admin/ContactLogForm";
 
@@ -37,6 +37,7 @@ type QueueStats = {
   waitingToProcess: number;
   processedByDay: Record<string, number>;
   processedThisWeek: number;
+  streak: number;
 };
 
 const DAY_LABELS: { key: string; label: string }[] = [
@@ -209,7 +210,7 @@ export default function CallQueuePage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
           <div className="bg-white rounded-2xl border border-slate-200 p-4">
             <div className="flex items-center justify-between">
               <Target size={16} className="text-purple-500" />
@@ -235,7 +236,7 @@ export default function CallQueuePage() {
             ) : (
               <div className="text-2xl font-black mt-1.5 text-slate-900">{statsLoading ? '—' : stats?.target ?? <button onClick={openEditTarget} className="text-sm font-bold text-purple-500 underline">Set target</button>}</div>
             )}
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Weekly Target</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Daily Target</div>
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 p-4">
@@ -254,21 +255,35 @@ export default function CallQueuePage() {
             <CheckCircle2 size={16} className="text-emerald-600" />
             <div className="text-2xl font-black mt-1.5 text-slate-900">
               {statsLoading ? '—' : stats?.processedThisWeek}
-              {stats?.target != null && <span className="text-sm font-bold text-slate-400"> / {stats.target}</span>}
+              {/* Daily target x 5 workdays - the implied weekly goal, since
+                  the number itself is a per-day quota, not a weekly total. */}
+              {stats?.target != null && <span className="text-sm font-bold text-slate-400"> / {stats.target * 5}</span>}
             </div>
             <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Processed This Week</div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4" title="Consecutive work days (Mon-Fri) hitting the daily target - weekends don't count for or against it">
+            <Flame size={16} className={stats && stats.streak > 0 ? 'text-orange-500' : 'text-slate-300'} />
+            <div className="text-2xl font-black mt-1.5 text-slate-900">{statsLoading ? '—' : stats?.streak}</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Daily Streak</div>
           </div>
         </div>
 
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-3">
           <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Processed Per Day This Week</h3>
           <div className="grid grid-cols-5 gap-2">
-            {DAY_LABELS.map(d => (
-              <div key={d.key} className="bg-slate-50 rounded-xl p-2.5 text-center">
-                <div className="text-lg font-black text-slate-900">{statsLoading ? '—' : stats?.processedByDay[d.key] ?? 0}</div>
-                <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-0.5">{d.label}</div>
-              </div>
-            ))}
+            {DAY_LABELS.map(d => {
+              const count = stats?.processedByDay[d.key] ?? 0;
+              return (
+                <div key={d.key} className="bg-slate-50 rounded-xl p-2.5 text-center">
+                  <div className="text-lg font-black text-slate-900">
+                    {statsLoading ? '—' : count}
+                    {stats?.target != null && <span className="text-xs font-bold text-slate-400">/{stats.target}</span>}
+                  </div>
+                  <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-0.5">{d.label}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
