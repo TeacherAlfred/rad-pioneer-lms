@@ -152,9 +152,30 @@ export default function MessageActivityPage() {
   const [error, setError] = useState<string | null>(null);
   const [directionFilter, setDirectionFilter] = useState<string>('all');
   const [kindFilter, setKindFilter] = useState<string>('all');
+  // Set by clicking a row in the Button Taps / Template Sends breakdown
+  // cards below - narrows the contacts table to leads with that specific
+  // tap/template, same idea as kindFilter but one level more specific than
+  // that dropdown goes. Clicking the same row again clears it.
+  const [buttonFilter, setButtonFilter] = useState<string | null>(null);
+  const [templateFilter, setTemplateFilter] = useState<string | null>(null);
+  const [countMode, setCountMode] = useState<'messages' | 'leads'>('messages');
   const [search, setSearch] = useState('');
-  const [showInhouse, setShowInhouse] = useState(false);
-  const [showBlocked, setShowBlocked] = useState(false);
+  // Mutually exclusive, momentary lenses - not additive filters. Flipping
+  // one on narrows the whole list to ONLY that category (inhouse or
+  // blocked contacts don't normally belong in the working view at all,
+  // there's just occasionally a reason to look at them specifically) and
+  // flips the other off, rather than adding them back alongside everyone
+  // else. Off (the default) excludes both.
+  const [showInhouse, setShowInhouseRaw] = useState(false);
+  const [showBlocked, setShowBlockedRaw] = useState(false);
+  function setShowInhouse(next: boolean) {
+    setShowInhouseRaw(next);
+    if (next) setShowBlockedRaw(false);
+  }
+  function setShowBlocked(next: boolean) {
+    setShowBlockedRaw(next);
+    if (next) setShowInhouseRaw(false);
+  }
 
   async function loadMessages() {
     try {
@@ -373,46 +394,65 @@ export default function MessageActivityPage() {
   }
 
   const statsRows = useMemo(() => rows.filter(r => !isInhouseRow(r) && !isBlockedRow(r)), [rows]);
-  const inhouseCount = rows.filter(r => isInhouseRow(r) && !isBlockedRow(r)).length;
-  const blockedCount = rows.filter(isBlockedRow).length;
+  // Lead counts, not message counts - these label a "how many contacts"
+  // toggle, and one chatty inhouse/blocked contact shouldn't inflate it.
+  const inhouseCount = new Set(rows.filter(r => isInhouseRow(r) && !isBlockedRow(r)).map(r => r.lead_id)).size;
+  const blockedCount = new Set(rows.filter(isBlockedRow).map(r => r.lead_id)).size;
+  const visibleMessageCount = showInhouse ? rows.filter(isInhouseRow).length
+    : showBlocked ? rows.filter(isBlockedRow).length
+    : statsRows.length;
 
   const parsedStatsRows = useMemo(() => statsRows.map(r => ({ row: r, parsed: parseMessage(r) })), [statsRows]);
 
+  // Every count below carries both a raw message count and a distinct-lead
+  // count, so the Messages/Leads view toggle (below) can pick either without
+  // recomputing - one chatty lead tapping the same button 20 times should
+  // read as "1" in leads view, not "20".
   const stats = useMemo(() => {
     const outbound = parsedStatsRows.filter(p => p.row.direction === 'outbound');
     const inbound = parsedStatsRows.filter(p => p.row.direction === 'inbound');
-    const delivered = outbound.filter(p => 'status' in p.parsed && p.parsed.status === 'delivered').length;
-    const failed = outbound.filter(p => 'status' in p.parsed && p.parsed.status === 'failed').length;
-    const buttonTaps = parsedStatsRows.filter(p => p.parsed.kind === 'button_tap');
-    const engagedLeads = new Set(buttonTaps.map(p => p.row.lead_id)).size;
+    const deliveredRows = outbound.filter(p => 'status' in p.parsed && p.parsed.status === 'delivered');
+    const failedRows = outbound.filter(p => 'status' in p.parsed && p.parsed.status === 'failed');
+    const buttonTapRows = parsedStatsRows.filter(p => p.parsed.kind === 'button_tap');
+    const engagedLeads = new Set(buttonTapRows.map(p => p.row.lead_id)).size;
 
     const messagedLeads = new Set(outbound.map(p => p.row.lead_id));
     const repliedLeads = new Set(
       parsedStatsRows.filter(p => p.row.direction === 'inbound' && messagedLeads.has(p.row.lead_id)).map(p => p.row.lead_id)
     );
 
-    const byKind: Record<string, number> = {};
-    const byTemplate: Record<string, number> = {};
-    const byButton: Record<string, number> = {};
+    const countOf = (list: { row: MessageRow }[]) => ({ messages: list.length, leads: new Set(list.map(p => p.row.lead_id)).size });
+
+    // Keyed by the raw parsed.kind (not its display label) so a click can
+    // feed straight into kindFilter, which already operates on that key.
+    const byKind: Record<string, { messages: number; leads: Set<string> }> = {};
+    const byTemplate: Record<string, { messages: number; leads: Set<string> }> = {};
+    const byButton: Record<string, { messages: number; leads: Set<string> }> = {};
 
     for (const { row, parsed } of parsedStatsRows) {
       if (row.direction !== 'outbound') continue;
-      byKind[KIND_LABEL[parsed.kind] || parsed.kind] = (byKind[KIND_LABEL[parsed.kind] || parsed.kind] || 0) + 1;
+      (byKind[parsed.kind] ||= { messages: 0, leads: new Set() });
+      byKind[parsed.kind].messages++;
+      byKind[parsed.kind].leads.add(row.lead_id);
       if (parsed.kind === 'template') {
-        byTemplate[parsed.label] = (byTemplate[parsed.label] || 0) + 1;
+        (byTemplate[parsed.label] ||= { messages: 0, leads: new Set() });
+        byTemplate[parsed.label].messages++;
+        byTemplate[parsed.label].leads.add(row.lead_id);
       }
     }
     for (const { row, parsed } of parsedStatsRows) {
       if (row.direction !== 'inbound' || parsed.kind !== 'button_tap') continue;
-      byButton[parsed.label] = (byButton[parsed.label] || 0) + 1;
+      (byButton[parsed.label] ||= { messages: 0, leads: new Set() });
+      byButton[parsed.label].messages++;
+      byButton[parsed.label].leads.add(row.lead_id);
     }
 
     return {
-      totalOutbound: outbound.length,
-      totalInbound: inbound.length,
-      delivered,
-      failed,
-      buttonTaps: buttonTaps.length,
+      totalOutbound: countOf(outbound),
+      totalInbound: countOf(inbound),
+      delivered: countOf(deliveredRows),
+      failed: countOf(failedRows),
+      buttonTaps: countOf(buttonTapRows),
       engagedLeads,
       replyRate: messagedLeads.size > 0 ? Math.round((repliedLeads.size / messagedLeads.size) * 100) : 0,
       byKind, byTemplate, byButton,
@@ -424,7 +464,9 @@ export default function MessageActivityPage() {
   // rather than changing what /admin/api/lead-funnel/messages returns, so
   // the flat `rows` still backs the stats/breakdown cards above untouched.
   const groups = useMemo<LeadGroup[]>(() => {
-    const source = rows.filter(r => (showInhouse || !isInhouseRow(r)) && (showBlocked || !isBlockedRow(r)));
+    const source = showInhouse ? rows.filter(isInhouseRow)
+      : showBlocked ? rows.filter(isBlockedRow)
+      : rows.filter(r => !isInhouseRow(r) && !isBlockedRow(r));
     const byLead = new Map<string, MessageRow[]>();
     for (const r of source) {
       if (!byLead.has(r.lead_id)) byLead.set(r.lead_id, []);
@@ -463,13 +505,15 @@ export default function MessageActivityPage() {
     return groups.filter(g => {
       if (directionFilter !== 'all' && !g.messages.some(m => m.direction === directionFilter)) return false;
       if (kindFilter !== 'all' && !g.messages.some(m => parseMessage(m).kind === kindFilter)) return false;
+      if (buttonFilter && !g.messages.some(m => { const p = parseMessage(m); return p.kind === 'button_tap' && p.label === buttonFilter; })) return false;
+      if (templateFilter && !g.messages.some(m => { const p = parseMessage(m); return p.kind === 'template' && p.label === templateFilter; })) return false;
       if (q) {
         const haystack = `${g.leadPhone || ''} ${g.leadName || ''} ${g.messages.map(m => m.body).join(' ')}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [groups, directionFilter, kindFilter, search]);
+  }, [groups, directionFilter, kindFilter, buttonFilter, templateFilter, search]);
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   function toggleExpanded(leadId: string) {
@@ -494,7 +538,7 @@ export default function MessageActivityPage() {
 
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, search, showInhouse, showBlocked]);
+  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, buttonFilter, templateFilter, search, showInhouse, showBlocked]);
   const totalPages = Math.max(1, Math.ceil(sortedGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
   const pagedGroups = useMemo(
@@ -524,24 +568,67 @@ export default function MessageActivityPage() {
           <div className="py-24 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading...</div>
         ) : (
           <>
+            <div className="flex items-center justify-end mb-3">
+              <div className="inline-flex bg-slate-100 rounded-xl p-1 text-xs font-black uppercase tracking-widest">
+                <button onClick={() => setCountMode('messages')} className={`px-3 py-1.5 rounded-lg transition-colors ${countMode === 'messages' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}>Messages</button>
+                <button onClick={() => setCountMode('leads')} className={`px-3 py-1.5 rounded-lg transition-colors ${countMode === 'leads' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}>Leads</button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
-              <StatCard icon={MessageSquare} label="Total Inbound" value={stats.totalInbound} accent="text-blue-600" />
-              <StatCard icon={Send} label="Total Sent" value={stats.totalOutbound} />
-              <StatCard icon={CheckCircle2} label="Delivered" value={stats.delivered} accent="text-emerald-600" />
-              <StatCard icon={XCircle} label="Failed" value={stats.failed} accent="text-rose-600" />
-              <StatCard icon={MousePointerClick} label="Button Taps" value={stats.buttonTaps} accent="text-indigo-600" />
+              <StatCard icon={MessageSquare} label="Total Inbound" value={stats.totalInbound[countMode]} accent="text-blue-600" />
+              <StatCard icon={Send} label="Total Sent" value={stats.totalOutbound[countMode]} />
+              <StatCard icon={CheckCircle2} label="Delivered" value={stats.delivered[countMode]} accent="text-emerald-600" />
+              <StatCard icon={XCircle} label="Failed" value={stats.failed[countMode]} accent="text-rose-600" />
+              <StatCard icon={MousePointerClick} label="Button Taps" value={stats.buttonTaps[countMode]} accent="text-indigo-600" />
               <StatCard icon={Users2} label="Leads Engaged" value={stats.engagedLeads} accent="text-indigo-600" />
               <StatCard icon={MessageSquare} label="Reply Rate" value={stats.replyRate} suffix="%" accent="text-amber-600" />
             </div>
 
             <div className="grid md:grid-cols-2 gap-4 mb-6">
-              <BreakdownCard title="Sends By Type" data={stats.byKind} />
-              <BreakdownCard title="Button Taps (Engagement)" data={stats.byButton} />
+              <BreakdownCard
+                title="Sends By Type"
+                data={stats.byKind}
+                mode={countMode}
+                keyLabel={k => KIND_LABEL[k] || k}
+                activeKey={kindFilter !== 'all' ? kindFilter : null}
+                onSelect={k => setKindFilter(prev => prev === k ? 'all' : k)}
+              />
+              <BreakdownCard
+                title="Button Taps (Engagement)"
+                data={stats.byButton}
+                mode={countMode}
+                activeKey={buttonFilter}
+                onSelect={k => setButtonFilter(prev => prev === k ? null : k)}
+              />
             </div>
 
             {Object.keys(stats.byTemplate).length > 0 && (
               <div className="mb-6">
-                <BreakdownCard title="Template Sends By Name" data={stats.byTemplate} />
+                <BreakdownCard
+                  title="Template Sends By Name"
+                  data={stats.byTemplate}
+                  mode={countMode}
+                  activeKey={templateFilter}
+                  onSelect={k => setTemplateFilter(prev => prev === k ? null : k)}
+                />
+              </div>
+            )}
+
+            {(buttonFilter || templateFilter) && (
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                {buttonFilter && (
+                  <span className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 text-[11px] font-bold px-3 py-1.5 rounded-full">
+                    Button: {buttonFilter}
+                    <button onClick={() => setButtonFilter(null)} className="hover:text-indigo-900"><X size={11} /></button>
+                  </span>
+                )}
+                {templateFilter && (
+                  <span className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 text-[11px] font-bold px-3 py-1.5 rounded-full">
+                    Template: {templateFilter}
+                    <button onClick={() => setTemplateFilter(null)} className="hover:text-indigo-900"><X size={11} /></button>
+                  </span>
+                )}
               </div>
             )}
 
@@ -564,13 +651,9 @@ export default function MessageActivityPage() {
                 <option value="all">All types</option>
                 {Object.entries(KIND_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
               </select>
-              <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
-                <input type="checkbox" checked={showInhouse} onChange={e => setShowInhouse(e.target.checked)} /> Show inhouse ({inhouseCount})
-              </label>
-              <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
-                <input type="checkbox" checked={showBlocked} onChange={e => setShowBlocked(e.target.checked)} /> Show blocked ({blockedCount})
-              </label>
-              <span className="text-xs text-slate-400 ml-auto">{filteredGroups.length} contact{filteredGroups.length === 1 ? '' : 's'} (of {(showInhouse ? rows.length : statsRows.length)} messages)</span>
+              <ViewToggle label={`Show inhouse (${inhouseCount})`} checked={showInhouse} onChange={setShowInhouse} activeColor="bg-slate-900" />
+              <ViewToggle label={`Show blocked (${blockedCount})`} checked={showBlocked} onChange={setShowBlocked} activeColor="bg-rose-500" />
+              <span className="text-xs text-slate-400 ml-auto">{filteredGroups.length} contact{filteredGroups.length === 1 ? '' : 's'} (of {visibleMessageCount} messages)</span>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
@@ -940,6 +1023,24 @@ export default function MessageActivityPage() {
   );
 }
 
+// A momentary lens switch, not a persistent filter - same track/thumb
+// styling as the bot-pause toggle in the reply modal above, just compact
+// enough to sit inline in the filter bar.
+function ViewToggle({ label, checked, onChange, activeColor }: { label: string; checked: boolean; onChange: (next: boolean) => void; activeColor: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500"
+    >
+      {label}
+      <span className={`relative h-5 w-9 rounded-full transition-colors duration-200 ${checked ? activeColor : 'bg-slate-200'}`}>
+        <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 ${checked ? 'translate-x-4' : 'translate-x-0'}`} />
+      </span>
+    </button>
+  );
+}
+
 function StatCard({ icon: Icon, label, value, accent, suffix }: { icon: any; label: string; value: number; accent?: string; suffix?: string }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
@@ -950,22 +1051,46 @@ function StatCard({ icon: Icon, label, value, accent, suffix }: { icon: any; lab
   );
 }
 
-function BreakdownCard({ title, data }: { title: string; data: Record<string, number> }) {
-  const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
+// Rows are clickable when onSelect is given - clicking narrows the
+// contacts table below to leads matching that key (clicking the active
+// row again clears it, handled by the caller's onSelect). `mode` picks
+// message-count vs distinct-lead-count out of each entry without the
+// caller needing two separate data shapes.
+function BreakdownCard({ title, data, mode, keyLabel, activeKey, onSelect }: {
+  title: string;
+  data: Record<string, { messages: number; leads: Set<string> }>;
+  mode: 'messages' | 'leads';
+  keyLabel?: (key: string) => string;
+  activeKey?: string | null;
+  onSelect: (key: string) => void;
+}) {
+  const entries = Object.entries(data)
+    .map(([key, v]) => [key, mode === 'leads' ? v.leads.size : v.messages] as const)
+    .sort((a, b) => b[1] - a[1]);
   const max = Math.max(1, ...entries.map(([, v]) => v));
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">{title}</h3>
       <div className="space-y-2">
-        {entries.map(([key, count]) => (
-          <div key={key} className="flex items-center gap-3">
-            <span className="text-xs text-slate-600 w-40 shrink-0 truncate" title={key}>{key}</span>
-            <div className="flex-1 bg-slate-50 rounded-full h-2 overflow-hidden">
-              <div className="bg-slate-800 h-full rounded-full" style={{ width: `${(count / max) * 100}%` }} />
-            </div>
-            <span className="text-xs font-black text-slate-500 w-8 text-right">{count}</span>
-          </div>
-        ))}
+        {entries.map(([key, count]) => {
+          const isActive = activeKey === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onSelect(key)}
+              className={`w-full flex items-center gap-3 rounded-lg -mx-1 px-1 py-0.5 transition-colors cursor-pointer hover:bg-slate-50 ${isActive ? 'bg-indigo-50' : ''}`}
+            >
+              <span className={`text-xs w-40 shrink-0 truncate text-left ${isActive ? 'text-indigo-700 font-bold' : 'text-slate-600'}`} title={keyLabel ? keyLabel(key) : key}>
+                {keyLabel ? keyLabel(key) : key}
+              </span>
+              <div className="flex-1 bg-slate-50 rounded-full h-2 overflow-hidden">
+                <div className={`h-full rounded-full ${isActive ? 'bg-indigo-500' : 'bg-slate-800'}`} style={{ width: `${(count / max) * 100}%` }} />
+              </div>
+              <span className={`text-xs font-black w-8 text-right ${isActive ? 'text-indigo-600' : 'text-slate-500'}`}>{count}</span>
+            </button>
+          );
+        })}
         {entries.length === 0 && <p className="text-xs text-slate-400">No data yet.</p>}
       </div>
     </div>
