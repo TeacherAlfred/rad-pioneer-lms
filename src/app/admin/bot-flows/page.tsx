@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Loader2, Plus, Trash2, CheckCircle2, XCircle, Pencil, AlertTriangle,
   ArrowLeft, MessageSquare, Send, GitBranch, FileText,
@@ -80,6 +81,16 @@ const emptyForm = {
 };
 
 export default function BotFlowsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Hand-off from the Template Rollout Wizard's Lane B - both present means
+  // "open a new template flow pre-selected to this template, and report the
+  // resulting bot_flows row id back to that rollout once saved" (see the
+  // save-success branch in handleSubmit below).
+  const rolloutId = searchParams.get('rolloutId');
+  const newFlowTemplate = searchParams.get('newFlowTemplate');
+  const prefilledFromRollout = useRef(false);
+
   const [rows, setRows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -112,6 +123,16 @@ export default function BotFlowsPage() {
   const payloadOptions = Array.from(new Set(rows.map(r => r.trigger_button_id))).sort();
 
   useEffect(() => { fetchRows(); }, []);
+
+  useEffect(() => {
+    if (!newFlowTemplate || prefilledFromRollout.current) return;
+    if (templates.length === 0) { loadTemplatesIfNeeded(); return; }
+    openCreate();
+    setForm(f => ({ ...f, action_type: 'template' }));
+    selectTemplate(newFlowTemplate);
+    prefilledFromRollout.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templates, newFlowTemplate]);
 
   // Editing an existing template flow opens the form before templates have
   // loaded (they're fetched async), so the button-payload inputs have
@@ -363,10 +384,23 @@ export default function BotFlowsPage() {
       if (!res.ok) throw new Error(data.error);
       if (editingId) {
         setRows(prev => prev.map(r => r.id === editingId ? data.row : r));
+        closeForm();
       } else {
         setRows(prev => [data.row, ...prev]);
+        closeForm();
+        // Closes the loop on the Template Rollout Wizard's Lane B hand-off -
+        // report the new flow's id back to the rollout it came from, then
+        // return there so its Done state shows the link instead of the
+        // admin having to remember to go check it themselves.
+        if (rolloutId && form.action_type === 'template' && form.template_key === newFlowTemplate) {
+          await fetch(`/admin/api/template-rollouts/${rolloutId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ linked_bot_flow_id: data.row.id, lane_completed_at: new Date().toISOString() }),
+          });
+          router.push(`/admin/template-rollouts/${rolloutId}`);
+        }
       }
-      closeForm();
     } catch (err: any) {
       setSaveError(err.message);
     } finally {

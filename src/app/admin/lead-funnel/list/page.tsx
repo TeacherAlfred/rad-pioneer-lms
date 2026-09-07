@@ -148,7 +148,7 @@ const MAX_RECIPIENTS = 50;
 
 type SendResult = { leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string };
 type MetaTemplate = {
-  name: string; language: string; category: string; variableNames: string[]; bodyPreview: string;
+  name: string; language: string; category: string; variableNames: string[]; variableLabels?: string[]; bodyPreview: string;
   quickReplyButtons: { text: string; index: number }[];
 };
 
@@ -179,6 +179,7 @@ export default function LeadFunnelPage() {
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('');
   const [manualEntry, setManualEntry] = useState(false);
   const [selectedVariableNames, setSelectedVariableNames] = useState<string[]>([]);
+  const [selectedVariableLabels, setSelectedVariableLabels] = useState<string[]>([]);
   const [selectedQuickReplyButtons, setSelectedQuickReplyButtons] = useState<{ text: string; index: number }[]>([]);
   const [buttonPayloads, setButtonPayloads] = useState<Record<number, string>>({});
   const [knownTriggerIds, setKnownTriggerIds] = useState<string[]>([]);
@@ -220,8 +221,16 @@ export default function LeadFunnelPage() {
     if (!t) return;
     setTemplateName(t.name);
     setLanguageCode(t.language);
-    setVariables(t.variableNames.map(vn => LEAD_AUTOFIELDS.includes(vn.toLowerCase()) ? `{{${vn}}}` : ''));
+    // A Template Rollout Wizard-created template has its own friendly labels
+    // ("name" instead of Meta's raw "1") - prefer those for the auto-fill
+    // match, but `variables` still carries what goes to send-template
+    // positionally either way, so this doesn't change what Meta receives.
+    setVariables(t.variableNames.map((vn, i) => {
+      const label = (t.variableLabels?.[i] || vn).toLowerCase();
+      return LEAD_AUTOFIELDS.includes(label) ? `{{${label}}}` : '';
+    }));
     setSelectedVariableNames(t.variableNames);
+    setSelectedVariableLabels(t.variableLabels || []);
     setSelectedQuickReplyButtons(t.quickReplyButtons || []);
     setButtonPayloads({});
   }
@@ -310,6 +319,7 @@ export default function LeadFunnelPage() {
     setSelectedTemplateKey('');
     setManualEntry(false);
     setSelectedVariableNames([]);
+    setSelectedVariableLabels([]);
     setSelectedQuickReplyButtons([]);
     setButtonPayloads({});
   }
@@ -1120,7 +1130,7 @@ export default function LeadFunnelPage() {
                   {variables.map((v, i) => (
                     <div key={i} className="flex gap-2 mb-2">
                       <input
-                        placeholder={selectedVariableNames[i] ? `{{${selectedVariableNames[i]}}} - e.g. {{name}}` : `Variable ${i + 1}, e.g. {{name}}`}
+                        placeholder={selectedVariableLabels[i] || selectedVariableNames[i] ? `{{${selectedVariableLabels[i] || selectedVariableNames[i]}}} - e.g. {{name}}` : `Variable ${i + 1}, e.g. {{name}}`}
                         value={v}
                         onChange={e => updateVariable(i, e.target.value)}
                         className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"

@@ -79,6 +79,7 @@ type MetaTemplate = {
   language: string;
   category: string;
   variableNames: string[];
+  variableLabels?: string[];
   bodyPreview: string;
   quickReplyButtons: { text: string; index: number }[];
 };
@@ -98,6 +99,7 @@ type TemplateOption = {
   languageCode: string;
   bodyPreview?: string;
   variableNames: string[];
+  variableLabels?: string[];
   presetVariables?: string[];
   presetButtonPayloads?: string[];
   quickReplyButtons?: { text: string; index: number }[];
@@ -292,6 +294,7 @@ export default function MessageActivityPage() {
         languageCode: t.language,
         bodyPreview: t.bodyPreview,
         variableNames: t.variableNames,
+        variableLabels: t.variableLabels,
         quickReplyButtons: t.quickReplyButtons,
       }));
     return [...fromFlows, ...fromMeta];
@@ -355,7 +358,10 @@ export default function MessageActivityPage() {
       // Bot-flow-linked: already configured, no manual fill needed.
       setTemplateVariables(t.presetVariables);
     } else {
-      setTemplateVariables(t.variableNames.map(vn => LEAD_AUTOFIELDS.includes(vn.toLowerCase()) ? `{{${vn}}}` : ''));
+      setTemplateVariables(t.variableNames.map((vn, i) => {
+        const label = (t.variableLabels?.[i] || vn).toLowerCase();
+        return LEAD_AUTOFIELDS.includes(label) ? `{{${label}}}` : '';
+      }));
     }
     setTemplateButtonPayloads({});
   }
@@ -1153,7 +1159,7 @@ export default function MessageActivityPage() {
                         key={i}
                         value={templateVariables[i] || ''}
                         onChange={e => setTemplateVariables(prev => { const next = [...prev]; next[i] = e.target.value; return next; })}
-                        placeholder={`{{${vn}}} or literal text`}
+                        placeholder={`{{${selectedTemplateOption.variableLabels?.[i] || vn}}} or literal text`}
                         className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] outline-none focus:border-blue-400"
                       />
                     ))}

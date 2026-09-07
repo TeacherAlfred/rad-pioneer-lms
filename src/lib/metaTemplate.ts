@@ -95,6 +95,37 @@ export function resolveProgramTokens(
     .replace(/\{\{\s*title\s*\}\}/gi, program.title || '');
 }
 
+// Creates a message template on Meta itself (Template Rollout Wizard,
+// src/app/admin/template-rollouts) - as opposed to sendMetaTemplate below,
+// which sends an already-APPROVED one. `components` follows Meta's Create
+// Message Templates shape directly (BODY/HEADER/FOOTER/BUTTONS) so the
+// caller building it from wizard fields stays the one place that knows the
+// exact request shape, not duplicated here. Same {ok,error,...} shape as
+// every other Graph API call in this file - the wizard surfaces `error`
+// verbatim, since a rejected/malformed submission is exactly where Meta's
+// own message matters most.
+export async function createMetaTemplate(
+  name: string,
+  language: string,
+  category: string,
+  components: any[]
+): Promise<{ ok: boolean; error?: string; metaTemplateId?: string; status?: string }> {
+  const wabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID!;
+  const token = process.env.WHATSAPP_TOKEN!;
+
+  const response = await fetch(`https://graph.facebook.com/v21.0/${wabaId}/message_templates`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, language, category, components }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    return { ok: false, error: data?.error?.message || data?.error?.error_user_msg || JSON.stringify(data) };
+  }
+  return { ok: true, metaTemplateId: data?.id, status: data?.status };
+}
+
 export async function sendMetaTemplate(
   to: string,
   templateName: string,
