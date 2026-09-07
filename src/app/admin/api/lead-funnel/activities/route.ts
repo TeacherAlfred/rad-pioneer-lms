@@ -39,6 +39,10 @@ export async function POST(req: Request) {
     }
 
     const supabase = supabaseAdmin();
+    // created_at only spread in when actually provided - see the matching
+    // note in call-queue/route.ts's POST for why an `undefined`-valued key
+    // here would make PostgREST insert NULL instead of applying `default
+    // now()`, tripping created_at's NOT NULL constraint.
     const { data, error } = await supabase
       .from('lead_activities')
       .insert([{
@@ -49,7 +53,7 @@ export async function POST(req: Request) {
         objective: objective || null,
         note: note?.trim() || null,
         created_by: createdBy || null,
-        created_at: occurredAt || undefined,
+        ...(occurredAt ? { created_at: occurredAt } : {}),
       }])
       .select()
       .single();

@@ -108,11 +108,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'This lead is blocked and cannot be queued.' }, { status: 403 });
     }
 
+    // NOTE: target_date is only spread in when actually provided - supabase-js
+    // computes the insert's `columns=` list from Object.keys(), which includes
+    // keys whose value is `undefined` (unlike JSON.stringify, which drops
+    // them from the body). With defaultToNull left at its default (true),
+    // that mismatch makes PostgREST insert an explicit NULL for target_date
+    // instead of letting the column's `default current_date` apply, tripping
+    // its NOT NULL constraint. Omitting the key outright sidesteps the whole
+    // footgun rather than relying on `{ defaultToNull: false }` semantics.
     const { data, error } = await supabase
       .from('lead_call_queue')
       .insert([{
         lead_id: leadId,
-        target_date: targetDate || undefined,
+        ...(targetDate ? { target_date: targetDate } : {}),
         manual_priority: manualPriority ?? null,
       }])
       .select()
