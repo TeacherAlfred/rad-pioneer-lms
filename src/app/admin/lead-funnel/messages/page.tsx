@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
+import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
 
 type MessageRow = {
   id: string;
@@ -585,6 +586,7 @@ export default function MessageActivityPage() {
                             </td>
                             <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                               <div className="inline-flex items-center gap-1.5">
+                                <QueueQuickAdd leadId={g.leadId} leadName={g.leadName} />
                                 <button
                                   onClick={() => openEditLead(g)}
                                   title="Edit lead details"

@@ -1,41 +1,20 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { STAGE_STALL_HOURS } from '@/lib/funnelStages';
 import { recordStageChange } from '@/lib/leadStageHistory';
+import { computeEngagementRecency, computeStageHealth } from '@/lib/leadUrgency';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const UPDATE_CHUNK_SIZE = 200;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
-}
-
-// Global warmth, independent of stage - spec §3.
-function computeEngagementRecency(lastInboundAt: string | null, createdAt: string): string {
-  const reference = lastInboundAt || createdAt;
-  const ageMs = Date.now() - new Date(reference).getTime();
-  if (ageMs <= 14 * DAY_MS) return 'active';
-  if (ageMs <= 45 * DAY_MS) return 'cooling';
-  if (ageMs <= 120 * DAY_MS) return 'dormant';
-  return 'cold';
-}
-
-// Per-stage staleness - how long they've sat in THIS stage vs. its expected
-// window (spec §2/§3). Terminal stages don't stall.
-function computeStageHealth(stage: string, stageEnteredAt: string, engagementRecency: string): string {
-  if (stage === 'won' || stage === 'lost' || stage === 'opted_out') return 'active';
-  const stallHours = STAGE_STALL_HOURS[stage] ?? Infinity;
-  const hoursInStage = (Date.now() - new Date(stageEnteredAt).getTime()) / HOUR_MS;
-  if (hoursInStage <= stallHours) return 'active';
-  return engagementRecency === 'dormant' || engagementRecency === 'cold' ? 'dormant' : 'stalled';
 }
 
 // Nightly automation for the lead lifecycle model (RAD_Lead_Stages_and_Followup_Spec.md):

@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, Users, UserPlus, MessageCircleWarning, Users2, MessageSquare,
   Send, XCircle, Baby, GraduationCap, CalendarClock, BellOff, AlertTriangle,
-  ArrowRight, X, HelpCircle, UserCheck,
+  ArrowRight, X, HelpCircle, UserCheck, Phone,
 } from "lucide-react";
 import { isWithinDnd, type DndDay } from "@/lib/dndSchedule";
 
@@ -212,6 +212,7 @@ export default function LeadsOverviewPage() {
                 { icon: UserPlus, label: 'New Today', value: newTodayLeads.length, items: newTodayLeads, renderRow: leadRow },
                 { icon: MessageCircleWarning, label: 'Needs Human', value: needsHumanLeads.length, accent: needsHumanLeads.length > 0 ? 'text-amber-600' : undefined, items: needsHumanLeads, renderRow: leadRow },
                 { icon: Users2, label: 'Households', value: householdGroups.length, accent: 'text-purple-600', items: householdGroups, renderRow: householdRow },
+                { icon: Phone, label: 'Call Queue', value: 'Open', directHref: '/admin/lead-funnel/call-queue' },
               ]}
               onTileClick={openTile}
             />

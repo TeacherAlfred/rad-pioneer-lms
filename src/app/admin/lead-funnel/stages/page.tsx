@@ -8,6 +8,7 @@ import {
 import { LIFECYCLE_STAGES, LIFECYCLE_STAGE_LABELS } from "@/lib/funnelStages";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
+import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
 
 type LeadStageRow = {
   id: string;
@@ -205,6 +206,7 @@ export default function FunnelStagesPage() {
                       <SortableHeader label="Stage" column="lifecycle_stage" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <SortableHeader label="Time in Stage" column="daysInStage" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <SortableHeader label="Messages in Stage" column="messagesInStage" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                      <th className="px-4 py-3"><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -227,10 +229,13 @@ export default function FunnelStagesPage() {
                         </td>
                         <td className="px-4 py-3 text-slate-600">{l.daysInStage}d</td>
                         <td className="px-4 py-3 text-slate-600">{l.messagesInStage}</td>
+                        <td className="px-4 py-3 text-right">
+                          <QueueQuickAdd leadId={l.id} leadName={l.name} />
+                        </td>
                       </tr>
                     ))}
                     {filteredLeads.length === 0 && (
-                      <tr><td colSpan={4} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
+                      <tr><td colSpan={5} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>

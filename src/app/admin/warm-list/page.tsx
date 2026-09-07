@@ -5,6 +5,7 @@ import {
   Loader2, CheckCircle2, XCircle, RotateCcw, Plus, Search,
   MapPin, Mail, Phone, AlertTriangle, Send, Tag, X,
 } from "lucide-react";
+import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
 
 type Row = {
   id: string;
@@ -388,7 +389,10 @@ export default function WarmListPage() {
                     <td className="p-3">
                       <div className="flex items-center justify-end gap-1.5">
                         {row.committed_at ? (
-                          <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Committed</span>
+                          <>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600">Committed</span>
+                            {row.phone && <QueueQuickAdd phone={row.phone} leadName={row.name} />}
+                          </>
                         ) : (
                           <>
                             {row.review_status !== 'approved' && (

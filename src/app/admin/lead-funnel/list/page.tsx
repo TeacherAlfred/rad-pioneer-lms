@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
+import { ContactLogForm, type LoggedActivity } from "@/components/admin/ContactLogForm";
+import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
 
 type Lead = {
   id: string;
@@ -46,7 +48,7 @@ type Lead = {
 };
 
 type LeadNote = { id: string; note: string; created_at: string; created_by: string | null };
-type LeadActivity = { id: string; channel: string; direction: string; outcome: string; note: string | null; created_by: string | null; created_at: string };
+type LeadActivity = { id: string; channel: string; direction: string; outcome: string; objective?: string | null; note: string | null; created_by: string | null; created_at: string };
 
 // Read-only shapes for the quick-view drawer - trimmed to what's actually
 // rendered, not the full API response (see kids/orders/passes routes for
@@ -418,6 +420,7 @@ export default function LeadFunnelPage() {
     setKids([]);
     setOrders([]);
     setPasses([]);
+    setShowLogForm(false);
   }
 
   function switchToEdit() {
@@ -561,11 +564,13 @@ export default function LeadFunnelPage() {
     });
   }
 
-  // --- Contact outcomes: read-only feed of lead_activities (Contacted /
-  // No Response / Follow-up Set, and bot_flow reply captures). Written only
-  // by the webhook - nothing here writes to it. ---
+  // --- Contact outcomes: feed of lead_activities (webhook-logged Contacted/
+  // No Response/Follow-up Set entries, plus admin-logged manual contact
+  // entries via ContactLogForm below). A timeline of separate dated rows,
+  // never a merged/editable blob. ---
   const [leadActivities, setLeadActivities] = useState<LeadActivity[]>([]);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
+  const [showLogForm, setShowLogForm] = useState(false);
 
   async function loadActivities(leadId: string) {
     setActivitiesLoading(true);
@@ -575,6 +580,22 @@ export default function LeadFunnelPage() {
       setLeadActivities(data.rows || []);
     } finally {
       setActivitiesLoading(false);
+    }
+  }
+
+  function handleLogged(activity: LoggedActivity, newStage: string | null) {
+    setLeadActivities(prev => [activity, ...prev]);
+    setShowLogForm(false);
+    setViewingLead(l => {
+      if (!l) return l;
+      const next = { ...l, needs_human: false };
+      if (newStage) next.lifecycle_stage = newStage;
+      return next;
+    });
+    if (viewingLead) {
+      setRows(prev => prev.map(r => r.id === viewingLead.id
+        ? { ...r, needs_human: false, ...(newStage ? { lifecycle_stage: newStage } : {}) }
+        : r));
     }
   }
 
@@ -864,6 +885,9 @@ export default function LeadFunnelPage() {
                             </button>
                           </div>
                           <div className="text-xs text-slate-400">+{r.phone}{r.email ? ` · ${r.email}` : ''}</div>
+                          <div className="mt-1">
+                            <QueueQuickAdd leadId={r.id} leadName={r.name} />
+                          </div>
                           {(r.children_names || []).length > 0 && (
                             <div className="text-[11px] text-slate-400 mt-0.5">Children: {(r.children_names || []).join(', ')}</div>
                           )}
@@ -1333,6 +1357,7 @@ export default function LeadFunnelPage() {
                   <p className="text-xs text-slate-400 mt-0.5">+{viewingLead.phone}{viewingLead.email ? ` · ${viewingLead.email}` : ''}</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <QueueQuickAdd leadId={viewingLead.id} leadName={viewingLead.name} />
                   <button
                     onClick={toggleBotPause}
                     disabled={pauseSaving}
@@ -1423,7 +1448,17 @@ export default function LeadFunnelPage() {
               )}
 
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1"><MessageSquare size={11} /> Contact Outcomes</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1"><MessageSquare size={11} /> Contact Outcomes</label>
+                  <button onClick={() => setShowLogForm(s => !s)} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+                    {showLogForm ? 'Cancel' : '+ Log Contact'}
+                  </button>
+                </div>
+                {showLogForm && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-2">
+                    <ContactLogForm lead={viewingLead} onLogged={handleLogged} />
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   {activitiesLoading ? (
                     <div className="flex items-center justify-center py-3 text-slate-300"><Loader2 className="animate-spin" size={14} /></div>
@@ -1434,7 +1469,7 @@ export default function LeadFunnelPage() {
                       <div key={a.id} className="flex items-center justify-between gap-2 text-[11px] bg-slate-50 rounded-lg px-2.5 py-1.5">
                         <span className="text-slate-600">
                           <b className="capitalize">{a.outcome.replace(/_/g, ' ')}</b>
-                          <span className="text-slate-400"> · {a.channel} · {a.direction}{a.created_by ? ` · ${a.created_by}` : ''}</span>
+                          <span className="text-slate-400"> · {a.channel} · {a.direction}{a.objective ? ` · ${a.objective.replace(/_/g, ' ')}` : ''}{a.created_by ? ` · ${a.created_by}` : ''}</span>
                         </span>
                         <span className="text-slate-400 shrink-0">{new Date(a.created_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short' })}</span>
                       </div>

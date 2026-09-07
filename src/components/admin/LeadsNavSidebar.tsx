@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
-  BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban,
+  BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone,
 } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
 
@@ -37,6 +37,13 @@ const RAD_COLORS: Record<RadColorKey, { text: string; bgTint: string }> = {
 // section, not one of the color-coded groups), and the Guide sits below
 // them (bottom of the "content" icons, above the divider).
 const OVERVIEW_LINK: NavItem = { href: '/admin/lead-funnel/overview', label: 'Leads Overview', icon: Gauge };
+// One click, no hover-flyout needed - this is a work-session tool used at
+// the start of every calling slot, not a reference page tucked into the
+// Leads group's list. Sits right under Overview for the same reason.
+const CALL_QUEUE_LINK: { item: NavItem; colorKey: RadColorKey } = {
+  item: { href: '/admin/lead-funnel/call-queue', label: 'Call Queue', icon: Phone },
+  colorKey: 'blue',
+};
 const GUIDE_LINK: { item: NavItem; colorKey: RadColorKey } = {
   item: { href: '/admin/lead-funnel/guide', label: 'Guide', icon: BookOpen },
   colorKey: 'purple',
@@ -123,6 +130,8 @@ function usePendingBufferCount(): number {
 export default function LeadsNavSidebar() {
   const pathname = usePathname();
   const overviewActive = isActive(pathname, OVERVIEW_LINK.href);
+  const callQueueActive = isActive(pathname, CALL_QUEUE_LINK.item.href);
+  const callQueueColors = RAD_COLORS[CALL_QUEUE_LINK.colorKey];
   const guideActive = isActive(pathname, GUIDE_LINK.item.href);
   const guideColors = RAD_COLORS[GUIDE_LINK.colorKey];
   const pendingCount = usePendingBufferCount();
@@ -141,7 +150,10 @@ export default function LeadsNavSidebar() {
       sectionLabel="Leads"
       topLink={OVERVIEW_LINK}
       groups={mobileGroups}
-      singleLinks={[{ ...GUIDE_LINK.item, colorKey: GUIDE_LINK.colorKey }]}
+      singleLinks={[
+        { ...CALL_QUEUE_LINK.item, colorKey: CALL_QUEUE_LINK.colorKey },
+        { ...GUIDE_LINK.item, colorKey: GUIDE_LINK.colorKey },
+      ]}
     />
     <nav className="hidden md:flex fixed left-0 top-0 h-full w-14 bg-white border-r border-slate-200 z-40 flex-col items-center py-4">
       <div className="flex-1 flex flex-col items-center gap-2">
@@ -153,6 +165,14 @@ export default function LeadsNavSidebar() {
           className={`w-10 h-10 rounded-xl flex items-center justify-center text-slate-900 transition-colors ${overviewActive ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
         >
           <OVERVIEW_LINK.icon size={18} />
+        </Link>
+
+        <Link
+          href={CALL_QUEUE_LINK.item.href}
+          title={CALL_QUEUE_LINK.item.label}
+          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${callQueueActive ? `${callQueueColors.bgTint} ${callQueueColors.text}` : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
+        >
+          <CALL_QUEUE_LINK.item.icon size={18} />
         </Link>
 
         <div className="w-8 border-t border-slate-100 my-1" />

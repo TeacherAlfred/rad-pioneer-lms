@@ -8,6 +8,7 @@ import { TodayBanner } from "../_components/TodayBanner";
 import { LIFECYCLE_STAGES, LIFECYCLE_STAGE_LABELS, VALID_STAGE_TRANSITIONS } from "@/lib/funnelStages";
 import { getSourceLane, SourceLane } from "@/lib/leadSourceLane";
 import { QUALIFICATION_STAGES, isLeadQualified, nextStageToCheck } from "@/lib/leadQualification";
+import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
 
 const LANE_OPTIONS: (SourceLane | "All")[] = ["All", "Meta", "Irene", "Warm List", "Organic", "Unknown"];
 const HEALTH_OPTIONS = ["All", "active", "stalled", "dormant"];
@@ -182,10 +183,14 @@ export default function LeadJourneyPage() {
                           <span>{daysAgo(lead.stage_entered_at)}d in stage</span>
                         </div>
                         {lead.phone && (
-                          <a href={`https://wa.me/${lead.phone.replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[10px] text-stone-500 hover:text-emerald-600 mb-3">
+                          <a href={`https://wa.me/${lead.phone.replace(/\D/g, "")}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-[10px] text-stone-500 hover:text-emerald-600 mb-2">
                             <Phone size={11} /> {lead.phone}
                           </a>
                         )}
+
+                        <div className="mb-3">
+                          <QueueQuickAdd leadId={lead.id} leadName={lead.name} />
+                        </div>
 
                         {(() => {
                           const checks = lead.qualification_checks || [];
