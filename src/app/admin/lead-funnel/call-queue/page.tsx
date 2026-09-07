@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, ArrowLeft, RefreshCcw, Phone, SkipForward, X, Pin, AlertTriangle } from "lucide-react";
+import { Loader2, ArrowLeft, RefreshCcw, Phone, SkipForward, X, Pin, AlertTriangle, Target, Inbox, Clock, CheckCircle2, Pencil, Info } from "lucide-react";
 import { LeadPicker, type PickerLead } from "@/components/admin/LeadPicker";
 import { ContactLogForm } from "@/components/admin/ContactLogForm";
 
@@ -30,6 +30,23 @@ type QueueRow = {
 
 type StaleFlag = { id: string; lead_id: string; lead_name: string | null; reason: string };
 
+type QueueStats = {
+  weekStart: string;
+  target: number | null;
+  totalInQueue: number;
+  waitingToProcess: number;
+  processedByDay: Record<string, number>;
+  processedThisWeek: number;
+};
+
+const DAY_LABELS: { key: string; label: string }[] = [
+  { key: 'mon', label: 'Mon' },
+  { key: 'tue', label: 'Tue' },
+  { key: 'wed', label: 'Wed' },
+  { key: 'thu', label: 'Thu' },
+  { key: 'fri', label: 'Fri' },
+];
+
 function urgencyLabel(lead: QueueLead | null): { text: string; className: string } | null {
   if (!lead) return null;
   if (lead.needs_human) return { text: "Needs Reply", className: "bg-amber-50 text-amber-600" };
@@ -52,6 +69,48 @@ export default function CallQueuePage() {
   const [loading, setLoading] = useState(true);
   const [loggingRowId, setLoggingRowId] = useState<string | null>(null);
 
+  const [stats, setStats] = useState<QueueStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [editingTarget, setEditingTarget] = useState(false);
+  const [targetInput, setTargetInput] = useState('');
+  const [savingTarget, setSavingTarget] = useState(false);
+
+  async function loadStats() {
+    setStatsLoading(true);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/call-queue/stats');
+      const data = await res.json();
+      setStats(data);
+    } finally {
+      setStatsLoading(false);
+    }
+  }
+
+  function openEditTarget() {
+    setTargetInput(stats?.target != null ? String(stats.target) : '');
+    setEditingTarget(true);
+  }
+
+  async function saveTarget() {
+    const target = Number(targetInput);
+    if (!Number.isFinite(target) || target < 0) return;
+    setSavingTarget(true);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/call-queue/stats', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStats(prev => prev ? { ...prev, target: data.row.target } : prev);
+        setEditingTarget(false);
+      }
+    } finally {
+      setSavingTarget(false);
+    }
+  }
+
   const [addLead, setAddLead] = useState<PickerLead | null>(null);
   const [addTargetDate, setAddTargetDate] = useState(todayIso());
   const [addPriority, setAddPriority] = useState("");
@@ -70,7 +129,7 @@ export default function CallQueuePage() {
     }
   }
 
-  useEffect(() => { loadQueue(); }, []);
+  useEffect(() => { loadQueue(); loadStats(); }, []);
 
   async function addToQueue(leadId: string, targetDate?: string, manualPriority?: number) {
     setAddError(null);
@@ -84,7 +143,7 @@ export default function CallQueuePage() {
       setAddError(data.error || "Failed to add to queue");
       return;
     }
-    await loadQueue();
+    await Promise.all([loadQueue(), loadStats()]);
   }
 
   async function handleAddSelected() {
@@ -102,6 +161,7 @@ export default function CallQueuePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, status: "skipped" }),
     });
+    loadStats();
   }
 
   async function remove(id: string) {
@@ -111,6 +171,7 @@ export default function CallQueuePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
+    loadStats();
   }
 
   async function handleLogged(rowId: string) {
@@ -121,6 +182,7 @@ export default function CallQueuePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: rowId, status: "done" }),
     });
+    loadStats();
   }
 
   function dismissStale(id: string) {
@@ -133,7 +195,7 @@ export default function CallQueuePage() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
             <Link href="/admin/lead-funnel/overview" className="inline-flex items-center gap-1 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 mb-2">
@@ -142,10 +204,78 @@ export default function CallQueuePage() {
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">Call Queue</h1>
             <p className="text-sm text-slate-500 mt-1">Pre-loaded, ordered by urgency. Work top to bottom, log each outcome, move on.</p>
           </div>
-          <button onClick={loadQueue} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 hover:border-slate-400">
+          <button onClick={() => { loadQueue(); loadStats(); }} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 border border-slate-200 hover:border-slate-400">
             <RefreshCcw size={12} /> Quick Scan
           </button>
         </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div className="bg-white rounded-2xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <Target size={16} className="text-purple-500" />
+              {!editingTarget && (
+                <button onClick={openEditTarget} className="text-slate-300 hover:text-slate-600"><Pencil size={12} /></button>
+              )}
+            </div>
+            {editingTarget ? (
+              <div className="mt-1.5 flex items-center gap-1">
+                <input
+                  autoFocus
+                  type="number"
+                  min={0}
+                  value={targetInput}
+                  onChange={e => setTargetInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveTarget(); if (e.key === 'Escape') setEditingTarget(false); }}
+                  className="w-16 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-lg font-black outline-none focus:border-slate-400"
+                />
+                <button onClick={saveTarget} disabled={savingTarget} className="text-[10px] font-black uppercase text-white bg-slate-900 rounded-lg px-2 py-1.5 disabled:opacity-50">
+                  {savingTarget ? <Loader2 size={11} className="animate-spin" /> : 'Save'}
+                </button>
+              </div>
+            ) : (
+              <div className="text-2xl font-black mt-1.5 text-slate-900">{statsLoading ? '—' : stats?.target ?? <button onClick={openEditTarget} className="text-sm font-bold text-purple-500 underline">Set target</button>}</div>
+            )}
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Weekly Target</div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4">
+            <Inbox size={16} className="text-slate-400" />
+            <div className="text-2xl font-black mt-1.5 text-slate-900">{statsLoading ? '—' : stats?.totalInQueue}</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Total In Queue</div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4">
+            <Clock size={16} className="text-amber-500" />
+            <div className="text-2xl font-black mt-1.5 text-slate-900">{statsLoading ? '—' : stats?.waitingToProcess}</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Waiting To Process</div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-4">
+            <CheckCircle2 size={16} className="text-emerald-600" />
+            <div className="text-2xl font-black mt-1.5 text-slate-900">
+              {statsLoading ? '—' : stats?.processedThisWeek}
+              {stats?.target != null && <span className="text-sm font-bold text-slate-400"> / {stats.target}</span>}
+            </div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Processed This Week</div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-3">
+          <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Processed Per Day This Week</h3>
+          <div className="grid grid-cols-5 gap-2">
+            {DAY_LABELS.map(d => (
+              <div key={d.key} className="bg-slate-50 rounded-xl p-2.5 text-center">
+                <div className="text-lg font-black text-slate-900">{statsLoading ? '—' : stats?.processedByDay[d.key] ?? 0}</div>
+                <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-0.5">{d.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <p className="flex items-start gap-1.5 text-[11px] text-slate-400 mb-6">
+          <Info size={12} className="shrink-0 mt-0.5" />
+          These numbers are strictly outbound - contact attempts you logged while working this queue. They never include replying to an inbound message (that&apos;s tracked separately on Message Activity).
+        </p>
 
         {(stale.length > 0 || suggestions.length > 0) && (
           <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
