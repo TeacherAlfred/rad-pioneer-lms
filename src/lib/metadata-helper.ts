@@ -138,7 +138,7 @@ async function searchOpenLibrary(params: Record<string, string>, limit = 4) {
   const url = new URLSearchParams({
     ...params,
     limit: String(limit),
-    fields: "title,author_name,cover_i,cover_edition_key,edition_key,key",
+    fields: "title,author_name,cover_i,cover_edition_key,edition_key,key,subject",
   });
 
   try {
@@ -166,7 +166,7 @@ async function searchOpenLibrary(params: Record<string, string>, limit = 4) {
  * vendor-tag noise ("z-library.sk 1lib.sk z-lib.sk"). Feeding it the cleanly
  * parsed title/author instead resolves the large majority of cases.
  */
-async function findCandidates(title: string, author: string | null, limit = 4) {
+export async function findCandidates(title: string, author: string | null, limit = 4) {
   if (author) {
     const tier1 = await searchOpenLibrary({ q: `${title} ${author}` }, limit);
     if (tier1.length > 0) return tier1;
@@ -330,7 +330,9 @@ export async function fetchExactOpenLibraryEdition(urlOrId: string) {
     } catch (e) { /* ignore */ }
   }
 
-  // 2. Fetch Work Description (The long synopsis)
+  // 2. Fetch Work Description (The long synopsis) + subjects (genre data lives
+  // on the work, not reliably on the edition).
+  let subjects: string[] = [];
   if (edData.works && edData.works.length > 0) {
     try {
       const workKey = edData.works[0].key;
@@ -339,8 +341,10 @@ export async function fetchExactOpenLibraryEdition(urlOrId: string) {
       if (workData.description) {
         workDesc = typeof workData.description === 'string' ? workData.description : (workData.description.value || "");
       }
+      if (Array.isArray(workData.subjects)) subjects = workData.subjects;
     } catch (e) { /* ignore */ }
   }
+  if (subjects.length === 0 && Array.isArray(edData.subjects)) subjects = edData.subjects;
 
   let editionDesc = "";
   if (edData.description) {
@@ -360,6 +364,7 @@ export async function fetchExactOpenLibraryEdition(urlOrId: string) {
     authors: [authorName],
     synopses: [finalSynopsis],
     coverIds: coverId ? [coverId] : [],
+    subjects,
     scan_status: 'success'
   };
 }

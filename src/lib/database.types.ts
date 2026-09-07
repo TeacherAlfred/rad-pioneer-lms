@@ -7241,11 +7241,13 @@ export type Database = {
       rad_books: {
         Row: {
           author: string | null
+          categorization_status: string
           cover_key: string | null
           created_at: string | null
           epub_locations: string | null
           file_key: string | null
           file_type: string | null
+          genre_metadata: Json | null
           has_digital: boolean | null
           has_physical: boolean | null
           id: string
@@ -7263,11 +7265,13 @@ export type Database = {
         }
         Insert: {
           author?: string | null
+          categorization_status?: string
           cover_key?: string | null
           created_at?: string | null
           epub_locations?: string | null
           file_key?: string | null
           file_type?: string | null
+          genre_metadata?: Json | null
           has_digital?: boolean | null
           has_physical?: boolean | null
           id?: string
@@ -7285,11 +7289,13 @@ export type Database = {
         }
         Update: {
           author?: string | null
+          categorization_status?: string
           cover_key?: string | null
           created_at?: string | null
           epub_locations?: string | null
           file_key?: string | null
           file_type?: string | null
+          genre_metadata?: Json | null
           has_digital?: boolean | null
           has_physical?: boolean | null
           id?: string

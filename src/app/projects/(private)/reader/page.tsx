@@ -30,7 +30,7 @@ type AlphaFilterType = "none" | "title" | "author";
 export default function LibraryDashboard() {
   const searchParams = useSearchParams();
   const [books, setBooks] = useState<BookWithTags[]>([]);
-  const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
+  const [tags, setTags] = useState<{ id: string; name: string; category?: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [selectedBookDetails, setSelectedBookDetails] = useState<BookWithTags | null>(null);

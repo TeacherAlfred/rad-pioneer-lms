@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/utils/supabase/server"; // Adjust path to your Supabase server client factory
 import { PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, BUCKET_NAME } from "@/lib/storage";
+import { MAX_GENRES_PER_BOOK, UNCATEGORIZED_GENRE } from "@/lib/genre-vocabulary";
+import { fetchAndStoreBookGenres } from "@/lib/genre-helper";
 
 export interface BookWithTags {
   id: string;
@@ -25,7 +27,7 @@ export interface BookWithTags {
   last_page_number?: number | null;
   last_cfi?: string | null;
   last_read_at?: string | null;
-  tags: { id: string; name: string }[];
+  tags: { id: string; name: string; category?: string | null }[];
   /** Only populated by getDuplicateGroups() - fetched on-demand from R2, not persisted. */
   fileSizeBytes?: number | null;
 }
@@ -48,7 +50,7 @@ export async function getLibraryBooks(): Promise<BookWithTags[]> {
       .select(`
         *,
         rad_book_tags (
-          rad_tags (id, name)
+          rad_tags (id, name, category)
         )
       `)
       .eq("marked_for_deletion", false)
@@ -88,6 +90,7 @@ export async function getAllTags() {
   const { data, error } = await supabase
     .from("rad_tags")
     .select("*")
+    .is("category", null)
     .order("name", { ascending: true });
 
   if (error) {
@@ -95,6 +98,230 @@ export async function getAllTags() {
     return [];
   }
   return data || [];
+}
+
+export interface GenreCategorizationStats {
+  total: number;
+  success: number;
+  needsReview: number;
+  failed: number;
+  pending: number;
+}
+
+/**
+ * Counts of rad_books by categorization_status, for the progress readout on
+ * the v2 Settings "Genre Categorization" card. Excludes books marked for
+ * deletion, same scope as the /api/categorize-genres batch job.
+ */
+export async function getGenreCategorizationStats(): Promise<GenreCategorizationStats> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("rad_books")
+    .select("categorization_status")
+    .eq("marked_for_deletion", false);
+
+  if (error) {
+    console.error("Error fetching categorization stats:", error);
+    return { total: 0, success: 0, needsReview: 0, failed: 0, pending: 0 };
+  }
+
+  const rows = data || [];
+  return {
+    total: rows.length,
+    success: rows.filter((r) => r.categorization_status === "success").length,
+    needsReview: rows.filter((r) => r.categorization_status === "needs_review").length,
+    failed: rows.filter((r) => r.categorization_status === "failed").length,
+    pending: rows.filter((r) => r.categorization_status === "pending").length,
+  };
+}
+
+export interface GenreCategorizeTarget {
+  id: string;
+  title: string;
+  author: string | null;
+}
+
+/**
+ * Next batch of books needing genre categorization, for the client-driven
+ * one-book-per-call loop in Settings. Deliberately not a single server-side
+ * loop over the whole batch (that was /api/categorize-genres, since
+ * removed) - a 100-book batch at ~1.5s/book is 2.5+ minutes, well past what
+ * a serverless function should hold open in one request. Per-book calls
+ * keep each round-trip fast and give the client real progress to show.
+ */
+export async function getBooksToCategorize(limit: number): Promise<GenreCategorizeTarget[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("rad_books")
+    .select("id, title, author, suggested_metadata")
+    .in("categorization_status", ["pending", "failed"])
+    .eq("marked_for_deletion", false)
+    .limit(limit);
+
+  if (error) {
+    console.error("Error fetching books to categorize:", error);
+    return [];
+  }
+
+  return (data || []).map((b: any) => ({
+    id: b.id,
+    title: b.suggested_metadata?.titles?.[0] || b.title,
+    author: b.suggested_metadata?.authors?.[0] || b.author,
+  }));
+}
+
+/**
+ * Categorizes a single book's genre - the per-book unit the Settings page
+ * loop calls repeatedly, same shape as autoScanSingleBook for metadata.
+ */
+export async function categorizeOneBook(bookId: string, title: string, author: string | null) {
+  const supabase = await createClient();
+  const { data: genreTags, error } = await supabase.from("rad_tags").select("id, name").eq("category", "genre");
+  if (error) throw new Error(`Failed to load genre vocabulary: ${error.message}`);
+  const genreTagIds = new Map((genreTags || []).map((t) => [t.name, t.id]));
+  return fetchAndStoreBookGenres(bookId, title, author, genreTagIds);
+}
+
+export interface GenreReviewBook {
+  id: string;
+  title: string;
+  author: string | null;
+  cover_key: string | null;
+  categorization_status: string;
+  reason: string | null;
+  genreTagIds: string[];
+}
+
+/**
+ * Books whose automated genre pass didn't land cleanly (no Open Library
+ * match, or a transient failure), for the "Needs Review" list on the v2
+ * Settings categorization card.
+ */
+export async function getGenreReviewQueue(): Promise<GenreReviewBook[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("rad_books")
+    .select(`
+      id, title, author, cover_key, categorization_status, genre_metadata,
+      rad_book_tags ( rad_tags (id, name, category) )
+    `)
+    .in("categorization_status", ["needs_review", "failed"])
+    .eq("marked_for_deletion", false)
+    .order("title", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching genre review queue:", error);
+    return [];
+  }
+
+  return (data || []).map((book: any) => ({
+    id: book.id,
+    title: book.title,
+    author: book.author,
+    cover_key: book.cover_key,
+    categorization_status: book.categorization_status,
+    reason: book.genre_metadata?.reason ?? null,
+    genreTagIds: (book.rad_book_tags || [])
+      .map((bt: any) => bt.rad_tags)
+      .filter((t: any) => t && t.category === "genre")
+      .map((t: any) => t.id),
+  }));
+}
+
+/**
+ * The pickable curated genre vocabulary (excludes the 'uncategorized'
+ * catch-all, which is a fallback state, not something to hand-pick).
+ */
+export async function getGenreOptions(): Promise<{ id: string; name: string }[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("rad_tags")
+    .select("id, name")
+    .eq("category", "genre")
+    .neq("name", UNCATEGORIZED_GENRE)
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching genre options:", error);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Manually sets a book's genre(s), same enforcement/replace-scoped-to-genre-
+ * tags shape as the automated fetchAndStoreBookGenres pipeline. Falls back
+ * to the 'uncategorized' tag if cleared to zero, preserving the invariant
+ * that every 'success' book carries at least one genre-category tag.
+ */
+export async function setBookGenres(bookId: string, genreTagIds: string[]): Promise<void> {
+  const supabase = await createClient();
+
+  const { data: genreTags, error: tagsError } = await supabase
+    .from("rad_tags")
+    .select("id, name")
+    .eq("category", "genre");
+  if (tagsError) throw new Error(`Failed to load genre vocabulary: ${tagsError.message}`);
+
+  const allGenreTags = genreTags || [];
+  const validIds = new Set(allGenreTags.map((t) => t.id));
+  const idToName = new Map(allGenreTags.map((t) => [t.id, t.name]));
+  const uncategorizedTag = allGenreTags.find((t) => t.name === UNCATEGORIZED_GENRE);
+
+  const cleanIds = genreTagIds.filter((id) => validIds.has(id) && idToName.get(id) !== UNCATEGORIZED_GENRE);
+  if (cleanIds.length > MAX_GENRES_PER_BOOK) {
+    throw new Error(`A book can carry at most ${MAX_GENRES_PER_BOOK} genres.`);
+  }
+
+  const finalIds = cleanIds.length > 0 ? cleanIds : uncategorizedTag ? [uncategorizedTag.id] : [];
+
+  const allGenreTagIds = Array.from(validIds);
+  if (allGenreTagIds.length > 0) {
+    await supabase.from("rad_book_tags").delete().eq("book_id", bookId).in("tag_id", allGenreTagIds);
+  }
+  if (finalIds.length > 0) {
+    await supabase.from("rad_book_tags").insert(finalIds.map((tag_id) => ({ book_id: bookId, tag_id })));
+  }
+
+  const matchedSlugs = finalIds.map((id) => idToName.get(id)).filter((n): n is string => !!n);
+  const { error: updateError } = await supabase
+    .from("rad_books")
+    .update({
+      categorization_status: "success",
+      genre_metadata: { subjects: [], matchedSlugs, reason: "manual_override", checked_at: new Date().toISOString() },
+    })
+    .eq("id", bookId);
+  if (updateError) throw new Error(`Failed to save genres: ${updateError.message}`);
+}
+
+/**
+ * Corrects a book's title/author directly - for the Needs Review queue,
+ * where the automated genre pass may have had nothing to search against
+ * because the parsed-from-filename title/author was wrong, independent of
+ * whether an Open Library match is ever found.
+ */
+export async function updateBookBasicInfo(bookId: string, title: string, author: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("rad_books")
+    .update({ title: title.trim(), author: author.trim() || null })
+    .eq("id", bookId);
+  if (error) throw new Error(`Failed to update book: ${error.message}`);
+}
+
+/**
+ * Applies a hand-reviewed Open Library override in one step: full metadata
+ * (title/author/synopsis/cover, via the same accept path the Rescan Review
+ * modal uses) plus genre tags. Nothing is written until this is called -
+ * fetching a URL's data for preview (syncExactOpenLibraryUrl) is a separate,
+ * read-only step, so the admin always reviews before anything is permanent.
+ */
+export async function applyOpenLibraryOverride(
+  bookId: string,
+  fields: { title: string; author: string; synopsis: string; coverId: number | null; genreTagIds: string[] }
+): Promise<void> {
+  await applyReviewedMetadata(bookId, fields.title, fields.author, fields.synopsis, fields.coverId);
+  await setBookGenres(bookId, fields.genreTagIds);
 }
 
 /**
@@ -326,7 +553,7 @@ export interface CommandPaletteBook {
   title: string;
   author: string | null;
   status: BookWithTags['status'];
-  tags: { id: string; name: string }[];
+  tags: { id: string; name: string; category?: string | null }[];
 }
 
 /**
