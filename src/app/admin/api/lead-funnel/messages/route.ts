@@ -13,7 +13,7 @@ const LIMIT = 2000;
 export async function GET() {
   const [{ data: messages, error: msgError }, { data: leads, error: leadError }, { data: respondentChecks, error: checksError }] = await Promise.all([
     supabaseAdmin.from('messages').select('*').order('created_at', { ascending: false }).limit(LIMIT),
-    supabaseAdmin.from('leads').select('id, phone, name, email, school, tags, bot_paused'),
+    supabaseAdmin.from('leads').select('id, phone, name, email, school, tags, bot_paused, is_blocked, blocked_reason'),
     supabaseAdmin.from('lead_qualification_checks').select('lead_id, passed').eq('stage_key', 'respondent_is_parent'),
   ]);
 
@@ -37,6 +37,8 @@ export async function GET() {
       lead_school: lead?.school || null,
       lead_tags: lead?.tags || [],
       lead_bot_paused: !!lead?.bot_paused,
+      lead_is_blocked: !!lead?.is_blocked,
+      lead_blocked_reason: lead?.blocked_reason || null,
       lead_respondent_is_parent: respondentByLead.has(m.lead_id) ? respondentByLead.get(m.lead_id) : null,
     };
   });

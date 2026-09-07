@@ -64,7 +64,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused } = body;
+    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused, is_blocked, blocked_reason } = body;
     // "class" is a reserved word, can't destructure it bare above.
     const className = body.class;
 
@@ -115,6 +115,11 @@ export async function PATCH(req: Request) {
     if (bot_paused !== undefined) {
       update.bot_paused = !!bot_paused;
       update.bot_paused_at = bot_paused ? new Date().toISOString() : null;
+    }
+    if (is_blocked !== undefined) {
+      update.is_blocked = !!is_blocked;
+      update.blocked_at = is_blocked ? new Date().toISOString() : null;
+      update.blocked_reason = is_blocked ? (blocked_reason || null) : null;
     }
     if (lifecycle_stage !== undefined) {
       update.lifecycle_stage = lifecycle_stage;

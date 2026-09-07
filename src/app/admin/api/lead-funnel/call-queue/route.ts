@@ -100,6 +100,14 @@ export async function POST(req: Request) {
     if (!leadId) return NextResponse.json({ error: 'leadId is required' }, { status: 400 });
 
     const supabase = supabaseAdmin();
+
+    // Belt-and-suspenders: a blocked lead should never enter the queue,
+    // even from a page whose row shape doesn't already know is_blocked.
+    const { data: lead } = await supabase.from('leads').select('is_blocked').eq('id', leadId).maybeSingle();
+    if (lead?.is_blocked) {
+      return NextResponse.json({ error: 'This lead is blocked and cannot be queued.' }, { status: 403 });
+    }
+
     const { data, error } = await supabase
       .from('lead_call_queue')
       .insert([{

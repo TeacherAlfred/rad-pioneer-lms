@@ -482,6 +482,21 @@ export async function POST(request: Request) {
 
               if (!lead) continue;
 
+              // --- BLOCKED: abusive/gibberish contact, admin already saw it and
+              // hit Block from Message Activity. Hard stop before anything else -
+              // no recency/stage bump (so they stay cold in the urgency signals
+              // the call queue sorts by), no bot logic, no admin notification.
+              // Still logged to `messages` below for an audit trail, just
+              // invisible to every downstream view/alert from here on.
+              if (lead.is_blocked) {
+                await supabase.from('messages').insert([{
+                  lead_id: lead.id,
+                  direction: 'inbound',
+                  body: messageText
+                }]);
+                continue;
+              }
+
               // Any inbound message is fresh signal of warmth, regardless of what
               // it says - update recency, and forward-only bump 'new' to 'engaged'
               // once this isn't their very first message (the first message is

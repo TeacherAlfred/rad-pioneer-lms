@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
   Users2, Search, MessageSquare, Reply, X, VolumeX, Plus, Sparkles,
-  ChevronDown, ChevronRight, Pencil,
+  ChevronDown, ChevronRight, Pencil, Ban, ShieldCheck,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -23,6 +23,8 @@ type MessageRow = {
   lead_school?: string | null;
   lead_tags?: string[] | null;
   lead_bot_paused?: boolean;
+  lead_is_blocked?: boolean;
+  lead_blocked_reason?: string | null;
   lead_respondent_is_parent?: boolean | null;
   status?: string | null;
   status_updated_at?: string | null;
@@ -39,6 +41,8 @@ type LeadGroup = {
   leadEmail: string | null;
   leadSchool: string | null;
   leadBotPaused: boolean;
+  leadIsBlocked: boolean;
+  leadBlockedReason: string | null;
   respondentIsParent: boolean | null;
   messages: MessageRow[];
   inboundCount: number;
@@ -79,6 +83,9 @@ function formatStatusTime(iso: string | null | undefined) {
 const INHOUSE_TAG = 'Inhouse';
 function isInhouseRow(m: MessageRow) {
   return (m.lead_tags || []).some(t => t.toLowerCase() === INHOUSE_TAG.toLowerCase());
+}
+function isBlockedRow(m: MessageRow) {
+  return !!m.lead_is_blocked;
 }
 
 // Everything sent to a lead is logged into `messages` as bracketed text
@@ -147,6 +154,7 @@ export default function MessageActivityPage() {
   const [kindFilter, setKindFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [showInhouse, setShowInhouse] = useState(false);
+  const [showBlocked, setShowBlocked] = useState(false);
 
   async function loadMessages() {
     try {
@@ -334,8 +342,39 @@ export default function MessageActivityPage() {
     }
   }
 
-  const statsRows = useMemo(() => rows.filter(r => !isInhouseRow(r)), [rows]);
-  const inhouseCount = rows.length - statsRows.length;
+  // Block an abusive/gibberish contact - webhook checks leads.is_blocked
+  // before any bot logic runs from here on (see whatsapp-webhook/route.ts),
+  // so this is the one place that actually stops them, not just hides them.
+  const [blockingId, setBlockingId] = useState<string | null>(null);
+  async function toggleBlocked(group: LeadGroup) {
+    const next = !group.leadIsBlocked;
+    let reason: string | null = null;
+    if (next) {
+      reason = window.prompt(`Why block ${group.leadName || 'this contact'}? (shown if you look back later)`) || null;
+      if (reason === null) return; // cancelled
+    }
+    setBlockingId(group.leadId);
+    try {
+      const res = await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: group.leadId, is_blocked: next, blocked_reason: reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update.');
+      setRows(prev => prev.map(r => r.lead_id === group.leadId
+        ? { ...r, lead_is_blocked: data.row.is_blocked, lead_blocked_reason: data.row.blocked_reason }
+        : r));
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setBlockingId(null);
+    }
+  }
+
+  const statsRows = useMemo(() => rows.filter(r => !isInhouseRow(r) && !isBlockedRow(r)), [rows]);
+  const inhouseCount = rows.filter(r => isInhouseRow(r) && !isBlockedRow(r)).length;
+  const blockedCount = rows.filter(isBlockedRow).length;
 
   const parsedStatsRows = useMemo(() => statsRows.map(r => ({ row: r, parsed: parseMessage(r) })), [statsRows]);
 
@@ -385,7 +424,7 @@ export default function MessageActivityPage() {
   // rather than changing what /admin/api/lead-funnel/messages returns, so
   // the flat `rows` still backs the stats/breakdown cards above untouched.
   const groups = useMemo<LeadGroup[]>(() => {
-    const source = showInhouse ? rows : statsRows;
+    const source = rows.filter(r => (showInhouse || !isInhouseRow(r)) && (showBlocked || !isBlockedRow(r)));
     const byLead = new Map<string, MessageRow[]>();
     for (const r of source) {
       if (!byLead.has(r.lead_id)) byLead.set(r.lead_id, []);
@@ -401,6 +440,8 @@ export default function MessageActivityPage() {
         leadEmail: sorted[0]?.lead_email || null,
         leadSchool: sorted[0]?.lead_school || null,
         leadBotPaused: !!sorted[0]?.lead_bot_paused,
+        leadIsBlocked: !!sorted[0]?.lead_is_blocked,
+        leadBlockedReason: sorted[0]?.lead_blocked_reason || null,
         respondentIsParent: sorted[0]?.lead_respondent_is_parent ?? null,
         messages: sorted,
         inboundCount: sorted.filter(m => m.direction === 'inbound').length,
@@ -411,7 +452,7 @@ export default function MessageActivityPage() {
         lastDirection: last?.direction || null,
       };
     });
-  }, [rows, statsRows, showInhouse]);
+  }, [rows, showInhouse, showBlocked]);
 
   // Filters decide which conversations show up at all (any message in the
   // thread matching is enough) - the expanded thread itself always shows
@@ -453,7 +494,7 @@ export default function MessageActivityPage() {
 
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, search, showInhouse]);
+  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, search, showInhouse, showBlocked]);
   const totalPages = Math.max(1, Math.ceil(sortedGroups.length / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
   const pagedGroups = useMemo(
@@ -526,6 +567,9 @@ export default function MessageActivityPage() {
               <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
                 <input type="checkbox" checked={showInhouse} onChange={e => setShowInhouse(e.target.checked)} /> Show inhouse ({inhouseCount})
               </label>
+              <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
+                <input type="checkbox" checked={showBlocked} onChange={e => setShowBlocked(e.target.checked)} /> Show blocked ({blockedCount})
+              </label>
               <span className="text-xs text-slate-400 ml-auto">{filteredGroups.length} contact{filteredGroups.length === 1 ? '' : 's'} (of {(showInhouse ? rows.length : statsRows.length)} messages)</span>
             </div>
 
@@ -569,6 +613,11 @@ export default function MessageActivityPage() {
                                     <VolumeX size={9} /> Paused
                                   </span>
                                 )}
+                                {g.leadIsBlocked && (
+                                  <span title={g.leadBlockedReason || 'Blocked - no bot replies, no admin alerts'} className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-600">
+                                    <Ban size={9} /> Blocked
+                                  </span>
+                                )}
                               </div>
                               <div className="text-xs text-slate-400">+{g.leadPhone}</div>
                             </td>
@@ -586,7 +635,7 @@ export default function MessageActivityPage() {
                             </td>
                             <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                               <div className="inline-flex items-center gap-1.5">
-                                <QueueQuickAdd leadId={g.leadId} leadName={g.leadName} />
+                                {!g.leadIsBlocked && <QueueQuickAdd leadId={g.leadId} leadName={g.leadName} />}
                                 <button
                                   onClick={() => openEditLead(g)}
                                   title="Edit lead details"
@@ -600,6 +649,17 @@ export default function MessageActivityPage() {
                                   className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
                                 >
                                   <Reply size={12} /> Reply
+                                </button>
+                                <button
+                                  onClick={() => toggleBlocked(g)}
+                                  disabled={blockingId === g.leadId}
+                                  title={g.leadIsBlocked ? 'Unblock - resume normal bot/admin handling' : 'Block - abusive/gibberish sender, stops all bot replies and admin alerts'}
+                                  className={`inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg disabled:opacity-50 ${
+                                    g.leadIsBlocked ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-rose-500 bg-slate-50 hover:bg-rose-50'
+                                  }`}
+                                >
+                                  {blockingId === g.leadId ? <Loader2 size={12} className="animate-spin" /> : g.leadIsBlocked ? <ShieldCheck size={12} /> : <Ban size={12} />}
+                                  {g.leadIsBlocked ? 'Unblock' : 'Block'}
                                 </button>
                               </div>
                             </td>

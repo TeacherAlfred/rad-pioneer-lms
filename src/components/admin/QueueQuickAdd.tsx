@@ -111,6 +111,7 @@ export function QueueQuickAdd({
       setShowConfirm(false);
     } catch (err: any) {
       setError(err.message);
+      if (!showConfirm) alert(err.message);
     } finally {
       setAdding(false);
     }
