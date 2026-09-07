@@ -26,6 +26,27 @@ export default function SystemsStatusPage() {
   const [systems, setSystems] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [expandedSystems, setExpandedSystems] = useState<Set<string>>(new Set());
+  const [doneShownSystems, setDoneShownSystems] = useState<Set<string>>(new Set());
+  const VISIBLE_ITEM_LIMIT = 5;
+
+  function toggleExpanded(systemKey: string) {
+    setExpandedSystems((prev) => {
+      const next = new Set(prev);
+      if (next.has(systemKey)) next.delete(systemKey);
+      else next.add(systemKey);
+      return next;
+    });
+  }
+
+  function toggleDoneShown(systemKey: string) {
+    setDoneShownSystems((prev) => {
+      const next = new Set(prev);
+      if (next.has(systemKey)) next.delete(systemKey);
+      else next.add(systemKey);
+      return next;
+    });
+  }
 
   useEffect(() => {
     loadData();
@@ -96,23 +117,62 @@ export default function SystemsStatusPage() {
               </div>
               <p className="text-xs text-stone-500 mb-4">{system.purpose}</p>
               <div className="space-y-2">
-                {(itemsBySystem[system.key] || []).map((item) => {
-                  const Icon = STATE_ICON[item.state];
+                {(() => {
+                  const allItems = itemsBySystem[system.key] || [];
+                  const activeItems = allItems.filter((i) => i.state !== "done");
+                  const doneItems = allItems.filter((i) => i.state === "done");
+                  const isExpanded = expandedSystems.has(system.key);
+                  const isDoneShown = doneShownSystems.has(system.key);
+                  const visibleActive = isExpanded ? activeItems : activeItems.slice(0, VISIBLE_ITEM_LIMIT);
+                  const hiddenActiveCount = activeItems.length - visibleActive.length;
+                  const visibleItems = isDoneShown ? [...visibleActive, ...doneItems] : visibleActive;
+
                   return (
-                    <button
-                      key={item.id}
-                      onClick={() => cycleState(item)}
-                      disabled={savingId === item.id}
-                      className="w-full text-left flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-stone-50 transition-colors"
-                    >
-                      <Icon size={16} className={`shrink-0 mt-0.5 ${STATE_COLOR[item.state]}`} />
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-stone-800">{item.label}</p>
-                        {item.notes && <p className="text-[10px] text-stone-400 mt-0.5">{item.notes}</p>}
-                      </div>
-                    </button>
+                    <>
+                      {visibleItems.map((item) => {
+                        const Icon = STATE_ICON[item.state];
+                        return (
+                          <button
+                            key={item.id}
+                            onClick={() => cycleState(item)}
+                            disabled={savingId === item.id}
+                            className="w-full text-left flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-stone-50 transition-colors"
+                          >
+                            <Icon size={16} className={`shrink-0 mt-0.5 ${STATE_COLOR[item.state]}`} />
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-stone-800">{item.label}</p>
+                              {item.notes && <p className="text-[10px] text-stone-400 mt-0.5">{item.notes}</p>}
+                            </div>
+                          </button>
+                        );
+                      })}
+                      {hiddenActiveCount > 0 && (
+                        <button
+                          onClick={() => toggleExpanded(system.key)}
+                          className="w-full text-left px-2.5 py-1.5 text-[10px] font-bold text-stone-400 hover:text-stone-600 transition-colors"
+                        >
+                          {`View more (${hiddenActiveCount})`}
+                        </button>
+                      )}
+                      {isExpanded && activeItems.length > VISIBLE_ITEM_LIMIT && (
+                        <button
+                          onClick={() => toggleExpanded(system.key)}
+                          className="w-full text-left px-2.5 py-1.5 text-[10px] font-bold text-stone-400 hover:text-stone-600 transition-colors"
+                        >
+                          View less
+                        </button>
+                      )}
+                      {doneItems.length > 0 && (
+                        <button
+                          onClick={() => toggleDoneShown(system.key)}
+                          className="w-full text-left px-2.5 py-1.5 text-[10px] font-bold text-emerald-600/70 hover:text-emerald-700 transition-colors"
+                        >
+                          {isDoneShown ? "Hide completed" : `Show completed (${doneItems.length})`}
+                        </button>
+                      )}
+                    </>
                   );
-                })}
+                })()}
               </div>
             </div>
           ))}
