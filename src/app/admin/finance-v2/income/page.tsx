@@ -13,6 +13,7 @@ type IncomeRow = {
   method: string | null;
   note: string | null;
   lead: { id: string; name: string | null; phone: string | null; email: string | null; company_name: string | null } | null;
+  earmarks: { name: string; amount: number }[];
 };
 
 const rand = (n: number) => `R ${Number(n || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2 })}`;
@@ -96,13 +97,14 @@ export default function IncomePage() {
           <div className="text-center py-24 text-slate-400 text-sm">No payments match this view.</div>
         ) : (
           <div className="bg-white border border-slate-200 rounded-[24px] shadow-sm overflow-x-auto">
-            <table className="w-full text-left text-xs min-w-[640px]">
+            <table className="w-full text-left text-xs min-w-[820px]">
               <thead>
                 <tr className="text-[9px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">
                   <th className="px-5 py-3">Date</th>
                   <th className="px-5 py-3">Lead</th>
                   <th className="px-5 py-3 text-right">Amount</th>
                   <th className="px-5 py-3 text-right">Allocated to Invoice</th>
+                  <th className="px-5 py-3">Paid For</th>
                 </tr>
               </thead>
               <tbody>
@@ -122,6 +124,19 @@ export default function IncomePage() {
                         </>
                       ) : (
                         <span className="text-slate-400 italic">Unallocated (legacy balance)</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3">
+                      {r.earmarks.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {r.earmarks.map((e, i) => (
+                            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-100 text-[10px] font-bold whitespace-nowrap">
+                              {e.name} <span className="text-purple-400">{rand(e.amount)}</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-slate-300 text-[11px] italic">Into the pool</span>
                       )}
                     </td>
                   </tr>

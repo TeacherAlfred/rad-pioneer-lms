@@ -5,13 +5,27 @@ import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft, Search, Wallet, CheckCircle2, AlertTriangle,
   Receipt, Loader2, ArrowRight, Coins, RefreshCw, Save,
-  User, Calendar, MessageSquare,
+  User, Calendar, MessageSquare, Landmark, Plus, X,
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 
 const PAYMENT_METHODS = ["eft", "cash", "card", "other"];
+const NEW_EXPENSE_SENTINEL = "__new__";
+
+type ExpenseAllocationRow = {
+  key: string;
+  expenseId: string; // NEW_EXPENSE_SENTINEL while "+ Add new expense" is selected
+  name: string;
+  amount: string;
+  dueDate: string;
+  recurring: boolean;
+};
+
+function emptyExpenseAllocationRow(): ExpenseAllocationRow {
+  return { key: crypto.randomUUID(), expenseId: NEW_EXPENSE_SENTINEL, name: "", amount: "", dueDate: "", recurring: false };
+}
 
 export default function PaymentCaptureV2Page() {
   return (
@@ -46,6 +60,20 @@ function PaymentCaptureV2Inner() {
   const [paymentMethod, setPaymentMethod] = useState("eft");
   const [paymentRef, setPaymentRef] = useState<string>("");
   const [paymentDate, setPaymentDate] = useState<string>(new Date().toISOString().split("T")[0]);
+
+  // Optional "what did this money go toward" note (Standing Expenses-backed) -
+  // purely a bookkeeping annotation, never gates or changes the payment
+  // itself. See income_expense_allocations.
+  const [standingExpenses, setStandingExpenses] = useState<any[]>([]);
+  const [expenseAllocations, setExpenseAllocations] = useState<ExpenseAllocationRow[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/admin/api/finance-v2/expenses");
+      const { expenses } = await res.json();
+      setStandingExpenses((expenses || []).filter((e: any) => e.active));
+    })();
+  }, []);
 
   useEffect(() => {
     if (!prefillLeadId) {
@@ -104,6 +132,30 @@ function PaymentCaptureV2Inner() {
   const totalOutstanding = useMemo(() => invoices.reduce((sum, inv) => sum + inv.outstanding, 0), [invoices]);
   const projectedBalance = useMemo(() => Math.max(0, totalOutstanding - totalAllocated), [totalOutstanding, totalAllocated]);
 
+  const totalEarmarked = useMemo(
+    () => expenseAllocations.reduce((sum, r) => sum + (Number(r.amount) || 0), 0),
+    [expenseAllocations]
+  );
+  const remainingToPool = useMemo(() => (Number(totalReceived) || 0) - totalEarmarked, [totalReceived, totalEarmarked]);
+
+  function addExpenseAllocationRow() {
+    setExpenseAllocations((prev) => [...prev, emptyExpenseAllocationRow()]);
+  }
+  function removeExpenseAllocationRow(key: string) {
+    setExpenseAllocations((prev) => prev.filter((r) => r.key !== key));
+  }
+  function updateExpenseAllocationRow(key: string, patch: Partial<ExpenseAllocationRow>) {
+    setExpenseAllocations((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  }
+  function selectExpenseForRow(key: string, expenseId: string) {
+    if (expenseId === NEW_EXPENSE_SENTINEL) {
+      updateExpenseAllocationRow(key, { expenseId, name: "", dueDate: "", recurring: false });
+      return;
+    }
+    const match = standingExpenses.find((e) => e.id === expenseId);
+    updateExpenseAllocationRow(key, { expenseId, name: match?.name || "" });
+  }
+
   function handleAutoAllocate() {
     let remaining = Number(totalReceived) || 0;
     const next: Record<string, number> = {};
@@ -135,6 +187,16 @@ function PaymentCaptureV2Inner() {
       // Note: any unallocated portion (received > allocated) is simply not
       // recorded anywhere this pass - there's no lead-linked credit-ledger
       // equivalent yet (credit_ledger is guardian_id-based, old model).
+      const validExpenseAllocations = expenseAllocations
+        .filter((r) => Number(r.amount) > 0 && r.name.trim() && (r.expenseId !== NEW_EXPENSE_SENTINEL || r.dueDate))
+        .map((r) => ({
+          expense_id: r.expenseId === NEW_EXPENSE_SENTINEL ? null : r.expenseId,
+          name: r.name.trim(),
+          amount: Number(r.amount),
+          due_date: r.dueDate || undefined,
+          recurring: r.recurring,
+        }));
+
       const captureRes = await fetch("/admin/api/finance-v2/capture", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -144,6 +206,7 @@ function PaymentCaptureV2Inner() {
           method: paymentMethod,
           reference: paymentRef,
           received_at: parsedDate,
+          expense_allocations: validExpenseAllocations,
         }),
       });
       const captureJson = await captureRes.json();
@@ -166,6 +229,7 @@ function PaymentCaptureV2Inner() {
         setTotalReceived("");
         setPaymentRef("");
         setPaymentDate(new Date().toISOString().split("T")[0]);
+        setExpenseAllocations([]);
         setSuccessMsg(null);
       }, 3000);
     } catch (err: any) {
@@ -344,6 +408,74 @@ function PaymentCaptureV2Inner() {
                         </button>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="bg-white border border-slate-200 rounded-[32px] shadow-sm overflow-hidden">
+                    <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50">
+                      <div>
+                        <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 flex items-center gap-2"><Landmark size={16} className="text-purple-500" /> 4. What's This Paying For? (Optional)</h3>
+                        <p className="text-[10px] font-bold text-slate-500 mt-1">A note, not a reservation — the money still goes into the pool either way, and a standing expense is only ever actually paid on its own due date.</p>
+                      </div>
+                      <button onClick={addExpenseAllocationRow} className="px-5 py-2.5 bg-purple-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-purple-500 flex items-center gap-2 transition-all shadow-md shrink-0">
+                        <Plus size={14} /> Add
+                      </button>
+                    </div>
+
+                    {expenseAllocations.length > 0 && (
+                      <div className="p-6 space-y-3">
+                        {expenseAllocations.map((row) => (
+                          <div key={row.key} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-3">
+                            <div className="flex items-center gap-3">
+                              <select
+                                value={row.expenseId}
+                                onChange={(e) => selectExpenseForRow(row.key, e.target.value)}
+                                className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-purple-400"
+                              >
+                                <option value={NEW_EXPENSE_SENTINEL}>+ Add new standing expense...</option>
+                                {standingExpenses.map((e) => (
+                                  <option key={e.id} value={e.id}>{e.name} (R {Number(e.amount).toLocaleString()})</option>
+                                ))}
+                              </select>
+                              <div className="relative w-32 shrink-0">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-sm text-slate-400">R</span>
+                                <input
+                                  type="number" min="0" placeholder="0.00" value={row.amount}
+                                  onChange={(e) => updateExpenseAllocationRow(row.key, { amount: e.target.value })}
+                                  className="w-full border border-slate-200 rounded-xl py-2 pl-8 pr-3 text-right font-black outline-none bg-white text-slate-900 focus:border-purple-400"
+                                />
+                              </div>
+                              <button onClick={() => removeExpenseAllocationRow(row.key)} className="p-2 text-slate-400 hover:text-rose-500 shrink-0"><X size={16} /></button>
+                            </div>
+
+                            {row.expenseId === NEW_EXPENSE_SENTINEL && (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pl-1">
+                                <input
+                                  type="text" placeholder="Expense name (e.g. Printer toner)" value={row.name}
+                                  onChange={(e) => updateExpenseAllocationRow(row.key, { name: e.target.value })}
+                                  className="sm:col-span-2 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-purple-400"
+                                />
+                                <input
+                                  type="date" value={row.dueDate}
+                                  onChange={(e) => updateExpenseAllocationRow(row.key, { dueDate: e.target.value })}
+                                  className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-purple-400"
+                                />
+                                <label className="sm:col-span-3 flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer">
+                                  <input type="checkbox" checked={row.recurring} onChange={(e) => updateExpenseAllocationRow(row.key, { recurring: e.target.checked })} className="w-3.5 h-3.5 accent-purple-600" />
+                                  Recurring (prompts to create next month's instance once this one's due date passes)
+                                </label>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        <div className="flex items-center justify-between px-1 pt-1">
+                          <p className="text-[10px] font-bold text-slate-500">Earmarked: R {totalEarmarked.toLocaleString()}</p>
+                          <p className="text-[10px] font-bold text-slate-500">
+                            Into the pool, unmarked: <span className={remainingToPool < 0 ? "text-rose-600" : "text-emerald-600"}>R {remainingToPool.toLocaleString()}</span>
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               )}
