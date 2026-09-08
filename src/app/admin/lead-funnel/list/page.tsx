@@ -162,12 +162,20 @@ export default function LeadFunnelPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [adOnly, setAdOnly] = useState(false);
+  // Reuses the Call Queue's own urgency-sorted order (not a separate
+  // re-derivation) so "who's up next" reads identically here as it does on
+  // that page - this exists so a bulk Send Template pass over today's queue
+  // doesn't require jumping between two screens.
+  const [queueOnly, setQueueOnly] = useState(false);
+  const [queuePositions, setQueuePositions] = useState<Map<string, number>>(new Map());
+  const [queueLoading, setQueueLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [showInhouse, setShowInhouse] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showSendModal, setShowSendModal] = useState(false);
+  const [showSendResultsModal, setShowSendResultsModal] = useState(false);
   const [templateName, setTemplateName] = useState('');
   const [languageCode, setLanguageCode] = useState('en_US');
   const [variables, setVariables] = useState<string[]>([]);
@@ -303,7 +311,13 @@ export default function LeadFunnelPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Send failed');
+      // Send succeeded - close the form modal and hand off to the separate
+      // results modal, rather than swapping this modal's own content in
+      // place (which read as "did my Cancel click do nothing?").
       setSendResults(data.results || []);
+      setShowSendModal(false);
+      resetSendForm();
+      setShowSendResultsModal(true);
     } catch (err: any) {
       setSendError(err.message);
     } finally {
@@ -311,19 +325,28 @@ export default function LeadFunnelPage() {
     }
   }
 
-  function closeSendModal() {
-    setShowSendModal(false);
+  function resetSendForm() {
     setTemplateName('');
     setLanguageCode('en_US');
     setVariables([]);
     setSendError(null);
-    setSendResults(null);
     setSelectedTemplateKey('');
     setManualEntry(false);
     setSelectedVariableNames([]);
     setSelectedVariableLabels([]);
     setSelectedQuickReplyButtons([]);
     setButtonPayloads({});
+  }
+
+  function closeSendModal() {
+    setShowSendModal(false);
+    resetSendForm();
+  }
+
+  function closeSendResultsModal() {
+    setShowSendResultsModal(false);
+    setSendResults(null);
+    setSelectedIds(new Set());
   }
 
   const [showHouseholdModal, setShowHouseholdModal] = useState(false);
@@ -711,6 +734,26 @@ export default function LeadFunnelPage() {
     })();
   }, []);
 
+  // Fetched fresh each time the toggle turns on, not cached across the
+  // session - the queue's own urgency ranking shifts as leads reply/go
+  // stale, so a position from ten minutes ago could already be wrong.
+  async function toggleQueueOnly(next: boolean) {
+    setQueueOnly(next);
+    if (!next) return;
+    setQueueLoading(true);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/call-queue?status=pending');
+      const data = await res.json();
+      const positions = new Map<string, number>();
+      (data.rows || []).forEach((r: any, i: number) => positions.set(r.lead_id, i));
+      setQueuePositions(positions);
+      setSortColumn('_queuePosition');
+      setSortDirection('asc');
+    } finally {
+      setQueueLoading(false);
+    }
+  }
+
   // Every stat below is computed off statsRows (inhouse leads excluded) -
   // the table listing is the only thing the showInhouse toggle affects.
   const statsRows = useMemo(() => rows.filter(r => !isInhouse(r)), [rows]);
@@ -757,17 +800,23 @@ export default function LeadFunnelPage() {
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const source = showInhouse ? rows : statsRows;
-    return source.filter(r => {
-      if (statusFilter !== 'all' && (r.lifecycle_stage || 'unknown') !== statusFilter) return false;
-      if (sourceFilter !== 'all' && (r.source || 'organic / direct') !== sourceFilter) return false;
-      if (adOnly && !r.ad_id) return false;
-      if (q) {
-        const haystack = `${r.phone} ${r.name || ''} ${r.email || ''} ${(r.tags || []).join(' ')}`.toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [rows, statsRows, showInhouse, statusFilter, sourceFilter, adOnly, search]);
+    return source
+      .filter(r => {
+        if (statusFilter !== 'all' && (r.lifecycle_stage || 'unknown') !== statusFilter) return false;
+        if (sourceFilter !== 'all' && (r.source || 'organic / direct') !== sourceFilter) return false;
+        if (adOnly && !r.ad_id) return false;
+        if (queueOnly && !queuePositions.has(r.id)) return false;
+        if (q) {
+          const haystack = `${r.phone} ${r.name || ''} ${r.email || ''} ${(r.tags || []).join(' ')}`.toLowerCase();
+          if (!haystack.includes(q)) return false;
+        }
+        return true;
+      })
+      // _queuePosition only matters (and only exists on any row) while
+      // queueOnly is active - sortRows treats it like any other numeric
+      // column, so clicking a different header still works normally.
+      .map(r => ({ ...r, _queuePosition: queuePositions.get(r.id) ?? null }));
+  }, [rows, statsRows, showInhouse, statusFilter, sourceFilter, adOnly, queueOnly, queuePositions, search]);
 
   const [sortColumn, setSortColumn] = useState<string | null>('created_at');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -785,7 +834,7 @@ export default function LeadFunnelPage() {
   // rendering itself is paged, so this never truncates what the numbers say.
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  useEffect(() => { setPage(0); }, [statusFilter, sourceFilter, adOnly, search, showInhouse]);
+  useEffect(() => { setPage(0); }, [statusFilter, sourceFilter, adOnly, queueOnly, search, showInhouse]);
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
   const pagedRows = useMemo(
@@ -859,6 +908,10 @@ export default function LeadFunnelPage() {
               <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
                 <input type="checkbox" checked={showInhouse} onChange={e => setShowInhouse(e.target.checked)} /> Show inhouse ({inhouseCount})
               </label>
+              <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
+                <input type="checkbox" checked={queueOnly} onChange={e => toggleQueueOnly(e.target.checked)} />
+                In Call Queue only {queueLoading ? <Loader2 size={11} className="animate-spin" /> : queueOnly ? `(${queuePositions.size})` : ''}
+              </label>
               <span className="text-xs text-slate-400 ml-auto">{filteredRows.length} of {showInhouse ? rows.length : statsRows.length}</span>
             </div>
 
@@ -897,6 +950,7 @@ export default function LeadFunnelPage() {
                           onChange={toggleSelectAllVisible}
                         />
                       </th>
+                      {queueOnly && <SortableHeader label="Queue #" column="_queuePosition" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />}
                       <SortableHeader label="Lead" column="name" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <SortableHeader label="Status" column="status" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       <SortableHeader label="Source" column="source" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
@@ -918,6 +972,13 @@ export default function LeadFunnelPage() {
                             onChange={() => toggleSelect(r.id)}
                           />
                         </td>
+                        {queueOnly && (
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-50 text-blue-600 text-xs font-black">
+                              {(r._queuePosition ?? -1) + 1}
+                            </span>
+                          </td>
+                        )}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => openView(r)} title="View lead details" className="font-bold text-slate-800 hover:underline text-left">
@@ -1029,7 +1090,7 @@ export default function LeadFunnelPage() {
                       </tr>
                     ))}
                     {filteredRows.length === 0 && (
-                      <tr><td colSpan={8} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
+                      <tr><td colSpan={queueOnly ? 9 : 8} className="px-4 py-16 text-center text-slate-400 text-sm">No leads match these filters.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1084,24 +1145,7 @@ export default function LeadFunnelPage() {
               Sending to <b>{selectedIds.size}</b> lead{selectedIds.size === 1 ? '' : 's'}. Template name must exactly match one approved in Meta Business Manager - this doesn't validate that for you. Opted-out leads in your selection are skipped automatically.
             </p>
 
-            {sendResults ? (
-              <div className="space-y-3">
-                <div className="flex gap-3 text-xs font-black uppercase tracking-widest">
-                  <span className="flex items-center gap-1 text-emerald-600"><CheckCircle2 size={14} /> {sendResults.filter(r => r.ok).length} delivered</span>
-                  <span className="flex items-center gap-1 text-rose-500"><XCircle size={14} /> {sendResults.filter(r => !r.ok && !r.skipped).length} failed</span>
-                  <span className="flex items-center gap-1 text-slate-400"><PhoneOff size={14} /> {sendResults.filter(r => r.skipped).length} skipped</span>
-                </div>
-                <div className="max-h-64 overflow-y-auto space-y-1">
-                  {sendResults.filter(r => !r.ok).map(r => (
-                    <div key={r.leadId} className="text-xs bg-rose-50 text-rose-600 rounded-lg px-3 py-2">
-                      +{r.phone}: {r.skipped ? 'Skipped (opted out)' : r.error}
-                    </div>
-                  ))}
-                </div>
-                <button onClick={closeSendModal} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900">Done</button>
-              </div>
-            ) : (
-              <div className="space-y-3">
+            <div className="space-y-3">
                 {templatesLoading ? (
                   <div className="flex items-center gap-2 text-xs text-slate-400 py-2"><Loader2 size={14} className="animate-spin" /> Loading approved templates from Meta...</div>
                 ) : !manualEntry && templates.length > 0 ? (
@@ -1198,7 +1242,34 @@ export default function LeadFunnelPage() {
                   </button>
                 </div>
               </div>
-            )}
+          </div>
+        </div>
+      )}
+
+      {showSendResultsModal && sendResults && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-black text-slate-800 flex items-center gap-2">
+                <CheckCircle2 size={18} className="text-emerald-500" /> Template Sent
+              </h3>
+              <button onClick={closeSendResultsModal} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <div className="space-y-3">
+              <div className="flex gap-3 text-xs font-black uppercase tracking-widest">
+                <span className="flex items-center gap-1 text-emerald-600"><CheckCircle2 size={14} /> {sendResults.filter(r => r.ok).length} delivered</span>
+                <span className="flex items-center gap-1 text-rose-500"><XCircle size={14} /> {sendResults.filter(r => !r.ok && !r.skipped).length} failed</span>
+                <span className="flex items-center gap-1 text-slate-400"><PhoneOff size={14} /> {sendResults.filter(r => r.skipped).length} skipped</span>
+              </div>
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {sendResults.filter(r => !r.ok).map(r => (
+                  <div key={r.leadId} className="text-xs bg-rose-50 text-rose-600 rounded-lg px-3 py-2">
+                    +{r.phone}: {r.skipped ? 'Skipped (opted out)' : r.error}
+                  </div>
+                ))}
+              </div>
+              <button onClick={closeSendResultsModal} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900">Done</button>
+            </div>
           </div>
         </div>
       )}

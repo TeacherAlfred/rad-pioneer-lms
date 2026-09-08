@@ -64,7 +64,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused, is_blocked, blocked_reason } = body;
+    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused, is_blocked, blocked_reason, dismiss_reply } = body;
     // "class" is a reserved word, can't destructure it bare above.
     const className = body.class;
 
@@ -120,6 +120,14 @@ export async function PATCH(req: Request) {
       update.is_blocked = !!is_blocked;
       update.blocked_at = is_blocked ? new Date().toISOString() : null;
       update.blocked_reason = is_blocked ? (blocked_reason || null) : null;
+    }
+    // Message Activity's "Needs Reply" flag is purely derived (last message
+    // is inbound) - dismissing it just stamps "don't flag the inbound
+    // message that's already here", not a permanent silence. The next
+    // inbound message is necessarily newer than this timestamp, so the flag
+    // reappears on its own with no explicit re-arm step.
+    if (dismiss_reply !== undefined) {
+      update.reply_dismissed_at = dismiss_reply ? new Date().toISOString() : null;
     }
     if (lifecycle_stage !== undefined) {
       update.lifecycle_stage = lifecycle_stage;

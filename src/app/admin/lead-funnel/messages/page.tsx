@@ -29,6 +29,7 @@ type MessageRow = {
   lead_bot_paused?: boolean;
   lead_is_blocked?: boolean;
   lead_blocked_reason?: string | null;
+  lead_reply_dismissed_at?: string | null;
   lead_respondent_is_parent?: boolean | null;
   status?: string | null;
   status_updated_at?: string | null;
@@ -47,6 +48,7 @@ type LeadGroup = {
   leadBotPaused: boolean;
   leadIsBlocked: boolean;
   leadBlockedReason: string | null;
+  replyDismissedAt: string | null;
   respondentIsParent: boolean | null;
   messages: MessageRow[];
   inboundCount: number;
@@ -141,6 +143,23 @@ function formatCountdown(msRemaining: number): string {
   const minutes = totalMinutes % 60;
   if (hours <= 0) return `${minutes}m left`;
   return `${hours}h ${minutes}m left`;
+}
+
+// A conversation "needs reply" purely because its own last message is
+// inbound - no reply has followed it yet, regardless of needs_human (which
+// can be stale/cleared for other reasons). Blocked leads are excluded -
+// their inbound messages are deliberately never replied to, so surfacing
+// them here would just be noise for something already decided.
+//
+// replyDismissedAt is a temporary "I handled this elsewhere" mark, not a
+// permanent silence - it only suppresses the flag for the inbound message
+// that already exists. A NEWER inbound message necessarily has a later
+// timestamp than the dismissal, so the flag reappears on its own the
+// moment the lead writes in again, with no explicit re-arm step anywhere.
+function needsReply(g: { lastDirection: 'inbound' | 'outbound' | null; leadIsBlocked: boolean; lastActivityAt: string | null; replyDismissedAt: string | null }): boolean {
+  if (g.lastDirection !== 'inbound' || g.leadIsBlocked) return false;
+  if (!g.replyDismissedAt || !g.lastActivityAt) return true;
+  return new Date(g.lastActivityAt).getTime() > new Date(g.replyDismissedAt).getTime();
 }
 
 export default function MessageActivityPage() {
@@ -262,7 +281,11 @@ export default function MessageActivityPage() {
   const [templateButtonPayloads, setTemplateButtonPayloads] = useState<Record<number, string>>({});
   const [templateSending, setTemplateSending] = useState(false);
   const [templateSendError, setTemplateSendError] = useState<string | null>(null);
-  const [templateSendOk, setTemplateSendOk] = useState(false);
+
+  // Shared across every send path on this page (free-form reply, template) -
+  // a successful send closes the compose modal and hands off to this one,
+  // rather than swapping in an inline "sent" banner while the form stays up.
+  const [sendSuccessInfo, setSendSuccessInfo] = useState<{ leadName: string | null; kind: 'Message' | 'Template' } | null>(null);
 
   const selectedTemplateOption = templateOptions.find(t => t.key === selectedTemplateKey) || null;
 
@@ -277,13 +300,11 @@ export default function MessageActivityPage() {
     setTemplateVariables([]);
     setTemplateButtonPayloads({});
     setTemplateSendError(null);
-    setTemplateSendOk(false);
   }
 
   function selectTemplateOption(key: string) {
     setSelectedTemplateKey(key);
     setTemplateSendError(null);
-    setTemplateSendOk(false);
     const t = templateOptions.find(o => o.key === key);
     if (!t) return;
     if (t.presetVariables) {
@@ -300,9 +321,9 @@ export default function MessageActivityPage() {
 
   async function sendTemplateFromReply() {
     if (!replyingTo || !selectedTemplateOption) return;
+    const leadName = replyingTo.leadName;
     setTemplateSending(true);
     setTemplateSendError(null);
-    setTemplateSendOk(false);
     try {
       const maxIndex = Math.max(-1, ...Object.keys(templateButtonPayloads).map(Number));
       const buttonPayloads = selectedTemplateOption.presetButtonPayloads
@@ -323,7 +344,8 @@ export default function MessageActivityPage() {
       if (!res.ok) throw new Error(data.error || 'Failed to send.');
       const result = (data.results || [])[0];
       if (result && !result.ok) throw new Error(result.error || 'Meta rejected this template send.');
-      setTemplateSendOk(true);
+      setReplyingTo(null);
+      setSendSuccessInfo({ leadName, kind: 'Template' });
       setLoading(true);
       await loadMessages();
     } catch (err: any) {
@@ -376,6 +398,7 @@ export default function MessageActivityPage() {
 
   async function sendReply() {
     if (!replyingTo || !replyText.trim()) return;
+    const leadName = replyingTo.leadName;
     setReplySending(true);
     setReplyError(null);
     try {
@@ -389,6 +412,7 @@ export default function MessageActivityPage() {
       setReplyingTo(null);
       setReplyText('');
       setReplyButtons([]);
+      setSendSuccessInfo({ leadName, kind: 'Message' });
       setLoading(true);
       await loadMessages();
     } catch (err: any) {
@@ -507,6 +531,29 @@ export default function MessageActivityPage() {
     }
   }
 
+  // "I handled this another way" - temporary, not a permanent silence. See
+  // needsReply()'s comment above for why no explicit re-arm is needed.
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
+  async function dismissReply(group: LeadGroup) {
+    setDismissingId(group.leadId);
+    try {
+      const res = await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: group.leadId, dismiss_reply: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update.');
+      setRows(prev => prev.map(r => r.lead_id === group.leadId
+        ? { ...r, lead_reply_dismissed_at: data.row.reply_dismissed_at }
+        : r));
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setDismissingId(null);
+    }
+  }
+
   const statsRows = useMemo(() => rows.filter(r => !isInhouseRow(r) && !isBlockedRow(r)), [rows]);
   // Lead counts, not message counts - these label a "how many contacts"
   // toggle, and one chatty inhouse/blocked contact shouldn't inflate it.
@@ -599,6 +646,7 @@ export default function MessageActivityPage() {
         leadBotPaused: !!sorted[0]?.lead_bot_paused,
         leadIsBlocked: !!sorted[0]?.lead_is_blocked,
         leadBlockedReason: sorted[0]?.lead_blocked_reason || null,
+        replyDismissedAt: sorted[0]?.lead_reply_dismissed_at || null,
         respondentIsParent: sorted[0]?.lead_respondent_is_parent ?? null,
         messages: sorted,
         inboundCount: sorted.filter(m => m.direction === 'inbound').length,
@@ -656,10 +704,14 @@ export default function MessageActivityPage() {
   // Leads still inside their messaging window are pinned to the top
   // regardless of the chosen column sort - Array.sort is stable in Node/V8, so this only
   // reorders across the open/closed boundary and leaves the user's chosen
-  // order intact within each bucket.
+  // order intact within each bucket. Unanswered-inbound conversations are a
+  // second, higher-priority pin on top of that - an unreplied lead matters
+  // more than window freshness, whether or not their window happens to
+  // still be open.
   const sortedGroups = useMemo(() => {
     const base = sortRows(filteredGroups, sortColumn, sortDirection);
-    return [...base].sort((a, b) => (b.isWindowOpen ? 1 : 0) - (a.isWindowOpen ? 1 : 0));
+    const byWindow = [...base].sort((a, b) => (b.isWindowOpen ? 1 : 0) - (a.isWindowOpen ? 1 : 0));
+    return byWindow.sort((a, b) => (needsReply(b) ? 1 : 0) - (needsReply(a) ? 1 : 0));
   }, [filteredGroups, sortColumn, sortDirection]);
 
   const [page, setPage] = useState(0);
@@ -805,6 +857,8 @@ export default function MessageActivityPage() {
                           <tr
                             onClick={() => toggleExpanded(g.leadId)}
                             className={`border-b border-slate-50 last:border-0 cursor-pointer transition-shadow duration-300 ${
+                              needsReply(g) ? 'border-l-4 border-l-rose-400' : ''
+                            } ${
                               g.isWindowOpen ? `relative z-0 ${windowGlowClass(g.msRemaining)} hover:brightness-95` : 'hover:bg-slate-50/50'
                             }`}
                           >
@@ -814,6 +868,19 @@ export default function MessageActivityPage() {
                             <td className="px-4 py-3">
                               <div className="font-bold text-slate-800 flex items-center gap-1.5">
                                 {g.leadName || '(no name)'}
+                                {needsReply(g) && (
+                                  <span title="Their last message hasn't had a reply yet" className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest pl-1.5 pr-1 py-0.5 rounded-full bg-rose-100 text-rose-600">
+                                    ● Needs Reply
+                                    <button
+                                      onClick={e => { e.stopPropagation(); dismissReply(g); }}
+                                      disabled={dismissingId === g.leadId}
+                                      title="Dismiss - I contacted them another way. Reappears if they message in again."
+                                      className="hover:text-rose-900 disabled:opacity-50"
+                                    >
+                                      {dismissingId === g.leadId ? <Loader2 size={9} className="animate-spin" /> : <X size={9} />}
+                                    </button>
+                                  </span>
+                                )}
                                 {g.isWindowOpen && (
                                   <span title={g.windowExpiresAt ? `${g.windowTotalHours ?? 24}h messaging window closes ${g.windowExpiresAt.toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' })}` : undefined} className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">
                                     {formatCountdown(g.msRemaining)}
@@ -1107,7 +1174,6 @@ export default function MessageActivityPage() {
                       {templateSending ? <Loader2 size={13} className="animate-spin" /> : <><Send size={12} /> Send Template</>}
                     </button>
                     {templateSendError && <div className="bg-rose-50 text-rose-600 text-[12px] rounded-lg px-3 py-2">{templateSendError}</div>}
-                    {templateSendOk && <div className="bg-emerald-50 text-emerald-600 text-[12px] rounded-lg px-3 py-2">Template sent.</div>}
                   </div>
                 )}
               </div>
@@ -1129,6 +1195,24 @@ export default function MessageActivityPage() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {sendSuccessInfo && (
+        <div className="fixed inset-0 bg-slate-900/25 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl shadow-2xl ring-1 ring-black/5 w-full max-w-sm p-6 text-center">
+            <div className="mx-auto h-12 w-12 rounded-full bg-emerald-50 flex items-center justify-center mb-3">
+              <CheckCircle2 size={24} className="text-emerald-500" />
+            </div>
+            <h3 className="text-[16px] font-semibold text-slate-900">{sendSuccessInfo.kind} sent</h3>
+            <p className="text-[13px] text-slate-400 mt-1">Delivered to {sendSuccessInfo.leadName || 'the lead'}.</p>
+            <button
+              onClick={() => setSendSuccessInfo(null)}
+              className="mt-5 w-full py-2.5 rounded-xl text-[14px] font-medium text-white bg-slate-900 hover:bg-slate-800 transition-colors duration-150"
+            >
+              Done
+            </button>
           </div>
         </div>
       )}
