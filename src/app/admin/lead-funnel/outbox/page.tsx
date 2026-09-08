@@ -24,7 +24,7 @@ type OutboxRow = {
   lead_phone: string | null;
 };
 
-const METHOD_LABEL: Record<string, string> = { waba: "WABA", desktop: "Desktop App" };
+const METHOD_LABEL: Record<string, string> = { waba: "WABA", desktop: "Desktop App", admin: "Sent to Admin" };
 
 function fmtDateTime(iso: string) {
   return new Date(iso).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -34,7 +34,11 @@ export default function MessagesOutboxPage() {
   const [rows, setRows] = useState<OutboxRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [methodFilter, setMethodFilter] = useState<"all" | "waba" | "desktop">("all");
+  // 'admin' cuts across method - it's "who this actually went to" (the
+  // admin's own number, for a pipeline/registration alert about a lead),
+  // not a delivery channel, so it sits alongside waba/desktop as a fourth
+  // tab rather than a value nested under either of them.
+  const [methodFilter, setMethodFilter] = useState<"all" | "waba" | "desktop" | "admin">("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [viewing, setViewing] = useState<OutboxRow | null>(null);
@@ -63,12 +67,14 @@ export default function MessagesOutboxPage() {
     all: rows.length,
     waba: rows.filter(r => r.method === "waba").length,
     desktop: rows.filter(r => r.method === "desktop").length,
-  }), [rows]);
+    admin: parsedRows.filter(({ parsed }) => parsed.kind === "admin_alert").length,
+  }), [rows, parsedRows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return parsedRows.filter(({ row, parsed }) => {
-      if (methodFilter !== "all" && row.method !== methodFilter) return false;
+      if (methodFilter === "admin" && parsed.kind !== "admin_alert") return false;
+      if (methodFilter !== "all" && methodFilter !== "admin" && row.method !== methodFilter) return false;
       if (statusFilter === "unconfirmed" && row.status) return false;
       if (statusFilter !== "all" && statusFilter !== "unconfirmed" && row.status !== statusFilter) return false;
       if (q) {
@@ -119,7 +125,7 @@ export default function MessagesOutboxPage() {
         ) : (
           <>
             <div className="flex items-center gap-2 mb-4 flex-wrap">
-              {(["all", "waba", "desktop"] as const).map(m => (
+              {(["all", "waba", "desktop", "admin"] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => setMethodFilter(m)}
@@ -175,10 +181,17 @@ export default function MessagesOutboxPage() {
                           </td>
                           <td className="px-4 py-3 text-slate-500">+{row.recipient_phone || row.lead_phone || "—"}</td>
                           <td className="px-4 py-3">
-                            <span className={`inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${row.method === "desktop" ? "bg-indigo-50 text-indigo-600" : "bg-emerald-50 text-emerald-600"}`}>
-                              {row.method === "desktop" ? <MessageCircle size={10} /> : <Send size={10} />}
-                              {METHOD_LABEL[row.method]}
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span className={`inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${row.method === "desktop" ? "bg-indigo-50 text-indigo-600" : "bg-emerald-50 text-emerald-600"}`}>
+                                {row.method === "desktop" ? <MessageCircle size={10} /> : <Send size={10} />}
+                                {METHOD_LABEL[row.method]}
+                              </span>
+                              {parsed.kind === "admin_alert" && (
+                                <span title="Sent to the admin's own number, about this lead" className="inline-flex items-center text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-amber-50 text-amber-600">
+                                  → Admin
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-3 max-w-sm">
                             <button onClick={() => setViewing(row)} className="text-left hover:underline text-slate-700 flex items-center gap-1.5">

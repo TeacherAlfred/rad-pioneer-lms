@@ -1476,12 +1476,19 @@ export default function LeadFunnelPage() {
                     <p className="text-[11px] text-slate-300">No contact attempts logged yet.</p>
                   ) : (
                     leadActivities.map(a => (
-                      <div key={a.id} className="flex items-center justify-between gap-2 text-[11px] bg-slate-50 rounded-lg px-2.5 py-1.5">
-                        <span className="text-slate-600">
-                          <b className="capitalize">{a.outcome.replace(/_/g, ' ')}</b>
-                          <span className="text-slate-400"> · {a.channel} · {a.direction}{a.objective ? ` · ${a.objective.replace(/_/g, ' ')}` : ''}{a.created_by ? ` · ${a.created_by}` : ''}</span>
-                        </span>
-                        <span className="text-slate-400 shrink-0">{new Date(a.created_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short' })}</span>
+                      <div key={a.id} className="text-[11px] bg-slate-50 rounded-lg px-2.5 py-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-slate-600">
+                            <b className="capitalize">{a.outcome.replace(/_/g, ' ')}</b>
+                            <span className="text-slate-400"> · {a.channel} · {a.direction}{a.objective ? ` · ${a.objective.replace(/_/g, ' ')}` : ''}{a.created_by ? ` · ${a.created_by}` : ''}</span>
+                          </span>
+                          <span className="text-slate-400 shrink-0">{new Date(a.created_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short' })}</span>
+                        </div>
+                        {/* e.g. a webinar/contact-form submission's actual
+                            typed message - was captured in lead_activities.note
+                            all along but never surfaced here, so it was
+                            effectively invisible without querying the DB directly. */}
+                        {a.note && <p className="text-slate-700 mt-1 whitespace-pre-wrap">{a.note}</p>}
                       </div>
                     ))
                   )}
