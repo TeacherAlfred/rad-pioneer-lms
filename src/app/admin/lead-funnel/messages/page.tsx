@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
   Users2, Search, MessageSquare, Reply, X, VolumeX, Plus, Sparkles,
-  ChevronDown, ChevronRight, Pencil, Ban, ShieldCheck,
+  ChevronDown, ChevronRight, Pencil, Ban, ShieldCheck, FileText,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -31,6 +31,12 @@ type MessageRow = {
   lead_blocked_reason?: string | null;
   lead_reply_dismissed_at?: string | null;
   lead_respondent_is_parent?: boolean | null;
+  media_path?: string | null;
+  media_type?: 'image' | 'sticker' | 'video' | 'audio' | 'document' | null;
+  media_mime_type?: string | null;
+  media_caption?: string | null;
+  media_filename?: string | null;
+  media_url?: string | null;
   status?: string | null;
   status_updated_at?: string | null;
   conversation_category?: string | null;
@@ -969,12 +975,36 @@ export default function MessageActivityPage() {
                                     return (
                                       <div key={m.id} className={`flex ${isOut ? 'justify-end' : 'justify-start'}`}>
                                         <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-[13px] ${isOut ? (ok ? 'bg-slate-900 text-white' : 'bg-rose-100 text-rose-700') : 'bg-white border border-slate-200 text-slate-800'}`}>
-                                          {parsed.kind !== 'text' && (
-                                            <div className={`text-[9px] font-black uppercase tracking-widest mb-1 ${isOut ? 'text-slate-300' : 'text-slate-400'}`}>{KIND_LABEL[parsed.kind] || parsed.kind}</div>
-                                          )}
-                                          <p className="whitespace-pre-wrap">{parsed.label}</p>
-                                          {'detail' in parsed && parsed.detail && (
-                                            <p className={`text-[11px] mt-0.5 ${isOut ? 'text-slate-300' : 'text-slate-400'}`}>{parsed.detail}</p>
+                                          {m.media_url ? (
+                                            <div>
+                                              {(m.media_type === 'image' || m.media_type === 'sticker') && (
+                                                <a href={m.media_url} target="_blank" rel="noopener noreferrer">
+                                                  <img src={m.media_url} alt={m.media_type} className="max-w-[220px] max-h-[220px] rounded-lg object-contain bg-slate-100" />
+                                                </a>
+                                              )}
+                                              {m.media_type === 'video' && (
+                                                <video src={m.media_url} controls className="max-w-[240px] rounded-lg" />
+                                              )}
+                                              {m.media_type === 'audio' && (
+                                                <audio src={m.media_url} controls className="max-w-[220px]" />
+                                              )}
+                                              {m.media_type === 'document' && (
+                                                <a href={m.media_url} target="_blank" rel="noopener noreferrer" className={`flex items-center gap-1.5 underline ${isOut ? 'text-white' : 'text-slate-700'}`}>
+                                                  <FileText size={13} /> {m.media_filename || 'Document'}
+                                                </a>
+                                              )}
+                                              {m.media_caption && <p className="whitespace-pre-wrap mt-1">{m.media_caption}</p>}
+                                            </div>
+                                          ) : (
+                                            <>
+                                              {parsed.kind !== 'text' && (
+                                                <div className={`text-[9px] font-black uppercase tracking-widest mb-1 ${isOut ? 'text-slate-300' : 'text-slate-400'}`}>{KIND_LABEL[parsed.kind] || parsed.kind}</div>
+                                              )}
+                                              <p className="whitespace-pre-wrap">{parsed.label}</p>
+                                              {'detail' in parsed && parsed.detail && (
+                                                <p className={`text-[11px] mt-0.5 ${isOut ? 'text-slate-300' : 'text-slate-400'}`}>{parsed.detail}</p>
+                                              )}
+                                            </>
                                           )}
                                           <div className={`flex items-center gap-1.5 text-[10px] mt-1 ${isOut ? 'text-slate-400' : 'text-slate-400'}`}>
                                             <span>{m.created_at ? new Date(m.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : ''}</span>

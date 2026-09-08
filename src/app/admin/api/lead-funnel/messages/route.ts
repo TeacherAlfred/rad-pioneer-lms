@@ -27,6 +27,21 @@ export async function GET() {
   // info naturally surfaces while reading a message thread), not a separate
   // tagging concept.
   const respondentByLead = new Map((respondentChecks || []).map((c: any) => [c.lead_id, c.passed]));
+
+  // Inbound media lives in a private bucket (unlike bot-media) since it can
+  // be a lead's own photo - media_path is just the bucket path, so a fresh
+  // signed URL has to be minted on every fetch rather than stored once.
+  const mediaPaths = (messages || []).map((m: any) => m.media_path).filter(Boolean);
+  const signedUrlByPath = new Map<string, string>();
+  if (mediaPaths.length > 0) {
+    const { data: signedUrls } = await supabaseAdmin.storage
+      .from('whatsapp-inbound-media')
+      .createSignedUrls(mediaPaths, 3600);
+    (signedUrls || []).forEach((s: any, i: number) => {
+      if (s?.signedUrl) signedUrlByPath.set(mediaPaths[i], s.signedUrl);
+    });
+  }
+
   const rows = (messages || []).map((m: any) => {
     const lead = leadsById.get(m.lead_id);
     return {
@@ -41,6 +56,7 @@ export async function GET() {
       lead_blocked_reason: lead?.blocked_reason || null,
       lead_reply_dismissed_at: lead?.reply_dismissed_at || null,
       lead_respondent_is_parent: respondentByLead.has(m.lead_id) ? respondentByLead.get(m.lead_id) : null,
+      media_url: m.media_path ? signedUrlByPath.get(m.media_path) || null : null,
     };
   });
 

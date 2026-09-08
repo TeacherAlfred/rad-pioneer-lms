@@ -24,6 +24,65 @@ function isValidMetaSignature(rawBody: string, signatureHeader: string | null): 
   return timingSafeEqual(expected, received);
 }
 
+// Pulled out of the middle of a free-text reply, not required to be the
+// whole message - "my email is jane@example.com thanks!" should capture
+// just as reliably as a bare address. Used by a bot_flows row with
+// reply_validation='email' (see 20260908220000_bot_flow_reply_validation.sql)
+// to distinguish a real answer from a lead ignoring the question.
+const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+function extractEmail(text: string): string | null {
+  return text.match(EMAIL_PATTERN)?.[0] || null;
+}
+
+// Inbound images/stickers/GIFs/audio/documents used to be silently dropped -
+// only message.text.body was ever read, so anything else stored an empty
+// body and rendered as a blank message in Message Activity. Fetching it
+// back is a two-hop Graph API dance: resolve the media id to a short-lived
+// download URL, then fetch that URL - both requests need the same Bearer
+// token, the URL alone 404s without it. Stored in a private bucket (not
+// public like bot-media, which is admin-curated) since this can be a
+// lead's own photo, e.g. of their child.
+const MEDIA_EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+  'video/mp4': 'mp4', 'video/3gpp': '3gp',
+  'audio/ogg': 'ogg', 'audio/ogg; codecs=opus': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/amr': 'amr',
+  'application/pdf': 'pdf',
+};
+
+async function downloadInboundMedia(
+  mediaId: string,
+  supabase: any,
+  senderPhone: string
+): Promise<{ path: string; mimeType: string } | null> {
+  const token = process.env.WHATSAPP_TOKEN!;
+  try {
+    const metaRes = await fetch(`https://graph.facebook.com/v21.0/${mediaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!metaRes.ok) return null;
+    const meta = await metaRes.json();
+    if (!meta.url) return null;
+
+    const fileRes = await fetch(meta.url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!fileRes.ok) return null;
+    const bytes = new Uint8Array(await fileRes.arrayBuffer());
+
+    const mimeType = meta.mime_type || 'application/octet-stream';
+    const ext = MEDIA_EXT_BY_MIME[mimeType] || mimeType.split('/')[1]?.split(';')[0] || 'bin';
+    const path = `${senderPhone}/${Date.now()}-${mediaId}.${ext}`;
+
+    const { error } = await supabase.storage.from('whatsapp-inbound-media').upload(path, bytes, {
+      contentType: mimeType,
+    });
+    if (error) throw error;
+
+    return { path, mimeType };
+  } catch (err) {
+    console.error('Failed to download inbound WhatsApp media:', err);
+    return null;
+  }
+}
+
 // Meta's delivery/read status events (sent -> delivered -> read, or
 // failed) arrive as value.statuses[], separate from value.messages[],
 // keyed by the message's own wamid rather than the phone number. Matches
@@ -89,7 +148,7 @@ async function applyMessageStatus(supabase: any, status: any) {
 // buffer window elapses. During DND, even immediate-tier events queue
 // instead of sending - "any lead notifications are not sent during that
 // time" applies across the board, not just the buffered ones.
-async function notifyAdmin(supabase: any, senderPhone: string, stageText: string, leadId: string, opts?: { immediate?: boolean }) {
+async function notifyAdmin(supabase: any, senderPhone: string, stageText: string, leadId: string | null, opts?: { immediate?: boolean }) {
   const adminPhone = process.env.ADMIN_PHONE_NUMBER;
   if (!adminPhone) return;
 
@@ -233,6 +292,8 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     leadUpdate.awaiting_reply_label = flow.reply_label || flow.label;
     leadUpdate.awaiting_reply_confirmation = flow.reply_confirmation || null;
     leadUpdate.awaiting_reply_completion_tag = flow.completion_tag || null;
+    leadUpdate.awaiting_reply_validation = flow.reply_validation || null;
+    leadUpdate.awaiting_reply_invalid_message = flow.reply_invalid_message || null;
   }
   if (Object.keys(leadUpdate).length > 0) {
     await supabase.from('leads').update(leadUpdate).eq('id', lead.id);
@@ -378,6 +439,17 @@ export async function POST(request: Request) {
                 if (dedupeError) {
                   if (dedupeError.code === '23505') continue;
                   console.error('❌ Dedup check failed, processing anyway:', dedupeError.message);
+                  // Fail-open is deliberate (a broken idempotency table shouldn't
+                  // block real messages) but was previously invisible outside
+                  // server logs - surface it so a degraded webhook_events_seen
+                  // table (which risks duplicate lead-creation/duplicate sends)
+                  // gets noticed. Best-effort: never let this itself break the
+                  // required 200 response below.
+                  try {
+                    await notifyAdmin(supabase, senderPhone, `⚠️ Dedup check failed (processed anyway): ${dedupeError.message}`, null);
+                  } catch (notifyErr) {
+                    console.error('❌ Failed to notify admin of dedup failure:', notifyErr);
+                  }
                 }
               }
 
@@ -448,6 +520,8 @@ export async function POST(request: Request) {
               }
 
               let messageText = '';
+              let mediaFields: { media_path: string; media_type: string; media_mime_type: string; media_caption: string | null; media_filename: string | null } | null = null;
+              const MEDIA_MESSAGE_TYPES = ['image', 'sticker', 'video', 'audio', 'document'];
               if (message.type === 'text') {
                 messageText = message.text?.body || '';
               } else if (message.type === 'interactive') {
@@ -465,6 +539,32 @@ export async function POST(request: Request) {
                 // every template button tap fell through every check below with
                 // no reply, no guide, no handoff - silently.
                 messageText = `[Button Reply: ${message.button?.text} (${message.button?.payload})]`;
+              } else if (MEDIA_MESSAGE_TYPES.includes(message.type)) {
+                const mediaObj = message[message.type];
+                const downloaded = mediaObj?.id ? await downloadInboundMedia(mediaObj.id, supabase, senderPhone) : null;
+                const label = message.type === 'audio'
+                  ? (mediaObj?.voice ? 'Voice note' : 'Audio')
+                  : message.type === 'document'
+                    ? `Document${mediaObj?.filename ? `: ${mediaObj.filename}` : ''}`
+                    : message.type[0].toUpperCase() + message.type.slice(1);
+                messageText = downloaded ? `[${label}]` : `[${label} - could not download]`;
+                if (downloaded) {
+                  mediaFields = {
+                    media_path: downloaded.path,
+                    media_type: message.type,
+                    media_mime_type: downloaded.mimeType,
+                    media_caption: mediaObj?.caption || null,
+                    media_filename: mediaObj?.filename || null,
+                  };
+                }
+              } else if (message.type === 'location') {
+                const loc = message.location;
+                messageText = `[Shared location${loc?.name ? `: ${loc.name}` : ''}]`;
+              } else if (message.type === 'reaction') {
+                messageText = message.reaction?.emoji ? `[Reacted ${message.reaction.emoji}]` : '[Reaction]';
+              } else if (message.type === 'contacts') {
+                const names = (message.contacts || []).map((c: any) => c.name?.formatted_name).filter(Boolean).join(', ');
+                messageText = `[Shared contact${names ? `: ${names}` : ''}]`;
               }
 
               // Click-to-WhatsApp ads attach this to the first inbound message of the
@@ -528,7 +628,8 @@ export async function POST(request: Request) {
                 await supabase.from('messages').insert([{
                   lead_id: lead.id,
                   direction: 'inbound',
-                  body: messageText
+                  body: messageText,
+                  ...(mediaFields || {}),
                 }]);
                 continue;
               }
@@ -562,7 +663,8 @@ export async function POST(request: Request) {
               await supabase.from('messages').insert([{
                 lead_id: lead.id,
                 direction: 'inbound',
-                body: messageText
+                body: messageText,
+                ...(mediaFields || {}),
               }]);
 
               // --- BOT PAUSED: admin has taken this conversation over manually ---
@@ -612,16 +714,50 @@ export async function POST(request: Request) {
               // to hear from you!" welcome instead of being captured.
               if (message.type === 'text' && lead.awaiting_reply_flow_id) {
                 const label = lead.awaiting_reply_label || 'Reply';
+
+                // A flow can require its reply look a specific way (currently
+                // just 'email') rather than accepting anything as the answer.
+                // A reply that doesn't validate skips the normal capture
+                // entirely and hands off to a human instead - see
+                // 20260908220000_bot_flow_reply_validation.sql.
+                const extractedEmail = lead.awaiting_reply_validation === 'email' ? extractEmail(messageText) : null;
+                const validationFailed = lead.awaiting_reply_validation === 'email' && !extractedEmail;
+
+                const clearAwaiting = {
+                  awaiting_reply_flow_id: null,
+                  awaiting_reply_label: null,
+                  awaiting_reply_confirmation: null,
+                  awaiting_reply_completion_tag: null,
+                  awaiting_reply_validation: null,
+                  awaiting_reply_invalid_message: null,
+                };
+
+                if (validationFailed) {
+                  await supabase.from('leads').update({
+                    ...clearAwaiting,
+                    needs_human: true,
+                    needs_human_nudged_at: new Date().toISOString(),
+                  }).eq('id', lead.id);
+                  const invalidText = lead.awaiting_reply_invalid_message
+                    || "Hmm, I couldn't quite catch a valid email address in that. No worries though - I've flagged this for our team and one of them will be in touch with you shortly.";
+                  const invalidAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: invalidText } });
+                  await supabase.from('messages').insert([{
+                    lead_id: lead.id,
+                    direction: 'outbound',
+                    body: invalidAckResult.ok ? '[Delivered reply-validation-failed handoff]' : `[FAILED to deliver reply-validation-failed handoff: ${invalidAckResult.error}]`,
+                    wamid: invalidAckResult.wamid || null,
+                  }]);
+                  await notifyAdmin(supabase, senderPhone, `⚠️ ${label} expected, no valid email found in: "${messageText}" - handed to a human.`, lead.id, { immediate: true });
+                  continue;
+                }
+
                 await supabase.from('lead_notes').insert([{
                   lead_id: lead.id,
                   note: `${label}: ${messageText}`,
                   created_by: 'bot_flow_capture',
                 }]);
                 const captureUpdate: Record<string, any> = {
-                  awaiting_reply_flow_id: null,
-                  awaiting_reply_label: null,
-                  awaiting_reply_confirmation: null,
-                  awaiting_reply_completion_tag: null,
+                  ...clearAwaiting,
                   needs_human: true,
                   needs_human_nudged_at: new Date().toISOString(),
                 };
@@ -630,6 +766,12 @@ export async function POST(request: Request) {
                 // needs_human or any other bot behavior.
                 if (lead.awaiting_reply_completion_tag) {
                   captureUpdate.tags = Array.from(new Set([...(lead.tags || []), lead.awaiting_reply_completion_tag]));
+                }
+                // A validated email is worth more than a note - it's an
+                // actual, usable contact field, so it lands on the lead
+                // record itself, not just buried in lead_notes.
+                if (extractedEmail) {
+                  captureUpdate.email = extractedEmail;
                 }
                 await supabase.from('leads').update(captureUpdate).eq('id', lead.id);
                 const confirmationText = lead.awaiting_reply_confirmation || "Thanks, I've passed that on to the team.";
@@ -763,7 +905,22 @@ export async function POST(request: Request) {
                       }
                     }
                   };
-                  await sendWhatsAppMessage(senderPhone, welcomePayload);
+                  // Unlike every other send in this file, this result used to
+                  // go unchecked - no ok/error branch, no `messages` log row,
+                  // no failure signal anywhere if the welcome send itself got
+                  // rejected (e.g. a future button-title/format regression).
+                  const welcomeResult = await sendWhatsAppMessage(senderPhone, welcomePayload);
+                  await supabase.from('messages').insert([{
+                    lead_id: lead.id,
+                    direction: 'outbound',
+                    body: welcomeResult.ok ? '[Delivered welcome menu]' : `[FAILED to deliver welcome menu: ${welcomeResult.error}]`,
+                    wamid: welcomeResult.wamid || null,
+                    meta_message_status: welcomeResult.messageStatus || null,
+                    ...(welcomeResult.ok ? {} : { status: 'failed', error_code: welcomeResult.errorCode || null, error_detail: welcomeResult.error || null }),
+                  }]);
+                  if (!welcomeResult.ok) {
+                    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver welcome menu: ${welcomeResult.error}`, lead.id, { immediate: true });
+                  }
                   // Plain text with no keyword match previously generated no
                   // buffered event at all - the bot replied with the generic
                   // menu and the admin had no visibility into what was
@@ -794,7 +951,7 @@ export async function POST(request: Request) {
                 // question they were mid-answering - don't let a later,
                 // unrelated message get captured as the answer to it.
                 if (lead.awaiting_reply_flow_id) {
-                  await supabase.from('leads').update({ awaiting_reply_flow_id: null, awaiting_reply_label: null, awaiting_reply_confirmation: null, awaiting_reply_completion_tag: null }).eq('id', lead.id);
+                  await supabase.from('leads').update({ awaiting_reply_flow_id: null, awaiting_reply_label: null, awaiting_reply_confirmation: null, awaiting_reply_completion_tag: null, awaiting_reply_validation: null, awaiting_reply_invalid_message: null }).eq('id', lead.id);
                   lead.awaiting_reply_flow_id = null;
                 }
 
@@ -821,6 +978,17 @@ export async function POST(request: Request) {
     return new NextResponse('Not Found', { status: 404 });
   } catch (error) {
     console.error('Webhook processing error:', error);
-    return new NextResponse('EVENT_RECEIVED', { status: 200 }); 
+    // Previously silent outside server logs - a genuine processing failure
+    // for a real inbound message was invisible to the admin. Best-effort and
+    // fully isolated: senderPhone/lead may not be in scope at the point of
+    // failure, and this must never risk the required 200 response below.
+    try {
+      const errSupabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+      const message = error instanceof Error ? error.message : String(error);
+      await notifyAdmin(errSupabase, 'unknown', `⚠️ Webhook processing error: ${message}`, null);
+    } catch (notifyErr) {
+      console.error('❌ Failed to notify admin of webhook processing error:', notifyErr);
+    }
+    return new NextResponse('EVENT_RECEIVED', { status: 200 });
   }
 }
