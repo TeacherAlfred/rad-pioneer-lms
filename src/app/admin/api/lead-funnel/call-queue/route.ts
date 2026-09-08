@@ -73,9 +73,14 @@ export async function GET(req: Request) {
   let stale: any[] = [];
   let suggestions: any[] = [];
   if (status === 'pending') {
+    // 'won'/is_customer are deliberately NOT staleness signals - outbound
+    // contact to an existing customer is still a legitimate reason to queue
+    // them (a referral ask, nurturing them toward their next purchase), not
+    // a sign the call is no longer needed. Only 'lost'/'opted_out' genuinely
+    // mean the funnel considers this relationship over or declined.
     stale = rows
-      .filter((r: any) => r.lead && (['won', 'lost', 'opted_out'].includes(r.lead.lifecycle_stage) || r.lead.is_customer))
-      .map((r: any) => ({ id: r.id, lead_id: r.lead_id, lead_name: r.lead?.name, reason: r.lead?.is_customer ? 'already a customer' : `stage is now ${r.lead.lifecycle_stage}` }));
+      .filter((r: any) => r.lead && ['lost', 'opted_out'].includes(r.lead.lifecycle_stage))
+      .map((r: any) => ({ id: r.id, lead_id: r.lead_id, lead_name: r.lead?.name, reason: `stage is now ${r.lead.lifecycle_stage}` }));
 
     const queuedLeadIds = new Set(leadIds);
     const { data: urgentLeads } = await supabase
