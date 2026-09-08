@@ -22,12 +22,12 @@ export async function GET() {
   // several invoices), so it's attached to every row sharing that batch id.
   const batchIds = [...new Set((invoicePayments || []).map((p: any) => p.capture_batch_id).filter(Boolean))];
   const { data: earmarks } = batchIds.length
-    ? await supabase.from('income_expense_allocations').select('capture_batch_id, expense_name, amount').in('capture_batch_id', batchIds)
+    ? await supabase.from('income_expense_allocations').select('id, capture_batch_id, expense_name, amount').in('capture_batch_id', batchIds)
     : { data: [] as any[] };
-  const earmarksByBatch = new Map<string, { name: string; amount: number }[]>();
+  const earmarksByBatch = new Map<string, { id: string; name: string; amount: number }[]>();
   (earmarks || []).forEach((e: any) => {
     const arr = earmarksByBatch.get(e.capture_batch_id) || [];
-    arr.push({ name: e.expense_name, amount: Number(e.amount) });
+    arr.push({ id: e.id, name: e.expense_name, amount: Number(e.amount) });
     earmarksByBatch.set(e.capture_batch_id, arr);
   });
 
@@ -65,6 +65,7 @@ export async function GET() {
         note: p.created_by,
         lead: leadById.get(p.lead_id) || null,
         earmarks: p.capture_batch_id ? earmarksByBatch.get(p.capture_batch_id) || [] : [],
+        canEarmark: true,
       };
     }),
     ...(bfPayments || []).map((p: any) => {
@@ -78,7 +79,8 @@ export async function GET() {
         method: null,
         note: p.note,
         lead: bal ? leadById.get(bal.lead_id) || null : null,
-        earmarks: [] as { name: string; amount: number }[],
+        earmarks: [] as { id: string; name: string; amount: number }[],
+        canEarmark: false,
       };
     }),
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());

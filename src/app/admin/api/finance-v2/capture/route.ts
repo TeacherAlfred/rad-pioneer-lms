@@ -1,14 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-
-type ExpenseAllocationInput = {
-  expense_id: string | null; // null => create a new standing expense from name/due_date/etc below
-  name: string;
-  amount: number;
-  due_date?: string;
-  payment_timing?: 'pre_paid' | 'post_paid';
-  recurring?: boolean;
-};
+import { insertExpenseAllocations, type ExpenseAllocationInput } from '@/lib/incomeExpenseAllocations';
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -63,39 +55,8 @@ export async function POST(request: Request) {
     }
 
     // Purely a bookkeeping note ("this money covered such and such") - never
-    // touches the invoices/waterfall math above. A row with expense_id=null
-    // creates the standing expense first (same defaults as the Standing
-    // Expenses "add" form), so a one-off freehand note becomes a real,
-    // trackable expense rather than disappearing after this capture.
-    for (const ea of expense_allocations || []) {
-      if (!ea.amount || ea.amount <= 0 || !ea.name?.trim()) continue;
-
-      let expenseId = ea.expense_id;
-      if (!expenseId) {
-        if (!ea.due_date) continue;
-        const { data: newExpense, error: expError } = await supabase
-          .from('monthly_expenses')
-          .insert({
-            name: ea.name.trim(),
-            amount: ea.amount,
-            due_date: ea.due_date,
-            payment_timing: ea.payment_timing === 'pre_paid' ? 'pre_paid' : 'post_paid',
-            recurring: !!ea.recurring,
-          })
-          .select('id')
-          .single();
-        if (expError) throw expError;
-        expenseId = newExpense.id;
-      }
-
-      const { error: allocError } = await supabase.from('income_expense_allocations').insert({
-        capture_batch_id: captureBatchId,
-        expense_id: expenseId,
-        expense_name: ea.name.trim(),
-        amount: ea.amount,
-      });
-      if (allocError) throw allocError;
-    }
+    // touches the invoices/waterfall math above.
+    await insertExpenseAllocations(supabase, captureBatchId, expense_allocations);
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {
