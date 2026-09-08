@@ -5,7 +5,7 @@ import { recordStageChange } from '@/lib/leadStageHistory';
 import { resolveVariable, resolveProgramTokens, sendMetaTemplate, sendWhatsAppMessage } from '@/lib/metaTemplate';
 import { STATUS_BUTTONS } from '@/lib/adminPipelineButtons';
 import { isWithinDnd } from '@/lib/dndSchedule';
-import { AD_ROBOTICS_WATCH_ID } from '@/lib/adFollowups';
+import { isRoboticsWatchAd } from '@/lib/adFollowups';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
 // signature Meta signs the raw body with, using the app secret.
@@ -882,17 +882,18 @@ export async function POST(request: Request) {
                 if (matchedMedia) {
                   await deliverBotMedia(supabase, senderPhone, lead, matchedMedia);
                 } else {
-                  // "The skill your watch doesn't teach" ad (ad_id
-                  // AD_ROBOTICS_WATCH_ID, src/lib/adFollowups.ts) gets a
-                  // purpose-built greeting instead of the generic menu below -
-                  // they already showed interest in this specific pitch, so
-                  // lead with it rather than starting them over at "what do
-                  // you want to explore". First contact only (isNewLead) -
-                  // a later, unrelated message from the same lead falls
-                  // through to the normal returning-lead welcome. Scoped to
-                  // this one ad_id, not "any ad referral" - every other ad
-                  // keeps today's generic welcome menu.
-                  const isRoboticsWatchAd = isNewLead && lead.ad_id === AD_ROBOTICS_WATCH_ID;
+                  // The "robotics watch" ad set (multiple ad_id creatives,
+                  // one campaign - see AD_SET_ROBOTICS_WATCH_IDS in
+                  // src/lib/adFollowups.ts) gets a purpose-built greeting
+                  // instead of the generic menu below - they already showed
+                  // interest in this specific pitch, so lead with it rather
+                  // than starting them over at "what do you want to
+                  // explore". First contact only (isNewLead) - a later,
+                  // unrelated message from the same lead falls through to
+                  // the normal returning-lead welcome. Scoped to this ad
+                  // set specifically, not "any ad referral" - every other
+                  // ad keeps today's generic welcome menu.
+                  const isFromRoboticsWatchAdSet = isNewLead && isRoboticsWatchAd(lead.ad_id);
 
                   // Catch-All Welcome - a lead we already have on file (an existing
                   // contact, or anyone carried over from the warm-list import) gets a
@@ -903,7 +904,7 @@ export async function POST(request: Request) {
                     ? "👋 Hi! Welcome to RAD Academy.\n\nWhether you're a returning parent or new to our community, we help turn screen time into skill-building. What would you like to explore?"
                     : "👋 Hey, great to hear from you!\n\nWhat can we help you with today?";
 
-                  const welcomePayload = isRoboticsWatchAd ? {
+                  const welcomePayload = isFromRoboticsWatchAdSet ? {
                     type: 'interactive',
                     interactive: {
                       type: 'button',

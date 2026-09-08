@@ -70,13 +70,18 @@ New capability, not just new copy: an `expects_reply` flow can now require `repl
 
 ---
 
-## Ad-specific first contact: "The skill your watch doesn't teach"
+## Ad-specific first contact: the "robotics watch" ad set
 
-The first ad-gated greeting in the system — scoped to one specific Meta ad (`ad_id: 120248999130920372`, matched on Meta's `referral.source_id`), not "any ad referral." A lead whose *first* message carries this `ad_id` gets a purpose-built pitch instead of the generic welcome menu; every other ad keeps today's generic welcome. Also the first **delayed** send in the system — everything else fires off a button tap; this one fires off *silence*.
+The first ad-gated greeting in the system — scoped to a specific Meta ad *set* (multiple ad creatives, one campaign, matched on Meta's `referral.source_id`), not "any ad referral." A lead whose *first* message carries one of this set's `ad_id`s gets a purpose-built pitch instead of the generic welcome menu; every other ad keeps today's generic welcome. Also the first **delayed** send in the system — everything else fires off a button tap; this one fires off *silence*.
+
+| `ad_id` | Ad headline |
+|---|---|
+| `120248999130920372` | "The skill your watch doesn't teach" |
+| `120248999130910372` | "Ask them what they'd rather do" |
 
 ```mermaid
 flowchart LR
-    A["First message, ad_id =<br/>120248999130920372"] -->|🎥 Register Now| B[btn_ad6219_register:<br/>asks email, validated]
+    A["First message, ad_id in<br/>AD_SET_ROBOTICS_WATCH_IDS"] -->|🎥 Register Now| B[btn_ad6219_register:<br/>asks email, validated]
     B --> C[Captures email]
     C --> D["tags: ad_source_watch_skill<br/>+ ad6219_webinar_registered"]
 
@@ -95,7 +100,7 @@ flowchart LR
 | `btn_ad6219_register` | Asks for email (validated), captures it, confirms webinar link + calendar invite on the way | `add_tags: ad_source_watch_skill`, `completion: ad6219_webinar_registered` | immediate |
 | `btn_ad6219_guide` | Acknowledges the guide isn't ready yet ("a day or two") — no PDF sent, since none exists | `add_tags: ad6219_guide_pending` | buffered |
 | `btn_human` | Reused as-is — same "team member will be in touch" copy, no separate row needed | — | immediate |
-| `sendAdFollowups()` (`src/lib/adFollowups.ts`) | Polled every 5-10 min via the existing `notify-flush` route; sends the 24h nudge to any lead on this `ad_id` still `lifecycle_stage: 'new'` since their first message | `leads.ad_followup_sent_at` stamped to prevent a repeat | — |
+| `sendAdFollowups()` (`src/lib/adFollowups.ts`) | Polled every 5-10 min via the existing `notify-flush` route; sends the 24h nudge to any lead on this ad set still `lifecycle_stage: 'new'` since their first message | `leads.ad_followup_sent_at` stamped to prevent a repeat | — |
 
 **Graceful upgrade path**: the real robotics guide doesn't exist yet. Once it's uploaded to `bot_media` under the keyword `robotics_watch_guide`, `sendAdFollowups()` starts attaching it automatically — no code change. `btn_ad6219_guide` itself needs one manual step at that point: flip its action type to `bot_media` from `/admin/bot-flows` and point it at the same item.
 
@@ -262,7 +267,7 @@ What surrounds the bot itself — and what depends on a human noticing rather th
 - **Webinar / Workshop / Reengage / Segment automation built** — all 4 wizard templates now have working `bot_flows` behind every button, including the 5-step Student qualifier and a call-time capture for Parent.
 - **Both "Hold My Spot" buttons + "I'm Interested" wired** — Hold My Spot now asks for and validates an email address (for the quote) before confirming; "I'm Interested" tags and alerts immediately.
 - **`btn_human` given its own human-friendly acknowledgement** — "A team member will be in touch with you shortly" replaces reliance on the generic handoff copy.
-- **Ad-specific first-contact flow built ("The skill your watch doesn't teach")** — a specific Click-to-WhatsApp ad now gets a purpose-built greeting instead of the generic welcome menu, plus a 24h-later follow-up if the lead never replies — the system's first delayed (as opposed to button-triggered) send.
+- **Ad-specific first-contact flow built (the "robotics watch" ad set)** — two ad creatives in the same campaign now get a purpose-built greeting instead of the generic welcome menu, plus a 24h-later follow-up if the lead never replies — the system's first delayed (as opposed to button-triggered) send.
 - **Email verification on captured replies (new capability)** — any `expects_reply` flow can now require a real email address before accepting the reply as an answer, extracting it straight onto the lead's own `email` field. Live on both Hold My Spot flows — migration applied, validation switched on.
 
 ### 🔴 Logged to Systems Status — need a call on desired behavior, not just a fix

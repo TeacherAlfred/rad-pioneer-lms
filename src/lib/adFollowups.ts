@@ -20,11 +20,18 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// "The skill your watch doesn't teach" - Click-to-WhatsApp ad, matched on
-// Meta's referral.source_id (stored as leads.ad_id at first contact). Only
-// this specific ad gets the custom greeting/follow-up - every other
-// ad-referral lead keeps the standard welcome menu.
-export const AD_ROBOTICS_WATCH_ID = '120248999130920372';
+// The "robotics watch" ad set - multiple ad creatives (different ad_id per
+// creative, same underlying pitch/campaign) that all route to the same
+// custom greeting/follow-up. Matched on Meta's referral.source_id (stored
+// as leads.ad_id at first contact). Every ad-referral lead outside this set
+// keeps the standard welcome menu.
+export const AD_SET_ROBOTICS_WATCH_IDS = [
+  '120248999130920372', // "The skill your watch doesn't teach"
+  '120248999130910372', // "Ask them what they'd rather do"
+];
+export function isRoboticsWatchAd(adId: string | null | undefined): boolean {
+  return !!adId && AD_SET_ROBOTICS_WATCH_IDS.includes(adId);
+}
 
 const FOLLOWUP_DELAY_MS = 24 * 60 * 60 * 1000;
 // Reserved for the real robotics guide once it exists (see
@@ -41,7 +48,7 @@ export async function sendAdFollowups(): Promise<{ sent: number; failed: number 
   const { data: dueLeads, error } = await supabaseAdmin
     .from('leads')
     .select('id, phone')
-    .eq('ad_id', AD_ROBOTICS_WATCH_ID)
+    .in('ad_id', AD_SET_ROBOTICS_WATCH_IDS)
     .eq('lifecycle_stage', 'new') // this codebase's existing "never replied since first contact" signal
     .is('ad_followup_sent_at', null)
     .lte('last_inbound_at', cutoff)
