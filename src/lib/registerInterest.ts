@@ -84,6 +84,21 @@ export async function notifyAdminOfRegistration(supabaseAdmin: any, leadId: stri
     },
   });
 
+  // Same outbox logging as the WhatsApp webhook's own notifyAdmin - see the
+  // Messages Outbox migration comment for why recipient_phone (the admin's
+  // own number) matters here.
+  await supabaseAdmin.from('messages').insert([{
+    lead_id: leadId,
+    direction: 'outbound',
+    method: 'waba',
+    recipient_phone: adminPhone,
+    body: `[Admin Alert] ${eventText}`,
+    wamid: result.wamid || null,
+    status: result.ok ? null : 'failed',
+    error_code: result.errorCode || null,
+    error_detail: result.ok ? null : (result.error || null),
+  }]);
+
   if (!result.ok) {
     await supabaseAdmin.from('admin_notification_buffer').insert([{ lead_id: leadId, event_text: eventText }]);
   }

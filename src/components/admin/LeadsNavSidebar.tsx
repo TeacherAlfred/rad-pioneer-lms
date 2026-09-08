@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
-  BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone, ListChecks,
+  BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone, ListChecks, Send,
 } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
 
@@ -43,6 +43,13 @@ const OVERVIEW_LINK: NavItem = { href: '/admin/lead-funnel/overview', label: 'Le
 const CALL_QUEUE_LINK: { item: NavItem; colorKey: RadColorKey } = {
   item: { href: '/admin/lead-funnel/call-queue', label: 'Call Queue', icon: Phone },
   colorKey: 'blue',
+};
+// Same "one click, no flyout" treatment as Call Queue - a record you check
+// when something didn't arrive, not a reference page worth burying a click
+// deeper behind the Messages group's hover flyout.
+const OUTBOX_LINK: { item: NavItem; colorKey: RadColorKey } = {
+  item: { href: '/admin/lead-funnel/outbox', label: 'Messages Outbox', icon: Send },
+  colorKey: 'teal',
 };
 const GUIDE_LINK: { item: NavItem; colorKey: RadColorKey } = {
   item: { href: '/admin/lead-funnel/guide', label: 'Guide', icon: BookOpen },
@@ -133,6 +140,8 @@ export default function LeadsNavSidebar() {
   const overviewActive = isActive(pathname, OVERVIEW_LINK.href);
   const callQueueActive = isActive(pathname, CALL_QUEUE_LINK.item.href);
   const callQueueColors = RAD_COLORS[CALL_QUEUE_LINK.colorKey];
+  const outboxActive = isActive(pathname, OUTBOX_LINK.item.href);
+  const outboxColors = RAD_COLORS[OUTBOX_LINK.colorKey];
   const guideActive = isActive(pathname, GUIDE_LINK.item.href);
   const guideColors = RAD_COLORS[GUIDE_LINK.colorKey];
   const pendingCount = usePendingBufferCount();
@@ -153,6 +162,7 @@ export default function LeadsNavSidebar() {
       groups={mobileGroups}
       singleLinks={[
         { ...CALL_QUEUE_LINK.item, colorKey: CALL_QUEUE_LINK.colorKey },
+        { ...OUTBOX_LINK.item, colorKey: OUTBOX_LINK.colorKey },
         { ...GUIDE_LINK.item, colorKey: GUIDE_LINK.colorKey },
       ]}
     />
@@ -174,6 +184,14 @@ export default function LeadsNavSidebar() {
           className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${callQueueActive ? `${callQueueColors.bgTint} ${callQueueColors.text}` : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
         >
           <CALL_QUEUE_LINK.item.icon size={18} />
+        </Link>
+
+        <Link
+          href={OUTBOX_LINK.item.href}
+          title={OUTBOX_LINK.item.label}
+          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${outboxActive ? `${outboxColors.bgTint} ${outboxColors.text}` : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
+        >
+          <OUTBOX_LINK.item.icon size={18} />
         </Link>
 
         <div className="w-8 border-t border-slate-100 my-1" />

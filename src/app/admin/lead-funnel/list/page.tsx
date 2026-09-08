@@ -12,6 +12,7 @@ import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
 import { ContactLogForm, type LoggedActivity } from "@/components/admin/ContactLogForm";
 import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
+import { DesktopSendButton } from "@/components/admin/DesktopSendButton";
 import { LEAD_AUTOFIELDS } from "@/lib/metaTemplate";
 
 type Lead = {
@@ -892,8 +893,9 @@ export default function LeadFunnelPage() {
                             </button>
                           </div>
                           <div className="text-xs text-slate-400">+{r.phone}{r.email ? ` · ${r.email}` : ''}</div>
-                          <div className="mt-1">
+                          <div className="mt-1 flex flex-wrap gap-1.5">
                             <QueueQuickAdd leadId={r.id} leadName={r.name} />
+                            <DesktopSendButton leadId={r.id} phone={r.phone} />
                           </div>
                           {(r.children_names || []).length > 0 && (
                             <div className="text-[11px] text-slate-400 mt-0.5">Children: {(r.children_names || []).join(', ')}</div>
@@ -1365,6 +1367,7 @@ export default function LeadFunnelPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <QueueQuickAdd leadId={viewingLead.id} leadName={viewingLead.name} />
+                  <DesktopSendButton leadId={viewingLead.id} phone={viewingLead.phone} />
                   <button
                     onClick={toggleBotPause}
                     disabled={pauseSaving}

@@ -15,7 +15,7 @@
 // id) so callers can store it on the messages row - that's what lets a
 // later status webhook (sent/delivered/read) get matched back to this
 // specific send, see whatsapp-webhook/route.ts's applyMessageStatus.
-export async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string; wamid?: string }> {
+export async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string; errorCode?: string; wamid?: string }> {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
 
@@ -36,8 +36,13 @@ export async function sendWhatsAppMessage(to: string, messagePayload: any): Prom
   const data = await response.json();
   if (!response.ok) {
     const errorDetail = data?.error?.message || JSON.stringify(data);
+    // Meta's numeric error code (e.g. 131047 = outside the 24h customer-
+    // service window) - kept separate from the flattened message string so
+    // the Messages Outbox can show/query it directly rather than just the
+    // free-text detail. See messages.error_code (20260908170000 migration).
+    const errorCode = data?.error?.code != null ? String(data.error.code) : undefined;
     console.error(`❌ Meta API Error sending to ${to}:`, JSON.stringify(data, null, 2));
-    return { ok: false, error: errorDetail };
+    return { ok: false, error: errorDetail, errorCode };
   }
   console.log(`✅ Message successfully sent to ${to}`);
   return { ok: true, wamid: data?.messages?.[0]?.id };
@@ -139,7 +144,7 @@ export async function sendMetaTemplate(
   // Meta assigns its own default payload and a tap won't match anything in
   // bot_flows even if the trigger_button_id looks right.
   buttonPayloads: string[] = []
-): Promise<{ ok: boolean; error?: string; wamid?: string }> {
+): Promise<{ ok: boolean; error?: string; errorCode?: string; wamid?: string }> {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
 
@@ -188,7 +193,7 @@ export async function sendMetaTemplate(
 
   const data = await response.json();
   if (!response.ok) {
-    return { ok: false, error: data?.error?.message || JSON.stringify(data) };
+    return { ok: false, error: data?.error?.message || JSON.stringify(data), errorCode: data?.error?.code != null ? String(data.error.code) : undefined };
   }
   return { ok: true, wamid: data?.messages?.[0]?.id };
 }

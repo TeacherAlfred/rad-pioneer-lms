@@ -140,6 +140,21 @@ export async function flushBufferedNotifications(opts: { force?: boolean; onlyLe
       },
     });
 
+    // Same outbox logging as the immediate-tier notifyAdmin paths - this is
+    // the consolidated-buffer flush, so it's the one most likely to land
+    // outside the admin's 24h window if they haven't texted the bot lately.
+    await supabaseAdmin.from('messages').insert([{
+      lead_id: leadId,
+      direction: 'outbound',
+      method: 'waba',
+      recipient_phone: adminPhone,
+      body: `[Admin Alert] ${lines.join('; ')}`,
+      wamid: result.wamid || null,
+      status: result.ok ? null : 'failed',
+      error_code: result.errorCode || null,
+      error_detail: result.ok ? null : (result.error || null),
+    }]);
+
     if (!result.ok) {
       await supabaseAdmin.from('pending_admin_alerts').insert([{ lead_phone: lead.phone, stage_text: alertText }]);
     }

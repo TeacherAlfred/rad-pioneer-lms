@@ -9,6 +9,7 @@ import { LIFECYCLE_STAGES, LIFECYCLE_STAGE_LABELS, VALID_STAGE_TRANSITIONS } fro
 import { getSourceLane, SourceLane } from "@/lib/leadSourceLane";
 import { QUALIFICATION_STAGES, isLeadQualified, nextStageToCheck } from "@/lib/leadQualification";
 import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
+import { DesktopSendButton } from "@/components/admin/DesktopSendButton";
 
 const LANE_OPTIONS: (SourceLane | "All")[] = ["All", "Meta", "Irene", "Warm List", "Organic", "Unknown"];
 const HEALTH_OPTIONS = ["All", "active", "stalled", "dormant"];
@@ -188,8 +189,9 @@ export default function LeadJourneyPage() {
                           </a>
                         )}
 
-                        <div className="mb-3">
+                        <div className="mb-3 flex flex-wrap gap-1.5">
                           <QueueQuickAdd leadId={lead.id} leadName={lead.name} />
+                          {lead.phone && <DesktopSendButton leadId={lead.id} phone={lead.phone} />}
                         </div>
 
                         {(() => {

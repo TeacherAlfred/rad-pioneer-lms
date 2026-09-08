@@ -10,6 +10,8 @@ import {
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
 import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
+import { parseMessage, KIND_LABEL, STATUS_DISPLAY } from "@/lib/messageParse";
+import { DesktopSendButton } from "@/components/admin/DesktopSendButton";
 import { LEAD_AUTOFIELDS } from "@/lib/metaTemplate";
 import { computeWindowState } from "@/lib/whatsappWindow";
 
@@ -105,18 +107,6 @@ type TemplateOption = {
   quickReplyButtons?: { text: string; index: number }[];
 };
 
-// WhatsApp's own check-mark convention - only meaningful for outbound rows
-// that actually got a status webhook (see whatsapp-webhook/route.ts's
-// applyMessageStatus). Rows sent before this feature existed have no
-// status at all and render with none of this, not a placeholder.
-const STATUS_DISPLAY: Record<string, { icon: string; label: string; className: string }> = {
-  sent: { icon: '✓', label: 'Sent', className: 'text-slate-400' },
-  delivered: { icon: '✓✓', label: 'Delivered', className: 'text-slate-400' },
-  played: { icon: '✓✓', label: 'Played', className: 'text-slate-400' },
-  read: { icon: '✓✓', label: 'Read', className: 'text-sky-500' },
-  failed: { icon: '⚠', label: 'Failed', className: 'text-rose-500' },
-};
-
 function formatStatusTime(iso: string | null | undefined) {
   if (!iso) return '';
   return new Date(iso).toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit' });
@@ -128,55 +118,6 @@ function isInhouseRow(m: MessageRow) {
 }
 function isBlockedRow(m: MessageRow) {
   return !!m.lead_is_blocked;
-}
-
-// Everything sent to a lead is logged into `messages` as bracketed text
-// rather than structured columns (see whatsapp-webhook/route.ts) - this
-// parses that back out into something a dashboard can group and count.
-type Parsed =
-  | { kind: 'template'; status: 'delivered' | 'failed'; label: string; detail?: string }
-  | { kind: 'bot_flow'; status: 'delivered' | 'failed'; label: string; detail?: string }
-  | { kind: 'bot_media'; status: 'delivered' | 'failed'; label: string; detail?: string }
-  | { kind: 'human_handoff'; status: 'delivered' | 'failed'; label: string; detail?: string }
-  | { kind: 'button_tap'; label: string; detail?: string }
-  | { kind: 'text'; label: string };
-
-function parseMessage(m: MessageRow): Parsed {
-  const body = m.body || '';
-
-  if (m.direction === 'outbound') {
-    let match = body.match(/^\[Delivered template: (.+)\]$/);
-    if (match) return { kind: 'template', status: 'delivered', label: match[1] };
-
-    match = body.match(/^\[FAILED to deliver template (.+?): (.+)\]$/);
-    if (match) return { kind: 'template', status: 'failed', label: match[1], detail: match[2] };
-
-    if (body === '[Delivered human-handoff acknowledgment]') {
-      return { kind: 'human_handoff', status: 'delivered', label: 'Human handoff acknowledgment' };
-    }
-    match = body.match(/^\[FAILED to deliver acknowledgment: (.+)\]$/);
-    if (match) return { kind: 'human_handoff', status: 'failed', label: 'Human handoff acknowledgment', detail: match[1] };
-
-    // Checked before the generic "[Delivered X]" bot_media catch-all below,
-    // which would otherwise also match this and mislabel every Bot Flows
-    // message-type send as Bot Media.
-    match = body.match(/^\[Delivered flow: (.+)\]$/);
-    if (match) return { kind: 'bot_flow', status: 'delivered', label: match[1] };
-    match = body.match(/^\[FAILED to deliver flow (.+?): (.+)\]$/);
-    if (match) return { kind: 'bot_flow', status: 'failed', label: match[1], detail: match[2] };
-
-    match = body.match(/^\[FAILED to deliver "(.+?)": (.+)\]$/);
-    if (match) return { kind: 'bot_media', status: 'failed', label: match[1], detail: match[2] };
-
-    match = body.match(/^\[Delivered (.+)\]$/);
-    if (match) return { kind: 'bot_media', status: 'delivered', label: match[1] };
-
-    return { kind: 'text', label: body };
-  }
-
-  const match = body.match(/^\[Button Reply: (.+) \((.+)\)\]$/);
-  if (match) return { kind: 'button_tap', label: match[1], detail: match[2] };
-  return { kind: 'text', label: body };
 }
 
 // Glow intensity communicates urgency, not just "open vs closed" - a lead
@@ -201,15 +142,6 @@ function formatCountdown(msRemaining: number): string {
   if (hours <= 0) return `${minutes}m left`;
   return `${hours}h ${minutes}m left`;
 }
-
-const KIND_LABEL: Record<string, string> = {
-  template: 'Template Send',
-  bot_flow: 'Bot Flow',
-  bot_media: 'Bot Media',
-  human_handoff: 'Human Handoff',
-  button_tap: 'Button Tap',
-  text: 'Text',
-};
 
 export default function MessageActivityPage() {
   const [rows, setRows] = useState<MessageRow[]>([]);
@@ -934,6 +866,7 @@ export default function MessageActivityPage() {
                                 >
                                   <Reply size={12} /> Reply
                                 </button>
+                                {!g.leadIsBlocked && <DesktopSendButton leadId={g.leadId} phone={g.leadPhone || ''} />}
                                 <button
                                   onClick={() => toggleBlocked(g)}
                                   disabled={blockingId === g.leadId}

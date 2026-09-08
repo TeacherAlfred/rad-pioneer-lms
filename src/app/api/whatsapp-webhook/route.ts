@@ -51,6 +51,16 @@ async function applyMessageStatus(supabase: any, status: any) {
     status: status.status,
     status_updated_at: new Date().toISOString(),
   };
+  // Meta's own rejection reason for a 'failed' status - e.g. code 131047
+  // ("Re-engagement message") when a freeform send lands outside the 24h
+  // customer-service window. Only ever present on 'failed', and even then
+  // only for sends that Meta accepted at request time but couldn't actually
+  // deliver later - most window violations instead get rejected synchronously
+  // at send time (see sendWhatsAppMessage's errorCode in metaTemplate.ts).
+  if (status.status === 'failed' && Array.isArray(status.errors) && status.errors[0]) {
+    update.error_code = status.errors[0].code != null ? String(status.errors[0].code) : null;
+    update.error_detail = status.errors[0].message || status.errors[0].title || null;
+  }
   if (status.conversation) {
     update.conversation_category = status.conversation.origin?.type ?? null;
     // Only ever present on the 'sent' status - when this lead's 24hr free-
@@ -107,6 +117,22 @@ async function notifyAdmin(supabase: any, senderPhone: string, stageText: string
       }
     }
   });
+
+  // Admin alerts never touched `messages` before - they were invisible to
+  // any outbound record, so a rejected one (e.g. outside the admin's own
+  // 24h window) left zero trace anywhere. recipient_phone is the admin's
+  // own number here, not the lead's - see the Messages Outbox migration.
+  await supabase.from('messages').insert([{
+    lead_id: leadId,
+    direction: 'outbound',
+    method: 'waba',
+    recipient_phone: adminPhone,
+    body: `[Admin Alert] ${stageText}`,
+    wamid: result.wamid || null,
+    status: result.ok ? null : 'failed',
+    error_code: result.errorCode || null,
+    error_detail: result.ok ? null : (result.error || null),
+  }]);
 
   if (!result.ok) {
     await supabase.from('pending_admin_alerts').insert([{ lead_phone: senderPhone, stage_text: stageText }]);
