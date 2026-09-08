@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { VALID_METRICS } from "@/lib/dashboard-v2/focusItemEvaluators";
 
-const VALID_METRICS = ["focus_log", "qualification_checks"];
 const VALID_CADENCE = ["daily", "weekly"];
 
 // "As and when" population of new focus items (founder framing, 2026-08-24) -

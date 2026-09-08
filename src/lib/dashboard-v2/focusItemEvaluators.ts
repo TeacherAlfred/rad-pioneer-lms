@@ -6,6 +6,11 @@ import { SupabaseClient } from "@supabase/supabase-js";
 // off from what the founder actually experiences as their day.
 const SAST_OFFSET_MS = 2 * 60 * 60 * 1000;
 
+// 'focus_log' is the fallback in evaluateFocusItem below (any unrecognized
+// key falls through to it), so this list is really "every metric that has
+// its own real evaluator" - keep it in sync with the branches there.
+export const VALID_METRICS = ["focus_log", "qualification_checks", "leads_contacted"];
+
 export type FocusItemRow = {
   id: string;
   label: string;
@@ -63,6 +68,22 @@ export async function evaluateFocusItem(
       .lt("checked_at", end.toISOString());
     const distinctLeads = new Set((data || []).map((r: any) => r.lead_id));
     return { actual: distinctLeads.size, achieved: distinctLeads.size >= item.target_value };
+  }
+
+  // Same "processed" definition as the Call Queue dashboard cards
+  // (src/app/admin/api/lead-funnel/call-queue/stats/route.ts): a
+  // lead_call_queue entry marked done by working the queue, i.e. a real
+  // logged outbound contact attempt - never a self-reported tap, and never
+  // includes replying to an inbound message.
+  if (item.metric_key === "leads_contacted") {
+    const { data } = await supabase
+      .from("lead_call_queue")
+      .select("id")
+      .eq("status", "done")
+      .gte("completed_at", start.toISOString())
+      .lt("completed_at", end.toISOString());
+    const actual = (data || []).length;
+    return { actual, achieved: actual >= item.target_value };
   }
 
   // 'focus_log' - no other system of record exists for this habit, so the

@@ -182,6 +182,7 @@ export function TodayBanner() {
                 >
                   <option value="focus_log">Tap to log</option>
                   <option value="qualification_checks">Auto — conversations reviewed</option>
+                  <option value="leads_contacted">Auto — leads contacted</option>
                 </select>
               </div>
               <div className="flex gap-2">
