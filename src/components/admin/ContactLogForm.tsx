@@ -24,7 +24,7 @@ export type LoggedActivity = {
   id: string;
   channel: string;
   direction: string;
-  outcome: string;
+  outcome: string | null;
   objective: string | null;
   note: string | null;
   created_by: string | null;
@@ -40,7 +40,11 @@ export function ContactLogForm({
 }) {
   const [channel, setChannel] = useState(CONTACT_CHANNELS[0]);
   const [objective, setObjective] = useState(CONTACT_OBJECTIVES[0]);
-  const [outcome, setOutcome] = useState(CONTACT_OUTCOMES[0]);
+  // Empty = "what they did" isn't known yet (a WhatsApp invite/email needs
+  // time for a reply) - logs "what I did" only, flagged for review if
+  // still unanswered 24h later. A live call where the outcome's already
+  // obvious can still pick a real value here and skip that wait entirely.
+  const [outcome, setOutcome] = useState("");
   const [contactedBy, setContactedBy] = useState(DEFAULT_CONTACTED_BY);
   const [occurredAt, setOccurredAt] = useState(nowLocalDatetime());
   const [note, setNote] = useState("");
@@ -77,7 +81,7 @@ export function ContactLogForm({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             toStage: stageChange,
-            reason: `Logged during contact — ${CONTACT_OUTCOME_LABELS[outcome] || outcome}`,
+            reason: outcome ? `Logged during contact — ${CONTACT_OUTCOME_LABELS[outcome] || outcome}` : "Logged during contact",
           }),
         });
         if (moveRes.ok) {
@@ -120,6 +124,7 @@ export function ContactLogForm({
         <div>
           <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Outcome</label>
           <select value={outcome} onChange={e => setOutcome(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-slate-400">
+            <option value="">Awaiting response...</option>
             {CONTACT_OUTCOMES.map(o => <option key={o} value={o}>{CONTACT_OUTCOME_LABELS[o]}</option>)}
           </select>
         </div>
@@ -128,6 +133,11 @@ export function ContactLogForm({
           <input type="datetime-local" value={occurredAt} onChange={e => setOccurredAt(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-slate-400" />
         </div>
       </div>
+      {!outcome && (
+        <p className="text-[11px] text-slate-400 -mt-1">
+          This logs what you did. Come back and capture their response later - if nothing's recorded within 24h, you&apos;ll be notified to confirm it as No Answer.
+        </p>
+      )}
 
       <div>
         <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Contacted By</label>

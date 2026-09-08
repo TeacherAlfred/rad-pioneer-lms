@@ -14,6 +14,7 @@ import { ContactLogForm, type LoggedActivity } from "@/components/admin/ContactL
 import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
 import { DesktopSendButton } from "@/components/admin/DesktopSendButton";
 import { LEAD_AUTOFIELDS } from "@/lib/metaTemplate";
+import { CONTACT_OUTCOMES, CONTACT_OUTCOME_LABELS } from "@/lib/contactLog";
 
 type Lead = {
   id: string;
@@ -50,7 +51,7 @@ type Lead = {
 };
 
 type LeadNote = { id: string; note: string; created_at: string; created_by: string | null };
-type LeadActivity = { id: string; channel: string; direction: string; outcome: string; objective?: string | null; note: string | null; created_by: string | null; created_at: string };
+type LeadActivity = { id: string; channel: string; direction: string; outcome: string | null; objective?: string | null; note: string | null; created_by: string | null; created_at: string };
 
 // Read-only shapes for the quick-view drawer - trimmed to what's actually
 // rendered, not the full API response (see kids/orders/passes routes for
@@ -604,6 +605,40 @@ export default function LeadFunnelPage() {
       setRows(prev => prev.map(r => r.id === viewingLead.id
         ? { ...r, needs_human: false, ...(newStage ? { lifecycle_stage: newStage } : {}) }
         : r));
+    }
+  }
+
+  // --- Capturing "what they did" for an entry logged without a known
+  // outcome yet (see ContactLogForm's "Awaiting response..." option) -
+  // reopening the lead later and filling this in is the whole point of the
+  // two-phase log. One-shot: the PATCH endpoint rejects it if a response is
+  // already recorded. ---
+  const [capturingResponseId, setCapturingResponseId] = useState<string | null>(null);
+  const [responseOutcome, setResponseOutcome] = useState(CONTACT_OUTCOMES[0]);
+  const [responseNote, setResponseNote] = useState('');
+  const [responseSaving, setResponseSaving] = useState(false);
+
+  function openCaptureResponse(activityId: string) {
+    setCapturingResponseId(activityId);
+    setResponseOutcome(CONTACT_OUTCOMES[0]);
+    setResponseNote('');
+  }
+
+  async function captureResponse(activityId: string) {
+    setResponseSaving(true);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/activities', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: activityId, outcome: responseOutcome, note: responseNote.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setLeadActivities(prev => prev.map(a => a.id === activityId ? data.row : a));
+        setCapturingResponseId(null);
+      }
+    } finally {
+      setResponseSaving(false);
     }
   }
 
@@ -1479,7 +1514,11 @@ export default function LeadFunnelPage() {
                       <div key={a.id} className="text-[11px] bg-slate-50 rounded-lg px-2.5 py-1.5">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-slate-600">
-                            <b className="capitalize">{a.outcome.replace(/_/g, ' ')}</b>
+                            {a.outcome ? (
+                              <b className="capitalize">{a.outcome.replace(/_/g, ' ')}</b>
+                            ) : (
+                              <b className="text-amber-600">Awaiting response</b>
+                            )}
                             <span className="text-slate-400"> · {a.channel} · {a.direction}{a.objective ? ` · ${a.objective.replace(/_/g, ' ')}` : ''}{a.created_by ? ` · ${a.created_by}` : ''}</span>
                           </span>
                           <span className="text-slate-400 shrink-0">{new Date(a.created_at).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short' })}</span>
@@ -1489,6 +1528,26 @@ export default function LeadFunnelPage() {
                             all along but never surfaced here, so it was
                             effectively invisible without querying the DB directly. */}
                         {a.note && <p className="text-slate-700 mt-1 whitespace-pre-wrap">{a.note}</p>}
+                        {!a.outcome && (
+                          capturingResponseId === a.id ? (
+                            <div className="mt-1.5 space-y-1.5 bg-white border border-slate-200 rounded-lg p-2">
+                              <select value={responseOutcome} onChange={e => setResponseOutcome(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] outline-none focus:border-slate-400">
+                                {CONTACT_OUTCOMES.map(o => <option key={o} value={o}>{CONTACT_OUTCOME_LABELS[o]}</option>)}
+                              </select>
+                              <textarea value={responseNote} onChange={e => setResponseNote(e.target.value)} rows={2} placeholder="What did they say/do? (optional)" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] outline-none focus:border-slate-400" />
+                              <div className="flex gap-1.5">
+                                <button onClick={() => setCapturingResponseId(null)} className="flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-500 border border-slate-200">Cancel</button>
+                                <button onClick={() => captureResponse(a.id)} disabled={responseSaving} className="flex-1 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white bg-slate-900 disabled:opacity-50">
+                                  {responseSaving ? 'Saving...' : 'Save Response'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button onClick={() => openCaptureResponse(a.id)} className="mt-1 text-[10px] font-black uppercase tracking-widest text-amber-600 hover:text-amber-700">
+                              + Capture Response
+                            </button>
+                          )
+                        )}
                       </div>
                     ))
                   )}

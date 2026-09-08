@@ -41,13 +41,15 @@ export function urgencyRank(lead: { needs_human?: boolean | null; stage_health?:
 }
 
 // Proportion of a lead's past logged contacts that went somewhere (not
-// no-answer/not-interested). Leads with no history get a neutral 0.5 so
-// they don't jump the queue in either direction. Used only as a tiebreak
-// within the same urgencyRank tier - the confirmed direction is
-// less-responsive-first, so equally-urgent leads don't quietly get sorted
-// by ease.
-export function responsivenessScore(activities: { outcome: string }[]): number {
-  if (activities.length === 0) return 0.5;
-  const responsive = activities.filter(a => isResponsiveOutcome(a.outcome)).length;
-  return responsive / activities.length;
+// no-answer/not-interested). Leads with no history - or none with a
+// captured response yet, e.g. everything's still within its 24h window -
+// get a neutral 0.5 so they don't jump the queue in either direction. Used
+// only as a tiebreak within the same urgencyRank tier - the confirmed
+// direction is less-responsive-first, so equally-urgent leads don't
+// quietly get sorted by ease.
+export function responsivenessScore(activities: { outcome: string | null }[]): number {
+  const resolved = activities.filter(a => a.outcome != null);
+  if (resolved.length === 0) return 0.5;
+  const responsive = resolved.filter(a => isResponsiveOutcome(a.outcome)).length;
+  return responsive / resolved.length;
 }

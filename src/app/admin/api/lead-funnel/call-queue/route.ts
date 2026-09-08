@@ -31,12 +31,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ rows: data || [] });
   }
 
-  const { data: queueRows, error } = await supabase
-    .from('lead_call_queue')
-    .select(`*, leads(${LEAD_COLUMNS})`)
-    .eq('status', status)
-    .order('target_date', { ascending: true })
-    .order('added_at', { ascending: true });
+  // 'history' is the "resolved" view (done + skipped, most-recently-
+  // completed first) that a lead falls into the moment an outcome is logged
+  // for them - see the activities route's POST, which is what actually
+  // moves a row from pending to done. Every other status value is an exact
+  // match against the single-status urgency-sorted queue below.
+  const isHistory = status === 'history';
+  let queueQuery = supabase.from('lead_call_queue').select(`*, leads(${LEAD_COLUMNS})`);
+  queueQuery = isHistory
+    ? queueQuery.in('status', ['done', 'skipped']).order('completed_at', { ascending: false })
+    : queueQuery.eq('status', status).order('target_date', { ascending: true }).order('added_at', { ascending: true });
+  const { data: queueRows, error } = await queueQuery;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const leadIds = (queueRows || []).map((r: any) => r.lead_id);
@@ -58,17 +63,22 @@ export async function GET(req: Request) {
     _responsiveness: responsivenessScore(activitiesByLead[r.lead_id] || []),
   }));
 
-  rows.sort((a: any, b: any) => {
-    const aPinned = a.manual_priority != null;
-    const bPinned = b.manual_priority != null;
-    if (aPinned && bPinned) return a.manual_priority - b.manual_priority;
-    if (aPinned) return -1;
-    if (bPinned) return 1;
-    if (a._urgencyRank !== b._urgencyRank) return a._urgencyRank - b._urgencyRank;
-    if (a._responsiveness !== b._responsiveness) return a._responsiveness - b._responsiveness;
-    if (a.target_date !== b.target_date) return a.target_date < b.target_date ? -1 : 1;
-    return new Date(a.added_at).getTime() - new Date(b.added_at).getTime();
-  });
+  // History is already ordered by completed_at desc from the query above -
+  // re-sorting by urgency/priority would scramble "most recently resolved
+  // first" into a meaningless order for a list that's no longer active.
+  if (!isHistory) {
+    rows.sort((a: any, b: any) => {
+      const aPinned = a.manual_priority != null;
+      const bPinned = b.manual_priority != null;
+      if (aPinned && bPinned) return a.manual_priority - b.manual_priority;
+      if (aPinned) return -1;
+      if (bPinned) return 1;
+      if (a._urgencyRank !== b._urgencyRank) return a._urgencyRank - b._urgencyRank;
+      if (a._responsiveness !== b._responsiveness) return a._responsiveness - b._responsiveness;
+      if (a.target_date !== b.target_date) return a.target_date < b.target_date ? -1 : 1;
+      return new Date(a.added_at).getTime() - new Date(b.added_at).getTime();
+    });
+  }
 
   let stale: any[] = [];
   let suggestions: any[] = [];

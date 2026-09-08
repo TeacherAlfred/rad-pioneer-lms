@@ -40,6 +40,11 @@ export const CONTACT_OUTCOME_LABELS: Record<string, string> = {
 // consistently regardless of which vocabulary logged each entry.
 const UNRESPONSIVE_OUTCOMES = new Set(['no_answer', 'not_interested', 'no_response']);
 
-export function isResponsiveOutcome(outcome: string): boolean {
+// null means "logged, response not captured yet" (see the two-phase outcome
+// migration) - not yet knowable either way, so it's neither responsive nor
+// unresponsive. Callers computing a ratio should exclude these entirely
+// rather than treating null as a miss.
+export function isResponsiveOutcome(outcome: string | null | undefined): boolean {
+  if (!outcome) return false;
   return !UNRESPONSIVE_OUTCOMES.has(outcome);
 }

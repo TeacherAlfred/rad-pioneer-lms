@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { recordStageChange } from '@/lib/leadStageHistory';
 import { computeEngagementRecency, computeStageHealth } from '@/lib/leadUrgency';
+import { sendWhatsAppMessage } from '@/lib/metaTemplate';
+import { CONTACT_CHANNEL_LABELS, CONTACT_OBJECTIVE_LABELS } from '@/lib/contactLog';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -127,11 +129,57 @@ export async function GET(request: Request) {
       });
     }
 
+    // --- PASS 4: contact-response review flags ---
+    // A "what I did" logged with no captured response 24h later gets
+    // flagged and the admin notified - never auto-marked. Per the two-phase
+    // contact log (2026-09-08), only a human confirming from the Needs
+    // Response view (bulk "mark as no response" or capturing the real
+    // outcome) ever writes a value into `outcome` - this pass just raises
+    // the flag and alerts, it doesn't decide anything on its own.
+    const { data: overdueActivities, error: overdueErr } = await supabaseAdmin
+      .from('lead_activities')
+      .select('id, lead_id, channel, objective, created_at, leads(name, phone)')
+      .is('outcome', null)
+      .eq('needs_response_review', false)
+      .not('response_due_at', 'is', null)
+      .lte('response_due_at', new Date().toISOString());
+    if (overdueErr) throw overdueErr;
+
+    let flaggedForReview = 0;
+    if (overdueActivities && overdueActivities.length > 0) {
+      await supabaseAdmin.from('lead_activities').update({ needs_response_review: true }).in('id', overdueActivities.map((a: any) => a.id));
+      flaggedForReview = overdueActivities.length;
+
+      const adminPhone = process.env.ADMIN_PHONE_NUMBER;
+      if (adminPhone) {
+        const shown = overdueActivities.slice(0, 25);
+        const lines = shown.map((a: any) => `• ${a.leads?.name || 'Unnamed'} +${a.leads?.phone || '?'} — ${CONTACT_CHANNEL_LABELS[a.channel] || a.channel}${a.objective ? ` (${CONTACT_OBJECTIVE_LABELS[a.objective] || a.objective})` : ''}`);
+        const overflow = overdueActivities.length - shown.length;
+        const alertText = `⏰ *Needs Response Review* (${overdueActivities.length})\n\nNo response captured 24h+ after these contacts - confirm or capture the real outcome in the Call Queue's Needs Response tab:\n\n${lines.join('\n')}${overflow > 0 ? `\n\n…and ${overflow} more.` : ''}`;
+        const result = await sendWhatsAppMessage(adminPhone, { type: 'text', text: { body: alertText } });
+        // lead_id is null here - this alert is about several leads at once,
+        // not any single one (see messages.lead_id's nullable FK).
+        await supabaseAdmin.from('messages').insert([{
+          lead_id: null,
+          direction: 'outbound',
+          method: 'waba',
+          recipient_phone: adminPhone,
+          body: `[Admin Alert] ${alertText}`,
+          wamid: result.wamid || null,
+          status: result.ok ? null : 'failed',
+          error_code: result.errorCode || null,
+          error_detail: result.ok ? null : (result.error || null),
+          meta_message_status: result.messageStatus || null,
+        }]);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       healthRecomputed: healthUpdates.length,
       sessionMoves,
       autoLost: toAutoLose.length,
+      flaggedForReview,
     });
   } catch (error: any) {
     console.error('Lead-funnel cron error:', error);

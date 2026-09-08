@@ -16,7 +16,7 @@ type QueueRow = {
 type ActivityRow = {
   id: string;
   channel: string;
-  outcome: string;
+  outcome: string | null;
   objective: string | null;
   note: string | null;
   created_at: string;
@@ -197,7 +197,7 @@ export function QueueQuickAdd({
                       <div key={a.id} className="bg-slate-50 rounded-lg px-2.5 py-1.5">
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="font-bold text-slate-700">
-                            {CONTACT_OUTCOME_LABELS[a.outcome] || a.outcome}
+                            {a.outcome ? (CONTACT_OUTCOME_LABELS[a.outcome] || a.outcome) : <span className="text-amber-600">Awaiting response</span>}
                             <span className="text-slate-400 font-normal"> · {CONTACT_CHANNEL_LABELS[a.channel] || a.channel}{a.objective ? ` · ${CONTACT_OBJECTIVE_LABELS[a.objective] || a.objective}` : ''}</span>
                           </span>
                           <span className="text-slate-400 shrink-0">{fmtDate(a.created_at)}</span>
