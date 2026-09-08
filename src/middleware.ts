@@ -65,8 +65,12 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url)
     }
 
-    // Only YOU (info@radacademy.co.za)
-    if (user.id !== 'adfefd6c-954c-4e13-9423-5519aa89980a') {
+    // You (info@radacademy.co.za), or the dedicated QA test-admin account
+    // (qa-admin-test@radacademy.co.za) used for automated browser checks -
+    // a real allowlist entry rather than a bypass, since this app has no
+    // role system to scope it more narrowly than "is an admin at all".
+    const ALLOWED_ADMIN_IDS = ['adfefd6c-954c-4e13-9423-5519aa89980a', 'adca35b8-523d-4dba-972b-87a44cb18f6b']
+    if (!ALLOWED_ADMIN_IDS.includes(user.id)) {
       url.pathname = '/'
       return NextResponse.redirect(url)
     }
