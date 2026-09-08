@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, RefreshCw, Search, Link2, BookOpen, Trash2, Check, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronUp, RefreshCw, Search, Link2, BookOpen, Trash2, Check, Loader2, BookmarkX } from "lucide-react";
 import { publishWipBook } from "../../reader/_actions/upload";
 import { autoScanSingleBook, searchBookOptions, syncExactOpenLibraryUrl } from "../../reader/_actions/metadata";
-import { markBookForDeletion, type BookWithTags } from "../../reader/_actions/books";
+import { markBookForDeletion, parkWipBook, type BookWithTags } from "../../reader/_actions/books";
 
 interface SuggestedMetadata {
   titles?: string[];
@@ -21,6 +21,7 @@ interface WipReviewCardProps {
   book: BookWithTags;
   onPublished: (bookId: string) => void;
   onDeleted: (bookId: string) => void;
+  onParked: (bookId: string) => void;
 }
 
 const STATUS_STYLE: Record<string, { label: string; className: string }> = {
@@ -43,7 +44,7 @@ function coverThumb(coverId: number | null) {
  * One canonical path: whatever's showing in the fields here is exactly what
  * gets published.
  */
-export default function WipReviewCard({ book, onPublished, onDeleted }: WipReviewCardProps) {
+export default function WipReviewCard({ book, onPublished, onDeleted, onParked }: WipReviewCardProps) {
   const suggested: SuggestedMetadata = (book as any).suggested_metadata || {};
   const scanStatus = suggested.scan_status || "pending";
 
@@ -60,6 +61,7 @@ export default function WipReviewCard({ book, onPublished, onDeleted }: WipRevie
   const [isRescanning, setIsRescanning] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isParking, setIsParking] = useState(false);
 
   const [manualQuery, setManualQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -165,6 +167,18 @@ export default function WipReviewCard({ book, onPublished, onDeleted }: WipRevie
       console.error("Delete failed", error);
       toast.error("Failed to remove.");
       setIsDeleting(false);
+    }
+  };
+
+  const handlePark = async () => {
+    setIsParking(true);
+    try {
+      await parkWipBook(book.id);
+      onParked(book.id);
+    } catch (error) {
+      console.error("Park failed", error);
+      toast.error("Failed to park.");
+      setIsParking(false);
     }
   };
 
@@ -319,6 +333,14 @@ export default function WipReviewCard({ book, onPublished, onDeleted }: WipRevie
                 className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0"
               >
                 <Trash2 size={14} strokeWidth={2} />
+              </button>
+              <button
+                onClick={handlePark}
+                disabled={isParking}
+                title="Park for later"
+                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0"
+              >
+                <BookmarkX size={14} strokeWidth={2} />
               </button>
               <span
                 title={book.title}

@@ -3,17 +3,19 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence } from "framer-motion";
-import { ArrowLeft, UploadCloud } from "lucide-react";
+import { ArrowLeft, ChevronDown, UploadCloud } from "lucide-react";
 import { getLibraryBooks, type BookWithTags } from "../../reader/_actions/books";
 import { useAmbientBackground } from "../_lib/use-ambient-background";
 import AddBooksModal from "../_components/add-books-modal";
 import WipReviewCard from "../_components/wip-review-card";
+import ParkedWipRow from "../_components/parked-wip-row";
 
 export default function InboxPage() {
   const ambientBackground = useAmbientBackground();
   const [books, setBooks] = useState<BookWithTags[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [showParked, setShowParked] = useState(false);
 
   const refresh = () => {
     getLibraryBooks().then((data) => {
@@ -26,7 +28,8 @@ export default function InboxPage() {
     refresh();
   }, []);
 
-  const wipBooks = books.filter((b) => b.status === "wip");
+  const wipBooks = books.filter((b) => b.status === "wip" && !b.is_wip_parked);
+  const parkedWipBooks = books.filter((b) => b.status === "wip" && b.is_wip_parked);
 
   const handlePublished = (bookId: string) => {
     setBooks((prev) => prev.filter((b) => b.id !== bookId));
@@ -34,6 +37,14 @@ export default function InboxPage() {
 
   const handleDeleted = (bookId: string) => {
     setBooks((prev) => prev.filter((b) => b.id !== bookId));
+  };
+
+  const handleParked = (bookId: string) => {
+    setBooks((prev) => prev.map((b) => (b.id === bookId ? { ...b, is_wip_parked: true } : b)));
+  };
+
+  const handleUnparked = (bookId: string) => {
+    setBooks((prev) => prev.map((b) => (b.id === bookId ? { ...b, is_wip_parked: false } : b)));
   };
 
   return (
@@ -84,9 +95,34 @@ export default function InboxPage() {
           <div className="space-y-3">
             <AnimatePresence initial={false}>
               {wipBooks.map((book) => (
-                <WipReviewCard key={book.id} book={book} onPublished={handlePublished} onDeleted={handleDeleted} />
+                <WipReviewCard
+                  key={book.id}
+                  book={book}
+                  onPublished={handlePublished}
+                  onDeleted={handleDeleted}
+                  onParked={handleParked}
+                />
               ))}
             </AnimatePresence>
+          </div>
+        )}
+
+        {parkedWipBooks.length > 0 && (
+          <div className="mt-6 pt-4 border-t border-slate-200">
+            <button
+              onClick={() => setShowParked((v) => !v)}
+              className="flex items-center gap-1.5 font-data text-[10px] uppercase tracking-widest text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <ChevronDown size={12} className={`transition-transform ${showParked ? "rotate-180" : ""}`} />
+              {showParked ? "Hide" : "Show"} Parked · {parkedWipBooks.length}
+            </button>
+            {showParked && (
+              <div className="mt-2 bg-white border border-slate-200 rounded-[16px] px-4">
+                {parkedWipBooks.map((book) => (
+                  <ParkedWipRow key={book.id} book={book} onUnparked={handleUnparked} />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </main>

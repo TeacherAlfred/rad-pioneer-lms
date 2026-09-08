@@ -23,6 +23,7 @@ export interface BookWithTags {
   suggested_metadata?: any; 
   is_vip?: boolean;
   is_vaulted?: boolean;
+  is_wip_parked?: boolean;
   reading_progress?: number | null;
   last_page_number?: number | null;
   last_cfi?: string | null;
@@ -470,15 +471,31 @@ export async function reverifyAllBooks(): Promise<void> {
  */
 export async function markBookForDeletion(bookId: string) {
   const supabase = await createClient();
-  
+
   const { error } = await supabase
     .from("rad_books")
     .update({ marked_for_deletion: true })
     .eq("id", bookId);
 
   if (error) throw new Error(error.message);
-  
+
   revalidatePath("/projects/reader");
+}
+
+/**
+ * Hides a WIP book from the Inbox review queue without changing its status
+ * - still 'wip', just set aside until unparked.
+ */
+export async function parkWipBook(bookId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ is_wip_parked: true }).eq("id", bookId);
+  if (error) throw new Error(`Failed to park book: ${error.message}`);
+}
+
+export async function unparkWipBook(bookId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ is_wip_parked: false }).eq("id", bookId);
+  if (error) throw new Error(`Failed to unpark book: ${error.message}`);
 }
 
 /**
