@@ -25,9 +25,9 @@ export async function GET(request: Request) {
     supabase.from('lead_balance_forward_payments').select('*'),
   ]);
 
-  // --- §3: Due tracker ---
-  const dueThisMonth = (invoices || []).filter((inv) => inRange(inv.due_at, thisMonth.start, thisMonth.end));
-  const dueNextMonth = (invoices || []).filter((inv) => inRange(inv.due_at, nextMonth.start, nextMonth.end));
+  // --- §3: Due tracker --- (credited invoices are void - nothing due, nothing to collect)
+  const dueThisMonth = (invoices || []).filter((inv) => inv.status !== 'cancelled' && inRange(inv.due_at, thisMonth.start, thisMonth.end));
+  const dueNextMonth = (invoices || []).filter((inv) => inv.status !== 'cancelled' && inRange(inv.due_at, nextMonth.start, nextMonth.end));
   const sumAmt = (rows: any[]) => rows.reduce((s, r) => s + Number(r.amount), 0);
   const dueTracker = {
     thisMonth: {
@@ -40,8 +40,8 @@ export async function GET(request: Request) {
     },
   };
 
-  // --- §3: Invoiced vs. Paid ---
-  const invoicedThisMonth = sumAmt((invoices || []).filter((inv) => inRange(inv.created_at, thisMonth.start, thisMonth.end)));
+  // --- §3: Invoiced vs. Paid --- (a credited invoice was never a real sale)
+  const invoicedThisMonth = sumAmt((invoices || []).filter((inv) => inv.status !== 'cancelled' && inRange(inv.created_at, thisMonth.start, thisMonth.end)));
   const paidThisMonth = (payments || [])
     .filter((p) => inRange(p.received_at, thisMonth.start, thisMonth.end))
     .reduce((s, p) => s + Number(p.amount), 0)
@@ -60,6 +60,7 @@ export async function GET(request: Request) {
   // drives the Due tracker above - that's a separate question (when the
   // client needs to pay) from when the cost is actually incurred.
   const deliveryInvoicesThisMonth = (invoices || []).filter((inv) => {
+    if (inv.status === 'cancelled') return false;
     if (inv.delivery_gated_on_payment && inv.status !== 'paid') return false;
     if (inv.delivery_month) return inv.delivery_month === monthKey;
     return inRange(inv.due_at, thisMonth.start, thisMonth.end);

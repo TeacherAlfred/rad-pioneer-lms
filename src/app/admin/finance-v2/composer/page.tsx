@@ -109,6 +109,16 @@ function ComposerV2Inner() {
   const [showPreview, setShowPreview] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // Supersede never touches the original quote's own invoices (that's how
+  // INV-27 was left dangling, still due, after QT-34 was superseded by
+  // QT-35/INV-28) - this prompt is the admin's one chance right after saving
+  // to decide what happens to them, per invoice. Nothing here credits
+  // anything on its own; skipping leaves them exactly as they are.
+  const [showCreditPrompt, setShowCreditPrompt] = useState(false);
+  const [creditCandidates, setCreditCandidates] = useState<any[]>([]);
+  const [selectedCreditIds, setSelectedCreditIds] = useState<Set<string>>(new Set());
+  const [creditReason, setCreditReason] = useState("");
+  const [creditingInvoices, setCreditingInvoices] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -276,13 +286,21 @@ function ComposerV2Inner() {
       if (!quoteRes.ok) throw new Error(quoteJson.error || "Failed to save quote");
       const newQuote = quoteJson.quote;
 
+      let hasCreditCandidates = false;
       if (supersedeFromId) {
         const supersedeRes = await fetch(`/admin/api/finance-v2/quotes/${supersedeFromId}/supersede`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ newQuoteId: newQuote.id }),
         });
+        const supersedeJson = await supersedeRes.json().catch(() => ({}));
         if (!supersedeRes.ok) throw new Error("New quote saved, but marking the original as superseded failed - do that manually from the Pipeline.");
+        if (supersedeJson.invoices?.length > 0) {
+          hasCreditCandidates = true;
+          setCreditCandidates(supersedeJson.invoices);
+          setSelectedCreditIds(new Set(supersedeJson.invoices.map((inv: any) => inv.id)));
+          setCreditReason(`Superseded by QT-${newQuote.quote_number}`);
+        }
       }
 
       if (action === "email") {
@@ -333,12 +351,46 @@ function ComposerV2Inner() {
         setSuccessMessage("Quote saved. Link copied to clipboard.");
       }
 
-      setTimeout(() => router.push("/admin/finance-v2/pipeline"), 2000);
+      if (hasCreditCandidates) {
+        setShowCreditPrompt(true);
+      } else {
+        setTimeout(() => router.push("/admin/finance-v2/pipeline"), 2000);
+      }
     } catch (err: any) {
       alert("Operational Failure: " + err.message);
     } finally {
       setIsProcessing(false);
     }
+  }
+
+  function toggleCreditCandidate(id: string) {
+    setSelectedCreditIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function resolveCreditPrompt(shouldCredit: boolean) {
+    if (shouldCredit && selectedCreditIds.size > 0) {
+      setCreditingInvoices(true);
+      try {
+        await Promise.all(
+          [...selectedCreditIds].map((id) =>
+            fetch(`/admin/api/finance-v2/invoices/${id}/credit`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ reason: creditReason.trim() || "Superseded quote" }),
+            })
+          )
+        );
+      } finally {
+        setCreditingInvoices(false);
+      }
+    }
+    setShowCreditPrompt(false);
+    router.push("/admin/finance-v2/pipeline");
   }
 
   // lineTotal computed the exact same way the quotes POST route computes the
@@ -715,6 +767,65 @@ function ComposerV2Inner() {
             <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="bg-white border border-emerald-200 rounded-2xl p-5 shadow-2xl flex items-center gap-4 max-w-sm pointer-events-auto">
               <CheckCircle2 className="text-emerald-500 shrink-0" size={20} />
               <p className="text-[10px] font-bold text-slate-600">{successMessage}</p>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showCreditPrompt && (
+          <div className="fixed inset-0 z-[300] flex justify-center items-center p-6 bg-slate-900/60 backdrop-blur-xl">
+            <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="w-full max-w-lg bg-white rounded-[32px] border border-slate-200 shadow-2xl p-7 space-y-5">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-rose-600">Original Invoice{creditCandidates.length === 1 ? "" : "s"} Not Yet Settled</p>
+                <h3 className="text-lg font-black text-slate-900 mt-1">Credit the superseded invoice{creditCandidates.length === 1 ? "" : "s"}?</h3>
+                <p className="text-xs text-slate-500 mt-2">
+                  Superseding QT-{supersedeFromId} doesn't touch its invoices automatically. The ones below are still open - decide per invoice, or skip and leave them as-is.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {creditCandidates.map((inv) => (
+                  <label key={inv.id} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedCreditIds.has(inv.id)}
+                      onChange={() => toggleCreditCandidate(inv.id)}
+                      className="w-4 h-4 accent-rose-600"
+                    />
+                    <span className="flex-1 text-xs font-bold text-slate-800">INV-{inv.invoice_number}</span>
+                    <span className="text-xs font-black text-slate-900">R {Number(inv.amount).toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</span>
+                  </label>
+                ))}
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Credit reason</label>
+                <textarea
+                  rows={2}
+                  value={creditReason}
+                  onChange={(e) => setCreditReason(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs outline-none focus:border-rose-400 resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={() => resolveCreditPrompt(false)}
+                  disabled={creditingInvoices}
+                  className="flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-slate-600 bg-slate-100 hover:bg-slate-200 disabled:opacity-50"
+                >
+                  Skip, Leave As-Is
+                </button>
+                <button
+                  onClick={() => resolveCreditPrompt(true)}
+                  disabled={creditingInvoices || selectedCreditIds.size === 0}
+                  className="flex-1 py-3 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {creditingInvoices ? <Loader2 size={14} className="animate-spin" /> : null}
+                  Credit Selected ({selectedCreditIds.size})
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

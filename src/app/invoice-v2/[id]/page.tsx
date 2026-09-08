@@ -59,8 +59,9 @@ export default function PublicInvoiceV2View() {
     );
   }
 
-  const outstanding = Math.max(0, Number(invoice.amount) - Number(invoice.amount_paid || 0));
-  const isPaid = invoice.status === "paid" || outstanding <= 0;
+  const isCredited = invoice.status === "cancelled";
+  const outstanding = isCredited ? 0 : Math.max(0, Number(invoice.amount) - Number(invoice.amount_paid || 0));
+  const isPaid = !isCredited && (invoice.status === "paid" || outstanding <= 0);
   // Same shape as the invoice's parent quote if line items exist, otherwise a
   // single line for the invoice amount (e.g. an installment invoice has no
   // line items of its own - it's a slice of the quote's total).
@@ -70,7 +71,12 @@ export default function PublicInvoiceV2View() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 p-4 md:p-12 font-sans">
-      {isPaid && (
+      {isCredited ? (
+        <div className="max-w-4xl mx-auto mb-8 p-6 rounded-3xl flex items-center justify-center gap-4 border bg-slate-100 border-slate-200 text-slate-500 text-center">
+          <XCircle size={32} />
+          <p className="text-sm font-black uppercase tracking-widest">This Invoice Has Been Cancelled</p>
+        </div>
+      ) : isPaid && (
         <div className="max-w-4xl mx-auto mb-8 p-6 rounded-3xl flex items-center justify-center gap-4 border bg-emerald-50 border-emerald-200 text-emerald-700 text-center">
           <CheckCircle2 size={32} />
           <p className="text-sm font-black uppercase tracking-widest">Invoice Paid — Thank You!</p>

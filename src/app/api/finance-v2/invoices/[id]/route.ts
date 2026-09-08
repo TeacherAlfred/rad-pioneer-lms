@@ -21,7 +21,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // to PayFast's test environment. Flipping PAYFAST_URL to the live process
   // URL (once sandbox testing is done) is the same switch that brings this
   // back, so there's nothing separate to remember to re-enable.
-  const payfastReady = (process.env.PAYFAST_URL || '').includes('www.payfast.co.za');
+  const payfastReady = invoice.status !== 'cancelled' && (process.env.PAYFAST_URL || '').includes('www.payfast.co.za');
   if (!payfastReady) {
     return NextResponse.json({ invoice, lead, lineItems: lineItems || [], payfastReady: false });
   }

@@ -31,7 +31,7 @@ export async function GET() {
 
   const rows = (invoices || []).map((inv: any) => ({
     ...inv,
-    outstanding: Math.max(0, Number(inv.amount) - Number(inv.amount_paid || 0)),
+    outstanding: inv.status === 'cancelled' ? 0 : Math.max(0, Number(inv.amount) - Number(inv.amount_paid || 0)),
     lead: leadById.get(inv.lead_id) || null,
     quote: quoteById.get(inv.quote_id) || null,
   }));

@@ -68,6 +68,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
 
   for (const inv of invoices || []) {
+    // A credited invoice (e.g. one left behind when its quote was
+    // superseded and replaced by a new invoice) has nothing left to
+    // collect - it's omitted here entirely rather than shown as a debit a
+    // client would read as still owed.
+    if (inv.status === 'cancelled') continue;
     const dateObj = new Date(inv.created_at);
     const lines = linesByQuote.get(inv.quote_id) || [];
     const desc = lines.length > 0 ? lines.map((l: any) => l.description).filter(Boolean).join('; ') : `Instalment #${inv.sequence_number}`;

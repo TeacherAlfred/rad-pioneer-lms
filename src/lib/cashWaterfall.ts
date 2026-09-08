@@ -108,6 +108,7 @@ export async function computeRunningBalanceThrough(supabase: any, throughMonthKe
 
   const obligationsByMonth = new Map<string, number>();
   for (const inv of invoices || []) {
+    if (inv.status === 'cancelled') continue;
     if (inv.delivery_gated_on_payment && inv.status !== 'paid') continue;
     const mk: string = inv.delivery_month || String(inv.due_at).slice(0, 7);
     const lines = linesByQuote.get(inv.quote_id) || [];

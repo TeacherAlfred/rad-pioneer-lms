@@ -4,12 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Search, Loader2, ExternalLink, Receipt, Coins,
-  CheckCircle2, AlertCircle, Clock, Wallet,
+  CheckCircle2, AlertCircle, Clock, Wallet, Ban,
 } from "lucide-react";
 
-type EffectiveStatus = "pending" | "partially_paid" | "paid" | "overdue";
+type EffectiveStatus = "pending" | "partially_paid" | "paid" | "overdue" | "credited";
 
 function effectiveStatus(inv: any): EffectiveStatus {
+  if (inv.status === "cancelled") return "credited";
   if (inv.status === "paid") return "paid";
   if (inv.due_at && new Date(inv.due_at) < new Date()) return "overdue";
   return inv.status === "partially_paid" ? "partially_paid" : "pending";
@@ -20,6 +21,7 @@ const STATUS_STYLE: Record<EffectiveStatus, { label: string; className: string; 
   partially_paid: { label: "Partially Paid", className: "bg-amber-50 text-amber-600 border-amber-100", icon: Coins },
   paid: { label: "Paid", className: "bg-emerald-50 text-emerald-600 border-emerald-100", icon: CheckCircle2 },
   overdue: { label: "Overdue", className: "bg-rose-50 text-rose-600 border-rose-100", icon: AlertCircle },
+  credited: { label: "Credited", className: "bg-slate-100 text-slate-500 border-slate-200", icon: Ban },
 };
 
 const TABS: { key: "all" | EffectiveStatus; label: string }[] = [
@@ -28,6 +30,7 @@ const TABS: { key: "all" | EffectiveStatus; label: string }[] = [
   { key: "pending", label: "Pending" },
   { key: "partially_paid", label: "Partially Paid" },
   { key: "paid", label: "Paid" },
+  { key: "credited", label: "Credited" },
 ];
 
 export default function InvoicesV2Page() {
@@ -36,6 +39,7 @@ export default function InvoicesV2Page() {
   const [tab, setTab] = useState<"all" | EffectiveStatus>("all");
   const [search, setSearch] = useState("");
   const [markingPaidId, setMarkingPaidId] = useState<string | null>(null);
+  const [creditingId, setCreditingId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
@@ -106,6 +110,27 @@ export default function InvoicesV2Page() {
       setToast(`Failed: ${err.message}`);
     } finally {
       setMarkingPaidId(null);
+    }
+  }
+
+  async function creditInvoice(inv: any) {
+    const reason = window.prompt(`Why is INV-${inv.invoice_number} being credited? (e.g. "Superseded by INV-28 after the quote was revised")`);
+    if (!reason || !reason.trim()) return;
+    setCreditingId(inv.id);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/invoices/${inv.id}/credit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to credit invoice");
+      await fetchInvoices();
+      setToast(`INV-${inv.invoice_number} credited.`);
+    } catch (err: any) {
+      setToast(`Failed: ${err.message}`);
+    } finally {
+      setCreditingId(null);
     }
   }
 
@@ -246,6 +271,14 @@ export default function InvoicesV2Page() {
                             title="Reconciliation only - money that landed outside the system"
                           >
                             {markingPaidId === inv.id ? <Loader2 size={14} className="animate-spin" /> : "Mark Paid"}
+                          </button>
+                          <button
+                            onClick={() => creditInvoice(inv)}
+                            disabled={creditingId === inv.id}
+                            className="px-2.5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-rose-600 hover:border-rose-200 transition-all text-[9px] font-black uppercase disabled:opacity-40"
+                            title="Void this invoice - nothing left to collect (e.g. superseded by a new invoice)"
+                          >
+                            {creditingId === inv.id ? <Loader2 size={14} className="animate-spin" /> : "Credit"}
                           </button>
                         </>
                       )}

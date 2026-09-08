@@ -6,7 +6,7 @@ import {
   Coins, CalendarDays, TrendingUp, Wallet, Clock,
   FileText, CreditCard, Receipt, Send, Package, Building2, ShieldCheck,
   ArrowRight, AlertTriangle, RefreshCw, Waves, GripVertical, RotateCcw,
-  ChevronLeft, ChevronRight, X, CheckCircle2, Loader2,
+  ChevronLeft, ChevronRight, X, CheckCircle2, Loader2, Ban,
 } from "lucide-react";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 import { supabase } from "@/lib/supabase";
@@ -229,7 +229,7 @@ export default function MoneyAdminPage() {
         : 0;
 
     const v2Invoices = v2Quotes.flatMap((q) => q.invoices || []);
-    const outstandingInvoices = v2Invoices.filter((inv) => inv.status !== "paid");
+    const outstandingInvoices = v2Invoices.filter((inv) => inv.status !== "paid" && inv.status !== "cancelled");
     const arBuckets = { notYetDue: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90plus: 0 };
     let arTotal = 0;
     outstandingInvoices.forEach((inv) => {
@@ -641,6 +641,9 @@ function InvoicePopup({ invoiceId, onClose, onChanged }: { invoiceId: string; on
   const [deliveryMonthInput, setDeliveryMonthInput] = useState("");
   const [deliveryGated, setDeliveryGated] = useState(false);
   const [savingTiming, setSavingTiming] = useState(false);
+  const [showCreditForm, setShowCreditForm] = useState(false);
+  const [creditReason, setCreditReason] = useState("");
+  const [crediting, setCrediting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -669,6 +672,29 @@ function InvoicePopup({ invoiceId, onClose, onChanged }: { invoiceId: string; on
       setError(err.message);
     } finally {
       setMarking(false);
+    }
+  }
+
+  async function creditInvoice() {
+    if (!creditReason.trim()) return;
+    setCrediting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/admin/api/finance-v2/invoices/${invoiceId}/credit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: creditReason.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setData((prev: any) => (prev ? { ...prev, invoice: json.invoice } : prev));
+      setShowCreditForm(false);
+      setCreditReason("");
+      onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setCrediting(false);
     }
   }
 
@@ -733,7 +759,7 @@ function InvoicePopup({ invoiceId, onClose, onChanged }: { invoiceId: string; on
             <div className="flex items-center justify-between pt-3 border-t border-stone-100">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Status</p>
-                <p className={`text-sm font-black ${data.invoice.status === "paid" ? "text-emerald-600" : "text-rose-500"}`}>{data.invoice.status}</p>
+                <p className={`text-sm font-black ${data.invoice.status === "paid" ? "text-emerald-600" : data.invoice.status === "cancelled" ? "text-stone-400" : "text-rose-500"}`}>{data.invoice.status}</p>
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Amount</p>
@@ -778,18 +804,64 @@ function InvoicePopup({ invoiceId, onClose, onChanged }: { invoiceId: string; on
               <p className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
                 <CheckCircle2 size={14} /> Already paid — not part of this cycle's cash to collect.
               </p>
+            ) : data.invoice.status === "cancelled" ? (
+              <p className="flex items-start gap-2 text-xs font-bold text-stone-500 bg-stone-50 border border-stone-200 rounded-xl px-4 py-3">
+                <Ban size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  Credited{data.invoice.credited_at ? ` on ${new Date(data.invoice.credited_at).toLocaleDateString("en-ZA")}` : ""} — nothing left to collect.
+                  {data.invoice.credit_reason && <span className="block font-normal text-stone-400 mt-0.5">{data.invoice.credit_reason}</span>}
+                </span>
+              </p>
             ) : (
-              <button
-                onClick={markPaid}
-                disabled={marking}
-                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                {marking ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Mark as Paid
-              </button>
+              <>
+                <button
+                  onClick={markPaid}
+                  disabled={marking}
+                  className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {marking ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Mark as Paid
+                </button>
+                <p className="text-[10px] text-stone-400 text-center">
+                  For settling an invoice that was already paid through another channel — this won't show up as new cash received this month. For a real new payment, use Capture Payment instead.
+                </p>
+
+                {!showCreditForm ? (
+                  <button
+                    onClick={() => setShowCreditForm(true)}
+                    className="w-full py-2.5 rounded-xl bg-white border border-stone-200 hover:border-rose-200 text-stone-500 hover:text-rose-600 text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all"
+                  >
+                    <Ban size={13} /> Credit Invoice
+                  </button>
+                ) : (
+                  <div className="border border-rose-100 bg-rose-50/50 rounded-xl p-4 space-y-2.5">
+                    <p className="text-[11px] font-bold text-rose-700">Why is this invoice being credited?</p>
+                    <textarea
+                      autoFocus
+                      rows={2}
+                      value={creditReason}
+                      onChange={(e) => setCreditReason(e.target.value)}
+                      placeholder="e.g. Superseded by INV-28 after the quote was revised"
+                      className="w-full bg-white border border-rose-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-rose-400 resize-none"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setShowCreditForm(false); setCreditReason(""); }}
+                        className="flex-1 py-2 rounded-lg text-[11px] font-bold text-stone-600 bg-white border border-stone-200 hover:bg-stone-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={creditInvoice}
+                        disabled={crediting || !creditReason.trim()}
+                        className="flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                      >
+                        {crediting ? <Loader2 size={12} className="animate-spin" /> : null} Confirm Credit
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
-            <p className="text-[10px] text-stone-400 text-center">
-              For settling an invoice that was already paid through another channel — this won't show up as new cash received this month. For a real new payment, use Capture Payment instead.
-            </p>
           </div>
         )}
       </div>
