@@ -22,7 +22,7 @@ function validateButtons(buttons: any[]): string | null {
 function validate(body: any): string | null {
   if (!body.trigger_button_id?.trim()) return 'trigger_button_id is required';
   if (!body.label?.trim()) return 'label is required';
-  if (!['message', 'template', 'bot_media'].includes(body.action_type)) return 'action_type must be "message", "template", or "bot_media"';
+  if (!['message', 'template', 'bot_media', 'tag_only'].includes(body.action_type)) return 'action_type must be "message", "template", "bot_media", or "tag_only"';
 
   if (body.action_type === 'message') {
     if (!body.message_body?.trim()) return 'message_body is required for a message flow';
@@ -31,8 +31,12 @@ function validate(body: any): string | null {
   } else if (body.action_type === 'template') {
     if (!body.template_name?.trim()) return 'template_name is required for a template flow';
     if (!body.template_language?.trim()) return 'template_language is required for a template flow';
-  } else {
+  } else if (body.action_type === 'bot_media') {
     if (!body.bot_media_keyword?.trim()) return 'bot_media_keyword is required for a bot media flow - the keyword to look up in /admin/bot-media';
+  } else {
+    // tag_only - nothing gets sent, so at least one tag is what makes the
+    // flow do anything at all rather than being a silent no-op.
+    if (!(body.add_tags || []).length) return 'A tag-only flow needs at least one tag in add_tags, or it does nothing when tapped';
   }
   if (body.expects_reply && !body.reply_label?.trim()) {
     return 'reply_label is required when this message expects a reply';

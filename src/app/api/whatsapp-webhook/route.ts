@@ -252,8 +252,15 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     return;
   }
 
-  let sendResult: { ok: boolean; error?: string; wamid?: string; messageStatus?: string };
-  if (flow.action_type === 'message') {
+  let sendResult: { ok: boolean; error?: string; wamid?: string; messageStatus?: string } | undefined;
+  if (flow.action_type === 'tag_only') {
+    // Nothing to send - leadUpdate above already applied add_tags/set_source,
+    // and the inbound "[Button Reply: ...]" log (written unconditionally in
+    // STAGE 2 regardless of which flow matches) is what keeps this tap
+    // visible in Message Activity even with no reply going out. Still falls
+    // through to the skip_human_handoff/notify_admin block below, same as
+    // every other action_type.
+  } else if (flow.action_type === 'message') {
     // {{dates}}/{{location}}/{{title}} resolve against the linked
     // featured_programs row (admin/bot-flows) so this flow's copy always
     // matches whatever's currently live on the website - see

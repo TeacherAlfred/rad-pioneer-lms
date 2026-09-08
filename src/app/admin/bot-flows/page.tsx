@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Loader2, Plus, Trash2, CheckCircle2, XCircle, Pencil, AlertTriangle,
-  ArrowLeft, MessageSquare, Send, GitBranch, FileText,
+  ArrowLeft, MessageSquare, Send, GitBranch, FileText, Tag,
 } from "lucide-react";
 
 type Button = { id: string; title: string };
@@ -14,7 +14,7 @@ type FlowRow = {
   id: string;
   trigger_button_id: string;
   label: string;
-  action_type: 'message' | 'template' | 'bot_media';
+  action_type: 'message' | 'template' | 'bot_media' | 'tag_only';
   message_body: string | null;
   message_buttons: Button[];
   featured_program_id: string | null;
@@ -56,7 +56,7 @@ type FeaturedProgramOption = { id: string; title: string; location: string | nul
 const emptyForm = {
   trigger_button_id: '',
   label: '',
-  action_type: 'message' as 'message' | 'template' | 'bot_media',
+  action_type: 'message' as 'message' | 'template' | 'bot_media' | 'tag_only',
   message_body: '',
   message_buttons: [] as Button[],
   featured_program_id: '',
@@ -342,6 +342,10 @@ function BotFlowsPageInner() {
       setSaveError('Select a bot media item.');
       return;
     }
+    if (form.action_type === 'tag_only' && !form.add_tags.trim()) {
+      setSaveError('A tag-only flow needs at least one tag, or it does nothing when tapped.');
+      return;
+    }
     if (form.expects_reply && !form.reply_label.trim()) {
       setSaveError('Give the expected reply a label (e.g. "Email address").');
       return;
@@ -457,6 +461,9 @@ function BotFlowsPageInner() {
               <button type="button" onClick={() => { setForm(p => ({ ...p, action_type: 'bot_media' })); loadBotMediaIfNeeded(); }} className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border ${form.action_type === 'bot_media' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'}`}>
                 <FileText size={13} className="inline -mt-0.5 mr-1" /> Bot Media
               </button>
+              <button type="button" onClick={() => setForm(p => ({ ...p, action_type: 'tag_only' }))} className={`flex-1 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border ${form.action_type === 'tag_only' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200'}`}>
+                <Tag size={13} className="inline -mt-0.5 mr-1" /> Tag Only
+              </button>
             </div>
 
             {form.action_type === 'message' ? (
@@ -524,6 +531,10 @@ function BotFlowsPageInner() {
                     </p>
                   </>
                 )}
+              </div>
+            ) : form.action_type === 'tag_only' ? (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                <p className="text-[12px] text-slate-500">No message, template, or media gets sent when this fires - the tap itself still shows up in Message Activity either way. Give it at least one tag below, or it won't do anything.</p>
               </div>
             ) : (
               <div>
@@ -659,9 +670,12 @@ function BotFlowsPageInner() {
                     <b className="text-slate-800">{row.label}</b>
                     <span className="text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{row.trigger_button_id}</span>
                     <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
-                      row.action_type === 'template' ? 'bg-indigo-50 text-indigo-600' : row.action_type === 'bot_media' ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'
+                      row.action_type === 'template' ? 'bg-indigo-50 text-indigo-600'
+                        : row.action_type === 'bot_media' ? 'bg-emerald-50 text-emerald-600'
+                        : row.action_type === 'tag_only' ? 'bg-amber-50 text-amber-600'
+                        : 'bg-blue-50 text-blue-600'
                     }`}>
-                      {row.action_type === 'template' ? 'Template' : row.action_type === 'bot_media' ? 'Bot Media' : 'Message'}
+                      {row.action_type === 'template' ? 'Template' : row.action_type === 'bot_media' ? 'Bot Media' : row.action_type === 'tag_only' ? 'Tag Only' : 'Message'}
                     </span>
                     {row.set_source && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">source: {row.set_source}</span>}
                     {row.expects_reply && <span className="text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">captures: {row.reply_label}</span>}
@@ -671,7 +685,9 @@ function BotFlowsPageInner() {
                       ? `Template: ${row.template_name} (${row.template_language})`
                       : row.action_type === 'bot_media'
                         ? `Bot Media keyword: "${row.bot_media_keyword}"`
-                        : row.message_body}
+                        : row.action_type === 'tag_only'
+                          ? `Tags: ${(row.add_tags || []).join(', ') || '(none set)'}`
+                          : row.message_body}
                   </p>
                   {row.message_buttons?.length > 0 && (
                     <div className="flex items-center gap-2 mt-2 text-[11px] text-slate-400">
