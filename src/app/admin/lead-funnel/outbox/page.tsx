@@ -19,6 +19,7 @@ type OutboxRow = {
   status_updated_at: string | null;
   error_code: string | null;
   error_detail: string | null;
+  meta_message_status: string | null;
   created_at: string;
   lead_name: string | null;
   lead_phone: string | null;
@@ -203,6 +204,15 @@ export default function MessagesOutboxPage() {
                           <td className="px-4 py-3">
                             {row.method === "desktop" ? (
                               <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">No confirmation</span>
+                            ) : row.meta_message_status && row.meta_message_status !== "accepted" ? (
+                              // Meta's own signal that an "accepted" send is
+                              // NOT actually proceeding to delivery - see
+                              // sendMetaTemplate/sendWhatsAppMessage in
+                              // metaTemplate.ts. Shown ahead of a normal
+                              // status/Pending read since it overrides both.
+                              <span className="text-xs font-bold text-amber-600" title="Meta accepted the send but is holding or has paused delivery - not the same as delivered">
+                                ⚠ {row.meta_message_status.replace(/_/g, ' ')}
+                              </span>
                             ) : statusInfo ? (
                               <span className={`text-xs font-bold ${statusInfo.className}`} title={row.error_detail || undefined}>{statusInfo.icon} {statusInfo.label}</span>
                             ) : row.status === "failed" ? (
@@ -262,6 +272,8 @@ export default function MessagesOutboxPage() {
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Status</label>
                   {viewing.method === "desktop" ? (
                     <span className="text-xs font-bold text-slate-400">No delivery confirmation possible (sent manually)</span>
+                  ) : viewing.meta_message_status && viewing.meta_message_status !== "accepted" ? (
+                    <span className="text-xs font-bold text-amber-600">⚠ Meta: {viewing.meta_message_status.replace(/_/g, ' ')} - accepted by the API but not confirmed as proceeding to delivery</span>
                   ) : statusInfo ? (
                     <span className={`text-xs font-bold ${statusInfo.className}`}>{statusInfo.icon} {statusInfo.label}</span>
                   ) : (

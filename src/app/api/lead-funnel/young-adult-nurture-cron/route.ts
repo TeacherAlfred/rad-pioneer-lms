@@ -68,12 +68,16 @@ export async function GET(request: Request) {
         variableNames
       );
 
+      // See send-template/route.ts's 2026-09-08 fix note - wamid is required
+      // for the status webhook to ever update this row past "no status".
       await supabaseAdmin.from('messages').insert([{
         lead_id: lead.id,
         direction: 'outbound',
         body: result.ok
           ? `[Delivered template: ${settings.young_adult_template_name}]`
           : `[FAILED to deliver template ${settings.young_adult_template_name}: ${result.error}]`,
+        wamid: result.wamid || null,
+        meta_message_status: result.messageStatus || null,
       }]);
 
       if (result.ok) {

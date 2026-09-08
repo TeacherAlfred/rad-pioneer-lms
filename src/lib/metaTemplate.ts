@@ -15,7 +15,7 @@
 // id) so callers can store it on the messages row - that's what lets a
 // later status webhook (sent/delivered/read) get matched back to this
 // specific send, see whatsapp-webhook/route.ts's applyMessageStatus.
-export async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string; errorCode?: string; wamid?: string }> {
+export async function sendWhatsAppMessage(to: string, messagePayload: any): Promise<{ ok: boolean; error?: string; errorCode?: string; wamid?: string; messageStatus?: string }> {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
 
@@ -44,8 +44,18 @@ export async function sendWhatsAppMessage(to: string, messagePayload: any): Prom
     console.error(`❌ Meta API Error sending to ${to}:`, JSON.stringify(data, null, 2));
     return { ok: false, error: errorDetail, errorCode };
   }
-  console.log(`✅ Message successfully sent to ${to}`);
-  return { ok: true, wamid: data?.messages?.[0]?.id };
+  // Per Meta's Cloud API reference, a 200 response's messages[0].message_status
+  // can be 'accepted', 'held_for_quality_assessment', or 'paused' - HTTP
+  // success alone does NOT mean the message will actually be delivered.
+  // Callers that log "[Delivered ...]" need this to avoid claiming delivery
+  // for a send Meta is holding or has paused.
+  const messageStatus: string | undefined = data?.messages?.[0]?.message_status;
+  if (messageStatus && messageStatus !== 'accepted') {
+    console.error(`⚠️ Meta held/paused message to ${to}: message_status=${messageStatus}`);
+  } else {
+    console.log(`✅ Message successfully sent to ${to}`);
+  }
+  return { ok: true, wamid: data?.messages?.[0]?.id, messageStatus };
 }
 
 // Template variables that auto-resolve against a matching column on the
@@ -144,7 +154,7 @@ export async function sendMetaTemplate(
   // Meta assigns its own default payload and a tap won't match anything in
   // bot_flows even if the trigger_button_id looks right.
   buttonPayloads: string[] = []
-): Promise<{ ok: boolean; error?: string; errorCode?: string; wamid?: string }> {
+): Promise<{ ok: boolean; error?: string; errorCode?: string; wamid?: string; messageStatus?: string }> {
   const phoneId = process.env.PHONE_NUMBER_ID!;
   const token = process.env.WHATSAPP_TOKEN!;
 
@@ -195,5 +205,11 @@ export async function sendMetaTemplate(
   if (!response.ok) {
     return { ok: false, error: data?.error?.message || JSON.stringify(data), errorCode: data?.error?.code != null ? String(data.error.code) : undefined };
   }
-  return { ok: true, wamid: data?.messages?.[0]?.id };
+  // See sendWhatsAppMessage above - 'accepted' is the only message_status
+  // that actually means the template is proceeding to delivery.
+  const messageStatus: string | undefined = data?.messages?.[0]?.message_status;
+  if (messageStatus && messageStatus !== 'accepted') {
+    console.error(`⚠️ Meta held/paused template send to ${to} (${templateName}): message_status=${messageStatus}`);
+  }
+  return { ok: true, wamid: data?.messages?.[0]?.id, messageStatus };
 }

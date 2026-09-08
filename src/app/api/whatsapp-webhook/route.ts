@@ -132,6 +132,7 @@ async function notifyAdmin(supabase: any, senderPhone: string, stageText: string
     status: result.ok ? null : 'failed',
     error_code: result.errorCode || null,
     error_detail: result.ok ? null : (result.error || null),
+    meta_message_status: result.messageStatus || null,
   }]);
 
   if (!result.ok) {
@@ -184,7 +185,7 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
   };
   const sendResult = await sendWhatsAppMessage(senderPhone, mediaPayload);
   if (sendResult.ok) {
-    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]`, wamid: sendResult.wamid || null }]);
+    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]`, wamid: sendResult.wamid || null, meta_message_status: sendResult.messageStatus || null }]);
     await notifyAdmin(supabase, senderPhone, `📥 Downloaded the ${matchedMedia.title}.`, lead.id);
   } else {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
@@ -251,7 +252,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     return;
   }
 
-  let sendResult: { ok: boolean; error?: string; wamid?: string };
+  let sendResult: { ok: boolean; error?: string; wamid?: string; messageStatus?: string };
   if (flow.action_type === 'message') {
     // {{dates}}/{{location}}/{{title}} resolve against the linked
     // featured_programs row (admin/bot-flows) so this flow's copy always
@@ -282,6 +283,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
       direction: 'outbound',
       body: sendResult.ok ? `[Delivered flow: ${flow.label}]` : `[FAILED to deliver flow ${flow.label}: ${sendResult.error}]`,
       wamid: sendResult.wamid || null,
+      meta_message_status: sendResult.messageStatus || null,
     }]);
   } else {
     const bodyValues = (flow.template_variables || []).map((v: string) => resolveVariable(String(v), effectiveLead));
@@ -291,6 +293,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
       direction: 'outbound',
       body: sendResult.ok ? `[Delivered template: ${flow.template_name}]` : `[FAILED to deliver template ${flow.template_name}: ${sendResult.error}]`,
       wamid: sendResult.wamid || null,
+      meta_message_status: sendResult.messageStatus || null,
     }]);
   }
 

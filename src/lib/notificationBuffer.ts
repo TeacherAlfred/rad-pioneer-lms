@@ -153,6 +153,7 @@ export async function flushBufferedNotifications(opts: { force?: boolean; onlyLe
       status: result.ok ? null : 'failed',
       error_code: result.errorCode || null,
       error_detail: result.ok ? null : (result.error || null),
+      meta_message_status: result.messageStatus || null,
     }]);
 
     if (!result.ok) {

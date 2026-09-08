@@ -16,7 +16,7 @@ export async function GET() {
   const supabase = supabaseAdmin();
   const { data, error } = await supabase
     .from('messages')
-    .select('id, lead_id, direction, body, method, recipient_phone, wamid, status, status_updated_at, error_code, error_detail, created_at, leads(name, phone)')
+    .select('id, lead_id, direction, body, method, recipient_phone, wamid, status, status_updated_at, error_code, error_detail, meta_message_status, created_at, leads(name, phone)')
     .eq('direction', 'outbound')
     .order('created_at', { ascending: false })
     .limit(LIMIT);

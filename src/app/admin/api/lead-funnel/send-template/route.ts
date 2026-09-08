@@ -49,12 +49,21 @@ export async function POST(req: Request) {
 
       const sendResult = await sendMetaTemplate(lead.phone, templateName.trim(), languageCode.trim(), bodyValues, variableNames || [], buttonPayloads || []);
 
+      // wamid is what lets the async status webhook (sent/delivered/read/
+      // failed) ever match back to this row - omitting it left every
+      // template send permanently stuck at no-status ("Pending"), forever,
+      // regardless of what actually happened on WhatsApp (found 2026-09-08,
+      // 0/110 historical template sends had a stored wamid). meta_message_status
+      // captures Meta's own accepted/held_for_quality_assessment/paused
+      // signal, since an HTTP 200 does not itself mean delivery is proceeding.
       await supabaseAdmin.from('messages').insert([{
         lead_id: lead.id,
         direction: 'outbound',
         body: sendResult.ok
           ? `[Delivered template: ${templateName}]`
           : `[FAILED to deliver template ${templateName}: ${sendResult.error}]`,
+        wamid: sendResult.wamid || null,
+        meta_message_status: sendResult.messageStatus || null,
       }]);
 
       results.push({ leadId: lead.id, phone: lead.phone, ok: sendResult.ok, error: sendResult.error });
