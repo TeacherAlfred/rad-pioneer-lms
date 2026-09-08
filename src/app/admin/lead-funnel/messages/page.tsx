@@ -67,7 +67,7 @@ type BotFlow = {
   id: string;
   trigger_button_id: string;
   label: string;
-  action_type: 'message' | 'template' | 'bot_media';
+  action_type: 'message' | 'template' | 'bot_media' | 'tag_only';
   message_body: string | null;
   message_buttons: ButtonRef[] | null;
   active: boolean;
@@ -726,7 +726,7 @@ export default function MessageActivityPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <Link href="/admin/lead-funnel" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
             <ArrowLeft size={14} /> Lead Funnel
@@ -836,7 +836,17 @@ export default function MessageActivityPage() {
 
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm table-fixed">
+                  <colgroup>
+                    <col className="w-8" />
+                    <col style={{ width: '24%' }} />
+                    <col style={{ width: '6%' }} />
+                    <col style={{ width: '6%' }} />
+                    <col style={{ width: '6%' }} />
+                    <col style={{ width: '22%' }} />
+                    <col style={{ width: '14%' }} />
+                    <col style={{ width: '19%' }} />
+                  </colgroup>
                   <thead>
                     <tr className="border-b border-slate-100 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">
                       <th className="px-4 py-3 w-6"></th>
@@ -866,8 +876,8 @@ export default function MessageActivityPage() {
                               {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                             </td>
                             <td className="px-4 py-3">
-                              <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                                {g.leadName || '(no name)'}
+                              <div className="font-bold text-slate-800 flex items-center flex-wrap gap-1.5">
+                                <span className="truncate max-w-full min-w-0">{g.leadName || '(no name)'}</span>
                                 {needsReply(g) && (
                                   <span title="Their last message hasn't had a reply yet" className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest pl-1.5 pr-1 py-0.5 rounded-full bg-rose-100 text-rose-600">
                                     ● Needs Reply
@@ -913,11 +923,11 @@ export default function MessageActivityPage() {
                                 {g.lastLabel}
                               </span>
                             </td>
-                            <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
+                            <td className="px-4 py-3 text-slate-400 text-xs truncate">
                               {g.lastActivityAt ? new Date(g.lastActivityAt).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}
                             </td>
                             <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
-                              <div className="inline-flex items-center gap-1.5">
+                              <div className="flex items-center flex-wrap justify-end gap-1.5">
                                 {!g.leadIsBlocked && <QueueQuickAdd leadId={g.leadId} leadName={g.leadName} />}
                                 <button
                                   onClick={() => openEditLead(g)}
