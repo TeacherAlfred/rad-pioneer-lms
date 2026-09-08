@@ -33,6 +33,8 @@ type FlowRow = {
   reply_label: string | null;
   reply_confirmation: string | null;
   completion_tag: string | null;
+  reply_validation: 'email' | null;
+  reply_invalid_message: string | null;
   active: boolean;
   created_at: string;
 };
@@ -78,6 +80,8 @@ const emptyForm = {
   reply_label: '',
   reply_confirmation: '',
   completion_tag: '',
+  reply_validation: '' as '' | 'email',
+  reply_invalid_message: '',
 };
 
 export default function BotFlowsPage() {
@@ -278,6 +282,8 @@ function BotFlowsPageInner() {
       reply_label: row.reply_label || '',
       reply_confirmation: row.reply_confirmation || '',
       completion_tag: row.completion_tag || '',
+      reply_validation: row.reply_validation || '',
+      reply_invalid_message: row.reply_invalid_message || '',
     });
     setEditingId(row.id);
     setSaveError(null);
@@ -378,6 +384,8 @@ function BotFlowsPageInner() {
         reply_label: form.expects_reply ? form.reply_label.trim() : null,
         reply_confirmation: form.reply_confirmation.trim() || null,
         completion_tag: form.expects_reply ? (form.completion_tag.trim() || null) : null,
+        reply_validation: form.expects_reply ? (form.reply_validation || null) : null,
+        reply_invalid_message: form.expects_reply ? (form.reply_invalid_message.trim() || null) : null,
       };
 
       const res = editingId
@@ -642,6 +650,30 @@ function BotFlowsPageInner() {
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
                     />
                     <p className="text-[11px] text-slate-400">Reporting only - shows up in the lead's tags in /admin/lead-funnel so you can filter who completed this. Doesn't change bot behavior.</p>
+
+                    <div className="pt-2 border-t border-slate-100">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Require a specific reply shape (optional)</label>
+                      <select
+                        value={form.reply_validation}
+                        onChange={e => setForm(p => ({ ...p, reply_validation: e.target.value as '' | 'email' }))}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none mb-2"
+                      >
+                        <option value="">No validation - anything counts as the answer</option>
+                        <option value="email">Must contain a valid email address</option>
+                      </select>
+                      {form.reply_validation && (
+                        <>
+                          <textarea
+                            placeholder="Sent instead of the confirmation, if the reply doesn't validate (optional - defaults to a generic 'couldn't catch that, team member will be in touch')"
+                            value={form.reply_invalid_message}
+                            onChange={e => setForm(p => ({ ...p, reply_invalid_message: e.target.value }))}
+                            rows={2}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none"
+                          />
+                          <p className="text-[11px] text-slate-400 mt-1">A reply that doesn't validate skips capture entirely and hands off to a human instead - it's never saved as the answer.</p>
+                        </>
+                      )}
+                    </div>
                   </>
                 )}
               </div>

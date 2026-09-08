@@ -41,6 +41,9 @@ function validate(body: any): string | null {
   if (body.expects_reply && !body.reply_label?.trim()) {
     return 'reply_label is required when this message expects a reply';
   }
+  if (body.reply_validation && !['email'].includes(body.reply_validation)) {
+    return 'reply_validation must be "email" (or left blank)';
+  }
   return null;
 }
 
@@ -84,6 +87,8 @@ export async function POST(req: Request) {
         reply_label: body.expects_reply ? body.reply_label.trim() : null,
         reply_confirmation: body.reply_confirmation?.trim() || null,
         completion_tag: body.expects_reply ? (body.completion_tag?.trim() || null) : null,
+        reply_validation: body.expects_reply ? (body.reply_validation || null) : null,
+        reply_invalid_message: body.expects_reply ? (body.reply_invalid_message?.trim() || null) : null,
         active: true,
       }])
       .select()
@@ -122,7 +127,7 @@ export async function PATCH(req: Request) {
       'trigger_button_id', 'label', 'action_type', 'message_body', 'message_buttons', 'featured_program_id',
       'template_name', 'template_language', 'template_variables', 'template_variable_names', 'template_button_payloads',
       'bot_media_keyword', 'set_source', 'add_tags', 'notify_admin', 'notify_admin_immediate', 'skip_human_handoff', 'active',
-      'expects_reply', 'reply_label', 'reply_confirmation', 'completion_tag',
+      'expects_reply', 'reply_label', 'reply_confirmation', 'completion_tag', 'reply_validation', 'reply_invalid_message',
     ];
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     for (const key of allowed) {
