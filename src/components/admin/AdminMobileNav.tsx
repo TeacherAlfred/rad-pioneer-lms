@@ -12,12 +12,13 @@ import { Menu, X, LayoutDashboard, type LucideIcon } from "lucide-react";
 // Each rail renders one of these alongside its desktop nav, passing its own
 // topLink/groups/singleLinks - this component only owns the mobile
 // presentation (top bar + full-screen drawer), not any section's link data.
-type RadColorKey = 'blue' | 'teal' | 'green' | 'purple';
+type RadColorKey = 'blue' | 'teal' | 'green' | 'purple' | 'red';
 const RAD_COLORS: Record<RadColorKey, { text: string; bgTint: string }> = {
   blue: { text: 'text-rad-blue', bgTint: 'bg-rad-blue/10' },
   teal: { text: 'text-rad-teal', bgTint: 'bg-rad-teal/10' },
   green: { text: 'text-rad-green', bgTint: 'bg-rad-green/10' },
   purple: { text: 'text-rad-purple', bgTint: 'bg-rad-purple/10' },
+  red: { text: 'text-rad-red', bgTint: 'bg-rad-red/10' },
 };
 
 export type MobileNavItem = {

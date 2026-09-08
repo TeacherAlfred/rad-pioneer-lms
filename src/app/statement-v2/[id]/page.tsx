@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Loader2, XCircle, Download, FileText } from "lucide-react";
+import { Loader2, XCircle, Download, FileText, MessageCircle } from "lucide-react";
 import RADStatement from "@/components/finance/RADStatement";
 
 export default function StatementV2View() {
@@ -71,6 +71,21 @@ export default function StatementV2View() {
     }
   };
 
+  // wa.me hand-off only - same "no delivery confirmation possible" tradeoff
+  // as every other manual WhatsApp send in admin (DesktopSendButton, capture
+  // page's post-payment message). Opens WhatsApp Desktop/Web with the
+  // statement's own public link prefilled, since wa.me can't attach a file.
+  const handleSendWhatsApp = () => {
+    if (!lead?.phone) return;
+    const firstName = (lead.company_name || lead.name || "there").split(" ")[0];
+    const amountStr = `R ${balanceDue.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}`;
+    const statementUrl = `${window.location.origin}/statement-v2/${leadId}`;
+    const msg = `Dear ${firstName},\n\nPlease find your account statement below. Current balance due: ${amountStr}.\n\n${statementUrl}\n\nRegards,\nRAD Academy Team`;
+    let cleanPhone = lead.phone.replace(/\D/g, "");
+    if (cleanPhone.startsWith("0")) cleanPhone = "27" + cleanPhone.substring(1);
+    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center gap-4">
@@ -103,14 +118,24 @@ export default function StatementV2View() {
           </div>
         </div>
 
-        <button
-          onClick={handleDownloadPDF}
-          disabled={isGeneratingPdf}
-          className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50"
-        >
-          {isGeneratingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-          {isGeneratingPdf ? "Compiling PDF..." : "Download PDF"}
-        </button>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <button
+            onClick={handleSendWhatsApp}
+            disabled={!lead.phone}
+            title={lead.phone ? "Open WhatsApp Desktop/Web with this statement's link prefilled" : "No phone number on record for this lead"}
+            className="flex-1 sm:flex-none px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-900/20 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <MessageCircle size={16} /> Send via WhatsApp
+          </button>
+          <button
+            onClick={handleDownloadPDF}
+            disabled={isGeneratingPdf}
+            className="flex-1 sm:flex-none px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 disabled:opacity-50"
+          >
+            {isGeneratingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            {isGeneratingPdf ? "Compiling PDF..." : "Download PDF"}
+          </button>
+        </div>
       </div>
 
       <div className="flex justify-center pb-20">

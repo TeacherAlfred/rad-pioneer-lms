@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Gauge, LayoutDashboard, FileSignature, Layers, Receipt, HandCoins,
-  Wallet, Landmark, PackageSearch,
+  Wallet, Landmark, PackageSearch, ScrollText, ClipboardList, Coins,
 } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
 
@@ -16,12 +16,13 @@ import AdminMobileNav from "./AdminMobileNav";
 type NavItem = { href: string; label: string; icon: any };
 type NavGroup = { id: string; label: string; icon: any; items: NavItem[]; colorKey: RadColorKey };
 
-type RadColorKey = 'blue' | 'teal' | 'green' | 'purple';
+type RadColorKey = 'blue' | 'teal' | 'green' | 'purple' | 'red';
 const RAD_COLORS: Record<RadColorKey, { text: string; bgTint: string }> = {
   blue: { text: 'text-rad-blue', bgTint: 'bg-rad-blue/10' },
   teal: { text: 'text-rad-teal', bgTint: 'bg-rad-teal/10' },
   green: { text: 'text-rad-green', bgTint: 'bg-rad-green/10' },
   purple: { text: 'text-rad-purple', bgTint: 'bg-rad-purple/10' },
+  red: { text: 'text-rad-red', bgTint: 'bg-rad-red/10' },
 };
 
 // Money & Admin sits above the groups (uppermost icon, always solid black
@@ -42,6 +43,14 @@ const GROUPS: NavGroup[] = [
     items: [
       { href: '/admin/finance-v2/invoices', label: 'Invoices', icon: Receipt },
       { href: '/admin/finance-v2/capture', label: 'Capture Payment', icon: HandCoins },
+      { href: '/admin/finance-v2/income', label: 'Income', icon: Coins },
+    ],
+  },
+  {
+    id: 'statements', label: 'Statements', icon: ScrollText, colorKey: 'red',
+    items: [
+      { href: '/admin/finance-v2/statements', label: 'Leads Owing', icon: ScrollText },
+      { href: '/admin/finance-v2/statements-detail', label: 'Invoices & Payments', icon: ClipboardList },
     ],
   },
   {
