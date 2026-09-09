@@ -345,6 +345,18 @@ export async function updateBookBasicInfo(bookId: string, title: string, author:
 }
 
 /**
+ * Explicitly clears a book's cover (e.g. an incorrectly-matched one), always
+ * writing null regardless of what else is going on - unlike
+ * applyReviewedMetadata, which only ever sets cover_key when a new cover
+ * download succeeds and otherwise leaves the existing one alone.
+ */
+export async function clearBookCover(bookId: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("rad_books").update({ cover_key: null }).eq("id", bookId);
+  if (error) throw new Error(`Failed to remove cover: ${error.message}`);
+}
+
+/**
  * Applies a hand-reviewed Open Library override in one step: full metadata
  * (title/author/synopsis/cover, via the same accept path the Rescan Review
  * modal uses) plus genre tags. Nothing is written until this is called -

@@ -267,20 +267,32 @@ export default function WipReviewCard({ book, onPublished, onDeleted, onParked }
             />
           </div>
 
-          {coverIdOptions.length > 1 && (
+          {(coverId || coverIdOptions.length > 1) && (
             <div>
-              <p className="font-data text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Cover</p>
-              <div className="flex gap-2">
-                {coverIdOptions.map((id) => (
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="font-data text-[9px] font-bold uppercase tracking-widest text-slate-400">Cover</p>
+                {coverId && (
                   <button
-                    key={id}
-                    onClick={() => setCoverId(id)}
-                    className={`w-10 h-14 rounded overflow-hidden border-2 flex-shrink-0 ${id === coverId ? "border-brass-500" : "border-transparent"}`}
+                    onClick={() => setCoverId(null)}
+                    className="font-data text-[9px] font-bold uppercase tracking-widest text-slate-400 hover:text-rose-600 transition-colors"
                   >
-                    <img src={coverThumb(id)!} className="w-full h-full object-cover" />
+                    Remove cover
                   </button>
-                ))}
+                )}
               </div>
+              {coverIdOptions.length > 1 && (
+                <div className="flex gap-2">
+                  {coverIdOptions.map((id) => (
+                    <button
+                      key={id}
+                      onClick={() => setCoverId(id)}
+                      className={`w-10 h-14 rounded overflow-hidden border-2 flex-shrink-0 ${id === coverId ? "border-brass-500" : "border-transparent"}`}
+                    >
+                      <img src={coverThumb(id)!} className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

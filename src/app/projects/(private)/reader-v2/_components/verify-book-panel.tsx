@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { BookOpen, Link2, X, ScanSearch, Check, BookmarkX } from "lucide-react";
+import { BookOpen, Link2, X, ScanSearch, Check, BookmarkX, ImageOff } from "lucide-react";
 import {
   updateBookBasicInfo,
   applyReviewedMetadata,
   markBookVerified,
   parkBookVerification,
+  clearBookCover,
   type VerifyBook,
 } from "../../reader/_actions/books";
 import { autoScanSingleBook, syncExactOpenLibraryUrl } from "../../reader/_actions/metadata";
@@ -40,6 +41,8 @@ export default function VerifyBookPanel({ book, onVerified, onParked }: VerifyBo
   const [urlInput, setUrlInput] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selectedCoverId, setSelectedCoverId] = useState<number | null>(null);
+  const [coverCleared, setCoverCleared] = useState(false);
+  const [isClearingCover, setIsClearingCover] = useState(false);
 
   const runAutoRescan = async () => {
     setIsScanning(true);
@@ -55,6 +58,7 @@ export default function VerifyBookPanel({ book, onVerified, onParked }: VerifyBo
       if (meta.titles?.[0]) setTitle(meta.titles[0]);
       if (meta.authors?.[0]) setAuthor(meta.authors[0]);
       setSelectedCoverId(meta.coverIds?.[0] ?? null);
+      setCoverCleared(false);
     } catch (error) {
       console.error("Rescan failed", error);
       toast.error("Rescan failed.");
@@ -76,6 +80,7 @@ export default function VerifyBookPanel({ book, onVerified, onParked }: VerifyBo
       if (data.titles?.[0]) setTitle(data.titles[0]);
       if (data.authors?.[0]) setAuthor(data.authors[0]);
       setSelectedCoverId(data.coverIds?.[0] ?? null);
+      setCoverCleared(false);
       setUrlInput("");
       setUrlOpen(false);
     } catch (error) {
@@ -115,7 +120,27 @@ export default function VerifyBookPanel({ book, onVerified, onParked }: VerifyBo
     }
   };
 
-  const coverUrl = selectedCoverId
+  // Writes immediately (unlike title/author/genre edits here, which wait
+  // for "Looks Good") - an incorrect cover is worth clearing on its own,
+  // without also having to decide the book is fully verified yet.
+  const handleRemoveCover = async () => {
+    setIsClearingCover(true);
+    try {
+      await clearBookCover(book.id);
+      setCoverCleared(true);
+      setSelectedCoverId(null);
+      toast.success("Cover removed.");
+    } catch (error) {
+      console.error("Failed to remove cover", error);
+      toast.error(error instanceof Error ? error.message : "Failed to remove cover.");
+    } finally {
+      setIsClearingCover(false);
+    }
+  };
+
+  const coverUrl = coverCleared
+    ? null
+    : selectedCoverId
     ? `https://covers.openlibrary.org/b/id/${selectedCoverId}-L.jpg`
     : book.cover_key
       ? `/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`
@@ -123,11 +148,24 @@ export default function VerifyBookPanel({ book, onVerified, onParked }: VerifyBo
 
   return (
     <div className="flex flex-col md:flex-row gap-6">
-      <div className="w-28 h-40 flex-shrink-0 mx-auto md:mx-0 rounded-xl overflow-hidden bg-slate-100 flex items-center justify-center shadow-sm">
-        {coverUrl ? (
-          <img src={coverUrl} className="w-full h-full object-cover" />
-        ) : (
-          <BookOpen size={24} className="text-slate-300" />
+      <div className="flex-shrink-0 mx-auto md:mx-0 flex flex-col items-center gap-2">
+        <div className="w-28 h-40 rounded-xl overflow-hidden bg-slate-100 flex items-center justify-center shadow-sm">
+          {coverUrl ? (
+            <img src={coverUrl} className="w-full h-full object-cover" />
+          ) : (
+            <BookOpen size={24} className="text-slate-300" />
+          )}
+        </div>
+        {coverUrl && (
+          <button
+            onClick={handleRemoveCover}
+            disabled={isClearingCover}
+            title="Remove this cover if it was matched incorrectly"
+            className="flex items-center gap-1 font-data text-[9px] uppercase tracking-widest text-slate-400 hover:text-rose-600 transition-colors disabled:opacity-40"
+          >
+            <ImageOff size={11} strokeWidth={2.5} />
+            {isClearingCover ? "Removing…" : "Remove"}
+          </button>
         )}
       </div>
 
