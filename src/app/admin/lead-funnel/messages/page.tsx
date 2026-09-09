@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
@@ -14,6 +14,7 @@ import { parseMessage, KIND_LABEL, STATUS_DISPLAY } from "@/lib/messageParse";
 import { DesktopSendButton } from "@/components/admin/DesktopSendButton";
 import { LEAD_AUTOFIELDS } from "@/lib/metaTemplate";
 import { computeWindowState } from "@/lib/whatsappWindow";
+import { useInboundMessagePoll } from "@/lib/useInboundMessagePoll";
 
 type MessageRow = {
   id: string;
@@ -211,6 +212,12 @@ export default function MessageActivityPage() {
       setLoading(false);
     }
   }
+
+  // Re-fetches the whole feed on a new inbound message rather than
+  // splicing just that row in - a single lead's `messages` array here is
+  // grouped/sorted (needsReply, window state) in ways that are cheaper to
+  // recompute from a fresh fetch than to patch incrementally.
+  useInboundMessagePoll(useCallback(() => { loadMessages(); }, []));
 
   const [botFlows, setBotFlows] = useState<BotFlow[]>([]);
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
