@@ -43,6 +43,12 @@ export default function MoneyAdminPage() {
   // billing_records only, so a v2 payment never moved these tiles. See
   // metrics below.
   const [incomeRows, setIncomeRows] = useState<any[]>([]);
+  // Every v2 invoice (any status) - lets Throughput show what was actually
+  // billed in a period alongside what was collected, since those can
+  // legitimately diverge (an invoice raised this month due later, or a
+  // payment landing against an older invoice - same distinction Cash
+  // Waterfall's Invoiced vs. Paid already draws).
+  const [v2Invoices, setV2Invoices] = useState<any[]>([]);
   const [consentByLane, setConsentByLane] = useState<Record<string, any>>({});
   const [securityAudit, setSecurityAudit] = useState<{ last_security_audit_at: string | null; last_security_audit_note: string | null } | null>(null);
   // Finance Pipeline: Cash Waterfall spec - due/invoiced/paid tracking and
@@ -94,11 +100,12 @@ export default function MoneyAdminPage() {
     (async () => {
       setLoading(true);
       try {
-        const [consentRes, settingsRes, v2QuotesRes, incomeRes] = await Promise.all([
+        const [consentRes, settingsRes, v2QuotesRes, incomeRes, v2InvoicesRes] = await Promise.all([
           fetch("/admin/api/dashboard-v2/consent-summary"),
           fetch("/admin/api/dashboard-v2/settings"),
           fetch("/admin/api/finance-v2/quotes/list"),
           fetch("/admin/api/finance-v2/income"),
+          fetch("/admin/api/finance-v2/invoices"),
         ]);
         const { byLane } = await consentRes.json();
         setConsentByLane(byLane || {});
@@ -108,6 +115,8 @@ export default function MoneyAdminPage() {
         setV2Quotes(v2QuotesData || []);
         const { payments: incomeData } = await incomeRes.json();
         setIncomeRows(incomeData || []);
+        const { invoices: v2InvoicesData } = await v2InvoicesRes.json();
+        setV2Invoices(v2InvoicesData || []);
         await fetchWaterfall();
       } catch (err) {
         console.error("Failed to fetch money-admin data:", err);
@@ -166,6 +175,19 @@ export default function MoneyAdminPage() {
     const revenueMonth = revenueSince(startOfMonth);
     const revenue90d = revenueSince(last90);
 
+    // What was actually billed in the period, regardless of status - the
+    // Cards' small "invoiced" figure, so a big gap against revenue above is
+    // visible at a glance instead of only showing up once you dig into Cash
+    // Waterfall's own Invoiced vs. Paid. A credited invoice was never a real
+    // sale, so it's excluded same as everywhere else this distinction is made.
+    const invoicedSince = (cutoff: Date) =>
+      v2Invoices
+        .filter((inv) => inv.status !== "cancelled" && new Date(inv.created_at) >= cutoff)
+        .reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
+
+    const invoicedMonth = invoicedSince(startOfMonth);
+    const invoiced90d = invoicedSince(last90);
+
     // Lifetime, so date-bucketing doesn't matter here - bucketed by each
     // quote's program instead of the old free-text line-item-to-billing_items
     // category match, since v2's quotes already carry a real program_id.
@@ -215,12 +237,12 @@ export default function MoneyAdminPage() {
     });
 
     return {
-      revenueWeek, revenueMonth, revenue90d, topCategories,
+      revenueWeek, revenueMonth, revenue90d, invoicedMonth, invoiced90d, topCategories,
       openPipelineValue, openPipelineCount: openPipelineQuotes.length,
       acceptedValue, acceptedCount: acceptedQuotes.length, avgAcceptedAgeDays,
       arTotal, arBuckets, outstandingCount: outstandingInvoices.length,
     };
-  }, [v2Quotes, incomeRows]);
+  }, [v2Quotes, incomeRows, v2Invoices]);
 
   if (loading) {
     return (
@@ -248,8 +270,8 @@ export default function MoneyAdminPage() {
           <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 mb-4">Throughput</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <LightStatTile label="Revenue This Week" value={rand(metrics.revenueWeek)} icon={Coins} color="text-emerald-600" />
-            <LightStatTile label="Revenue This Month" value={rand(metrics.revenueMonth)} icon={CalendarDays} color="text-emerald-600" />
-            <LightStatTile label="Revenue, Last 90 Days" value={rand(metrics.revenue90d)} icon={TrendingUp} color="text-emerald-600" />
+            <LightStatTile label="Revenue This Month" value={rand(metrics.revenueMonth)} icon={CalendarDays} color="text-emerald-600" trend={`${rand(metrics.invoicedMonth)} invoiced`} />
+            <LightStatTile label="Revenue, Last 90 Days" value={rand(metrics.revenue90d)} icon={TrendingUp} color="text-emerald-600" trend={`${rand(metrics.invoiced90d)} invoiced`} />
           </div>
           {metrics.topCategories.length > 0 && (
             <div className="bg-white border border-stone-200 rounded-[24px] p-6 md:p-8 shadow-sm">
