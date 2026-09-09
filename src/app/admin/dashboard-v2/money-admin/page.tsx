@@ -9,26 +9,10 @@ import {
   ChevronLeft, ChevronRight, X, CheckCircle2, Loader2, Ban,
 } from "lucide-react";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
-import { supabase } from "@/lib/supabase";
 import { DashboardV2Nav } from "../_components/DashboardV2Nav";
 import { ConstraintPill } from "../_components/ConstraintPill";
 import { TodayBanner } from "../_components/TodayBanner";
 import { LightStatTile } from "../_components/LightStatTile";
-
-function parseLineItems(raw: any): any[] {
-  try {
-    return typeof raw === "string" ? JSON.parse(raw) : raw || [];
-  } catch {
-    return [];
-  }
-}
-
-function netLineValue(li: any): number {
-  const price = Number(li.price) || 0;
-  const qty = Number(li.qty) || 0;
-  const disc = Math.max(0, Number(li.disc || 0));
-  return price * (1 - disc / 100) * qty;
-}
 
 const NAV_TILES = [
   { label: "Quote Composer", desc: "Build a new quote against a lead", icon: FileText, path: "/admin/finance-v2/composer" },
@@ -49,13 +33,16 @@ const LEGACY_NAV_TILES = [
 
 export default function MoneyAdminPage() {
   const [loading, setLoading] = useState(true);
-  const [records, setRecords] = useState<any[]>([]);
-  const [billingItems, setBillingItems] = useState<any[]>([]);
   // Real finance-v2 quotes (composer + self-serve package selection) - the
   // old billing_records table has no idea these exist, which is why this
   // dashboard's "Inventory" tiles were stuck showing only pre-migration
   // pipeline and never moved when a new quote went out. See quotes/list.
   const [v2Quotes, setV2Quotes] = useState<any[]>([]);
+  // Real cash received (invoice_payments + lead_balance_forward_payments,
+  // same feed as the Income page) - Throughput used to read paid
+  // billing_records only, so a v2 payment never moved these tiles. See
+  // metrics below.
+  const [incomeRows, setIncomeRows] = useState<any[]>([]);
   const [consentByLane, setConsentByLane] = useState<Record<string, any>>({});
   const [securityAudit, setSecurityAudit] = useState<{ last_security_audit_at: string | null; last_security_audit_note: string | null } | null>(null);
   // Finance Pipeline: Cash Waterfall spec - due/invoiced/paid tracking and
@@ -107,21 +94,20 @@ export default function MoneyAdminPage() {
     (async () => {
       setLoading(true);
       try {
-        const [{ data: recordsData }, { data: itemsData }, consentRes, settingsRes, v2QuotesRes] = await Promise.all([
-          supabase.from("billing_records").select("*"),
-          supabase.from("billing_items").select("name, category, aliases"),
+        const [consentRes, settingsRes, v2QuotesRes, incomeRes] = await Promise.all([
           fetch("/admin/api/dashboard-v2/consent-summary"),
           fetch("/admin/api/dashboard-v2/settings"),
           fetch("/admin/api/finance-v2/quotes/list"),
+          fetch("/admin/api/finance-v2/income"),
         ]);
-        if (recordsData) setRecords(recordsData);
-        if (itemsData) setBillingItems(itemsData);
         const { byLane } = await consentRes.json();
         setConsentByLane(byLane || {});
         const { settings } = await settingsRes.json();
         setSecurityAudit(settings || null);
         const { quotes: v2QuotesData } = await v2QuotesRes.json();
         setV2Quotes(v2QuotesData || []);
+        const { payments: incomeData } = await incomeRes.json();
+        setIncomeRows(incomeData || []);
         await fetchWaterfall();
       } catch (err) {
         console.error("Failed to fetch money-admin data:", err);
@@ -162,20 +148,6 @@ export default function MoneyAdminPage() {
     }
   }
 
-  const categoryMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    billingItems.forEach((i) => {
-      const category = i.category || "Other";
-      if (i.name) map[i.name.toLowerCase().trim()] = category;
-      if (Array.isArray(i.aliases)) {
-        i.aliases.forEach((alias: string) => {
-          if (alias) map[alias.toLowerCase().trim()] = category;
-        });
-      }
-    });
-    return map;
-  }, [billingItems]);
-
   const metrics = useMemo(() => {
     const now = new Date();
     const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -183,30 +155,26 @@ export default function MoneyAdminPage() {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const last90 = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
 
-    // Revenue below is still legacy-only (paid billing_records) - a v2
-    // invoice paid via the PayFast webhook lands in the real `invoices`
-    // table, which this figure doesn't see yet. Flagged rather than silently
-    // wrong: the Inventory section below it is what actually needed fixing
-    // for "quotes not showing up," so that's what's wired to v2 here.
-    const invoices = records.filter((r) => r.doc_type === "invoice");
-    const paidInvoices = invoices.filter((r) => r.status === "paid" || r.status === "settled");
-
+    // Real cash received, v2-native: invoice_payments + lead_balance_forward_payments
+    // (same feed as the Income page), not paid billing_records - that legacy
+    // table has no idea a v2 invoice or a PayFast webhook payment exists, so
+    // these tiles never moved once billing work migrated to v2.
     const revenueSince = (cutoff: Date) =>
-      paidInvoices
-        .filter((r) => new Date(r.updated_at || r.created_at) >= cutoff)
-        .reduce((sum, r) => sum + (Number(r.total_amount) || 0), 0);
+      incomeRows.filter((r) => new Date(r.date) >= cutoff).reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
     const revenueWeek = revenueSince(startOfWeek);
     const revenueMonth = revenueSince(startOfMonth);
     const revenue90d = revenueSince(last90);
 
+    // Lifetime, so date-bucketing doesn't matter here - bucketed by each
+    // quote's program instead of the old free-text line-item-to-billing_items
+    // category match, since v2's quotes already carry a real program_id.
     const revenueByCategory: Record<string, number> = {};
-    paidInvoices.forEach((inv) => {
-      parseLineItems(inv.line_items).forEach((li: any) => {
-        const desc = (li.desc || li.description || "").toLowerCase().trim();
-        const category = categoryMap[desc] || "Uncategorized";
-        revenueByCategory[category] = (revenueByCategory[category] || 0) + netLineValue(li);
-      });
+    v2Quotes.forEach((q) => {
+      const paid = (q.invoices || []).reduce((s: number, inv: any) => s + Number(inv.amount_paid || 0), 0);
+      if (paid <= 0) return;
+      const category = q.program?.name || "Uncategorized";
+      revenueByCategory[category] = (revenueByCategory[category] || 0) + paid;
     });
     const topCategories = Object.entries(revenueByCategory).sort((a, b) => b[1] - a[1]);
 
@@ -252,7 +220,7 @@ export default function MoneyAdminPage() {
       acceptedValue, acceptedCount: acceptedQuotes.length, avgAcceptedAgeDays,
       arTotal, arBuckets, outstandingCount: outstandingInvoices.length,
     };
-  }, [records, categoryMap, v2Quotes]);
+  }, [v2Quotes, incomeRows]);
 
   if (loading) {
     return (
