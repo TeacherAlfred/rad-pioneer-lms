@@ -13,7 +13,7 @@
 // notification buffer, so this rides the same cadence instead of needing a
 // second external cron entry.
 import { createClient } from '@supabase/supabase-js';
-import { sendWhatsAppMessage } from '@/lib/metaTemplate';
+import { sendMetaTemplate } from '@/lib/metaTemplate';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -34,16 +34,26 @@ export function isRoboticsWatchAd(adId: string | null | undefined): boolean {
 }
 
 const FOLLOWUP_DELAY_MS = 24 * 60 * 60 * 1000;
-// Reserved for the real robotics guide once it exists (see
-// btn_ad6219_guide in bot_flows, which has the same "not built yet, no code
-// change needed later" note) - looked up fresh each run, so uploading an
-// active bot_media row under this keyword is the only step needed to start
-// attaching it here.
-const ROBOTICS_GUIDE_KEYWORD = 'robotics_watch_guide';
 
-const FOLLOWUP_TEXT = "Hey, following up! In case the live session doesn't fit your schedule, here's the guide we mentioned - a quick read on what robotics and coding actually teach kids.\n\nStill keen to see it live instead?";
+// Meta rejects a freeform/interactive send once the customer-service window
+// has closed (error 131047) - and this function only ever fires AFTER 24h of
+// silence, meaning the window is guaranteed closed by construction. So this
+// has to go out as a pre-approved template (exempt from the window), not a
+// freeform message like the rest of this file's sibling sends. Approved via
+// the Template Rollout Wizard's own mechanism (see template_rollouts row of
+// the same name) - the exact copy lives there, not duplicated here.
+const FOLLOWUP_TEMPLATE_NAME = 'rad_robotics_followup';
+const FOLLOWUP_TEMPLATE_LANGUAGE = 'en';
 
-export async function sendAdFollowups(): Promise<{ sent: number; failed: number }> {
+// A template's structure (including whether it has a document header) is
+// fixed at Meta-approval time, not swappable per send like a freeform
+// message's header was. So the "attach the real guide once it exists"
+// upgrade this file used to do for free is on hold until then - once the
+// guide is ready, submit a second template with a document header via the
+// wizard and point FOLLOWUP_TEMPLATE_NAME at it (or add a variant lookup
+// here). Not building that now since the guide doesn't exist yet either.
+
+export async function sendAdFollowups(): Promise<{ sent: number; failed: number; pending: number }> {
   const cutoff = new Date(Date.now() - FOLLOWUP_DELAY_MS).toISOString();
   const { data: dueLeads, error } = await supabaseAdmin
     .from('leads')
@@ -54,30 +64,30 @@ export async function sendAdFollowups(): Promise<{ sent: number; failed: number 
     .lte('last_inbound_at', cutoff)
     .limit(100);
   if (error) throw error;
-  if (!dueLeads || dueLeads.length === 0) return { sent: 0, failed: 0 };
-
-  // Graceful upgrade: if the real guide has been uploaded to bot_media
-  // under this keyword by now, attach it - otherwise send text-only.
-  const { data: guideMedia } = await supabaseAdmin
-    .from('bot_media')
-    .select('file_url, filename')
-    .eq('active', true)
-    .contains('trigger_keywords', [ROBOTICS_GUIDE_KEYWORD])
-    .maybeSingle();
+  if (!dueLeads || dueLeads.length === 0) return { sent: 0, failed: 0, pending: 0 };
 
   let sent = 0;
   let failed = 0;
+  let pending = 0;
   for (const lead of dueLeads) {
-    const payload: any = {
-      type: 'interactive',
-      interactive: {
-        type: 'button',
-        ...(guideMedia ? { header: { type: 'document', document: { link: guideMedia.file_url, filename: guideMedia.filename } } } : {}),
-        body: { text: FOLLOWUP_TEXT },
-        action: { buttons: [{ type: 'reply', reply: { id: 'btn_ad6219_register', title: 'Register for Webinar' } }] },
-      },
-    };
-    const result = await sendWhatsAppMessage(lead.phone, payload);
+    const result = await sendMetaTemplate(
+      lead.phone,
+      FOLLOWUP_TEMPLATE_NAME,
+      FOLLOWUP_TEMPLATE_LANGUAGE,
+      [],
+      [],
+      ['btn_ad6219_register'] // the template's one QUICK_REPLY button payload
+    );
+
+    // 132001 = template name/language not found under this WABA, which is
+    // also what Meta returns while a submitted template is still PENDING
+    // review - not a real failure, just "not approved yet". Skip logging
+    // and don't stamp ad_followup_sent_at so the next poll retries once
+    // Meta approves it, instead of silently burning the lead's one shot.
+    if (!result.ok && result.errorCode === '132001') {
+      pending++;
+      continue;
+    }
 
     await supabaseAdmin.from('messages').insert([{
       lead_id: lead.id,
@@ -88,13 +98,14 @@ export async function sendAdFollowups(): Promise<{ sent: number; failed: number 
       ...(result.ok ? {} : { status: 'failed', error_code: result.errorCode || null, error_detail: result.error || null }),
     }]);
 
-    // Stamped regardless of send success - a hard Meta rejection (e.g.
-    // window closed) won't fix itself on the next poll either, and without
-    // this the lead would get retried every 5-10 minutes indefinitely.
+    // Stamped on success or on a genuine (non-pending-approval) failure - a
+    // hard Meta rejection unrelated to template approval won't fix itself
+    // on the next poll either, and without this the lead would get retried
+    // every 5-10 minutes indefinitely.
     await supabaseAdmin.from('leads').update({ ad_followup_sent_at: new Date().toISOString() }).eq('id', lead.id);
 
     if (result.ok) sent++; else failed++;
   }
 
-  return { sent, failed };
+  return { sent, failed, pending };
 }

@@ -91,7 +91,7 @@ flowchart LR
     A -->|💬 Talk to Us| G[btn_human]
     G --> H["'A team member will be in touch'"]
 
-    A -.->|24h later, still lifecycle_stage 'new'| I["Follow-up poll<br/>(rides notify-flush, no new cron)"]
+    A -.->|24h later, still lifecycle_stage 'new'| I["Follow-up poll<br/>(rides notify-flush, no new cron)<br/>sent as template rad_robotics_followup"]
     I -->|Register for Webinar| B
 ```
 
@@ -102,7 +102,9 @@ flowchart LR
 | `btn_human` | Reused as-is — same "team member will be in touch" copy, no separate row needed | — | immediate |
 | `sendAdFollowups()` (`src/lib/adFollowups.ts`) | Polled every 5-10 min via the existing `notify-flush` route; sends the 24h nudge to any lead on this ad set still `lifecycle_stage: 'new'` since their first message | `leads.ad_followup_sent_at` stamped to prevent a repeat | — |
 
-**Graceful upgrade path**: the real robotics guide doesn't exist yet. Once it's uploaded to `bot_media` under the keyword `robotics_watch_guide`, `sendAdFollowups()` starts attaching it automatically — no code change. `btn_ad6219_guide` itself needs one manual step at that point: flip its action type to `bot_media` from `/admin/bot-flows` and point it at the same item.
+**Fixed 2026-09-09 — window-closed send failures**: the 24h nudge originally went out as a freeform/interactive message, which Meta unconditionally rejects once the customer-service window has closed (error 131047) — and this send only ever fires *after* 24h of silence, so the window was guaranteed closed every time. All ~19 real sends up to this point failed silently (status `failed`, logged as `[Delivered ...]` regardless — see the Outbox for the same "always logs as delivered" gap noted elsewhere in this doc). Fixed by submitting a dedicated pre-approved template, `rad_robotics_followup` (MARKETING, en, one QUICK_REPLY button → `btn_ad6219_register`, approved same day) — templates are exempt from the 24h window. `sendAdFollowups()` now sends via `sendMetaTemplate()` instead of `sendWhatsAppMessage()`. Also changed the stamping rule: a send that fails because the template isn't approved yet (Meta error 132001) no longer stamps `ad_followup_sent_at`, so it retries on the next poll instead of permanently silencing the lead — a genuine post-approval failure still stamps, same as before. The 19 leads caught by the original bug had `ad_followup_sent_at` reset once the fix shipped, so they get one legitimate retry.
+
+**Graceful upgrade path (on hold)**: the real robotics guide doesn't exist yet, and a template's structure (including whether it has a document header) is fixed at Meta-approval time — unlike the old freeform message, it can't attach a document conditionally per send. Once the guide is ready, submit a second template with a document header via the Template Rollout Wizard and point `sendAdFollowups()` at it. `btn_ad6219_guide` itself still just needs its action type flipped to `bot_media` from `/admin/bot-flows` at that point.
 
 ---
 
