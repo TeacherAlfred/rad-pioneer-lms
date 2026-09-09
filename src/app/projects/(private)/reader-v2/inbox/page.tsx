@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft, ChevronDown, UploadCloud } from "lucide-react";
 import { getLibraryBooks, type BookWithTags } from "../../reader/_actions/books";
 import { useAmbientBackground } from "../_lib/use-ambient-background";
@@ -16,6 +16,7 @@ export default function InboxPage() {
   const [loading, setLoading] = useState(true);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [showParked, setShowParked] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
 
   const refresh = () => {
     getLibraryBooks().then((data) => {
@@ -26,6 +27,14 @@ export default function InboxPage() {
 
   useEffect(() => {
     refresh();
+  }, []);
+
+  // Header's own back link scrolls out of view on a long inbox - this gives
+  // a way back to the shelf without scrolling all the way up first.
+  useEffect(() => {
+    const handleScroll = () => setIsScrolled(window.scrollY > 240);
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   const wipBooks = books.filter((b) => b.status === "wip" && !b.is_wip_parked);
@@ -126,6 +135,26 @@ export default function InboxPage() {
           </div>
         )}
       </main>
+
+      <AnimatePresence>
+        {isScrolled && (
+          <motion.div
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -8 }}
+            transition={{ duration: 0.2 }}
+            className="fixed left-6 top-1/2 -translate-y-1/2 z-40"
+          >
+            <Link
+              href="/projects/reader-v2"
+              title="Back to your shelf"
+              className="flex items-center justify-center w-11 h-11 bg-white border border-slate-200 rounded-full shadow-lg text-slate-400 hover:text-brass-600 hover:shadow-xl transition-all"
+            >
+              <ArrowLeft size={18} strokeWidth={2.5} />
+            </Link>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AddBooksModal
         isOpen={isUploadOpen}
