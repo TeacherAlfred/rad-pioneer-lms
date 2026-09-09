@@ -69,6 +69,10 @@ export default function MoneyAdminPage() {
   // previously no way to view any month but the current one.
   const [waterfallMonth, setWaterfallMonth] = useState<string | null>(null);
   const [invoicePopupId, setInvoicePopupId] = useState<string | null>(null);
+  // Which Throughput tile's invoice/payment breakdown is open - 'month' or
+  // '90d' mirrors the same two cutoffs metrics.invoicedMonth/invoiced90d
+  // already use, so the modal's numbers always match what was clicked.
+  const [ledgerPeriod, setLedgerPeriod] = useState<'month' | '90d' | null>(null);
   // Cumulative bank position (opening balance + every month's paid minus
   // obligations since) - deliberately separate from the monthly scenarios
   // above, which reset each month on purpose (month-to-month profitability
@@ -188,6 +192,14 @@ export default function MoneyAdminPage() {
     const invoicedMonth = invoicedSince(startOfMonth);
     const invoiced90d = invoicedSince(last90);
 
+    // What was billed in the period but hasn't actually come in yet - not
+    // the same thing as AR's aging buckets below, which are lifetime/
+    // all-outstanding-invoices regardless of when they were raised. This is
+    // scoped to the same period as the invoiced figure it sits under, so
+    // "this month's invoiced vs. this month's owing" reads as one story.
+    const owingMonth = Math.max(0, invoicedMonth - revenueMonth);
+    const owing90d = Math.max(0, invoiced90d - revenue90d);
+
     // Lifetime, so date-bucketing doesn't matter here - bucketed by each
     // quote's program instead of the old free-text line-item-to-billing_items
     // category match, since v2's quotes already carry a real program_id.
@@ -218,8 +230,8 @@ export default function MoneyAdminPage() {
           acceptedQuotes.length
         : 0;
 
-    const v2Invoices = v2Quotes.flatMap((q) => q.invoices || []);
-    const outstandingInvoices = v2Invoices.filter((inv) => inv.status !== "paid" && inv.status !== "cancelled");
+    const quoteInvoices = v2Quotes.flatMap((q) => q.invoices || []);
+    const outstandingInvoices = quoteInvoices.filter((inv) => inv.status !== "paid" && inv.status !== "cancelled");
     const arBuckets = { notYetDue: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90plus: 0 };
     let arTotal = 0;
     outstandingInvoices.forEach((inv) => {
@@ -237,7 +249,7 @@ export default function MoneyAdminPage() {
     });
 
     return {
-      revenueWeek, revenueMonth, revenue90d, invoicedMonth, invoiced90d, topCategories,
+      revenueWeek, revenueMonth, revenue90d, invoicedMonth, invoiced90d, owingMonth, owing90d, topCategories,
       openPipelineValue, openPipelineCount: openPipelineQuotes.length,
       acceptedValue, acceptedCount: acceptedQuotes.length, avgAcceptedAgeDays,
       arTotal, arBuckets, outstandingCount: outstandingInvoices.length,
@@ -270,8 +282,32 @@ export default function MoneyAdminPage() {
           <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 mb-4">Throughput</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <LightStatTile label="Revenue This Week" value={rand(metrics.revenueWeek)} icon={Coins} color="text-emerald-600" />
-            <LightStatTile label="Revenue This Month" value={rand(metrics.revenueMonth)} icon={CalendarDays} color="text-emerald-600" trend={`${rand(metrics.invoicedMonth)} invoiced`} />
-            <LightStatTile label="Revenue, Last 90 Days" value={rand(metrics.revenue90d)} icon={TrendingUp} color="text-emerald-600" trend={`${rand(metrics.invoiced90d)} invoiced`} />
+            <LightStatTile
+              label="Revenue This Month"
+              value={rand(metrics.revenueMonth)}
+              icon={CalendarDays}
+              color="text-emerald-600"
+              onClick={() => setLedgerPeriod('month')}
+              trend={
+                <div className="text-right leading-tight">
+                  <div>{rand(metrics.invoicedMonth)} invoiced</div>
+                  {metrics.owingMonth > 0 && <div className="text-amber-600">{rand(metrics.owingMonth)} owing</div>}
+                </div>
+              }
+            />
+            <LightStatTile
+              label="Revenue, Last 90 Days"
+              value={rand(metrics.revenue90d)}
+              icon={TrendingUp}
+              color="text-emerald-600"
+              onClick={() => setLedgerPeriod('90d')}
+              trend={
+                <div className="text-right leading-tight">
+                  <div>{rand(metrics.invoiced90d)} invoiced</div>
+                  {metrics.owing90d > 0 && <div className="text-amber-600">{rand(metrics.owing90d)} owing</div>}
+                </div>
+              }
+            />
           </div>
           {metrics.topCategories.length > 0 && (
             <div className="bg-white border border-stone-200 rounded-[24px] p-6 md:p-8 shadow-sm">
@@ -521,6 +557,16 @@ export default function MoneyAdminPage() {
             invoiceId={invoicePopupId}
             onClose={() => setInvoicePopupId(null)}
             onChanged={() => fetchWaterfall()}
+          />
+        )}
+
+        {ledgerPeriod && (
+          <InvoiceLedgerModal
+            period={ledgerPeriod}
+            invoices={v2Invoices}
+            payments={incomeRows}
+            onClose={() => setLedgerPeriod(null)}
+            onSelectInvoice={(id) => { setLedgerPeriod(null); setInvoicePopupId(id); }}
           />
         )}
 
@@ -854,6 +900,129 @@ function InvoicePopup({ invoiceId, onClose, onChanged }: { invoiceId: string; on
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Invoices raised in the clicked Throughput tile's period, each row paired
+// with whatever payments have actually landed against it (which can arrive
+// in a different period than the invoice was raised in - see v2Invoices'
+// own comment above). Kept as one row per invoice with both sides in the
+// same flex container (not two independently-stacked columns), since an
+// invoice with 2+ partial payments would otherwise grow its row taller on
+// the payments side only and drift every row below it out of alignment.
+function InvoiceLedgerModal({
+  period,
+  invoices,
+  payments,
+  onClose,
+  onSelectInvoice,
+}: {
+  period: 'month' | '90d';
+  invoices: any[];
+  payments: any[];
+  onClose: () => void;
+  onSelectInvoice: (id: string) => void;
+}) {
+  const rand = (n: number) => `R ${Math.round(n).toLocaleString()}`;
+
+  const { rows, totalInvoiced, totalPaid } = useMemo(() => {
+    const now = new Date();
+    const cutoff = period === 'month'
+      ? new Date(now.getFullYear(), now.getMonth(), 1)
+      : new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+
+    const periodInvoices = invoices.filter(
+      (inv) => inv.status !== 'cancelled' && new Date(inv.created_at) >= cutoff
+    );
+
+    const rows = periodInvoices
+      .map((inv) => ({
+        invoice: inv,
+        payments: payments.filter((p) => p.invoiceId === inv.id),
+      }))
+      .sort((a, b) => {
+        const aPaid = a.invoice.status === 'paid' ? 0 : 1;
+        const bPaid = b.invoice.status === 'paid' ? 0 : 1;
+        if (aPaid !== bPaid) return aPaid - bPaid;
+        return Number(b.invoice.amount) - Number(a.invoice.amount);
+      });
+
+    const totalInvoiced = periodInvoices.reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
+    const totalPaid = rows.reduce(
+      (sum, r) => sum + r.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0),
+      0
+    );
+
+    return { rows, totalInvoiced, totalPaid };
+  }, [period, invoices, payments]);
+
+  const title = period === 'month' ? 'This Month' : 'Last 90 Days';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-stone-900/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="p-7">
+          <div className="flex items-start justify-between mb-5">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-stone-400">Invoices &amp; Payments</p>
+              <h3 className="text-xl font-black text-stone-900">{title}</h3>
+            </div>
+            <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={18} /></button>
+          </div>
+
+          {rows.length === 0 ? (
+            <p className="text-sm text-stone-400 italic py-12 text-center">No invoices raised in this period.</p>
+          ) : (
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-2 gap-4 pb-2 mb-1 border-b-2 border-stone-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">Invoices</span>
+                  <span className="text-sm font-black text-stone-900">{rand(totalInvoiced)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-stone-400">Payments</span>
+                  <span className="text-sm font-black text-emerald-600">{rand(totalPaid)}</span>
+                </div>
+              </div>
+
+              {rows.map(({ invoice, payments: invoicePayments }) => (
+                <div key={invoice.id} className="grid grid-cols-2 gap-4 items-stretch">
+                  <button
+                    onClick={() => onSelectInvoice(invoice.id)}
+                    className="text-left px-3 py-2.5 rounded-lg bg-stone-50 hover:bg-stone-100 transition-colors flex items-center justify-between gap-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-xs text-stone-700 truncate">
+                        {new Date(invoice.created_at).toLocaleDateString('en-ZA')} · {invoice.lead?.name || invoice.lead?.company_name || 'Unknown'}
+                      </span>
+                      <span className={`block text-[10px] font-black uppercase tracking-widest ${invoice.status === 'paid' ? 'text-emerald-600' : 'text-rose-500'}`}>
+                        INV-{invoice.invoice_number} · {invoice.status}
+                      </span>
+                    </span>
+                    <span className="font-bold text-stone-900 text-xs shrink-0">{rand(invoice.amount)}</span>
+                  </button>
+
+                  <div className="px-3 py-2.5 rounded-lg bg-stone-50/60 flex items-center">
+                    {invoicePayments.length === 0 ? (
+                      <span className="text-xs text-stone-400 italic">Not yet paid</span>
+                    ) : (
+                      <div className="w-full space-y-1">
+                        {invoicePayments.map((p) => (
+                          <div key={p.id} className="flex items-center justify-between text-xs">
+                            <span className="text-stone-500">{new Date(p.date).toLocaleDateString('en-ZA')}</span>
+                            <span className="font-bold text-emerald-600">{rand(p.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

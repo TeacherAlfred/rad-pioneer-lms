@@ -18,7 +18,7 @@ export function LightStatTile({
   value: React.ReactNode;
   icon: LucideIcon;
   color?: string;
-  trend?: string;
+  trend?: React.ReactNode;
   onClick?: () => void;
 }) {
   return (
