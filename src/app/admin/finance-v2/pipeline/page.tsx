@@ -8,6 +8,7 @@ import {
   CheckCircle2, XCircle, AlertCircle, Layers, Coins, X, CopyPlus,
   ArrowRightLeft, Receipt, Settings2,
 } from "lucide-react";
+import { QuoteReminderButton } from "@/components/admin/QuoteReminderButton";
 
 type EffectiveStatus = "sent" | "expired" | "accepted" | "declined" | "superseded";
 
@@ -365,6 +366,15 @@ export default function QuotePipelineV2Page() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {status === "sent" && (quote.lead?.id || quote.lead_id) && (
+                        <QuoteReminderButton
+                          leadId={quote.lead?.id || quote.lead_id}
+                          phone={quote.lead?.phone}
+                          name={quote.lead?.company_name || quote.lead?.name || "there"}
+                          defaultEvent={quote.program?.name || ""}
+                          quoteLink={`${window.location.origin}/quote-v2/${quote.id}`}
+                        />
+                      )}
                       <Link
                         href={`/statement-v2/${quote.lead?.id || quote.lead_id}`}
                         target="_blank"
