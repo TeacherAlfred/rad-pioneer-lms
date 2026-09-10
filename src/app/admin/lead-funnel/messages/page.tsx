@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
   Users2, Search, MessageSquare, Reply, X, VolumeX, Plus, Sparkles,
-  ChevronDown, ChevronRight, Pencil, Ban, ShieldCheck, FileText,
+  ChevronDown, ChevronRight, Pencil, Ban, ShieldCheck, FileText, LayoutList,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -123,6 +123,21 @@ function formatStatusTime(iso: string | null | undefined) {
   return new Date(iso).toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit' });
 }
 
+// Hour windows offered by the date-range filter below - null means no
+// cutoff at all. Deliberately not memoized against Date.now() anywhere:
+// it's recomputed inline on every render, so the existing 60s clockTick
+// (already driving the messaging-window countdowns) also rolls this
+// forward on its own with no extra plumbing.
+const DATE_RANGE_OPTIONS: { value: string; label: string; hours: number | null }[] = [
+  { value: 'all', label: 'All time', hours: null },
+  { value: '24h', label: 'Last 24 hours', hours: 24 },
+  { value: '48h', label: 'Last 48 hours', hours: 48 },
+  { value: '72h', label: 'Last 72 hours', hours: 72 },
+  { value: '7d', label: 'Last 7 days', hours: 24 * 7 },
+  { value: '14d', label: 'Last 2 weeks', hours: 24 * 14 },
+  { value: '30d', label: 'Last 30 days', hours: 24 * 30 },
+];
+
 const INHOUSE_TAG = 'Inhouse';
 function isInhouseRow(m: MessageRow) {
   return (m.lead_tags || []).some(t => t.toLowerCase() === INHOUSE_TAG.toLowerCase());
@@ -185,6 +200,17 @@ export default function MessageActivityPage() {
   const [templateFilter, setTemplateFilter] = useState<string | null>(null);
   const [countMode, setCountMode] = useState<'messages' | 'leads'>('messages');
   const [search, setSearch] = useState('');
+  // 'grouped' (one row per lead, expand for the thread) is the page's
+  // original shape and stays the default - 'list' is a flat one-row-per-
+  // message view, same List/Grouped-by-Lead split as the Sent Messages
+  // outbox page.
+  const [viewMode, setViewMode] = useState<'grouped' | 'list'>('grouped');
+  const [dateRangeFilter, setDateRangeFilter] = useState('all');
+  // "Replied" means the inbound message has a later outbound message
+  // somewhere in the same lead's thread (see flatMessages' `answered`
+  // below) - independent of whether that later send actually addressed it.
+  const [hideReplied, setHideReplied] = useState(false);
+  const [msgSortDirection, setMsgSortDirection] = useState<SortDirection>('desc');
   // Mutually exclusive, momentary lenses - not additive filters. Flipping
   // one on narrows the whole list to ONLY that category (inhouse or
   // blocked contacts don't normally belong in the working view at all,
@@ -705,10 +731,17 @@ export default function MessageActivityPage() {
     });
   }, [rows, showInhouse, showBlocked]);
 
+  const dateCutoffHours = DATE_RANGE_OPTIONS.find(o => o.value === dateRangeFilter)?.hours ?? null;
+  const dateCutoffMs = dateCutoffHours !== null ? Date.now() - dateCutoffHours * 60 * 60 * 1000 : null;
+
   // Filters decide which conversations show up at all (any message in the
   // thread matching is enough) - the expanded thread itself always shows
   // every message for that lead, unfiltered, since a conversation with
-  // gaps cut out of it isn't a conversation anymore.
+  // gaps cut out of it isn't a conversation anymore. Date range and "hide
+  // replied" are the two exceptions - both read as lead-level here (was
+  // this lead active recently; does this lead still need a reply), the
+  // per-message versions of the same two filters live in filteredMessages
+  // below for List view instead.
   const filteredGroups = useMemo(() => {
     const q = search.trim().toLowerCase();
     return groups.filter(g => {
@@ -716,13 +749,55 @@ export default function MessageActivityPage() {
       if (kindFilter !== 'all' && !g.messages.some(m => parseMessage(m).kind === kindFilter)) return false;
       if (buttonFilter && !g.messages.some(m => { const p = parseMessage(m); return p.kind === 'button_tap' && p.label === buttonFilter; })) return false;
       if (templateFilter && !g.messages.some(m => { const p = parseMessage(m); return p.kind === 'template' && p.label === templateFilter; })) return false;
+      if (dateCutoffMs !== null && (!g.lastActivityAt || new Date(g.lastActivityAt).getTime() < dateCutoffMs)) return false;
+      if (hideReplied && !needsReply(g)) return false;
       if (q) {
         const haystack = `${g.leadPhone || ''} ${g.leadName || ''} ${g.messages.map(m => m.body).join(' ')}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [groups, directionFilter, kindFilter, buttonFilter, templateFilter, search]);
+  }, [groups, directionFilter, kindFilter, buttonFilter, templateFilter, search, dateCutoffMs, hideReplied]);
+
+  // One row per message rather than per lead - List view's flat
+  // alternative to the grouped/conversation table above. `answered` powers
+  // "hide replied": true the moment ANY later outbound message exists in
+  // the same thread, regardless of whether that send actually addressed
+  // this specific inbound message - a lead who wrote in twice and got one
+  // reply back has both their inbound messages marked answered, not just
+  // the first.
+  type FlatMessage = MessageRow & { answered: boolean; group: LeadGroup };
+  const flatMessages = useMemo<FlatMessage[]>(() => {
+    const items: FlatMessage[] = [];
+    for (const g of groups) {
+      for (let i = 0; i < g.messages.length; i++) {
+        const m = g.messages[i];
+        const answered = m.direction === 'inbound' && g.messages.slice(i + 1).some(later => later.direction === 'outbound');
+        items.push({ ...m, answered, group: g });
+      }
+    }
+    return items;
+  }, [groups]);
+
+  const filteredMessages = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return flatMessages.filter(m => {
+      if (directionFilter !== 'all' && m.direction !== directionFilter) return false;
+      const parsed = parseMessage(m);
+      if (kindFilter !== 'all' && parsed.kind !== kindFilter) return false;
+      if (buttonFilter && !(parsed.kind === 'button_tap' && parsed.label === buttonFilter)) return false;
+      if (templateFilter && !(parsed.kind === 'template' && parsed.label === templateFilter)) return false;
+      if (dateCutoffMs !== null && (!m.created_at || new Date(m.created_at).getTime() < dateCutoffMs)) return false;
+      if (hideReplied && m.answered) return false;
+      if (q) {
+        const haystack = `${m.lead_phone || ''} ${m.lead_name || ''} ${m.body || ''}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [flatMessages, directionFilter, kindFilter, buttonFilter, templateFilter, search, dateCutoffMs, hideReplied]);
+
+  const sortedMessages = useMemo(() => sortRows(filteredMessages, 'created_at', msgSortDirection), [filteredMessages, msgSortDirection]);
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   function toggleExpanded(leadId: string) {
@@ -758,12 +833,17 @@ export default function MessageActivityPage() {
 
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, buttonFilter, templateFilter, search, showInhouse, showBlocked]);
-  const totalPages = Math.max(1, Math.ceil(sortedGroups.length / pageSize));
+  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, buttonFilter, templateFilter, search, showInhouse, showBlocked, viewMode, dateRangeFilter, hideReplied]);
+  const totalItems = viewMode === 'list' ? sortedMessages.length : sortedGroups.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
   const pagedGroups = useMemo(
     () => sortedGroups.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
     [sortedGroups, currentPage, pageSize]
+  );
+  const pagedMessages = useMemo(
+    () => sortedMessages.slice(currentPage * pageSize, currentPage * pageSize + pageSize),
+    [sortedMessages, currentPage, pageSize]
   );
 
   return (
@@ -853,6 +933,20 @@ export default function MessageActivityPage() {
             )}
 
             <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4 flex flex-wrap gap-3 items-center">
+              <div className="inline-flex bg-slate-100 rounded-xl p-1 gap-1">
+                <button
+                  onClick={() => setViewMode('grouped')}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-colors ${viewMode === 'grouped' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  <Users2 size={12} /> Grouped by Lead
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-colors ${viewMode === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  <LayoutList size={12} /> List
+                </button>
+              </div>
               <div className="relative flex-1 min-w-[200px]">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
                 <input
@@ -871,13 +965,89 @@ export default function MessageActivityPage() {
                 <option value="all">All types</option>
                 {Object.entries(KIND_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
               </select>
+              <select value={dateRangeFilter} onChange={e => setDateRangeFilter(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none">
+                {DATE_RANGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <ViewToggle
+                label="Hide replied"
+                checked={hideReplied}
+                onChange={setHideReplied}
+                activeColor="bg-indigo-500"
+              />
               <ViewToggle label={`Show inhouse (${inhouseCount})`} checked={showInhouse} onChange={setShowInhouse} activeColor="bg-slate-900" />
               <ViewToggle label={`Show blocked (${blockedCount})`} checked={showBlocked} onChange={setShowBlocked} activeColor="bg-rose-500" />
-              <span className="text-xs text-slate-400 ml-auto">{filteredGroups.length} contact{filteredGroups.length === 1 ? '' : 's'} (of {visibleMessageCount} messages)</span>
+              <span className="text-xs text-slate-400 ml-auto">
+                {viewMode === 'list'
+                  ? `${filteredMessages.length} message${filteredMessages.length === 1 ? '' : 's'}`
+                  : `${filteredGroups.length} contact${filteredGroups.length === 1 ? '' : 's'} (of ${visibleMessageCount} messages)`}
+              </span>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
               <div className="overflow-x-auto">
+                {viewMode === 'list' ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">
+                      <th className="px-4 py-3">Dir</th>
+                      <th className="px-4 py-3">Lead</th>
+                      <th className="px-4 py-3">Message</th>
+                      <SortableHeader label="Date & Time" column="created_at" sortColumn="created_at" sortDirection={msgSortDirection} onSort={() => setMsgSortDirection(d => d === 'asc' ? 'desc' : 'asc')} />
+                      <th className="px-4 py-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedMessages.map(m => {
+                      const parsed = parseMessage(m);
+                      const statusInfo = m.status ? STATUS_DISPLAY[m.status] : null;
+                      const needsThisReply = m.direction === 'inbound' && !m.answered && !m.group.leadIsBlocked;
+                      return (
+                        <tr key={m.id} className={`border-b border-slate-50 last:border-0 hover:bg-slate-50/50 ${needsThisReply ? 'border-l-4 border-l-rose-400' : ''}`}>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${m.direction === 'inbound' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-600'}`}>
+                              {m.direction === 'inbound' ? 'In' : 'Out'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="font-bold text-slate-800 truncate max-w-[180px]">{m.lead_name || '(no name)'}</div>
+                            <div className="text-xs text-slate-400">+{m.lead_phone}</div>
+                          </td>
+                          <td className="px-4 py-3 max-w-sm">
+                            {parsed.kind !== 'text' && (
+                              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 mr-1.5">{KIND_LABEL[parsed.kind] || parsed.kind}</span>
+                            )}
+                            <span className="line-clamp-1">{parsed.label}</span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{m.created_at ? new Date(m.created_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : '—'}</td>
+                          <td className="px-4 py-3">
+                            {m.direction === 'outbound' ? (
+                              statusInfo ? (
+                                <span className={`text-xs font-bold ${statusInfo.className}`}>{statusInfo.icon} {statusInfo.label}</span>
+                              ) : (
+                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">Pending</span>
+                              )
+                            ) : m.answered ? (
+                              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Replied</span>
+                            ) : needsThisReply ? (
+                              <button
+                                onClick={() => openReply({ leadId: m.group.leadId, leadName: m.group.leadName, leadPhone: m.group.leadPhone, botPaused: m.group.leadBotPaused, isWindowOpen: m.group.isWindowOpen, windowExpiresAt: m.group.windowExpiresAt, windowTotalHours: m.group.windowTotalHours })}
+                                className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-rose-600 bg-rose-50 hover:bg-rose-100 px-2 py-1 rounded-lg"
+                              >
+                                <Reply size={11} /> Needs Reply
+                              </button>
+                            ) : (
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredMessages.length === 0 && (
+                      <tr><td colSpan={5} className="px-4 py-16 text-center text-slate-400 text-sm">No messages match these filters.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+                ) : (
                 <table className="w-full text-sm table-fixed">
                   <colgroup>
                     <col className="w-8" />
@@ -1069,12 +1239,13 @@ export default function MessageActivityPage() {
                     )}
                   </tbody>
                 </table>
+                )}
               </div>
-              {filteredGroups.length > 0 && (
+              {totalItems > 0 && (
                 <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-t border-slate-100">
                   <div className="flex items-center gap-2 text-xs text-slate-400">
                     <span>
-                      Showing {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, filteredGroups.length)} of {filteredGroups.length} contacts
+                      Showing {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, totalItems)} of {totalItems} {viewMode === 'list' ? 'messages' : 'contacts'}
                     </span>
                     <select
                       value={pageSize}
