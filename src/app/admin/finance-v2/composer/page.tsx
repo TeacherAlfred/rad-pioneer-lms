@@ -11,9 +11,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import RADBillingDocument from "@/components/finance/RADBillingDocument";
 
-type LineSource = "freeform" | "program" | "package";
+type LineSource = "freeform" | "program" | "package" | "inventory";
 
 type DiscountMode = "pct" | "amount";
+
+// Preset section labels for the grouped ICP quote format - a line can also
+// carry any custom text via the free-text box next to these, so this isn't
+// an enum on the database column, just what the picker suggests.
+const GROUP_LABEL_PRESETS = ["Workshop", "Materials", "Additional Coaching", "Bonus"];
 
 type LineItem = {
   source: LineSource;
@@ -21,6 +26,11 @@ type LineItem = {
   program_id: string | null;
   session_id: string | null;
   event_package_id: string | null;
+  inventory_item_id: string | null;
+  // Which section this line prints under on the document (Workshop /
+  // Materials / Additional Coaching / Bonus / a custom label) - null means
+  // ungrouped, which renders exactly like a flat quote always has.
+  group_label: string | null;
   quantity: number;
   unit_price: number;
   // discount_pct is the single value actually saved/used everywhere
@@ -34,11 +44,27 @@ type LineItem = {
   discount_input: string;
 };
 
-function emptyLine(): LineItem {
+function emptyLine(overrides: Partial<LineItem> = {}): LineItem {
   return {
     source: "freeform", description: "", program_id: null, session_id: null, event_package_id: null,
+    inventory_item_id: null, group_label: null,
     quantity: 1, unit_price: 0, discount_pct: 0, discount_mode: "pct", discount_input: "",
+    ...overrides,
   };
+}
+
+// One-click starting point for the grouped ICP quote format: empty
+// Workshop/Materials/Coaching lines plus a Bonus line pre-set to a 100%
+// discount - priced then comped, not just discounted, so RADBillingDocument
+// renders it as a struck-through price next to R0 with a "Complimentary"
+// tag. Admin fills in the specifics from here.
+function icpQuoteStarterLines(): LineItem[] {
+  return [
+    emptyLine({ group_label: "Workshop" }),
+    emptyLine({ group_label: "Materials", source: "inventory" }),
+    emptyLine({ group_label: "Additional Coaching" }),
+    emptyLine({ group_label: "Bonus", discount_mode: "pct", discount_input: "100", discount_pct: 100 }),
+  ];
 }
 
 // Converts whatever's currently typed (percent or a flat Rand amount) into
@@ -75,6 +101,7 @@ function ComposerV2Inner() {
   const [programs, setPrograms] = useState<any[]>([]);
   const [featuredPrograms, setFeaturedPrograms] = useState<any[]>([]);
   const [eventPackages, setEventPackages] = useState<any[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [sessionsByProgram, setSessionsByProgram] = useState<Record<string, any[]>>({});
   const [nextQuoteNumber, setNextQuoteNumber] = useState(1);
 
@@ -90,6 +117,7 @@ function ComposerV2Inner() {
   const [newLeadEmail, setNewLeadEmail] = useState("");
 
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLine()]);
+  const [newSectionInput, setNewSectionInput] = useState("");
   const [notes, setNotes] = useState("");
   const [expiryDate, setExpiryDate] = useState(() => {
     const d = new Date();
@@ -144,6 +172,13 @@ function ComposerV2Inner() {
       const epRes = await fetch("/admin/api/pricing/event-packages");
       const { rows: ep } = await epRes.json();
       if (ep) setEventPackages((ep as any[]).filter((row) => row.final_fee !== null && row.package?.active !== false));
+
+      // Backs the per-line "Inventory Item" source (Materials, etc.) - lets
+      // a quote line point at the real catalog instead of a freeform-typed
+      // description/price, so its cost is actually traceable afterwards.
+      const invRes = await fetch("/admin/api/pricing/inventory");
+      const { rows: inv } = await invRes.json();
+      if (inv) setInventoryItems((inv as any[]).filter((row) => row.active !== false));
     })();
   }, []);
 
@@ -173,6 +208,8 @@ function ComposerV2Inner() {
               program_id: li.program_id || null,
               session_id: li.session_id || null,
               event_package_id: li.event_package_id || null,
+              inventory_item_id: li.inventory_item_id || null,
+              group_label: li.group_label || null,
               quantity: li.quantity,
               unit_price: li.unit_price,
               discount_pct: li.discount_pct || 0,
@@ -228,12 +265,57 @@ function ComposerV2Inner() {
     }));
   }
 
-  function addLine() {
-    setLineItems((prev) => [...prev, emptyLine()]);
+  // The one entry point for adding a line, grouped or not - the label
+  // decides which section it lands in (null = the plain, ungrouped bucket).
+  // A "Bonus" section defaults every new line in it to a 100% discount,
+  // since that's what "Bonus" means here - priced then comped, not a
+  // negotiated markdown.
+  function addLineToSection(label: string | null) {
+    setLineItems((prev) => [
+      ...prev,
+      emptyLine({
+        group_label: label,
+        ...(label === "Bonus" ? { discount_mode: "pct" as DiscountMode, discount_input: "100", discount_pct: 100 } : {}),
+      }),
+    ]);
+  }
+
+  // Sections aren't separate state - they're derived by grouping lineItems
+  // on group_label, in first-appearance order, so a section exists exactly
+  // as long as it has at least one line in it and disappears on its own
+  // once the last one is removed. Each entry keeps its original index so
+  // updateLine/removeLine below can still address the flat array directly.
+  const sections = (() => {
+    const order: (string | null)[] = [];
+    const byLabel = new Map<string | null, { item: LineItem; idx: number }[]>();
+    lineItems.forEach((item, idx) => {
+      const label = item.group_label || null;
+      if (!byLabel.has(label)) {
+        byLabel.set(label, []);
+        order.push(label);
+      }
+      byLabel.get(label)!.push({ item, idx });
+    });
+    return order.map((label) => ({ label, entries: byLabel.get(label)! }));
+  })();
+
+  function addNewSection() {
+    const label = newSectionInput.trim();
+    if (!label) return;
+    addLineToSection(label);
+    setNewSectionInput("");
   }
 
   function removeLine(idx: number) {
     setLineItems((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)));
+  }
+
+  function applyIcpQuoteStarter() {
+    const hasRealContent = lineItems.some((li) => li.description.trim() || li.unit_price > 0);
+    if (hasRealContent && !window.confirm("Replace the current line items with the ICP quote starter (Workshop / Materials / Additional Coaching / Bonus)?")) {
+      return;
+    }
+    setLineItems(icpQuoteStarterLines());
   }
 
   const subTotal = lineItems.reduce((sum, li) => sum + li.quantity * li.unit_price, 0);
@@ -399,6 +481,7 @@ function ComposerV2Inner() {
   const documentItems = lineItems.map((li) => ({
     desc: li.description, qty: li.quantity, price: li.unit_price, disc: li.discount_pct,
     lineTotal: li.quantity * li.unit_price * (1 - Math.max(0, li.discount_pct) / 100),
+    group: li.group_label || undefined,
   }));
 
   return (
@@ -436,151 +519,251 @@ function ComposerV2Inner() {
             <div className="bg-white border border-slate-200 rounded-[40px] p-8 shadow-sm space-y-6">
               <div className="flex items-center justify-between border-b border-slate-100 pb-6">
                 <h3 className="text-sm font-black uppercase tracking-widest text-emerald-600">Line Items</h3>
-                <button onClick={addLine} className="text-[10px] font-black uppercase bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1">
-                  <Plus size={12} /> Add Line
+                <div className="flex items-center gap-2">
+                  <button onClick={applyIcpQuoteStarter} className="text-[10px] font-black uppercase bg-amber-50 text-amber-700 px-4 py-2 rounded-xl hover:bg-amber-500 hover:text-white transition-all">
+                    New ICP Quote
+                  </button>
+                  <button onClick={() => addLineToSection(null)} className="text-[10px] font-black uppercase bg-emerald-50 text-emerald-600 px-4 py-2 rounded-xl hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1">
+                    <Plus size={12} /> Add Line
+                  </button>
+                </div>
+              </div>
+
+              {/* Section comes first: pick (or type) a section here and it
+                  opens below as its own card - "Add Item to <Section>" on
+                  that card adds more lines straight into it, each still
+                  getting its own Freeform/Programme/Package/Inventory
+                  choice. "Add Line" above stays the plain, ungrouped path
+                  for quotes that don't need sections at all. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[9px] font-black uppercase text-slate-400 mr-1">Add Section</span>
+                {GROUP_LABEL_PRESETS.filter((preset) => !sections.some((s) => s.label === preset)).map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => addLineToSection(preset)}
+                    className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-white border border-slate-200 text-slate-500 hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-all"
+                  >
+                    + {preset}
+                  </button>
+                ))}
+                <input
+                  value={newSectionInput}
+                  onChange={(e) => setNewSectionInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNewSection(); } }}
+                  placeholder="Custom section name..."
+                  className="flex-1 min-w-[140px] bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-[10px] font-bold outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={addNewSection}
+                  disabled={!newSectionInput.trim()}
+                  className="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-amber-50 text-amber-700 hover:bg-amber-500 hover:text-white transition-all disabled:opacity-30"
+                >
+                  Add
                 </button>
               </div>
 
-              <div className="space-y-4">
-                {lineItems.map((item, idx) => (
-                  <div key={idx} className="bg-slate-50 p-6 rounded-3xl border border-slate-100 relative">
-                    <div className="flex items-center gap-2 mb-4">
-                      {(["freeform", "program", "package"] as LineSource[]).map((src) => (
-                        <button
-                          key={src}
-                          type="button"
-                          onClick={() => updateLine(idx, { source: src, program_id: null, session_id: null, event_package_id: null })}
-                          className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${item.source === src ? "bg-emerald-500 text-white" : "bg-white border border-slate-200 text-slate-500 hover:bg-slate-100"}`}
-                        >
-                          {src === "freeform" ? "Freeform" : src === "program" ? "Curriculum Programme" : "Pricing Package"}
-                        </button>
-                      ))}
-                    </div>
-
-                    {item.source === "program" && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Programme</label>
-                          <select
-                            value={item.program_id || ""}
-                            onChange={(e) => {
-                              const pid = e.target.value || null;
-                              updateLine(idx, { program_id: pid, session_id: null });
-                              if (pid) loadSessionsFor(pid);
-                            }}
-                            className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
-                          >
-                            <option value="">— choose a programme —</option>
-                            {programs.map((p) => (
-                              <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
-                            ))}
-                          </select>
+              <div className="space-y-6">
+                {sections.map((section) => {
+                  const isGrouped = !!section.label;
+                  return (
+                    <div
+                      key={section.label ?? "__ungrouped"}
+                      className={isGrouped ? "bg-slate-50 border border-slate-200 rounded-3xl p-5 space-y-4" : "space-y-4"}
+                    >
+                      {(isGrouped || sections.length > 1) && (
+                        <div className="flex items-center justify-between px-1">
+                          <h4 className={isGrouped ? "text-[11px] font-black uppercase italic tracking-widest text-amber-600" : "text-[10px] font-black uppercase tracking-widest text-slate-400"}>
+                            {section.label || "Ungrouped"}
+                          </h4>
+                          <span className="text-[9px] text-slate-400 font-bold">{section.entries.length} item{section.entries.length === 1 ? "" : "s"}</span>
                         </div>
-                        {item.program_id && (
-                          <div>
-                            <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Session</label>
-                            <select
-                              value={item.session_id || ""}
-                              onChange={(e) => {
-                                const sid = e.target.value || null;
-                                const session = (sessionsByProgram[item.program_id!] || []).find((s) => s.id === sid);
-                                updateLine(idx, {
-                                  session_id: sid,
-                                  unit_price: session ? Number(session.price) : item.unit_price,
-                                  description: item.description || (session ? `${programs.find((p) => p.id === item.program_id)?.name} — ${new Date(session.starts_at).toLocaleDateString("en-ZA")}` : item.description),
-                                });
-                              }}
-                              className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
-                            >
-                              <option value="">— No specific session —</option>
-                              {(sessionsByProgram[item.program_id] || []).map((s) => (
-                                <option key={s.id} value={s.id}>{new Date(s.starts_at).toLocaleDateString("en-ZA")} (R{s.price})</option>
+                      )}
+
+                      <div className="space-y-4">
+                        {section.entries.map(({ item, idx }) => (
+                          <div key={idx} className={isGrouped ? "bg-white p-5 rounded-2xl border border-slate-200 relative" : "bg-slate-50 p-6 rounded-3xl border border-slate-100 relative"}>
+                            <div className="flex items-center gap-2 mb-4">
+                              {(["freeform", "program", "package", "inventory"] as LineSource[]).map((src) => (
+                                <button
+                                  key={src}
+                                  type="button"
+                                  onClick={() => updateLine(idx, { source: src, program_id: null, session_id: null, event_package_id: null, inventory_item_id: null })}
+                                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${item.source === src ? "bg-emerald-500 text-white" : "bg-white border border-slate-200 text-slate-500 hover:bg-slate-100"}`}
+                                >
+                                  {src === "freeform" ? "Freeform" : src === "program" ? "Curriculum Programme" : src === "package" ? "Pricing Package" : "Inventory Item"}
+                                </button>
                               ))}
-                            </select>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                            </div>
 
-                    {item.source === "package" && (
-                      <div className="mb-4">
-                        <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Pricing Package</label>
-                        <select
-                          value={item.event_package_id || ""}
-                          onChange={(e) => {
-                            const ep = eventPackages.find((row) => row.id === e.target.value);
-                            if (!ep) { updateLine(idx, { event_package_id: null }); return; }
-                            updateLine(idx, {
-                              event_package_id: ep.id,
-                              description: item.description || (ep.display_name || ep.package.name),
-                              unit_price: Number(ep.final_fee),
-                              quantity: selectedLead?.number_of_children || item.quantity || 1,
-                            });
-                          }}
-                          className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
+                            {item.source === "program" && (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                <div>
+                                  <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Programme</label>
+                                  <select
+                                    value={item.program_id || ""}
+                                    onChange={(e) => {
+                                      const pid = e.target.value || null;
+                                      updateLine(idx, { program_id: pid, session_id: null });
+                                      if (pid) loadSessionsFor(pid);
+                                    }}
+                                    className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
+                                  >
+                                    <option value="">— choose a programme —</option>
+                                    {programs.map((p) => (
+                                      <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                {item.program_id && (
+                                  <div>
+                                    <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Session</label>
+                                    <select
+                                      value={item.session_id || ""}
+                                      onChange={(e) => {
+                                        const sid = e.target.value || null;
+                                        const session = (sessionsByProgram[item.program_id!] || []).find((s) => s.id === sid);
+                                        updateLine(idx, {
+                                          session_id: sid,
+                                          unit_price: session ? Number(session.price) : item.unit_price,
+                                          description: item.description || (session ? `${programs.find((p) => p.id === item.program_id)?.name} — ${new Date(session.starts_at).toLocaleDateString("en-ZA")}` : item.description),
+                                        });
+                                      }}
+                                      className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
+                                    >
+                                      <option value="">— No specific session —</option>
+                                      {(sessionsByProgram[item.program_id] || []).map((s) => (
+                                        <option key={s.id} value={s.id}>{new Date(s.starts_at).toLocaleDateString("en-ZA")} (R{s.price})</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {item.source === "package" && (
+                              <div className="mb-4">
+                                <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Pricing Package</label>
+                                <select
+                                  value={item.event_package_id || ""}
+                                  onChange={(e) => {
+                                    const ep = eventPackages.find((row) => row.id === e.target.value);
+                                    if (!ep) { updateLine(idx, { event_package_id: null }); return; }
+                                    updateLine(idx, {
+                                      event_package_id: ep.id,
+                                      description: item.description || (ep.display_name || ep.package.name),
+                                      unit_price: Number(ep.final_fee),
+                                      quantity: selectedLead?.number_of_children || item.quantity || 1,
+                                    });
+                                  }}
+                                  className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
+                                >
+                                  <option value="">— choose a priced package —</option>
+                                  {eventPackages.map((ep) => (
+                                    <option key={ep.id} value={ep.id}>
+                                      {ep.display_name || ep.package.name} — {ep.featured_program?.title || "Global"} — R {Number(ep.final_fee).toLocaleString("en-ZA")}
+                                    </option>
+                                  ))}
+                                </select>
+                                {item.event_package_id && (
+                                  <p className="text-[9px] text-slate-500 mt-1.5">Price and description pulled from the Pricing Library — still editable below. Quantity defaulted from the lead's number of children.</p>
+                                )}
+                              </div>
+                            )}
+
+                            {item.source === "inventory" && (
+                              <div className="mb-4">
+                                <label className="text-[9px] font-black uppercase text-slate-500 ml-1">Inventory Item</label>
+                                <select
+                                  value={item.inventory_item_id || ""}
+                                  onChange={(e) => {
+                                    const inv = inventoryItems.find((row) => row.id === e.target.value);
+                                    if (!inv) { updateLine(idx, { inventory_item_id: null }); return; }
+                                    updateLine(idx, {
+                                      inventory_item_id: inv.id,
+                                      description: item.description || inv.name,
+                                      unit_price: Number(inv.unit_cost),
+                                    });
+                                  }}
+                                  className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold outline-none focus:border-emerald-400 mt-1"
+                                >
+                                  <option value="">— choose an inventory item —</option>
+                                  {inventoryItems.map((inv) => (
+                                    <option key={inv.id} value={inv.id}>
+                                      {inv.name} — {inv.category} — R {Number(inv.unit_cost).toLocaleString("en-ZA")}
+                                    </option>
+                                  ))}
+                                </select>
+                                {item.inventory_item_id && (
+                                  <p className="text-[9px] text-slate-500 mt-1.5">Price and description pulled from the Inventory catalog — still editable below. Links this line back to real cost tracking.</p>
+                                )}
+                              </div>
+                            )}
+
+                            <input
+                              value={item.description}
+                              onChange={(e) => updateLine(idx, { description: e.target.value })}
+                              className="w-full bg-transparent border-b border-slate-200 pb-2 mb-4 text-xs text-slate-700 outline-none focus:border-emerald-400"
+                              placeholder="Description shown on the document..."
+                            />
+
+                            <div className="flex flex-wrap gap-4">
+                              <div className="w-20">
+                                <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Qty</label>
+                                <input type="number" value={item.quantity} onChange={(e) => updateLine(idx, { quantity: Number(e.target.value) || 0 })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-400" />
+                              </div>
+                              <div className="w-28">
+                                <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Unit Price (R)</label>
+                                <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateLine(idx, { unit_price: Number(e.target.value) || 0 })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-400" />
+                              </div>
+                              <div className="w-32">
+                                <div className="flex items-center justify-between">
+                                  <label className="text-[9px] font-black uppercase text-slate-500">Discount</label>
+                                  <div className="flex rounded-md overflow-hidden border border-slate-200">
+                                    {(["pct", "amount"] as DiscountMode[]).map((m) => (
+                                      <button
+                                        key={m} type="button"
+                                        onClick={() => updateLine(idx, { discount_mode: m, discount_input: item.discount_mode === m ? item.discount_input : "" })}
+                                        className={`px-1.5 text-[9px] font-black ${item.discount_mode === m ? "bg-emerald-500 text-white" : "bg-white text-slate-500"}`}
+                                      >
+                                        {m === "pct" ? "%" : "R"}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <input
+                                  type="number" step="0.01" value={item.discount_input}
+                                  onChange={(e) => updateLine(idx, { discount_input: e.target.value })}
+                                  placeholder={item.discount_mode === "pct" ? "0" : "0.00"}
+                                  className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-emerald-600 text-center outline-none focus:border-emerald-400 mt-1"
+                                />
+                                {item.discount_mode === "amount" && item.discount_pct > 0 && (
+                                  <p className="text-[8px] text-slate-500 text-center mt-1">≈ {item.discount_pct.toFixed(1)}%</p>
+                                )}
+                              </div>
+                              {lineItems.length > 1 && (
+                                <button onClick={() => removeLine(idx)} className="ml-auto self-end mb-2 text-slate-400 hover:text-rose-500 transition-colors">
+                                  <Trash2 size={18} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {isGrouped && (
+                        <button
+                          type="button"
+                          onClick={() => addLineToSection(section.label)}
+                          className="text-[10px] font-black uppercase bg-white text-amber-700 border border-amber-200 px-4 py-2 rounded-xl hover:bg-amber-500 hover:text-white hover:border-amber-500 transition-all flex items-center gap-1"
                         >
-                          <option value="">— choose a priced package —</option>
-                          {eventPackages.map((ep) => (
-                            <option key={ep.id} value={ep.id}>
-                              {ep.display_name || ep.package.name} — {ep.featured_program?.title || "Global"} — R {Number(ep.final_fee).toLocaleString("en-ZA")}
-                            </option>
-                          ))}
-                        </select>
-                        {item.event_package_id && (
-                          <p className="text-[9px] text-slate-500 mt-1.5">Price and description pulled from the Pricing Library — still editable below. Quantity defaulted from the lead's number of children.</p>
-                        )}
-                      </div>
-                    )}
-
-                    <input
-                      value={item.description}
-                      onChange={(e) => updateLine(idx, { description: e.target.value })}
-                      className="w-full bg-transparent border-b border-slate-200 pb-2 mb-4 text-xs text-slate-700 outline-none focus:border-emerald-400"
-                      placeholder="Description shown on the document..."
-                    />
-
-                    <div className="flex flex-wrap gap-4">
-                      <div className="w-20">
-                        <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Qty</label>
-                        <input type="number" value={item.quantity} onChange={(e) => updateLine(idx, { quantity: Number(e.target.value) || 0 })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-400" />
-                      </div>
-                      <div className="w-28">
-                        <label className="text-[9px] font-black uppercase text-slate-500 text-center block">Unit Price (R)</label>
-                        <input type="number" step="0.01" value={item.unit_price} onChange={(e) => updateLine(idx, { unit_price: Number(e.target.value) || 0 })} className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-center outline-none focus:border-emerald-400" />
-                      </div>
-                      <div className="w-32">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[9px] font-black uppercase text-slate-500">Discount</label>
-                          <div className="flex rounded-md overflow-hidden border border-slate-200">
-                            {(["pct", "amount"] as DiscountMode[]).map((m) => (
-                              <button
-                                key={m} type="button"
-                                onClick={() => updateLine(idx, { discount_mode: m, discount_input: item.discount_mode === m ? item.discount_input : "" })}
-                                className={`px-1.5 text-[9px] font-black ${item.discount_mode === m ? "bg-emerald-500 text-white" : "bg-white text-slate-500"}`}
-                              >
-                                {m === "pct" ? "%" : "R"}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <input
-                          type="number" step="0.01" value={item.discount_input}
-                          onChange={(e) => updateLine(idx, { discount_input: e.target.value })}
-                          placeholder={item.discount_mode === "pct" ? "0" : "0.00"}
-                          className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-black text-emerald-600 text-center outline-none focus:border-emerald-400 mt-1"
-                        />
-                        {item.discount_mode === "amount" && item.discount_pct > 0 && (
-                          <p className="text-[8px] text-slate-500 text-center mt-1">≈ {item.discount_pct.toFixed(1)}%</p>
-                        )}
-                      </div>
-                      {lineItems.length > 1 && (
-                        <button onClick={() => removeLine(idx)} className="ml-auto self-end mb-2 text-slate-400 hover:text-rose-500 transition-colors">
-                          <Trash2 size={18} />
+                          <Plus size={12} /> Add Item to {section.label}
                         </button>
                       )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

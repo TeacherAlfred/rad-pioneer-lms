@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment } from "react";
 import { FileText, Download, Shield, Check, Wallet, MessageSquare } from "lucide-react";
 
 interface DocumentProps {
@@ -10,7 +11,7 @@ interface DocumentProps {
     email?: string;
     phone?: string;
   };
-  items: Array<{ desc: string; qty: number | string; price: number | string; disc?: number | string; lineTotal?: number | string; note?: string }>;
+  items: Array<{ desc: string; qty: number | string; price: number | string; disc?: number | string; lineTotal?: number | string; note?: string; group?: string | null }>;
   date: string;
   dueDate: string;
   globalNote?: string;
@@ -43,6 +44,26 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
   const formatZAR = (amount: number) => {
     return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
+
+  // A near-100% discount reads as "priced, then comped" rather than a
+  // negotiated markdown - e.g. a thank-you bonus line - so it gets its own
+  // gold treatment instead of the usual emerald discount styling.
+  const isComplimentary = (item: DocumentProps["items"][number]) => Math.max(0, Number(item.disc || 0)) >= 99.5;
+
+  // Consecutive items sharing the same optional `group` collapse into one
+  // labelled section, in original order. Items with no group (every
+  // existing invoice/quote, or any ungrouped line on a new one) carry a
+  // null label and render with no heading at all - grouping is strictly
+  // additive, nothing changes for a document that doesn't opt in.
+  type Item = DocumentProps["items"][number];
+  const segments: { label: string | null; items: Item[] }[] = [];
+  for (const item of items) {
+    const label = item.group ?? null;
+    const last = segments[segments.length - 1];
+    if (last && last.label === label) last.items.push(item);
+    else segments.push({ label, items: [item] });
+  }
+  const isFlat = segments.length <= 1 && !segments[0]?.label;
 
   return (
     <div className="w-full max-w-4xl mx-auto bg-white text-slate-900 p-6 md:p-12 rounded-[32px] md:rounded-[40px] border border-slate-200 shadow-xl font-sans overflow-hidden">
@@ -106,80 +127,117 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
               <th className="py-4 text-right">Total</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
-            {items.map((item, i) => {
-               const qty = Number(item.qty);
-               const price = Number(item.price);
-               const disc = Math.max(0, Number(item.disc || 0));
-               const rowTotal = resolveLineTotal(item);
-               const discountedPrice = qty > 0 ? rowTotal / qty : price;
-
-               return (
-                  <tr key={i} className="text-sm">
-                    <td className="py-6">
-                      <span className="font-bold text-base text-slate-900">{item.desc}</span>
-                      {item.note && (
-                          <div className="text-xs text-slate-500 italic mt-1 font-normal break-words pr-4">
-                              {item.note}
-                          </div>
-                      )}
+          <tbody>
+            {segments.map((segment, si) => (
+              <Fragment key={`s-${si}`}>
+                {segment.label && (
+                  <tr key={`h-${si}`}>
+                    <td colSpan={4} className={si === 0 ? "pt-2 pb-2" : "pt-8 pb-2"}>
+                      <span className="text-[10px] font-black uppercase italic tracking-widest text-emerald-600">{segment.label}</span>
                     </td>
-                    <td className="py-6 text-center text-slate-500">{qty}</td>
-                    <td className="py-6 text-right">
-                      {disc > 0 ? (
-                        <div className="flex items-baseline justify-end gap-2 whitespace-nowrap">
-                          <span className="text-slate-400 line-through text-xs">R {formatZAR(price)}</span>
-                          <span className="text-emerald-600 font-bold">R {formatZAR(discountedPrice)}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-700">R {formatZAR(price)}</span>
-                      )}
-                    </td>
-                    <td className="py-6 text-right font-black text-slate-900">R {formatZAR(rowTotal)}</td>
                   </tr>
-               );
-            })}
+                )}
+                {segment.items.map((item, i) => {
+                   const qty = Number(item.qty);
+                   const price = Number(item.price);
+                   const disc = Math.max(0, Number(item.disc || 0));
+                   const rowTotal = resolveLineTotal(item);
+                   const discountedPrice = qty > 0 ? rowTotal / qty : price;
+                   const comped = isComplimentary(item);
+
+                   return (
+                      <tr key={`${si}-${i}`} className="text-sm border-b border-slate-100">
+                        <td className="py-6">
+                          <span className="font-bold text-base text-slate-900">{item.desc}</span>
+                          {comped && (
+                            <span className="ml-2 align-middle text-[9px] font-black uppercase tracking-widest text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">Complimentary</span>
+                          )}
+                          {item.note && (
+                              <div className="text-xs text-slate-500 italic mt-1 font-normal break-words pr-4">
+                                  {item.note}
+                              </div>
+                          )}
+                        </td>
+                        <td className="py-6 text-center text-slate-500">{qty}</td>
+                        <td className="py-6 text-right">
+                          {disc > 0 ? (
+                            <div className="flex items-baseline justify-end gap-2 whitespace-nowrap">
+                              <span className="text-slate-400 line-through text-xs">R {formatZAR(price)}</span>
+                              <span className={`font-bold ${comped ? "text-amber-600" : "text-emerald-600"}`}>R {formatZAR(discountedPrice)}</span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-700">R {formatZAR(price)}</span>
+                          )}
+                        </td>
+                        <td className="py-6 text-right font-black text-slate-900">R {formatZAR(rowTotal)}</td>
+                      </tr>
+                   );
+                })}
+              </Fragment>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {/* LINE ITEMS - Mobile Stack View */}
-      <div className="md:hidden space-y-4 mb-8">
-        <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100 pb-2">Line Items</h3>
-        {items.map((item, i) => {
-           const qty = Number(item.qty);
-           const price = Number(item.price);
-           const disc = Math.max(0, Number(item.disc || 0));
-           const rowTotal = resolveLineTotal(item);
-           const discountedPrice = qty > 0 ? rowTotal / qty : price;
+      {/* LINE ITEMS - Mobile Stack View. This is the primary surface, not a
+          fallback - most quotes/invoices are opened from a link on a phone,
+          so grouped sections get real visual weight here (their own
+          eyebrow, generous space between groups, a gold-accented card for
+          a complimentary line) rather than just a smaller version of the
+          desktop table. */}
+      <div className="md:hidden mb-8">
+        {isFlat && (
+          <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100 pb-2 mb-4">Line Items</h3>
+        )}
+        {segments.map((segment, si) => (
+          <div key={si} className={si === 0 ? "" : "mt-8"}>
+            {segment.label && (
+              <h3 className="text-[11px] font-black uppercase italic tracking-widest text-emerald-600 border-b border-slate-100 pb-2 mb-4">{segment.label}</h3>
+            )}
+            <div className="space-y-4">
+              {segment.items.map((item, i) => {
+                 const qty = Number(item.qty);
+                 const price = Number(item.price);
+                 const disc = Math.max(0, Number(item.disc || 0));
+                 const rowTotal = resolveLineTotal(item);
+                 const discountedPrice = qty > 0 ? rowTotal / qty : price;
+                 const comped = isComplimentary(item);
 
-           return (
-             <div key={i} className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
-                <div>
-                  <p className="font-bold text-base leading-tight text-slate-900">{item.desc}</p>
-                  {item.note && <p className="text-[11px] text-slate-500 italic mt-1 leading-snug">{item.note}</p>}
-                </div>
+                 return (
+                   <div key={i} className={`border rounded-2xl p-5 space-y-4 ${comped ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-200"}`}>
+                      <div>
+                        <p className="font-bold text-base leading-tight text-slate-900 flex items-center gap-2 flex-wrap">
+                          {item.desc}
+                          {comped && (
+                            <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">Complimentary</span>
+                          )}
+                        </p>
+                        {item.note && <p className="text-[11px] text-slate-500 italic mt-1 leading-snug">{item.note}</p>}
+                      </div>
 
-                <div className="pt-4 border-t border-slate-200 text-sm">
-                  <p className="text-[9px] font-black uppercase text-slate-400">Qty x Unit Price</p>
-                  {disc > 0 ? (
-                    <p className="flex items-baseline gap-2 flex-wrap">
-                      <span className="text-slate-600">{qty} x</span>
-                      <span className="text-slate-400 line-through">R {formatZAR(price)}</span>
-                      <span className="text-emerald-600 font-bold">R {formatZAR(discountedPrice)}</span>
-                    </p>
-                  ) : (
-                    <p className="text-slate-600">{qty} x R {formatZAR(price)}</p>
-                  )}
-                </div>
+                      <div className={`pt-4 border-t text-sm ${comped ? "border-amber-200" : "border-slate-200"}`}>
+                        <p className="text-[9px] font-black uppercase text-slate-400">Qty x Unit Price</p>
+                        {disc > 0 ? (
+                          <p className="flex items-baseline gap-2 flex-wrap">
+                            <span className="text-slate-600">{qty} x</span>
+                            <span className="text-slate-400 line-through">R {formatZAR(price)}</span>
+                            <span className={`font-bold ${comped ? "text-amber-700" : "text-emerald-600"}`}>R {formatZAR(discountedPrice)}</span>
+                          </p>
+                        ) : (
+                          <p className="text-slate-600">{qty} x R {formatZAR(price)}</p>
+                        )}
+                      </div>
 
-                <div className="flex justify-between items-end pt-2">
-                  <span className="text-[10px] font-black uppercase text-emerald-600">Line Total</span>
-                  <span className="font-black text-lg text-slate-900">R {formatZAR(rowTotal)}</span>
-                </div>
-             </div>
-           );
-        })}
+                      <div className="flex justify-between items-end pt-2">
+                        <span className={`text-[10px] font-black uppercase ${comped ? "text-amber-700" : "text-emerald-600"}`}>Line Total</span>
+                        <span className="font-black text-lg text-slate-900">R {formatZAR(rowTotal)}</span>
+                      </div>
+                   </div>
+                 );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* TOTALS SECTOR - one right-aligned column, fixed width, short labels

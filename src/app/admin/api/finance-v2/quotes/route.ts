@@ -50,6 +50,8 @@ export async function POST(request: Request) {
         program_id: li.program_id || null,
         session_id: li.session_id || null,
         event_package_id: li.event_package_id || null,
+        inventory_item_id: li.inventory_item_id || null,
+        group_label: li.group_label || null,
         quantity: li.quantity,
         unit_price: li.unit_price,
         discount_pct: li.discount_pct,

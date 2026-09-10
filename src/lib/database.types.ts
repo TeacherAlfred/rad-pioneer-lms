@@ -6956,7 +6956,9 @@ export type Database = {
           discount_pct: number
           event_package_id: string | null
           event_package_quantity: number | null
+          group_label: string | null
           id: string
+          inventory_item_id: string | null
           line_total: number
           program_id: string | null
           quantity: number
@@ -6971,7 +6973,9 @@ export type Database = {
           discount_pct?: number
           event_package_id?: string | null
           event_package_quantity?: number | null
+          group_label?: string | null
           id?: string
+          inventory_item_id?: string | null
           line_total: number
           program_id?: string | null
           quantity?: number
@@ -6986,7 +6990,9 @@ export type Database = {
           discount_pct?: number
           event_package_id?: string | null
           event_package_quantity?: number | null
+          group_label?: string | null
           id?: string
+          inventory_item_id?: string | null
           line_total?: number
           program_id?: string | null
           quantity?: number
@@ -7001,6 +7007,13 @@ export type Database = {
             columns: ["event_package_id"]
             isOneToOne: false
             referencedRelation: "event_packages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_line_items_inventory_item_id_fkey"
+            columns: ["inventory_item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
             referencedColumns: ["id"]
           },
           {

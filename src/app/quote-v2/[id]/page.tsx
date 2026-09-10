@@ -106,7 +106,7 @@ export default function PublicQuoteV2View() {
     );
   }
 
-  const documentItems = lineItems.map((li) => ({ desc: li.description, qty: li.quantity, price: li.unit_price, disc: li.discount_pct, lineTotal: li.line_total }));
+  const documentItems = lineItems.map((li) => ({ desc: li.description, qty: li.quantity, price: li.unit_price, disc: li.discount_pct, lineTotal: li.line_total, group: li.group_label || undefined }));
   const effectiveStatus = isExpired ? "expired" : quote.status;
 
   return (
