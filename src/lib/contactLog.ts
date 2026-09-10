@@ -48,3 +48,46 @@ export function isResponsiveOutcome(outcome: string | null | undefined): boolean
   if (!outcome) return false;
   return !UNRESPONSIVE_OUTCOMES.has(outcome);
 }
+
+const RESPONSE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Same "log a contact attempt, resolve the call queue" behavior as
+// POST /admin/api/lead-funnel/activities (used by ContactLogForm), extracted
+// so a send path outside the queue's own "Log Outcome" button - today just
+// the Lead Funnel list's bulk Send Template action - can get the same
+// automatic result: the habit tracker's "leads contacted" count and the
+// queue both reflect a template send the moment it goes out, not only a
+// manually-logged call. outcome is deliberately left unset (unknowable at
+// send time), same two-phase shape as a logged-but-unanswered call -
+// response_due_at is stamped 24h out for the same nightly-cron review the
+// Call Queue's "Needs Response" tab already surfaces.
+//
+// If the lead has no pending queue entry right now, one is created and
+// immediately resolved too - "a template went out" is itself a completed
+// contact attempt, whether or not this lead happened to be queued for it.
+export async function logOutboundContactAndResolveQueue(supabase: any, leadId: string, note: string, createdBy = 'send_template') {
+  await supabase.from('lead_activities').insert([{
+    lead_id: leadId,
+    channel: 'whatsapp',
+    direction: 'outbound',
+    outcome: null,
+    note,
+    created_by: createdBy,
+    response_due_at: new Date(Date.now() + RESPONSE_WINDOW_MS).toISOString(),
+  }]);
+  await supabase.from('leads').update({ needs_human: false }).eq('id', leadId);
+
+  const { data: pendingQueueRow } = await supabase
+    .from('lead_call_queue')
+    .select('id')
+    .eq('lead_id', leadId)
+    .eq('status', 'pending')
+    .maybeSingle();
+
+  const queueRowId = pendingQueueRow?.id
+    || (await supabase.from('lead_call_queue').insert([{ lead_id: leadId }]).select('id').single()).data?.id;
+
+  if (queueRowId) {
+    await supabase.from('lead_call_queue').update({ status: 'done', completed_at: new Date().toISOString() }).eq('id', queueRowId);
+  }
+}

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { resolveVariable, sendMetaTemplate } from '@/lib/metaTemplate';
+import { logOutboundContactAndResolveQueue } from '@/lib/contactLog';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -65,6 +66,14 @@ export async function POST(req: Request) {
         wamid: sendResult.wamid || null,
         meta_message_status: sendResult.messageStatus || null,
       }]);
+
+      // Sending a template from here counts as making the contact - resolves
+      // this lead's spot in the Call Queue (adding them first if they
+      // weren't already queued) and logs it, same as clicking "Log Outcome"
+      // by hand. See logOutboundContactAndResolveQueue's own comment for why.
+      if (sendResult.ok) {
+        await logOutboundContactAndResolveQueue(supabaseAdmin, lead.id, `Template sent: ${templateName}`);
+      }
 
       results.push({ leadId: lead.id, phone: lead.phone, ok: sendResult.ok, error: sendResult.error });
     }
