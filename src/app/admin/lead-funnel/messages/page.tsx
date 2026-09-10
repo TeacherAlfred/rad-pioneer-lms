@@ -32,6 +32,7 @@ type MessageRow = {
   lead_blocked_reason?: string | null;
   lead_reply_dismissed_at?: string | null;
   lead_respondent_is_parent?: boolean | null;
+  lead_is_business_number?: boolean;
   media_path?: string | null;
   media_type?: 'image' | 'sticker' | 'video' | 'audio' | 'document' | null;
   media_mime_type?: string | null;
@@ -57,6 +58,7 @@ type LeadGroup = {
   leadBlockedReason: string | null;
   replyDismissedAt: string | null;
   respondentIsParent: boolean | null;
+  isBusinessNumber: boolean;
   messages: MessageRow[];
   inboundCount: number;
   outboundCount: number;
@@ -439,11 +441,12 @@ export default function MessageActivityPage() {
   // often exactly where a name/email/parent-or-child detail first surfaces -
   // no need to jump to the full lead-funnel list just to record it.
   const [editingLead, setEditingLead] = useState<{
-    leadId: string; name: string; email: string; phone: string; school: string; respondentIsParent: boolean | null;
+    leadId: string; name: string; email: string; phone: string; school: string; respondentIsParent: boolean | null; isBusinessNumber: boolean;
   } | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [respondentSaving, setRespondentSaving] = useState(false);
+  const [businessNumberSaving, setBusinessNumberSaving] = useState(false);
 
   function openEditLead(group: LeadGroup) {
     setEditingLead({
@@ -453,6 +456,7 @@ export default function MessageActivityPage() {
       phone: group.leadPhone || '',
       school: group.leadSchool || '',
       respondentIsParent: group.respondentIsParent,
+      isBusinessNumber: group.isBusinessNumber,
     });
     setEditError(null);
   }
@@ -511,6 +515,30 @@ export default function MessageActivityPage() {
       setEditError(err.message);
     } finally {
       setRespondentSaving(false);
+    }
+  }
+
+  // Gates every automated bot reply to this lead through the /admin/lead-funnel/outbox
+  // approval queue instead of sending straight out - see src/lib/leadSend.ts.
+  // Saved immediately on toggle, same pattern as setRespondent above.
+  async function setBusinessNumber(next: boolean) {
+    if (!editingLead) return;
+    setBusinessNumberSaving(true);
+    setEditError(null);
+    try {
+      const res = await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: editingLead.leadId, is_business_number: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save.');
+      setEditingLead(prev => prev ? { ...prev, isBusinessNumber: next } : prev);
+      setRows(prev => prev.map(r => r.lead_id === editingLead.leadId ? { ...r, lead_is_business_number: next } : r));
+    } catch (err: any) {
+      setEditError(err.message);
+    } finally {
+      setBusinessNumberSaving(false);
     }
   }
 
@@ -661,6 +689,7 @@ export default function MessageActivityPage() {
         leadBlockedReason: sorted[0]?.lead_blocked_reason || null,
         replyDismissedAt: sorted[0]?.lead_reply_dismissed_at || null,
         respondentIsParent: sorted[0]?.lead_respondent_is_parent ?? null,
+        isBusinessNumber: !!sorted[0]?.lead_is_business_number,
         messages: sorted,
         inboundCount: sorted.filter(m => m.direction === 'inbound').length,
         outboundCount: sorted.filter(m => m.direction === 'outbound').length,
@@ -912,6 +941,11 @@ export default function MessageActivityPage() {
                                 {g.respondentIsParent !== null && (
                                   <span className={`inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full ${g.respondentIsParent ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
                                     {g.respondentIsParent ? 'Parent' : 'Child'}
+                                  </span>
+                                )}
+                                {g.isBusinessNumber && (
+                                  <span title="Bot replies queue in the Outbox for approval" className="inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-600">
+                                    Biz
                                   </span>
                                 )}
                                 {g.leadBotPaused && (
@@ -1296,6 +1330,22 @@ export default function MessageActivityPage() {
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">Same qualification check used on Lead Journey - marking Child may auto-move this lead to Lost.</p>
+              </div>
+
+              <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5">
+                <div>
+                  <p className="text-[13px] font-medium text-slate-800">Business Number</p>
+                  <p className="text-[11px] text-slate-400">Bot replies queue in the Outbox for approval instead of sending automatically.</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {businessNumberSaving && <Loader2 size={12} className="animate-spin text-slate-400" />}
+                  <ViewToggle
+                    label=""
+                    checked={editingLead.isBusinessNumber}
+                    onChange={setBusinessNumber}
+                    activeColor="bg-teal-500"
+                  />
+                </div>
               </div>
 
               <div>

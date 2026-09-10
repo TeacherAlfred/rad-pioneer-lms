@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { recordStageChange } from '@/lib/leadStageHistory';
-import { resolveVariable, resolveProgramTokens, sendMetaTemplate, sendWhatsAppMessage } from '@/lib/metaTemplate';
+import { resolveVariable, resolveProgramTokens, sendWhatsAppMessage } from '@/lib/metaTemplate';
 import { STATUS_BUTTONS } from '@/lib/adminPipelineButtons';
 import { isWithinDnd } from '@/lib/dndSchedule';
 import { isRoboticsWatchAd } from '@/lib/adFollowups';
+import { sendToLead } from '@/lib/leadSend';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
 // signature Meta signs the raw body with, using the app secret.
@@ -243,8 +244,10 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
       }
     }
   };
-  const sendResult = await sendWhatsAppMessage(senderPhone, mediaPayload);
-  if (sendResult.ok) {
+  const sendResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: mediaPayload }, matchedMedia.title);
+  if (sendResult.queued) {
+    await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Queued for approval: ${matchedMedia.title}]` }]);
+  } else if (sendResult.ok) {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Delivered ${matchedMedia.title}]`, wamid: sendResult.wamid || null, meta_message_status: sendResult.messageStatus || null }]);
     await notifyAdmin(supabase, senderPhone, `📥 Downloaded the ${matchedMedia.title}.`, lead.id);
   } else {
@@ -265,11 +268,11 @@ async function handleGenericHandoff(supabase: any, senderPhone: string, lead: an
   // seconds later shouldn't immediately trigger a second, near-identical
   // "someone will be in touch" nudge on top of it.
   await supabase.from('leads').update({ needs_human: true, needs_human_nudged_at: new Date().toISOString() }).eq('id', lead.id);
-  const ackResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } });
+  const ackResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: { type: 'text', text: { body: "Got it! 👤 One of our educators will be in touch with you shortly." } } }, 'human-handoff acknowledgment');
   await supabase.from('messages').insert([{
     lead_id: lead.id,
     direction: 'outbound',
-    body: ackResult.ok ? '[Delivered human-handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${ackResult.error}]`,
+    body: ackResult.queued ? '[Queued for approval: human-handoff acknowledgment]' : ackResult.ok ? '[Delivered human-handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${ackResult.error}]`,
     wamid: ackResult.wamid || null,
   }]);
   await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — needs a human.`, lead.id);
@@ -314,7 +317,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     return;
   }
 
-  let sendResult: { ok: boolean; error?: string; wamid?: string; messageStatus?: string } | undefined;
+  let sendResult: { ok: boolean; queued: boolean; error?: string; wamid?: string; messageStatus?: string } | undefined;
   if (flow.action_type === 'tag_only') {
     // Nothing to send - leadUpdate above already applied add_tags/set_source,
     // and the inbound "[Button Reply: ...]" log (written unconditionally in
@@ -346,21 +349,28 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
           },
         }
       : { type: 'text', text: { body: messageBody } };
-    sendResult = await sendWhatsAppMessage(senderPhone, payload);
+    sendResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload }, `flow: ${flow.label}`);
     await supabase.from('messages').insert([{
       lead_id: lead.id,
       direction: 'outbound',
-      body: sendResult.ok ? `[Delivered flow: ${flow.label}]` : `[FAILED to deliver flow ${flow.label}: ${sendResult.error}]`,
+      body: sendResult.queued ? `[Queued for approval: flow: ${flow.label}]` : sendResult.ok ? `[Delivered flow: ${flow.label}]` : `[FAILED to deliver flow ${flow.label}: ${sendResult.error}]`,
       wamid: sendResult.wamid || null,
       meta_message_status: sendResult.messageStatus || null,
     }]);
   } else {
     const bodyValues = (flow.template_variables || []).map((v: string) => resolveVariable(String(v), effectiveLead));
-    sendResult = await sendMetaTemplate(senderPhone, flow.template_name, flow.template_language, bodyValues, flow.template_variable_names || [], flow.template_button_payloads || []);
+    sendResult = await sendToLead(supabase, lead, senderPhone, {
+      kind: 'template',
+      templateName: flow.template_name,
+      templateLanguage: flow.template_language,
+      bodyValues,
+      variableNames: flow.template_variable_names || [],
+      buttonPayloads: flow.template_button_payloads || [],
+    }, `template: ${flow.template_name}`);
     await supabase.from('messages').insert([{
       lead_id: lead.id,
       direction: 'outbound',
-      body: sendResult.ok ? `[Delivered template: ${flow.template_name}]` : `[FAILED to deliver template ${flow.template_name}: ${sendResult.error}]`,
+      body: sendResult.queued ? `[Queued for approval: template: ${flow.template_name}]` : sendResult.ok ? `[Delivered template: ${flow.template_name}]` : `[FAILED to deliver template ${flow.template_name}: ${sendResult.error}]`,
       wamid: sendResult.wamid || null,
       meta_message_status: sendResult.messageStatus || null,
     }]);
@@ -695,11 +705,11 @@ export async function POST(request: Request) {
                 const trimmed = messageText.trim().toLowerCase();
                 if (['stop', 'unsubscribe', 'opt out', 'optout'].includes(trimmed)) {
                   await supabase.from('leads').update({ opted_out: true }).eq('id', lead.id);
-                  const optOutResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "You've been unsubscribed from marketing messages from RAD Academy. Reply anytime if you still need help - we're still here for that." } });
+                  const optOutResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: { type: 'text', text: { body: "You've been unsubscribed from marketing messages from RAD Academy. Reply anytime if you still need help - we're still here for that." } } }, 'opt-out confirmation');
                   await supabase.from('messages').insert([{
                     lead_id: lead.id,
                     direction: 'outbound',
-                    body: optOutResult.ok ? '[Delivered opt-out confirmation]' : `[FAILED to deliver opt-out confirmation: ${optOutResult.error}]`,
+                    body: optOutResult.queued ? '[Queued for approval: opt-out confirmation]' : optOutResult.ok ? '[Delivered opt-out confirmation]' : `[FAILED to deliver opt-out confirmation: ${optOutResult.error}]`,
                     wamid: optOutResult.wamid || null,
                   }]);
                   await notifyAdmin(supabase, senderPhone, "🚫 Opted out of marketing.", lead.id, { immediate: true });
@@ -741,11 +751,11 @@ export async function POST(request: Request) {
                   }).eq('id', lead.id);
                   const invalidText = lead.awaiting_reply_invalid_message
                     || "Hmm, I couldn't quite catch a valid email address in that. No worries though - I've flagged this for our team and one of them will be in touch with you shortly.";
-                  const invalidAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: invalidText } });
+                  const invalidAckResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: { type: 'text', text: { body: invalidText } } }, 'reply-validation-failed handoff');
                   await supabase.from('messages').insert([{
                     lead_id: lead.id,
                     direction: 'outbound',
-                    body: invalidAckResult.ok ? '[Delivered reply-validation-failed handoff]' : `[FAILED to deliver reply-validation-failed handoff: ${invalidAckResult.error}]`,
+                    body: invalidAckResult.queued ? '[Queued for approval: reply-validation-failed handoff]' : invalidAckResult.ok ? '[Delivered reply-validation-failed handoff]' : `[FAILED to deliver reply-validation-failed handoff: ${invalidAckResult.error}]`,
                     wamid: invalidAckResult.wamid || null,
                   }]);
                   await notifyAdmin(supabase, senderPhone, `⚠️ ${label} expected, no valid email found in: "${messageText}" - handed to a human.`, lead.id, { immediate: true });
@@ -776,11 +786,11 @@ export async function POST(request: Request) {
                 }
                 await supabase.from('leads').update(captureUpdate).eq('id', lead.id);
                 const confirmationText = lead.awaiting_reply_confirmation || "Thanks, I've passed that on to the team.";
-                const captureAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: confirmationText } });
+                const captureAckResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: { type: 'text', text: { body: confirmationText } } }, 'reply-capture confirmation');
                 await supabase.from('messages').insert([{
                   lead_id: lead.id,
                   direction: 'outbound',
-                  body: captureAckResult.ok ? '[Delivered reply-capture confirmation]' : `[FAILED to deliver reply-capture confirmation: ${captureAckResult.error}]`,
+                  body: captureAckResult.queued ? '[Queued for approval: reply-capture confirmation]' : captureAckResult.ok ? '[Delivered reply-capture confirmation]' : `[FAILED to deliver reply-capture confirmation: ${captureAckResult.error}]`,
                   wamid: captureAckResult.wamid || null,
                 }]);
                 await notifyAdmin(supabase, senderPhone, `📝 ${label}: ${messageText}`, lead.id);
@@ -796,11 +806,11 @@ export async function POST(request: Request) {
                 const textLower = messageText.toLowerCase();
                 if (textLower.includes('irene') && textLower.includes('voting')) {
                   await supabase.from('leads').update({ needs_human: true, needs_human_nudged_at: new Date().toISOString() }).eq('id', lead.id);
-                  const ireneAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } });
+                  const ireneAckResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: { type: 'text', text: { body: "Thanks for reaching out about the Irene Primary voting page! 🗳️ One of our team will help you shortly." } } }, 'Irene voting support acknowledgment');
                   await supabase.from('messages').insert([{
                     lead_id: lead.id,
                     direction: 'outbound',
-                    body: ireneAckResult.ok ? '[Delivered Irene voting support acknowledgment]' : `[FAILED to deliver Irene voting support acknowledgment: ${ireneAckResult.error}]`,
+                    body: ireneAckResult.queued ? '[Queued for approval: Irene voting support acknowledgment]' : ireneAckResult.ok ? '[Delivered Irene voting support acknowledgment]' : `[FAILED to deliver Irene voting support acknowledgment: ${ireneAckResult.error}]`,
                     wamid: ireneAckResult.wamid || null,
                   }]);
                   await notifyAdmin(supabase, senderPhone, "🗳️ IRENE VOTING SUPPORT — needs a human.", lead.id);
@@ -825,11 +835,11 @@ export async function POST(request: Request) {
                   // instead of the automated flow taking it (spec §3.1).
                   if (matchedVoucher.code === '75HARD') {
                     await supabase.from('leads').update({ needs_human: true, needs_human_nudged_at: new Date().toISOString() }).eq('id', lead.id);
-                    const voucherAckResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for reaching out! 🙌 One of our team will be in touch with you personally shortly." } });
+                    const voucherAckResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: { type: 'text', text: { body: "Thanks for reaching out! 🙌 One of our team will be in touch with you personally shortly." } } }, '75HARD handoff acknowledgment');
                     await supabase.from('messages').insert([{
                       lead_id: lead.id,
                       direction: 'outbound',
-                      body: voucherAckResult.ok ? '[Delivered 75HARD handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${voucherAckResult.error}]`,
+                      body: voucherAckResult.queued ? '[Queued for approval: 75HARD handoff acknowledgment]' : voucherAckResult.ok ? '[Delivered 75HARD handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${voucherAckResult.error}]`,
                       wamid: voucherAckResult.wamid || null,
                     }]);
                     await notifyAdmin(supabase, senderPhone, `🏋️ 75HARD voucher - needs a human (personal reply, no automated flow).`, lead.id, { immediate: true });
@@ -855,11 +865,11 @@ export async function POST(request: Request) {
                 const NUDGE_COOLDOWN_MS = 30 * 60 * 1000;
                 const lastNudge = lead.needs_human_nudged_at ? new Date(lead.needs_human_nudged_at).getTime() : 0;
                 if (Date.now() - lastNudge > NUDGE_COOLDOWN_MS) {
-                  const nudgeResult = await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: "Thanks for the message! 🙏 You're already on our team's list - one of our educators will be in touch with you as soon as possible. No need to tap or type anything else in the meantime." } });
+                  const nudgeResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: { type: 'text', text: { body: "Thanks for the message! 🙏 You're already on our team's list - one of our educators will be in touch with you as soon as possible. No need to tap or type anything else in the meantime." } } }, 'needs-human nudge');
                   await supabase.from('messages').insert([{
                     lead_id: lead.id,
                     direction: 'outbound',
-                    body: nudgeResult.ok ? '[Delivered needs-human nudge]' : `[FAILED to deliver needs-human nudge: ${nudgeResult.error}]`,
+                    body: nudgeResult.queued ? '[Queued for approval: needs-human nudge]' : nudgeResult.ok ? '[Delivered needs-human nudge]' : `[FAILED to deliver needs-human nudge: ${nudgeResult.error}]`,
                     wamid: nudgeResult.wamid || null,
                   }]);
                   await supabase.from('leads').update({ needs_human_nudged_at: new Date().toISOString() }).eq('id', lead.id);
@@ -939,16 +949,16 @@ export async function POST(request: Request) {
                   // go unchecked - no ok/error branch, no `messages` log row,
                   // no failure signal anywhere if the welcome send itself got
                   // rejected (e.g. a future button-title/format regression).
-                  const welcomeResult = await sendWhatsAppMessage(senderPhone, welcomePayload);
+                  const welcomeResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: welcomePayload }, 'welcome menu');
                   await supabase.from('messages').insert([{
                     lead_id: lead.id,
                     direction: 'outbound',
-                    body: welcomeResult.ok ? '[Delivered welcome menu]' : `[FAILED to deliver welcome menu: ${welcomeResult.error}]`,
+                    body: welcomeResult.queued ? '[Queued for approval: welcome menu]' : welcomeResult.ok ? '[Delivered welcome menu]' : `[FAILED to deliver welcome menu: ${welcomeResult.error}]`,
                     wamid: welcomeResult.wamid || null,
                     meta_message_status: welcomeResult.messageStatus || null,
-                    ...(welcomeResult.ok ? {} : { status: 'failed', error_code: welcomeResult.errorCode || null, error_detail: welcomeResult.error || null }),
+                    ...(welcomeResult.queued || welcomeResult.ok ? {} : { status: 'failed', error_code: welcomeResult.errorCode || null, error_detail: welcomeResult.error || null }),
                   }]);
-                  if (!welcomeResult.ok) {
+                  if (!welcomeResult.queued && !welcomeResult.ok) {
                     await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver welcome menu: ${welcomeResult.error}`, lead.id, { immediate: true });
                   }
                   // Plain text with no keyword match previously generated no

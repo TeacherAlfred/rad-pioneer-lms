@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { sendMetaTemplate, resolveVariable } from '@/lib/metaTemplate';
+import { resolveVariable } from '@/lib/metaTemplate';
 import { YOUNG_ADULT_TRACK_TAG } from '@/lib/leadQualification';
+import { sendToLead } from '@/lib/leadSend';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -60,27 +61,32 @@ export async function GET(request: Request) {
 
     for (const lead of due) {
       const bodyValues = variableNames.map((name) => resolveVariable(`{{${name}}}`, lead));
-      const result = await sendMetaTemplate(
-        lead.phone,
-        settings.young_adult_template_name,
-        settings.young_adult_template_language || 'en',
+      const result = await sendToLead(supabaseAdmin, lead, lead.phone, {
+        kind: 'template',
+        templateName: settings.young_adult_template_name,
+        templateLanguage: settings.young_adult_template_language || 'en',
         bodyValues,
-        variableNames
-      );
+        variableNames,
+      }, `template: ${settings.young_adult_template_name}`);
 
       // See send-template/route.ts's 2026-09-08 fix note - wamid is required
       // for the status webhook to ever update this row past "no status".
       await supabaseAdmin.from('messages').insert([{
         lead_id: lead.id,
         direction: 'outbound',
-        body: result.ok
+        body: result.queued
+          ? `[Queued for approval: template: ${settings.young_adult_template_name}]`
+          : result.ok
           ? `[Delivered template: ${settings.young_adult_template_name}]`
           : `[FAILED to deliver template ${settings.young_adult_template_name}: ${result.error}]`,
         wamid: result.wamid || null,
         meta_message_status: result.messageStatus || null,
       }]);
 
-      if (result.ok) {
+      // Stamped on queued too, not just a real send - otherwise every run
+      // between now and the admin's approval would re-queue a duplicate for
+      // the same lead (the 80-day resend gap check reads this same field).
+      if (result.ok || result.queued) {
         await supabaseAdmin.from('leads').update({ young_adult_last_nurture_sent_at: new Date().toISOString() }).eq('id', lead.id);
         sent++;
       } else {

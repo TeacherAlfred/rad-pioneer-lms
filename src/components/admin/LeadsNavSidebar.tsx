@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
-  BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone, ListChecks, Send,
+  BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone, ListChecks, Send, Inbox,
 } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
 
@@ -47,8 +47,16 @@ const CALL_QUEUE_LINK: { item: NavItem; colorKey: RadColorKey } = {
 // Same "one click, no flyout" treatment as Call Queue - a record you check
 // when something didn't arrive, not a reference page worth burying a click
 // deeper behind the Messages group's hover flyout.
+const SENT_LINK: { item: NavItem; colorKey: RadColorKey } = {
+  item: { href: '/admin/lead-funnel/sent', label: 'Sent Messages', icon: Send },
+  colorKey: 'teal',
+};
+// The pending-approval queue for business-number leads (leads.is_business_number -
+// see src/lib/leadSend.ts) - a bot reply that would normally go straight out
+// lands here instead, waiting for an admin to approve or reject it by hand.
+// Distinct from Sent above: that's a log of what already went out.
 const OUTBOX_LINK: { item: NavItem; colorKey: RadColorKey } = {
-  item: { href: '/admin/lead-funnel/outbox', label: 'Messages Outbox', icon: Send },
+  item: { href: '/admin/lead-funnel/outbox', label: 'Outbox', icon: Inbox },
   colorKey: 'teal',
 };
 const GUIDE_LINK: { item: NavItem; colorKey: RadColorKey } = {
@@ -140,6 +148,8 @@ export default function LeadsNavSidebar() {
   const overviewActive = isActive(pathname, OVERVIEW_LINK.href);
   const callQueueActive = isActive(pathname, CALL_QUEUE_LINK.item.href);
   const callQueueColors = RAD_COLORS[CALL_QUEUE_LINK.colorKey];
+  const sentActive = isActive(pathname, SENT_LINK.item.href);
+  const sentColors = RAD_COLORS[SENT_LINK.colorKey];
   const outboxActive = isActive(pathname, OUTBOX_LINK.item.href);
   const outboxColors = RAD_COLORS[OUTBOX_LINK.colorKey];
   const guideActive = isActive(pathname, GUIDE_LINK.item.href);
@@ -163,6 +173,7 @@ export default function LeadsNavSidebar() {
       singleLinks={[
         { ...CALL_QUEUE_LINK.item, colorKey: CALL_QUEUE_LINK.colorKey },
         { ...OUTBOX_LINK.item, colorKey: OUTBOX_LINK.colorKey },
+        { ...SENT_LINK.item, colorKey: SENT_LINK.colorKey },
         { ...GUIDE_LINK.item, colorKey: GUIDE_LINK.colorKey },
       ]}
     />
@@ -192,6 +203,14 @@ export default function LeadsNavSidebar() {
           className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${outboxActive ? `${outboxColors.bgTint} ${outboxColors.text}` : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
         >
           <OUTBOX_LINK.item.icon size={18} />
+        </Link>
+
+        <Link
+          href={SENT_LINK.item.href}
+          title={SENT_LINK.item.label}
+          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${sentActive ? `${sentColors.bgTint} ${sentColors.text}` : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
+        >
+          <SENT_LINK.item.icon size={18} />
         </Link>
 
         <div className="w-8 border-t border-slate-100 my-1" />

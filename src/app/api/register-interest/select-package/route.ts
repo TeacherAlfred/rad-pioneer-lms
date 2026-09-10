@@ -3,7 +3,7 @@ import { Resend } from 'resend';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { recordStageChange } from '@/lib/leadStageHistory';
 import { notifyAdminOfRegistration, normalizePhone } from '@/lib/registerInterest';
-import { sendWhatsAppMessage } from '@/lib/metaTemplate';
+import { sendToLead } from '@/lib/leadSend';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     const supabase = supabaseAdmin();
 
     const [{ data: lead, error: leadErr }, { data: eventPackage, error: epErr }] = await Promise.all([
-      supabase.from('leads').select('id, name, email, phone, number_of_children, preferred_channel, interested_program_id, lifecycle_stage').eq('id', leadId).single(),
+      supabase.from('leads').select('id, name, email, phone, number_of_children, preferred_channel, interested_program_id, lifecycle_stage, is_business_number').eq('id', leadId).single(),
       supabase.from('event_packages').select('id, final_fee, featured_program_id, display_name, display_description, package:packages(id, name, description, event_type)').eq('id', eventPackageId).eq('published', true).single(),
     ]);
     if (leadErr || !lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
@@ -136,7 +136,7 @@ async function sendQuote(
 
   if (lead.preferred_channel === 'whatsapp' && lead.phone) {
     const text = `Hi ${lead.name || 'there'}, here's what your *${packageName}* includes: ${bullets || 'see the full quote'} — full quote here: ${quoteLink}`;
-    const result = await sendWhatsAppMessage(normalizePhone(lead.phone), { type: 'text', text: { body: text } });
+    const result = await sendToLead(supabase, lead, normalizePhone(lead.phone), { kind: 'freeform', payload: { type: 'text', text: { body: text } } }, `self-serve quote: ${packageName}`);
     sent = result.ok;
   }
 

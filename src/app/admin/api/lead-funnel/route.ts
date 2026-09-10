@@ -64,7 +64,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused, is_blocked, blocked_reason, dismiss_reply } = body;
+    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused, is_blocked, blocked_reason, dismiss_reply, is_business_number } = body;
     // "class" is a reserved word, can't destructure it bare above.
     const className = body.class;
 
@@ -121,6 +121,11 @@ export async function PATCH(req: Request) {
       update.blocked_at = is_blocked ? new Date().toISOString() : null;
       update.blocked_reason = is_blocked ? (blocked_reason || null) : null;
     }
+    // Gates every automated send to this lead through the pending-approval
+    // queue instead of Meta - see src/lib/leadSend.ts's sendToLead() and
+    // /admin/lead-funnel/outbox. Unlike is_blocked, no companion reason
+    // field - there's nothing to record beyond the flag itself.
+    if (is_business_number !== undefined) update.is_business_number = !!is_business_number;
     // Message Activity's "Needs Reply" flag is purely derived (last message
     // is inbound) - dismissing it just stamps "don't flag the inbound
     // message that's already here", not a permanent silence. The next

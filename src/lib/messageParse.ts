@@ -12,6 +12,7 @@ export type ParsedMessage =
   | { kind: 'bot_flow'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'bot_media'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'human_handoff'; status: 'delivered' | 'failed'; label: string; detail?: string }
+  | { kind: 'queued'; label: string }
   | { kind: 'admin_alert'; label: string }
   | { kind: 'button_tap'; label: string; detail?: string }
   | { kind: 'text'; label: string };
@@ -31,6 +32,13 @@ export function parseMessage(m: { direction: string | null; body: string | null 
     }
     match = body.match(/^\[FAILED to deliver acknowledgment: (.+)\]$/);
     if (match) return { kind: 'human_handoff', status: 'failed', label: 'Human handoff acknowledgment', detail: match[1] };
+
+    // A lead flagged leads.is_business_number - sent to outbound_message_queue
+    // for approval instead of Meta (see src/lib/leadSend.ts's sendToLead()).
+    // Checked before the generic bot_media catch-all below for the same
+    // reason bot_flow/admin_alert are.
+    match = body.match(/^\[Queued for approval: (.+)\]$/);
+    if (match) return { kind: 'queued', label: match[1] };
 
     // Admin pipeline/registration alerts - sent TO the admin's own number
     // ABOUT a lead (see notifyAdmin/notifyAdminOfRegistration/
@@ -66,6 +74,7 @@ export const KIND_LABEL: Record<string, string> = {
   bot_flow: 'Bot Flow',
   bot_media: 'Bot Media',
   human_handoff: 'Human Handoff',
+  queued: 'Awaiting Approval',
   admin_alert: 'Admin Alert',
   button_tap: 'Button Tap',
   text: 'Text',

@@ -28,7 +28,7 @@ export function DesktopSendButton({
     setSending(true);
     setError(null);
     try {
-      const res = await fetch("/admin/api/lead-funnel/outbox", {
+      const res = await fetch("/admin/api/lead-funnel/sent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ leadId, phone, body: text.trim() }),
