@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { flushBufferedNotifications } from '@/lib/notificationBuffer';
-import { sendAdFollowups } from '@/lib/adFollowups';
 
 // Consolidates admin_notification_buffer into one WhatsApp message PER LEAD
 // (never one message spanning multiple leads) once that lead's oldest
@@ -22,10 +21,7 @@ export async function GET(request: Request) {
 
   try {
     const result = await flushBufferedNotifications();
-    // Rides the same 5-10 min external poll rather than needing its own -
-    // see src/lib/adFollowups.ts for why this can't be a bot_flows row.
-    const adFollowups = await sendAdFollowups();
-    return NextResponse.json({ ...result, adFollowups });
+    return NextResponse.json(result);
   } catch (error: any) {
     console.error('notify-flush error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

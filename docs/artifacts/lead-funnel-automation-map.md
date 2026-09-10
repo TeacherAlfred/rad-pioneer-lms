@@ -72,7 +72,7 @@ New capability, not just new copy: an `expects_reply` flow can now require `repl
 
 ## Ad-specific first contact: the "robotics watch" ad set
 
-The first ad-gated greeting in the system — scoped to a specific Meta ad *set* (multiple ad creatives, one campaign, matched on Meta's `referral.source_id`), not "any ad referral." A lead whose *first* message carries one of this set's `ad_id`s gets a purpose-built pitch instead of the generic welcome menu; every other ad keeps today's generic welcome. Also the first **delayed** send in the system — everything else fires off a button tap; this one fires off *silence*.
+The first ad-gated greeting in the system — scoped to a specific Meta ad *set* (multiple ad creatives, one campaign, matched on Meta's `referral.source_id`), not "any ad referral." A lead whose *first* message carries one of this set's `ad_id`s gets a purpose-built pitch instead of the generic welcome menu; every other ad keeps today's generic welcome. The first-contact greeting is still automatic; the 24h-silence follow-up that used to fire automatically after it was reverted to a manual send on 2026-09-10 (see below) — this system still has no automated *delayed* send.
 
 | `ad_id` | Ad headline |
 |---|---|
@@ -91,7 +91,7 @@ flowchart LR
     A -->|💬 Talk to Us| G[btn_human]
     G --> H["'A team member will be in touch'"]
 
-    A -.->|24h later, still lifecycle_stage 'new'| I["Follow-up poll<br/>(rides notify-flush, no new cron)<br/>sent as template rad_robotics_followup"]
+    A -.->|24h, still lifecycle_stage 'new'<br/>MANUAL: Send Template| I["rad_robotics_followup<br/>(admin picks the due leads)"]
     I -->|Register for Webinar| B
 ```
 
@@ -100,11 +100,13 @@ flowchart LR
 | `btn_ad6219_register` | Asks for email (validated), captures it, confirms webinar link + calendar invite on the way | `add_tags: ad_source_watch_skill`, `completion: ad6219_webinar_registered` | immediate |
 | `btn_ad6219_guide` | Acknowledges the guide isn't ready yet ("a day or two") — no PDF sent, since none exists | `add_tags: ad6219_guide_pending` | buffered |
 | `btn_human` | Reused as-is — same "team member will be in touch" copy, no separate row needed | — | immediate |
-| `sendAdFollowups()` (`src/lib/adFollowups.ts`) | Polled every 5-10 min via the existing `notify-flush` route; sends the 24h nudge to any lead on this ad set still `lifecycle_stage: 'new'` since their first message | `leads.ad_followup_sent_at` stamped to prevent a repeat | — |
+| ~~`sendAdFollowups()`~~ (removed 2026-09-10) | Manual now — see below | — | — |
 
-**Fixed 2026-09-09 — window-closed send failures**: the 24h nudge originally went out as a freeform/interactive message, which Meta unconditionally rejects once the customer-service window has closed (error 131047) — and this send only ever fires *after* 24h of silence, so the window was guaranteed closed every time. All ~19 real sends up to this point failed silently (status `failed`, logged as `[Delivered ...]` regardless — see the Outbox for the same "always logs as delivered" gap noted elsewhere in this doc). Fixed by submitting a dedicated pre-approved template, `rad_robotics_followup` (MARKETING, en, one QUICK_REPLY button → `btn_ad6219_register`, approved same day) — templates are exempt from the 24h window. `sendAdFollowups()` now sends via `sendMetaTemplate()` instead of `sendWhatsAppMessage()`. Also changed the stamping rule: a send that fails because the template isn't approved yet (Meta error 132001) no longer stamps `ad_followup_sent_at`, so it retries on the next poll instead of permanently silencing the lead — a genuine post-approval failure still stamps, same as before. The 19 leads caught by the original bug had `ad_followup_sent_at` reset once the fix shipped, so they get one legitimate retry.
+**Reverted to manual 2026-09-10**: the 24h nudge originally went out as a freeform/interactive message, which Meta unconditionally rejects once the customer-service window has closed (error 131047) — and this send only ever fired *after* 24h of silence, so the window was guaranteed closed every time. All ~19 real sends failed this way. On 2026-09-09 this was fixed by submitting a dedicated pre-approved template, `rad_robotics_followup` (MARKETING, en, one QUICK_REPLY button → `btn_ad6219_register`), which is exempt from the 24h window — but after seeing the string of failed sends in the Outbox, the decision was made to drop the automated poll entirely rather than keep debugging it. `sendAdFollowups()` and its call from `notify-flush` are gone; `src/lib/adFollowups.ts` now only exports the ad-set matching helper (`isRoboticsWatchAd`) that the first-contact greeting still needs.
 
-**Graceful upgrade path (on hold)**: the real robotics guide doesn't exist yet, and a template's structure (including whether it has a document header) is fixed at Meta-approval time — unlike the old freeform message, it can't attach a document conditionally per send. Once the guide is ready, submit a second template with a document header via the Template Rollout Wizard and point `sendAdFollowups()` at it. `btn_ad6219_guide` itself still just needs its action type flipped to `bot_media` from `/admin/bot-flows` at that point.
+**Send it manually instead**: `rad_robotics_followup` is an approved template, so it's already available from the Lead Funnel table's **Send Template** bulk action — select the due leads (ad set + no reply since first contact), pick the template, and set its one quick-reply button's payload to `btn_ad6219_register` so a tap still routes through Bot Flows exactly like the automated version would have.
+
+**Graceful upgrade path (on hold)**: the real robotics guide still doesn't exist. Once it's ready, a second template with a document header can be submitted via the Template Rollout Wizard for the same manual-send flow. `btn_ad6219_guide` itself still just needs its action type flipped to `bot_media` from `/admin/bot-flows` at that point.
 
 ---
 
@@ -253,7 +255,7 @@ What surrounds the bot itself — and what depends on a human noticing rather th
 | Nightly cron | Lifecycle bookkeeping (stage health, session-expiry moves, 180-day auto-lost) + one live admin alert for overdue call/activity follow-ups | ✅ Yes |
 | Young-adult nurture cron | Quarterly template send to a tagged segment, 80-day resend gap | ✅ Yes, if template configured |
 | Notification buffer / DND | Consolidates admin alerts, flushed every 5–10 min | ⚠️ Depends on an external, out-of-repo cron-job.org schedule — no in-app check that it's still running |
-| Ad follow-up poll (`sendAdFollowups()`) | 24h-later nudge for the robotics-watch ad, if still no reply | ✅ Yes — rides the same external poll as the notification buffer, no separate cron entry |
+| Ad follow-up (`rad_robotics_followup`) | 24h-later nudge for the robotics-watch ad set, if still no reply | ❌ Manual since 2026-09-10 — send via Lead Funnel's Send Template action; the automated poll kept failing on the closed customer-service window and was removed rather than kept fighting it |
 | Messages Outbox | Read-only log of every send incl. failed/held/paused | ⚠️ No retry, no alert — a human has to browse and notice |
 | "Needs Reply" indicator | Client-side flag: last message in thread is inbound | ⚠️ No time threshold, no escalation, no badge |
 
@@ -269,7 +271,7 @@ What surrounds the bot itself — and what depends on a human noticing rather th
 - **Webinar / Workshop / Reengage / Segment automation built** — all 4 wizard templates now have working `bot_flows` behind every button, including the 5-step Student qualifier and a call-time capture for Parent.
 - **Both "Hold My Spot" buttons + "I'm Interested" wired** — Hold My Spot now asks for and validates an email address (for the quote) before confirming; "I'm Interested" tags and alerts immediately.
 - **`btn_human` given its own human-friendly acknowledgement** — "A team member will be in touch with you shortly" replaces reliance on the generic handoff copy.
-- **Ad-specific first-contact flow built (the "robotics watch" ad set)** — two ad creatives in the same campaign now get a purpose-built greeting instead of the generic welcome menu, plus a 24h-later follow-up if the lead never replies — the system's first delayed (as opposed to button-triggered) send.
+- **Ad-specific first-contact flow built (the "robotics watch" ad set)** — two ad creatives in the same campaign now get a purpose-built greeting instead of the generic welcome menu. The 24h-later follow-up was originally automated but kept failing (Meta rejects freeform sends outside the 24h window); reverted to a manual send (Lead Funnel → Send Template → `rad_robotics_followup`) on 2026-09-10.
 - **Email verification on captured replies (new capability)** — any `expects_reply` flow can now require a real email address before accepting the reply as an answer, extracting it straight onto the lead's own `email` field. Live on both Hold My Spot flows — migration applied, validation switched on.
 
 ### 🔴 Logged to Systems Status — need a call on desired behavior, not just a fix
