@@ -991,7 +991,7 @@ export default function LeadFunnelPage() {
                           <div className="text-xs text-slate-400">+{r.phone}{r.email ? ` · ${r.email}` : ''}</div>
                           <div className="mt-1 flex flex-wrap gap-1.5">
                             <QueueQuickAdd leadId={r.id} leadName={r.name} />
-                            <DesktopSendButton leadId={r.id} phone={r.phone} />
+                            <DesktopSendButton leadId={r.id} phone={r.phone} lead={r} />
                           </div>
                           {(r.children_names || []).length > 0 && (
                             <div className="text-[11px] text-slate-400 mt-0.5">Children: {(r.children_names || []).join(', ')}</div>
@@ -1473,7 +1473,7 @@ export default function LeadFunnelPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <QueueQuickAdd leadId={viewingLead.id} leadName={viewingLead.name} />
-                  <DesktopSendButton leadId={viewingLead.id} phone={viewingLead.phone} />
+                  <DesktopSendButton leadId={viewingLead.id} phone={viewingLead.phone} lead={viewingLead} />
                   <button
                     onClick={toggleBotPause}
                     disabled={pauseSaving}
