@@ -1,7 +1,16 @@
 "use client";
 
 import { Fragment } from "react";
+import { Archivo } from "next/font/google";
 import { FileText, Download, Shield, Check, Wallet, MessageSquare } from "lucide-react";
+
+// Scoped to this component rather than routed through the app's
+// --font-precision token, which only resolves inside reader-v2's layout -
+// everywhere else (including every quote/invoice route) it silently falls
+// back to Arial. This is the one place on the document that actually needs
+// a distinct display face; body text uses font-brand (Geist, already
+// loaded app-wide) instead of the plain font-sans/Arial default.
+const archivo = Archivo({ subsets: ["latin"], weight: ["800", "900"], style: ["italic", "normal"], display: "swap" });
 
 interface DocumentProps {
   type: 'invoice' | 'quote';
@@ -50,68 +59,85 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
   // gold treatment instead of the usual emerald discount styling.
   const isComplimentary = (item: DocumentProps["items"][number]) => Math.max(0, Number(item.disc || 0)) >= 99.5;
 
-  // Consecutive items sharing the same optional `group` collapse into one
-  // labelled section, in original order. Items with no group (every
-  // existing invoice/quote, or any ungrouped line on a new one) carry a
-  // null label and render with no heading at all - grouping is strictly
-  // additive, nothing changes for a document that doesn't opt in.
+  // Items sharing the same optional `group` collapse into one labelled
+  // section, sections ordered by each label's first appearance - a full
+  // groupBy rather than only merging adjacent items, since the composer's
+  // "Add Item to <Section>" always appends to the end of the line-item
+  // array, which can easily leave same-label items non-adjacent. Items with
+  // no group (every existing invoice/quote, or any ungrouped line on a new
+  // one) carry a null label and render with no heading at all - grouping is
+  // strictly additive, nothing changes for a document that doesn't opt in.
   type Item = DocumentProps["items"][number];
-  const segments: { label: string | null; items: Item[] }[] = [];
-  for (const item of items) {
-    const label = item.group ?? null;
-    const last = segments[segments.length - 1];
-    if (last && last.label === label) last.items.push(item);
-    else segments.push({ label, items: [item] });
-  }
+  const segments: { label: string | null; items: Item[] }[] = (() => {
+    const order: (string | null)[] = [];
+    const byLabel = new Map<string | null, Item[]>();
+    for (const item of items) {
+      const label = item.group ?? null;
+      if (!byLabel.has(label)) {
+        byLabel.set(label, []);
+        order.push(label);
+      }
+      byLabel.get(label)!.push(item);
+    }
+    return order.map((label) => ({ label, items: byLabel.get(label)! }));
+  })();
   const isFlat = segments.length <= 1 && !segments[0]?.label;
 
   return (
-    <div className="w-full max-w-4xl mx-auto bg-white text-slate-900 p-6 md:p-12 rounded-[32px] md:rounded-[40px] border border-slate-200 shadow-xl font-sans overflow-hidden">
+    <div className="w-full max-w-4xl mx-auto bg-white text-slate-900 p-5 md:p-12 rounded-[28px] md:rounded-[40px] border border-slate-200 shadow-xl font-brand overflow-hidden">
 
-      {/* HEADER SECTOR */}
-      <div className="flex flex-col md:flex-row justify-between items-start gap-8 border-b border-slate-100 pb-8 mb-8 md:pb-10 md:mb-10">
-        <div className="space-y-2 w-full md:w-auto text-center md:text-left">
-          <div className="flex items-center justify-center md:justify-start gap-2 text-emerald-600">
-            <Shield size={14} />
-            <span className="text-[10px] font-black uppercase tracking-[0.2em]">RAD Academy Finance</span>
+      {/* HEADER SECTOR - kept tight on mobile: this is what a client sees
+          before scrolling at all, so it should get them to the line items
+          fast, not fill the screen with letterhead. The full company
+          address card is desktop/PDF-only (PUPPETEER renders the PDF at a
+          desktop-width viewport, so it still prints there) - on a phone the
+          "RAD Academy Finance" eyebrow already says who this is from. */}
+      <div className="flex flex-col md:flex-row justify-between items-start gap-2 md:gap-8 border-b border-slate-100 pb-3 mb-3 md:pb-10 md:mb-10">
+        <div className="space-y-0.5 md:space-y-2 w-full md:w-auto text-center md:text-left">
+          <div className="flex items-center justify-center md:justify-start gap-1.5 md:gap-2 text-emerald-600">
+            <Shield size={11} className="md:hidden" />
+            <Shield size={14} className="hidden md:block" />
+            <span className="text-[9px] md:text-[10px] font-black uppercase tracking-[0.16em] md:tracking-[0.2em]">RAD Academy Finance</span>
           </div>
-          <h1 className="text-5xl md:text-6xl font-black tracking-tighter uppercase italic leading-none text-emerald-600">
+          <h1 className={`${archivo.className} text-3xl md:text-6xl italic leading-none text-emerald-600`} style={{ fontWeight: 900 }}>
             {type.toUpperCase()}
           </h1>
-          <p className="text-slate-400 font-mono text-sm">REF: {docNumber}</p>
+          <p className="text-slate-400 font-mono text-[11px] md:text-sm">REF: {docNumber}</p>
         </div>
 
-        <div className="text-center md:text-right space-y-1 w-full md:w-auto bg-slate-50 md:bg-transparent p-4 md:p-0 rounded-2xl md:rounded-none">
-          <p className="font-black uppercase text-lg italic text-slate-900 md:text-inherit">RAD Academy (Pty) Ltd</p>
+        <div className="hidden md:block text-right space-y-1 w-auto">
+          <p className={`${archivo.className} uppercase text-lg italic text-slate-900`} style={{ fontWeight: 800 }}>RAD Academy (Pty) Ltd</p>
           <p className="text-xs text-slate-500">Jasper Avenue, Centurion, Pretoria, GP</p>
           <p className="text-xs text-slate-500">076-906 5959 (WhatsApp)</p>
           <p className="text-xs text-slate-500">info@radacademy.co.za</p>
         </div>
       </div>
 
-      {/* RECIPIENT & DATES */}
-      <div className="flex flex-col md:grid md:grid-cols-2 gap-8 md:gap-12 mb-10 md:mb-12">
-        <div className="space-y-4">
-          <h3 className="text-[10px] font-black uppercase text-emerald-600 tracking-widest text-center md:text-left">
+      {/* RECIPIENT & DATES - dates drop the bordered-card treatment on
+          mobile in favour of a slim inline row, so this whole block clears
+          the fold quickly. */}
+      <div className="flex flex-col md:grid md:grid-cols-2 gap-2.5 md:gap-12 mb-4 md:mb-12">
+        <div className="space-y-1 md:space-y-4">
+          <h3 className="text-[9px] md:text-[10px] font-black uppercase text-emerald-600 tracking-widest text-center md:text-left">
             {type === 'quote' ? 'Prepared_For' : 'Billed_To'}
           </h3>
-          <div className="bg-slate-50 border border-slate-200 p-6 rounded-3xl space-y-1 text-center md:text-left">
-            <p className="text-xl font-bold text-slate-900">{recipient.name}</p>
-            {recipient.email && <p className="text-sm text-slate-500 break-all">{recipient.email}</p>}
-            {recipient.phone && <p className="text-sm text-slate-500">{recipient.phone}</p>}
+          <div className="bg-slate-50 border border-slate-200 p-3 md:p-6 rounded-2xl md:rounded-3xl space-y-0.5 md:space-y-1 text-center md:text-left">
+            <p className="text-base md:text-xl font-bold text-slate-900">{recipient.name}</p>
+            {recipient.email && <p className="text-[11px] md:text-sm text-slate-500 break-all">{recipient.email}</p>}
+            {recipient.phone && <p className="text-[11px] md:text-sm text-slate-500">{recipient.phone}</p>}
           </div>
         </div>
 
-        <div className="flex flex-row justify-between md:flex-col md:justify-end md:items-end gap-4 p-6 md:p-0 bg-slate-50 md:bg-transparent rounded-3xl md:rounded-none border border-slate-200 md:border-transparent">
-          <div className="text-left md:text-right">
-            <p className="text-[9px] font-black uppercase text-slate-400">Issue_Date</p>
-            <p className="font-bold text-sm md:text-base text-slate-900">{date}</p>
+        <div className="flex flex-row justify-center gap-8 md:flex-col md:justify-end md:items-end md:gap-4">
+          <div className="text-center md:text-right">
+            <p className="text-[8px] md:text-[9px] font-black uppercase text-slate-400">Issue_Date</p>
+            <p className="font-bold text-xs md:text-base text-slate-900">{date}</p>
           </div>
-          <div className="text-right">
-            <p className="text-[9px] font-black uppercase text-slate-400">
+          <div className="text-center md:text-right">
+            <p className="text-[8px] md:text-[9px] font-black uppercase text-slate-400">
               {type === 'quote' ? 'Valid_Until' : 'Due_Date'}
             </p>
-            <p className="font-bold text-emerald-600 text-sm md:text-base">{dueDate}</p>
+            <p className="font-bold text-emerald-600 text-xs md:text-base">{dueDate}</p>
           </div>
         </div>
       </div>
@@ -133,7 +159,7 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
                 {segment.label && (
                   <tr key={`h-${si}`}>
                     <td colSpan={4} className={si === 0 ? "pt-2 pb-2" : "pt-8 pb-2"}>
-                      <span className="text-[10px] font-black uppercase italic tracking-widest text-emerald-600">{segment.label}</span>
+                      <span className={`${archivo.className} text-[11px] uppercase italic tracking-widest text-emerald-600`} style={{ fontWeight: 900 }}>{segment.label}</span>
                     </td>
                   </tr>
                 )}
@@ -180,91 +206,63 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
       </div>
 
       {/* LINE ITEMS - Mobile Stack View. This is the primary surface, not a
-          fallback - most quotes/invoices are opened from a link on a phone,
-          so grouped sections get real visual weight here (their own
-          eyebrow, generous space between groups, a gold-accented card for
-          a complimentary line) rather than just a smaller version of the
-          desktop table. */}
+          fallback - most quotes/invoices are opened from a link on a phone.
+          Sections read as one panel of compact rows each (description + qty
+          x price on the left, total on the right), not a full padded card
+          per item - a real multi-item quote stays scannable in a couple of
+          screens instead of turning into an endless scroll. A complimentary
+          line still stands out on its own via a gold wash + tag, without
+          adding bulk. */}
       <div className="md:hidden mb-8">
-        {isFlat && (
-          <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100 pb-2 mb-4">Line Items</h3>
-        )}
-        {segments.map((segment, si) => (
-          <div key={si} className={si === 0 ? "" : "mt-8"}>
-            {segment.label && (
-              <h3 className="text-[11px] font-black uppercase italic tracking-widest text-emerald-600 border-b border-slate-100 pb-2 mb-4">{segment.label}</h3>
-            )}
-            <div className="space-y-4">
-              {segment.items.map((item, i) => {
-                 const qty = Number(item.qty);
-                 const price = Number(item.price);
-                 const disc = Math.max(0, Number(item.disc || 0));
-                 const rowTotal = resolveLineTotal(item);
-                 const discountedPrice = qty > 0 ? rowTotal / qty : price;
-                 const comped = isComplimentary(item);
+        {/* Short break, not a full-width rule - a deliberate pause between
+            the header block above and the line items starting below,
+            without drawing a hard line across the whole card. */}
+        <div className="w-10 h-[3px] rounded-full bg-slate-200 mx-auto mb-6" />
 
-                 return (
-                   <div key={i} className={`border rounded-2xl p-5 space-y-4 ${comped ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-200"}`}>
-                      <div>
-                        <p className="font-bold text-base leading-tight text-slate-900 flex items-center gap-2 flex-wrap">
-                          {item.desc}
-                          {comped && (
-                            <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">Complimentary</span>
-                          )}
-                        </p>
-                        {item.note && <p className="text-[11px] text-slate-500 italic mt-1 leading-snug">{item.note}</p>}
-                      </div>
+        <div className="space-y-7">
+          {segments.map((segment, si) => (
+            <div key={si}>
+              {segment.label ? (
+                <h3 className={`${archivo.className} text-[13px] italic uppercase tracking-wide text-emerald-600 pb-2 mb-1 border-b border-slate-100`} style={{ fontWeight: 900 }}>
+                  {segment.label}
+                </h3>
+              ) : (
+                <h3 className="text-[10px] font-black uppercase text-slate-400 tracking-widest pb-2 mb-1 border-b border-slate-100">
+                  {isFlat ? "Line Items" : "Other Items"}
+                </h3>
+              )}
+              <div className="divide-y divide-slate-100">
+                {segment.items.map((item, i) => {
+                   const qty = Number(item.qty);
+                   const price = Number(item.price);
+                   const disc = Math.max(0, Number(item.disc || 0));
+                   const rowTotal = resolveLineTotal(item);
+                   const comped = isComplimentary(item);
 
-                      <div className={`pt-4 border-t text-sm ${comped ? "border-amber-200" : "border-slate-200"}`}>
-                        <p className="text-[9px] font-black uppercase text-slate-400">Qty x Unit Price</p>
-                        {disc > 0 ? (
-                          <p className="flex items-baseline gap-2 flex-wrap">
-                            <span className="text-slate-600">{qty} x</span>
-                            <span className="text-slate-400 line-through">R {formatZAR(price)}</span>
-                            <span className={`font-bold ${comped ? "text-amber-700" : "text-emerald-600"}`}>R {formatZAR(discountedPrice)}</span>
+                   return (
+                     <div key={i} className={`flex items-start justify-between gap-3 py-3 ${comped ? "bg-amber-50 border border-amber-200 -mx-1 px-3 rounded-xl my-1" : ""}`}>
+                        <div className="min-w-0">
+                          <p className="text-sm leading-snug text-slate-800 break-words">
+                            {item.desc}
+                            {comped && (
+                              <span className="ml-2 align-middle text-[8px] font-black uppercase tracking-wide text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">Complimentary</span>
+                            )}
                           </p>
-                        ) : (
-                          <p className="text-slate-600">{qty} x R {formatZAR(price)}</p>
-                        )}
-                      </div>
-
-                      <div className="flex justify-between items-end pt-2">
-                        <span className={`text-[10px] font-black uppercase ${comped ? "text-amber-700" : "text-emerald-600"}`}>Line Total</span>
-                        <span className="font-black text-lg text-slate-900">R {formatZAR(rowTotal)}</span>
-                      </div>
-                   </div>
-                 );
-              })}
+                          {item.note && <p className="text-[10px] text-slate-400 italic mt-0.5 leading-snug">{item.note}</p>}
+                          <p className="text-[11px] text-slate-400 mt-0.5">{qty} × R {formatZAR(price)}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          {disc > 0 && (
+                            <p className="text-[10px] text-slate-400 line-through whitespace-nowrap">R {formatZAR(qty * price)}</p>
+                          )}
+                          <p className={`font-medium text-sm whitespace-nowrap ${comped ? "text-amber-700" : "text-slate-900"}`}>R {formatZAR(rowTotal)}</p>
+                        </div>
+                     </div>
+                   );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-
-      {/* TOTALS SECTOR - one right-aligned column, fixed width, short labels
-          so nothing can push wider than the box. The parent document has
-          overflow-hidden for its rounded corners, so anything that doesn't
-          fit here doesn't wrap - it just gets silently clipped, which is
-          exactly what long labels + a 4xl figure did before. */}
-      <div className="flex justify-end mb-10 md:mb-12 border-t border-slate-200 md:border-none pt-6 md:pt-0">
-        <div className="w-full md:w-[22rem] bg-slate-50 md:bg-transparent p-6 md:p-0 rounded-3xl md:rounded-none space-y-2.5">
-          {/* Always three rows - subtotal before discount, the discount
-              itself, subtotal once the discount is applied - not just shown
-              when a discount happens to be present, so the breakdown reads
-              the same way on every document. */}
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-slate-400 uppercase font-black text-[10px] tracking-widest shrink-0">Subtotal</span>
-            <span className="font-bold text-slate-700 text-sm whitespace-nowrap">R {formatZAR(subTotal)}</span>
-          </div>
-
-          <div className="flex items-baseline justify-between gap-3">
-              <span className="text-slate-400 uppercase font-black text-[10px] tracking-widest shrink-0">Discount</span>
-              <span className={`font-bold text-sm whitespace-nowrap ${totalDiscount > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>- R {formatZAR(totalDiscount)}</span>
-          </div>
-
-          <div className="pt-3 border-t border-slate-200 flex items-baseline justify-between gap-3">
-            <span className="text-emerald-600 uppercase font-black text-[10px] tracking-widest shrink-0">Total Due</span>
-            <span className="text-2xl md:text-3xl font-black italic tracking-tight text-slate-900 whitespace-nowrap">R {formatZAR(grandTotal)}</span>
-          </div>
+          ))}
         </div>
       </div>
 
@@ -274,32 +272,54 @@ export default function RADBillingDocument({ type, docNumber, recipient, items, 
              <p className="text-[10px] font-black uppercase text-slate-400 mb-3 flex items-center gap-2">
                  <MessageSquare size={14}/> Document_Notes
              </p>
-             <p className="text-xs md:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap font-sans">
+             <p className="text-xs md:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap font-brand">
                  {globalNote}
              </p>
           </div>
       )}
 
-      {/* BANKING SETTLEMENT */}
-      <div className="bg-emerald-50 border border-emerald-100 p-6 md:p-8 rounded-[32px] flex flex-col md:grid md:grid-cols-2 gap-6 md:gap-8">
-        <div>
-          <h4 className="text-[10px] md:text-xs font-black uppercase text-emerald-700 tracking-widest flex items-center justify-center md:justify-start gap-2 mb-4 md:mb-5 border-b border-emerald-100 md:border-none pb-3 md:pb-0">
-            <Wallet size={14}/> Payment_Instructions
-          </h4>
-          <div className="space-y-2 text-sm text-center md:text-left bg-white/60 md:bg-transparent p-4 md:p-0 rounded-2xl md:rounded-none">
-            <p className="text-slate-700"><span className="text-slate-400 font-mono text-[10px] uppercase mr-2 tracking-widest">Bank:</span> FNB</p>
-            <p className="text-slate-700"><span className="text-slate-400 font-mono text-[10px] uppercase mr-2 tracking-widest">Name:</span> RAD Academy</p>
-            <p className="text-slate-700"><span className="text-slate-400 font-mono text-[10px] uppercase mr-2 tracking-widest">Type:</span> Cheque Account</p>
-            <p className="text-slate-700"><span className="text-slate-400 font-mono text-[10px] uppercase mr-2 tracking-widest">Acc:</span> 6289 636 1632</p>
-            <p className="pt-2 mt-2 border-t border-emerald-200 text-emerald-700 font-black"><span className="text-slate-400 font-mono text-[10px] uppercase mr-2 tracking-widest font-normal">Ref:</span> {docNumber}-{recipient.name.split(' ')[0]}</p>
+      {/* SETTLEMENT SECTOR - banking and the numeric breakdown as one
+          panel, split by a single vertical rule, instead of two separate
+          stacked blocks - this is the whole footer, not half of it. */}
+      <div className="bg-emerald-50 border border-emerald-100 rounded-[24px] md:rounded-[32px] overflow-hidden">
+        <div className="grid grid-cols-2 divide-x divide-emerald-200">
+          <div className="p-4 md:p-8">
+            <h4 className="text-[9px] md:text-xs font-black uppercase text-emerald-700 tracking-widest flex items-center gap-1.5 mb-2.5 md:mb-5">
+              <Wallet size={12} className="md:hidden" /><Wallet size={14} className="hidden md:block" /> Payment
+            </h4>
+            <div className="space-y-1.5 md:space-y-2 text-[11px] md:text-sm">
+              <p className="text-slate-700"><span className="text-slate-400 font-mono text-[9px] md:text-[10px] uppercase mr-1 tracking-widest">Bank:</span> FNB</p>
+              <p className="text-slate-700"><span className="text-slate-400 font-mono text-[9px] md:text-[10px] uppercase mr-1 tracking-widest">Name:</span> RAD Academy</p>
+              <p className="text-slate-700"><span className="text-slate-400 font-mono text-[9px] md:text-[10px] uppercase mr-1 tracking-widest">Type:</span> Cheque Acc.</p>
+              <p className="text-slate-700 break-words"><span className="text-slate-400 font-mono text-[9px] md:text-[10px] uppercase mr-1 tracking-widest">Acc:</span> 6289 636 1632</p>
+              <p className="pt-1.5 mt-1.5 border-t border-emerald-200 text-emerald-700 font-bold"><span className="text-slate-400 font-mono text-[9px] uppercase mr-1 tracking-widest font-normal">Ref:</span> {docNumber}-{recipient.name.split(' ')[0]}</p>
+            </div>
+          </div>
+
+          {/* Always three rows - subtotal before discount, the discount
+              itself, subtotal once the discount is applied - not just shown
+              when a discount happens to be present, so the breakdown reads
+              the same way on every document. */}
+          <div className="p-4 md:p-8 flex flex-col justify-center space-y-1.5 md:space-y-2.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-slate-400 uppercase font-black text-[9px] tracking-widest shrink-0">Subtotal</span>
+              <span className="font-medium text-slate-700 text-xs md:text-sm whitespace-nowrap">R {formatZAR(subTotal)}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-slate-400 uppercase font-black text-[9px] tracking-widest shrink-0">Discount</span>
+              <span className={`font-medium text-xs md:text-sm whitespace-nowrap ${totalDiscount > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>- R {formatZAR(totalDiscount)}</span>
+            </div>
+            <div className="pt-1.5 md:pt-2 border-t border-emerald-200">
+              <span className="text-emerald-600 uppercase font-black text-[9px] tracking-widest block mb-0.5">Total Due</span>
+              <span className={`${archivo.className} text-lg md:text-3xl italic tracking-tight text-slate-900 whitespace-nowrap block`} style={{ fontWeight: 900 }}>R {formatZAR(grandTotal)}</span>
+            </div>
           </div>
         </div>
-        <div className="flex flex-col justify-center items-center md:items-end opacity-50 pt-4 md:pt-0 border-t border-emerald-100 md:border-none">
-            <div className="text-[9px] md:text-[10px] font-black uppercase text-center md:text-right leading-relaxed italic tracking-widest text-slate-500">
-                System Generated Document<br/>
-                RAD Academy (Pty) Ltd<br/>
-                Thank you for your business
-            </div>
+
+        <div className="border-t border-emerald-200 py-2 px-4 text-center opacity-60">
+          <p className="text-[8px] md:text-[9px] font-black uppercase tracking-widest text-slate-600">
+            System Generated · RAD Academy (Pty) Ltd · Thank You
+          </p>
         </div>
       </div>
     </div>
