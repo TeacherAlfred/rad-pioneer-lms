@@ -1,0 +1,10 @@
+-- Tutorial Hub (radacademy.co.za/tutorials, RAD_Tutorial_Hub_Page_Spec.md)
+-- code is built and type-checks clean (schema, public pages, admin CMS,
+-- offer placements, WhatsApp phone-link flow) - tracking what's genuinely
+-- still open here rather than only saying so in chat, per the Systems
+-- Status convention (20260826130000_systems_status_tracking.sql).
+insert into system_checklist_items (system_key, label, state, notes, sort_order) values
+  ('lead_generation', 'Tutorial Hub: content model, public pages, admin CMS', 'done', 'Series -> Tutorial -> Step schema, /tutorials public pages (hub/series/step-by-step/resume), /admin/tutorials CMS with reorder/publish. Type-checks and builds clean. No content authored yet - series/tutorials/steps and the offer both need to be created and published before the page is usable.', 6),
+  ('lead_generation', 'Tutorial Hub: cross-device progress via WhatsApp phone-link', 'partial', 'Code complete (tutorial_visitors/tutorial_progress_tokens + a "LINK <code>" branch in the WhatsApp webhook that never touches the leads table), but not yet exercised against a real inbound message - and RAD_WHATSAPP_NUMBER in src/lib/tutorialProgress.ts (27769065959) was inferred from the number used elsewhere for general contact links, not explicitly confirmed as the number this webhook actually receives on. Confirm the number, then send a real "LINK <code>" message end-to-end before relying on this.', 7),
+  ('lead_generation', 'Tutorial Hub: admin nav discoverability', 'not_started', '/admin/tutorials and /admin/tutorials/offer are not linked from any of the AdminXChrome sidebar components (same as /admin/courses and /admin/featured-programs) - reachable by direct URL only. Low priority unless an admin other than whoever built this needs to find it unprompted.', 8),
+  ('lead_generation', 'Tutorial Hub: brand/visual QA pass', 'not_started', 'Uses the existing rad-* Tailwind tokens but hasn''t had an actual side-by-side check against current marketing pages/fonts, or a real-device pass for the no-horizontal-scroll requirement (spec S2).', 9);

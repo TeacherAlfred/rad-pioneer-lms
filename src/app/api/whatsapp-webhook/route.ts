@@ -7,6 +7,7 @@ import { STATUS_BUTTONS } from '@/lib/adminPipelineButtons';
 import { isWithinDnd } from '@/lib/dndSchedule';
 import { isRoboticsWatchAd } from '@/lib/adFollowups';
 import { sendToLead } from '@/lib/leadSend';
+import { normalizePhone, generateProgressToken, progressTokenExpiresAt, buildResumeUrl } from '@/lib/tutorialProgress';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
 // signature Meta signs the raw body with, using the app secret.
@@ -576,6 +577,59 @@ export async function POST(request: Request) {
               } else if (message.type === 'contacts') {
                 const names = (message.contacts || []).map((c: any) => c.name?.formatted_name).filter(Boolean).join(', ');
                 messageText = `[Shared contact${names ? `: ${names}` : ''}]`;
+              }
+
+              // --- TUTORIAL HUB: "LINK <code>" phone-verification (radacademy.co.za/
+              // tutorials, RAD_Tutorial_Hub_Page_Spec.md S5) ---
+              // Proof-of-possession for the Hub's optional cross-device progress
+              // sync: the visitor's phone is already their second screen, so this
+              // reuses that click-to-chat message instead of standing up an SMS/OTP
+              // vendor (see src/lib/tutorialProgress.ts). Deliberately checked and
+              // `continue`d before the lead upsert below - a tutorial-hub visitor
+              // linking progress is not a sales lead, and letting this fall through
+              // would create a `leads` row and fire the "Brand New Lead" admin alert
+              // for every single link, which is exactly the funnel noise this is
+              // meant to stay separate from.
+              if (message.type === 'text') {
+                const linkMatch = messageText.trim().match(/^link\s+([a-z0-9]{4,10})$/i);
+                if (linkMatch) {
+                  const code = linkMatch[1].toUpperCase();
+                  const normalizedSender = normalizePhone(senderPhone);
+                  const { data: visitor } = await supabase
+                    .from('tutorial_visitors')
+                    .select('id, phone, pending_link_code, pending_link_code_expires_at')
+                    .eq('pending_link_code', code)
+                    .maybeSingle();
+
+                  const valid = !!visitor
+                    && visitor.phone === normalizedSender
+                    && !!visitor.pending_link_code_expires_at
+                    && new Date(visitor.pending_link_code_expires_at) > new Date();
+
+                  if (valid) {
+                    await supabase.from('tutorial_visitors').update({
+                      phone_verified_at: new Date().toISOString(),
+                      pending_link_code: null,
+                      pending_link_code_expires_at: null,
+                    }).eq('id', visitor.id);
+
+                    const token = generateProgressToken();
+                    await supabase.from('tutorial_progress_tokens').insert([{
+                      tutorial_visitor_id: visitor.id,
+                      token,
+                      expires_at: progressTokenExpiresAt(),
+                    }]);
+
+                    await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body:
+                      `✅ You're linked! Your Tutorial Hub progress will now follow you across devices.\n\nBookmark this to pick up anywhere: ${buildResumeUrl(token)}`
+                    } });
+                  } else {
+                    await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body:
+                      "That link code wasn't recognized or has expired - head back to the Tutorial Hub page and tap \"Save my progress\" again for a fresh one."
+                    } });
+                  }
+                  continue;
+                }
               }
 
               // Click-to-WhatsApp ads attach this to the first inbound message of the
