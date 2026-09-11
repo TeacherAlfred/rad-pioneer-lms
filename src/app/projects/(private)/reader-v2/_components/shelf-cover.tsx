@@ -41,6 +41,8 @@ export default function ShelfCover({ book, index, selected, onToggleSelect }: Sh
         {book.cover_key ? (
           <img
             src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`}
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         ) : (

@@ -156,16 +156,20 @@ export default function BookDetailsSheet({ book, isOpen, onClose, onDelete, onBo
           <div className="relative h-72 bg-slate-900 flex items-center justify-center flex-shrink-0 overflow-hidden shadow-inner group">
             {book.cover_key ? (
               <>
-                <img 
-                  src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`} 
-                  alt="" 
+                <img
+                  src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`}
+                  alt=""
                   aria-hidden="true"
-                  className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-40 scale-125 saturate-200" 
+                  loading="lazy"
+                  decoding="async"
+                  className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-40 scale-125 saturate-200"
                 />
-                <img 
-                  src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`} 
-                  alt={`Cover for ${book.title}`} 
-                  className="absolute inset-0 w-full h-full object-contain p-6 drop-shadow-2xl z-10 transition-transform duration-300 group-hover:scale-95" 
+                <img
+                  src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`}
+                  alt={`Cover for ${book.title}`}
+                  loading="lazy"
+                  decoding="async"
+                  className="absolute inset-0 w-full h-full object-contain p-6 drop-shadow-2xl z-10 transition-transform duration-300 group-hover:scale-95"
                 />
               </>
             ) : (

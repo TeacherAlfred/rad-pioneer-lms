@@ -99,16 +99,20 @@ export default function WipCard({ book, onPublishSuccess, isSelectable, isSelect
         {suggested.coverKey && !selectedCoverId ? (
           <>
             {/* Ambient Blurred Background */}
-            <img 
-              src={`/api/storage/cover?key=${encodeURIComponent(suggested.coverKey)}`} 
-              alt="" 
+            <img
+              src={`/api/storage/cover?key=${encodeURIComponent(suggested.coverKey)}`}
+              alt=""
               aria-hidden="true"
+              loading="lazy"
+              decoding="async"
               className="absolute inset-0 w-full h-full object-cover blur-xl opacity-40 scale-110 saturate-150"
             />
             {/* Crisp Uncropped Foreground */}
-            <img 
-              src={`/api/storage/cover?key=${encodeURIComponent(suggested.coverKey)}`} 
-              alt="Cover" 
+            <img
+              src={`/api/storage/cover?key=${encodeURIComponent(suggested.coverKey)}`}
+              alt="Cover"
+              loading="lazy"
+              decoding="async"
               className={`absolute inset-0 w-full h-full object-contain p-4 drop-shadow-2xl transition-all duration-500 z-10 ${isSelected ? 'scale-95' : 'group-hover:scale-105'}`}
             />
           </>

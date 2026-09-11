@@ -39,6 +39,8 @@ function BookCover({ book, selected, onToggleSelect, onOpenDetails }: {
           <div className="w-full h-full relative">
             <img
               src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
             <div className="absolute top-2 right-2 bg-slate-900/75 backdrop-blur-xs text-[9px] font-bold text-white px-1.5 py-0.5 rounded uppercase tracking-wider">

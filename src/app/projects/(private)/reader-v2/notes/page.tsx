@@ -1,26 +1,31 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Search, BookOpen, ClipboardCopy, Rows3, LayoutList, ChevronDown, ChevronRight, Sparkles, Flame, X } from "lucide-react";
+import { ArrowLeft, Search, BookOpen, ClipboardCopy, Rows3, LayoutList, ChevronDown, ChevronRight, Sparkles, Flame, X, Download } from "lucide-react";
 import {
   getAllNotes,
   getNotesGraphData,
   getTagHeatMapData,
   getNoteTagOptions,
   updateNoteTags,
+  getSuggestedTags,
   type NoteWithBook,
   type NotesGraphData,
   type TagHeatEntry,
   type NoteTagOption,
+  type SuggestedTag,
 } from "../../reader/_actions/notes";
 import { getReaderSettings, setFocusTags } from "../../reader/_actions/settings";
+import { getAllTags as getBookTagOptions } from "../../reader/_actions/books";
 import { useAmbientBackground } from "../_lib/use-ambient-background";
-import NotesConstellation from "../_components/notes-constellation";
+import NotesConstellation, { type NotesConstellationHandle } from "../_components/notes-constellation";
+import NoteGroupsPanel from "../_components/note-groups-panel";
 import NoteTagPicker from "../_components/note-tag-picker";
 import TagHeatMap from "../_components/tag-heat-map";
+import { deriveNoteGroups, computeOtherGroupCounts, type NoteGroup } from "../_lib/derive-note-groups";
 
 type GroupMode = "flat" | "book" | "constellation" | "tags";
 
@@ -38,9 +43,15 @@ export default function NotesPage() {
 
   const [graphData, setGraphData] = useState<NotesGraphData | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [bookTagOptions, setBookTagOptions] = useState<{ id: string; name: string }[] | null>(null);
+  const [visibleNoteIds, setVisibleNoteIds] = useState<Set<string>>(new Set());
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
+  const constellationRef = useRef<NotesConstellationHandle>(null);
 
   const [heatEntries, setHeatEntries] = useState<TagHeatEntry[] | null>(null);
   const [heatLoading, setHeatLoading] = useState(false);
+  const [suggestedTags, setSuggestedTags] = useState<SuggestedTag[] | null>(null);
+  const [copiedWord, setCopiedWord] = useState<string | null>(null);
 
   useEffect(() => {
     getAllNotes().then((data) => {
@@ -55,11 +66,70 @@ export default function NotesPage() {
     setGroupMode("constellation");
     if (!graphData && !graphLoading) {
       setGraphLoading(true);
-      getNotesGraphData().then((data) => {
+      Promise.all([getNotesGraphData(), getBookTagOptions()]).then(([data, bookTags]) => {
         setGraphData(data);
+        setBookTagOptions(bookTags);
         setGraphLoading(false);
       });
     }
+  };
+
+  const noteGroups = useMemo(() => {
+    if (!graphData || !bookTagOptions) return [];
+    const noteTagNameById = new Map(allTags.map((t) => [t.id, t.name]));
+    const bookTagNameById = new Map(bookTagOptions.map((t) => [t.id, t.name]));
+    return deriveNoteGroups(graphData.nodes, noteTagNameById, bookTagNameById);
+  }, [graphData, allTags, bookTagOptions]);
+
+  const selectedGroups = useMemo(
+    () => noteGroups.filter((g) => selectedGroupIds.has(g.id)),
+    [noteGroups, selectedGroupIds]
+  );
+
+  const selectedMemberIds = useMemo(() => {
+    const ids = new Set<string>();
+    selectedGroups.forEach((g) => g.memberIds.forEach((id) => ids.add(id)));
+    return ids;
+  }, [selectedGroups]);
+
+  const otherGroupCounts = useMemo(
+    () => computeOtherGroupCounts(noteGroups, selectedGroupIds),
+    [noteGroups, selectedGroupIds]
+  );
+
+  // Keeps the canvas's own focus mode in sync with the panel's selection -
+  // runs after every selection change (single click, ctrl-click add/remove,
+  // or per-row deselect) rather than driving fitToView from each handler
+  // individually, so there's exactly one place that decides what the camera
+  // frames.
+  useEffect(() => {
+    if (selectedMemberIds.size > 0) {
+      constellationRef.current?.focusGroup(Array.from(selectedMemberIds));
+    } else {
+      constellationRef.current?.clearGroupFocus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMemberIds]);
+
+  const handleSelectGroup = (group: NoteGroup, additive: boolean) => {
+    setSelectedGroupIds((prev) => {
+      if (additive) {
+        const next = new Set(prev);
+        if (next.has(group.id)) next.delete(group.id);
+        else next.add(group.id);
+        return next;
+      }
+      if (prev.size === 1 && prev.has(group.id)) return new Set();
+      return new Set([group.id]);
+    });
+  };
+
+  const handleDeselectGroup = (group: NoteGroup) => {
+    setSelectedGroupIds((prev) => {
+      const next = new Set(prev);
+      next.delete(group.id);
+      return next;
+    });
   };
 
   const openTagsView = () => {
@@ -70,6 +140,20 @@ export default function NotesPage() {
         setHeatEntries(data);
         setHeatLoading(false);
       });
+    }
+    if (!suggestedTags) {
+      getSuggestedTags().then(setSuggestedTags);
+    }
+  };
+
+  const handleCopyWord = async (word: string) => {
+    try {
+      await navigator.clipboard.writeText(word);
+      setCopiedWord(word);
+      setTimeout(() => setCopiedWord((w) => (w === word ? null : w)), 1500);
+    } catch (error) {
+      console.error("Failed to copy word", error);
+      toast.error("Failed to copy.");
     }
   };
 
@@ -139,16 +223,15 @@ export default function NotesPage() {
     return Array.from(map.values());
   }, [filtered, groupMode]);
 
-  const handleExport = async () => {
-    if (filtered.length === 0) return;
+  const buildMarkdownSections = (notesList: NoteWithBook[]): string[] => {
     const byBook = new Map<string, { book: NoteWithBook["book"]; notes: NoteWithBook[] }>();
-    filtered.forEach((n) => {
+    notesList.forEach((n) => {
       const existing = byBook.get(n.book.id);
       if (existing) existing.notes.push(n);
       else byBook.set(n.book.id, { book: n.book, notes: [n] });
     });
 
-    const sections = Array.from(byBook.values()).map(({ book, notes: bookNotes }) => {
+    return Array.from(byBook.values()).map(({ book, notes: bookNotes }) => {
       const noteBlocks = bookNotes.map((n) => {
         const heading = n.pageNumber !== null ? `Page ${n.pageNumber}` : n.chapterTitle || "Highlight";
         const parts = [`### ${heading}`];
@@ -158,8 +241,11 @@ export default function NotesPage() {
       });
       return [`## ${book.title}`, `_${book.author || "Unknown Author"}_`, ...noteBlocks].join("\n\n");
     });
+  };
 
-    const markdown = [`# Notes`, ...sections].join("\n\n---\n\n");
+  const handleExport = async () => {
+    if (filtered.length === 0) return;
+    const markdown = [`# Notes`, ...buildMarkdownSections(filtered)].join("\n\n---\n\n");
     try {
       await navigator.clipboard.writeText(markdown);
       toast.success("Notes copied as Markdown.");
@@ -167,6 +253,54 @@ export default function NotesPage() {
       console.error("Failed to copy notes", error);
       toast.error("Failed to copy notes.");
     }
+  };
+
+  const downloadMarkdownFile = (markdown: string, filename: string) => {
+    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const slugify = (text: string) =>
+    text.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "notes";
+
+  const handleDownloadSelected = () => {
+    if (selectedGroups.length === 0 || selectedMemberIds.size === 0) return;
+    const groupNotes = notes.filter((n) => selectedMemberIds.has(n.id));
+    if (groupNotes.length === 0) {
+      toast.error("No notes found for this selection.");
+      return;
+    }
+    const title = selectedGroups.length === 1 ? selectedGroups[0].label : `${selectedGroups.length} Groupings`;
+    const subtitle = selectedGroups.map((g) => `${g.label} (${g.memberIds.length})`).join(", ");
+    const markdown = [
+      `# ${title}`,
+      `_${subtitle} · ${groupNotes.length} ${groupNotes.length === 1 ? "note" : "notes"} total_`,
+      ...buildMarkdownSections(groupNotes),
+    ].join("\n\n---\n\n");
+    downloadMarkdownFile(markdown, `${slugify(title)}-notes.md`);
+    toast.success("Downloaded as Markdown.");
+  };
+
+  const handleDownloadVisible = () => {
+    const viewNotes = notes.filter((n) => visibleNoteIds.has(n.id));
+    if (viewNotes.length === 0) {
+      toast.error("No notes currently in view.");
+      return;
+    }
+    const markdown = [
+      `# Notes in View`,
+      `_${viewNotes.length} ${viewNotes.length === 1 ? "note" : "notes"} currently visible in the constellation_`,
+      ...buildMarkdownSections(viewNotes),
+    ].join("\n\n---\n\n");
+    downloadMarkdownFile(markdown, "constellation-view-notes.md");
+    toast.success("Downloaded as Markdown.");
   };
 
   const NoteCard = ({ note, showBook = true }: { note: NoteWithBook; showBook?: boolean }) => (
@@ -182,6 +316,8 @@ export default function NotesPage() {
             {note.book.coverKey ? (
               <img
                 src={`/api/storage/cover?key=${encodeURIComponent(note.book.coverKey)}`}
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover"
               />
             ) : (
@@ -222,7 +358,8 @@ export default function NotesPage() {
     </motion.div>
   );
 
-  const containerWidth = groupMode === "constellation" || groupMode === "tags" ? "max-w-5xl" : "max-w-3xl";
+  const containerWidth =
+    groupMode === "constellation" ? "max-w-6xl" : groupMode === "tags" ? "max-w-5xl" : "max-w-3xl";
   const activeTagName = tagFilter ? allTags.find((t) => t.id === tagFilter)?.name : null;
 
   return (
@@ -325,6 +462,32 @@ export default function NotesPage() {
                 onSelectTag={handleSelectTag}
                 onToggleFocus={handleToggleFocus}
               />
+
+              {suggestedTags && suggestedTags.length > 0 && (
+                <div className="mt-10 pt-8 border-t border-slate-200">
+                  <p className="font-data text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+                    Suggested — not yet a tag
+                  </p>
+                  <p className="font-precision text-sm text-slate-500 mb-4 max-w-xl">
+                    Words that keep recurring across your notes but aren't part of the vocabulary yet. Nothing here
+                    is applied automatically — copy one you like and add it as a real tag when you're ready.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {suggestedTags.map((s) => (
+                      <button
+                        key={s.word}
+                        onClick={() => handleCopyWord(s.word)}
+                        title="Copy word"
+                        className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-full pl-3 pr-2.5 py-1.5 text-xs font-precision font-bold text-slate-700 hover:border-brass-400 hover:text-brass-700 transition-colors"
+                      >
+                        {s.word}
+                        <span className="font-data font-normal text-slate-400">{s.noteCount}</span>
+                        <ClipboardCopy size={11} className={copiedWord === s.word ? "text-brass-600" : "text-slate-300"} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )
         ) : groupMode === "constellation" ? (
@@ -337,12 +500,51 @@ export default function NotesPage() {
             </section>
           ) : (
             <>
-              <p className="font-precision text-sm text-slate-500 mb-6 max-w-xl">
-                Notes connected across different books — by shared tag, shared collection, the same author, or
-                similar wording. Scroll to zoom, drag the background to pan, click a note to focus it, drag a note to
-                reposition it.
-              </p>
-              <NotesConstellation nodes={graphData.nodes} edges={graphData.edges} />
+              <div className="flex items-start justify-between gap-4 mb-6">
+                <p className="font-precision text-sm text-slate-500 max-w-xl">
+                  Notes connected across different books — by shared tag, shared collection, the same author, or
+                  similar wording. Scroll to zoom, drag the background to pan, click a note to focus it, drag a note
+                  to reposition it.
+                </p>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {selectedGroups.length > 0 && (
+                    <button
+                      onClick={handleDownloadSelected}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-slate-900 text-white text-xs font-bold uppercase tracking-widest rounded-full hover:bg-slate-800 transition-colors whitespace-nowrap"
+                    >
+                      <Download size={13} strokeWidth={2.5} />
+                      Selected ({selectedMemberIds.size})
+                    </button>
+                  )}
+                  <button
+                    onClick={handleDownloadVisible}
+                    title="Download every note currently visible in the constellation, grouped or not"
+                    className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 text-slate-600 text-xs font-bold uppercase tracking-widest rounded-full hover:bg-slate-50 transition-colors whitespace-nowrap"
+                  >
+                    <Download size={13} strokeWidth={2.5} />
+                    In view ({visibleNoteIds.size})
+                  </button>
+                </div>
+              </div>
+              <div className="flex gap-4 items-start">
+                <NoteGroupsPanel
+                  groups={noteGroups}
+                  visibleIds={visibleNoteIds}
+                  selectedGroupIds={selectedGroupIds}
+                  onSelect={handleSelectGroup}
+                  onDeselect={handleDeselectGroup}
+                />
+                <div className="flex-1 min-w-0">
+                  <NotesConstellation
+                    ref={constellationRef}
+                    nodes={graphData.nodes}
+                    edges={graphData.edges}
+                    onViewportChange={setVisibleNoteIds}
+                    otherGroupCounts={otherGroupCounts}
+                    onGroupFocusCleared={() => setSelectedGroupIds(new Set())}
+                  />
+                </div>
+              </div>
             </>
           )
         ) : loading ? (
@@ -381,7 +583,7 @@ export default function NotesPage() {
                     <Link href={`/projects/reader-v2/${book.id}`} className="flex items-center gap-3 flex-1 min-w-0 group">
                       <div className="w-8 h-11 rounded overflow-hidden bg-slate-100 flex-shrink-0">
                         {book.coverKey ? (
-                          <img src={`/api/storage/cover?key=${encodeURIComponent(book.coverKey)}`} className="w-full h-full object-cover" />
+                          <img src={`/api/storage/cover?key=${encodeURIComponent(book.coverKey)}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-slate-300">
                             <BookOpen size={12} />

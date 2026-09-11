@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   forceSimulation,
@@ -57,9 +57,20 @@ interface Transform {
 interface NotesConstellationProps {
   nodes: NoteGraphNode[];
   edges: NoteGraphEdge[];
+  onViewportChange?: (visibleIds: Set<string>) => void;
+  otherGroupCounts?: Map<string, number>;
+  onGroupFocusCleared?: () => void;
 }
 
-export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }: NotesConstellationProps) {
+export interface NotesConstellationHandle {
+  focusGroup(memberIds: string[]): void;
+  clearGroupFocus(): void;
+}
+
+function NotesConstellation(
+  { nodes: rawNodes, edges: rawEdges, onViewportChange, otherGroupCounts, onGroupFocusCleared }: NotesConstellationProps,
+  ref: React.Ref<NotesConstellationHandle>
+) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -69,6 +80,10 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
   const hoveredIdRef = useRef<string | null>(null);
   const focusedIdRef = useRef<string | null>(null);
   const neighborIdsRef = useRef<Set<string>>(new Set());
+  const focusedGroupRef = useRef<Set<string> | null>(null);
+  const otherGroupCountsRef = useRef<Map<string, number>>(new Map());
+  const onViewportChangeRef = useRef(onViewportChange);
+  const lastViewportEmitRef = useRef(0);
   const transformRef = useRef<Transform>({ x: 0, y: 0, k: 1 });
   const animationRef = useRef<number | null>(null);
 
@@ -79,6 +94,15 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
   const [hoveredNode, setHoveredNode] = useState<SimNode | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [focusedNode, setFocusedNode] = useState<SimNode | null>(null);
+  const [focusedGroup, setFocusedGroup] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    onViewportChangeRef.current = onViewportChange;
+  }, [onViewportChange]);
+
+  useEffect(() => {
+    otherGroupCountsRef.current = otherGroupCounts ?? new Map();
+  }, [otherGroupCounts]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -112,12 +136,14 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
     const focusedId = focusedIdRef.current;
     const neighbors = neighborIdsRef.current;
     const emphasizeId = focusedId || hoveredId;
+    const groupIds = focusedGroupRef.current;
 
     simLinksRef.current.forEach((link) => {
       const source = link.source as SimNode;
       const target = link.target as SimNode;
       if (source.x === undefined || target.x === undefined) return;
-      const dim = emphasizeId && source.id !== emphasizeId && target.id !== emphasizeId;
+      if (groupIds && (!groupIds.has(source.id) || !groupIds.has(target.id))) return;
+      const dim = !groupIds && emphasizeId && source.id !== emphasizeId && target.id !== emphasizeId;
       const style = EDGE_STYLE[link.reason];
       ctx.beginPath();
       ctx.moveTo(source.x, source.y!);
@@ -129,10 +155,28 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
       ctx.globalAlpha = 1;
     });
 
+    // Centroid of the focused group, used as the origin direction for each
+    // member's "path into the ether" trail (see below).
+    let groupCentroid: { x: number; y: number } | null = null;
+    if (groupIds) {
+      let sx = 0, sy = 0, count = 0;
+      simNodesRef.current.forEach((n) => {
+        if (groupIds.has(n.id) && n.x !== undefined && n.y !== undefined) {
+          sx += n.x; sy += n.y; count++;
+        }
+      });
+      if (count > 0) groupCentroid = { x: sx / count, y: sy / count };
+    }
+
     simNodesRef.current.forEach((node) => {
       if (node.x === undefined || node.y === undefined) return;
-      const isEmphasized = node.id === emphasizeId;
-      const isDimmed = focusedId ? node.id !== focusedId && !neighbors.has(node.id) : Boolean(hoveredId && !isEmphasized);
+      const inGroup = groupIds ? groupIds.has(node.id) : true;
+      const isEmphasized = !groupIds && node.id === emphasizeId;
+      const isDimmed = groupIds
+        ? !inGroup
+        : focusedId
+          ? node.id !== focusedId && !neighbors.has(node.id)
+          : Boolean(hoveredId && !isEmphasized);
       ctx.beginPath();
       ctx.arc(node.x, node.y, isEmphasized ? HOVER_RADIUS : NODE_RADIUS, 0, Math.PI * 2);
       ctx.fillStyle = colorForBook(node.bookId);
@@ -144,7 +188,47 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
         ctx.strokeStyle = "#0f172a";
         ctx.stroke();
       }
+
+      // A note that also belongs to other groupings gets a faint dashed
+      // trail pointing away from this group's centroid - a hint that its
+      // story continues elsewhere, without pulling those other connections
+      // into a view that's supposed to isolate just this group.
+      if (groupIds && inGroup && groupCentroid && (otherGroupCountsRef.current.get(node.id) ?? 0) > 0) {
+        let dx = node.x - groupCentroid.x;
+        let dy = node.y - groupCentroid.y;
+        const len = Math.hypot(dx, dy) || 1;
+        dx /= len; dy /= len;
+        const start = NODE_RADIUS + 3;
+        const end = start + 10 / k;
+        ctx.save();
+        ctx.setLineDash([2 / k, 2 / k]);
+        ctx.beginPath();
+        ctx.moveTo(node.x + dx * start, node.y + dy * start);
+        ctx.lineTo(node.x + dx * end, node.y + dy * end);
+        ctx.strokeStyle = "rgba(15,23,42,0.35)";
+        ctx.lineWidth = 1 / k;
+        ctx.stroke();
+        ctx.restore();
+      }
     });
+
+    const emitViewport = onViewportChangeRef.current;
+    if (emitViewport) {
+      const now = performance.now();
+      if (now - lastViewportEmitRef.current > 120) {
+        lastViewportEmitRef.current = now;
+        const visible = new Set<string>();
+        simNodesRef.current.forEach((node) => {
+          if (node.x === undefined || node.y === undefined) return;
+          const sx = node.x * k + tx;
+          const sy = node.y * k + ty;
+          if (sx >= -20 && sx <= dims.width + 20 && sy >= -20 && sy <= dims.height + 20) {
+            visible.add(node.id);
+          }
+        });
+        emitViewport(visible);
+      }
+    }
   }, [dims]);
 
   // Physics setup - runs once per actual dataset/size change, never on hover/focus/pan/zoom.
@@ -197,6 +281,26 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
     }
     draw();
   }, [focusedNode, draw]);
+
+  useEffect(() => {
+    focusedGroupRef.current = focusedGroup;
+    draw();
+  }, [focusedGroup, draw]);
+
+  useImperativeHandle(ref, () => ({
+    focusGroup(memberIds: string[]) {
+      const idSet = new Set(memberIds);
+      focusedIdRef.current = null;
+      neighborIdsRef.current = new Set();
+      setFocusedNode(null);
+      setFocusedGroup(idSet);
+      fitToView(idSet);
+    },
+    clearGroupFocus() {
+      setFocusedGroup(null);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
 
   const animateTransform = (target: Transform, duration = 450) => {
     if (animationRef.current) cancelAnimationFrame(animationRef.current);
@@ -343,6 +447,8 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
         // A click, not a drag - focus this note instead of navigating away immediately.
         drag.node.fx = null;
         drag.node.fy = null;
+        if (focusedGroupRef.current) onGroupFocusCleared?.();
+        setFocusedGroup(null);
         setFocusedNode(drag.node);
       }
       // If actually dragged, leave fx/fy set so the node stays where it was placed.
@@ -362,6 +468,8 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
 
   const handleBackgroundDoubleClick = () => {
     setFocusedNode(null);
+    if (focusedGroupRef.current) onGroupFocusCleared?.();
+    setFocusedGroup(null);
   };
 
   return (
@@ -394,7 +502,7 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
         </div>
 
         {/* Lightweight hover preview - only while nothing is focused */}
-        {hoveredNode && !focusedNode && (
+        {hoveredNode && !focusedNode && !focusedGroup && (
           <div
             className="absolute z-10 pointer-events-none bg-slate-900 text-white rounded-xl shadow-2xl px-4 py-3 max-w-xs"
             style={{
@@ -452,7 +560,10 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-4 font-data text-[10px] uppercase tracking-widest text-slate-400">
         {(Object.keys(EDGE_STYLE) as NoteEdgeReason[]).map((reason) => (
           <span key={reason} className="flex items-center gap-2">
-            <span className="w-4 h-px" style={{ backgroundColor: EDGE_STYLE[reason].color.replace(/[\d.]+\)$/, "1)") }} />
+            <span
+              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+              style={{ backgroundColor: EDGE_STYLE[reason].color.replace(/[\d.]+\)$/, "1)") }}
+            />
             {EDGE_LABEL[reason]}
           </span>
         ))}
@@ -464,3 +575,5 @@ export default function NotesConstellation({ nodes: rawNodes, edges: rawEdges }:
     </div>
   );
 }
+
+export default forwardRef(NotesConstellation);

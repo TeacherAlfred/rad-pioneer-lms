@@ -44,7 +44,7 @@ export default function BookCloseMoment({ isOpen, coverKey, title, onDismiss }: 
               className="w-40 h-56 rounded-lg overflow-hidden shadow-[0_30px_60px_rgba(0,0,0,0.4)] bg-slate-100"
             >
               {coverKey ? (
-                <img src={`/api/storage/cover?key=${encodeURIComponent(coverKey)}`} className="w-full h-full object-cover" />
+                <img src={`/api/storage/cover?key=${encodeURIComponent(coverKey)}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-slate-400">
                   <BookOpen size={32} />

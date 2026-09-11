@@ -143,6 +143,8 @@ export default function GenreReviewRow({ book, genreOptions, onSaved, onParked }
           ) : book.cover_key ? (
             <img
               src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover"
             />
           ) : (

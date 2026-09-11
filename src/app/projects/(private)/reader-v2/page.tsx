@@ -420,6 +420,8 @@ export default function MeridianHome() {
                   {continueBook.cover_key ? (
                     <img
                       src={`/api/storage/cover?key=${encodeURIComponent(continueBook.cover_key)}`}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover"
                     />
                   ) : (

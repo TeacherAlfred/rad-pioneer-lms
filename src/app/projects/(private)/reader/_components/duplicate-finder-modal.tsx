@@ -83,7 +83,7 @@ export default function DuplicateFinderModal({ isOpen, isScanning, groups, onClo
                       <div key={book.id} className="flex-shrink-0 w-52 bg-white border border-slate-200 rounded-[16px] overflow-hidden shadow-sm flex flex-col">
                         <div className="h-28 bg-slate-100 flex items-center justify-center overflow-hidden">
                           {book.cover_key ? (
-                            <img src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`} className="w-full h-full object-cover" />
+                            <img src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                           ) : (
                             <FileText size={24} className="text-slate-300" />
                           )}

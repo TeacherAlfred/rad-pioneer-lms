@@ -265,6 +265,63 @@ export async function getTagHeatMapData(): Promise<TagHeatEntry[]> {
   }));
 }
 
+export interface SuggestedTag {
+  word: string;
+  noteCount: number;
+}
+
+const SUGGESTION_MIN_NOTES = 3;
+const SUGGESTION_LIMIT = 20;
+
+/**
+ * Deterministic, no-embeddings tag discovery - same keyword-extraction logic
+ * as the constellation graph's "similar wording" edges (keywordSet, below),
+ * just tallied across the whole library instead of pairwise. Surfaces words
+ * that recur across several notes but aren't already represented by the
+ * curated vocabulary (getNoteTagOptions), as raw material for a human to
+ * decide whether it deserves to become a real tag - this never writes
+ * anything, tag creation stays a deliberate migration as before.
+ */
+export async function getSuggestedTags(): Promise<SuggestedTag[]> {
+  const supabase = await createClient();
+
+  const [{ data: notes, error: notesError }, { data: tags, error: tagsError }] = await Promise.all([
+    supabase
+      .from("rad_book_notes")
+      .select("id, excerpt, user_comment, rad_books ( is_vaulted )"),
+    supabase.from("rad_tags").select("name").not("category", "is", null),
+  ]);
+
+  if (notesError || !notes) {
+    console.error("Error fetching notes for tag suggestions:", notesError);
+    return [];
+  }
+  if (tagsError) console.error("Error fetching existing tags for tag suggestions:", tagsError);
+
+  const existingWords = new Set<string>();
+  (tags || []).forEach((t: any) => {
+    t.name.toLowerCase().split(/[-_\s]+/).forEach((w: string) => existingWords.add(w));
+  });
+
+  const wordNotes = new Map<string, Set<string>>();
+  notes.forEach((n: any) => {
+    if (n.rad_books?.is_vaulted) return;
+    const words = keywordSet(`${n.excerpt || ""} ${n.user_comment || ""}`);
+    words.forEach((word) => {
+      if (existingWords.has(word)) return;
+      const noteIds = wordNotes.get(word) ?? new Set<string>();
+      noteIds.add(n.id);
+      wordNotes.set(word, noteIds);
+    });
+  });
+
+  return Array.from(wordNotes.entries())
+    .map(([word, noteIds]) => ({ word, noteCount: noteIds.size }))
+    .filter((s) => s.noteCount >= SUGGESTION_MIN_NOTES)
+    .sort((a, b) => b.noteCount - a.noteCount)
+    .slice(0, SUGGESTION_LIMIT);
+}
+
 export interface NoteGraphNode {
   id: string;
   bookId: string;
@@ -275,6 +332,7 @@ export interface NoteGraphNode {
   userComment: string;
   pageNumber: number | null;
   tagIds: string[];
+  bookTagIds: string[];
 }
 
 export type NoteEdgeReason = "note-tag" | "tag" | "author" | "keyword";
@@ -365,6 +423,7 @@ export async function getNotesGraphData(): Promise<NotesGraphData> {
       userComment: n.user_comment,
       pageNumber: n.page_number,
       tagIds: (n.rad_book_note_tags || []).map((t: any) => t.tag_id),
+      bookTagIds: (book.rad_book_tags || []).map((t: any) => t.tag_id),
     });
 
     if (!bookTags.has(book.id)) {

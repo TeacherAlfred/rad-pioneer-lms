@@ -43,7 +43,7 @@ export default function BookList({ books, selectedBooks, onToggleSelect, onOpenD
 
             <div className="w-9 h-12 flex-shrink-0 rounded-md overflow-hidden border border-slate-200 bg-slate-100">
               {book.cover_key ? (
-                <img src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`} className="w-full h-full object-cover" />
+                <img src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-slate-300">
                   <BookOpen size={14} />

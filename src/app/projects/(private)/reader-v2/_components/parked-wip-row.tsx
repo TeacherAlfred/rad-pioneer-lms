@@ -31,6 +31,8 @@ export default function ParkedWipRow({ book, onUnparked }: ParkedWipRowProps) {
         {book.cover_key ? (
           <img
             src={`/api/storage/cover?key=${encodeURIComponent(book.cover_key)}`}
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover"
           />
         ) : (

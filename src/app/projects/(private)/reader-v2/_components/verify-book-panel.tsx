@@ -151,7 +151,7 @@ export default function VerifyBookPanel({ book, onVerified, onParked }: VerifyBo
       <div className="flex-shrink-0 mx-auto md:mx-0 flex flex-col items-center gap-2">
         <div className="w-28 h-40 rounded-xl overflow-hidden bg-slate-100 flex items-center justify-center shadow-sm">
           {coverUrl ? (
-            <img src={coverUrl} className="w-full h-full object-cover" />
+            <img src={coverUrl} loading="lazy" decoding="async" className="w-full h-full object-cover" />
           ) : (
             <BookOpen size={24} className="text-slate-300" />
           )}
