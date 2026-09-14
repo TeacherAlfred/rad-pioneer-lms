@@ -15,6 +15,8 @@ export type ParsedMessage =
   | { kind: 'queued'; label: string }
   | { kind: 'admin_alert'; label: string }
   | { kind: 'button_tap'; label: string; detail?: string }
+  | { kind: 'system'; label: string }
+  | { kind: 'unsupported'; label: string }
   | { kind: 'text'; label: string };
 
 export function parseMessage(m: { direction: string | null; body: string | null }): ParsedMessage {
@@ -66,6 +68,13 @@ export function parseMessage(m: { direction: string | null; body: string | null 
 
   const match = body.match(/^\[Button Reply: (.+) \((.+)\)\]$/);
   if (match) return { kind: 'button_tap', label: match[1], detail: match[2] };
+
+  const systemMatch = body.match(/^\[System: ([\s\S]+)\]$/);
+  if (systemMatch) return { kind: 'system', label: systemMatch[1] };
+
+  const unsupportedMatch = body.match(/^\[Unsupported message: ([\s\S]+)\]$/);
+  if (unsupportedMatch) return { kind: 'unsupported', label: unsupportedMatch[1] };
+
   return { kind: 'text', label: body };
 }
 
@@ -77,6 +86,8 @@ export const KIND_LABEL: Record<string, string> = {
   queued: 'Awaiting Approval',
   admin_alert: 'Admin Alert',
   button_tap: 'Button Tap',
+  system: 'System Notice',
+  unsupported: 'Unsupported Message',
   text: 'Text',
 };
 

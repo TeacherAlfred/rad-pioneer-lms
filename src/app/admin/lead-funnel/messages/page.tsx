@@ -24,6 +24,7 @@ type MessageRow = {
   created_at?: string | null;
   lead_phone?: string | null;
   lead_name?: string | null;
+  lead_wa_profile_name?: string | null;
   lead_email?: string | null;
   lead_school?: string | null;
   lead_tags?: string[] | null;
@@ -50,6 +51,7 @@ type ButtonRef = { id: string; title: string };
 type LeadGroup = {
   leadId: string;
   leadName: string | null;
+  leadWaProfileName: string | null;
   leadPhone: string | null;
   leadEmail: string | null;
   leadSchool: string | null;
@@ -707,6 +709,7 @@ export default function MessageActivityPage() {
       return {
         leadId,
         leadName: sorted[0]?.lead_name || null,
+        leadWaProfileName: sorted[0]?.lead_wa_profile_name || null,
         leadPhone: sorted[0]?.lead_phone || null,
         leadEmail: sorted[0]?.lead_email || null,
         leadSchool: sorted[0]?.lead_school || null,
@@ -1129,7 +1132,10 @@ export default function MessageActivityPage() {
                                   </span>
                                 )}
                               </div>
-                              <div className="text-xs text-slate-400">+{g.leadPhone}</div>
+                              <div className="text-xs text-slate-400">
+                                +{g.leadPhone}
+                                {g.leadWaProfileName && <span className="text-slate-300"> ({g.leadWaProfileName})</span>}
+                              </div>
                             </td>
                             <td className="px-4 py-3 text-slate-600 font-bold">{g.inboundCount}</td>
                             <td className="px-4 py-3 text-slate-600 font-bold">{g.outboundCount}</td>

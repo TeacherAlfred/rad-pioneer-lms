@@ -125,12 +125,20 @@ async function applyMessageStatus(supabase: any, status: any) {
   }
   if (status.conversation) {
     update.conversation_category = status.conversation.origin?.type ?? null;
+    update.conversation_id = status.conversation.id ?? null;
     // Only ever present on the 'sent' status - when this lead's 24hr free-
     // reply window closes. Not an adjustable setting, just Meta telling us
     // the fixed policy's actual close time for this specific conversation.
     if (status.conversation.expiration_timestamp) {
       update.conversation_expires_at = new Date(Number(status.conversation.expiration_timestamp) * 1000).toISOString();
     }
+  }
+  // Meta's own billing category for this conversation (utility/marketing/
+  // service/authentication) and whether it was actually billable - only sent
+  // on the 'sent' status, same as conversation above.
+  if (status.pricing) {
+    update.pricing_category = status.pricing.category ?? null;
+    update.pricing_billable = status.pricing.billable ?? null;
   }
 
   await supabase.from('messages').update(update).eq('id', existing.id);
@@ -430,6 +438,12 @@ export async function POST(request: Request) {
               const senderPhone = message.from || message.from_user_id;
               if (!senderPhone) continue;
 
+              // Meta's contacts[] is positionally aligned with messages[] but not
+              // guaranteed to match 1:1 (rare multi-message payloads) - match by
+              // wa_id against the sender we already resolved, falling back to the
+              // first entry if that ever misses.
+              const contactInfo = (value.contacts || []).find((c: any) => c.wa_id === senderPhone) || value.contacts?.[0] || null;
+
               // Service role, not anon: this route is server-only (never shipped to
               // a browser), and NEXT_PUBLIC_SUPABASE_ANON_KEY is public by design -
               // using it here meant leads/messages RLS had to stay open to anyone
@@ -533,6 +547,13 @@ export async function POST(request: Request) {
 
               let messageText = '';
               let mediaFields: { media_path: string; media_type: string; media_mime_type: string; media_caption: string | null; media_filename: string | null } | null = null;
+              // Forwarded-ness can accompany any message type (it's on the shared
+              // `context` wrapper, not type-specific), so it's read once up front
+              // rather than duplicated into every branch below.
+              const forwarded: boolean | null = message.context?.forwarded ?? null;
+              let reactionMessageId: string | null = null;
+              let errorCode: string | null = null;
+              let errorDetail: string | null = null;
               const MEDIA_MESSAGE_TYPES = ['image', 'sticker', 'video', 'audio', 'document'];
               if (message.type === 'text') {
                 messageText = message.text?.body || '';
@@ -574,10 +595,32 @@ export async function POST(request: Request) {
                 messageText = `[Shared location${loc?.name ? `: ${loc.name}` : ''}]`;
               } else if (message.type === 'reaction') {
                 messageText = message.reaction?.emoji ? `[Reacted ${message.reaction.emoji}]` : '[Reaction]';
+                reactionMessageId = message.reaction?.message_id || null;
               } else if (message.type === 'contacts') {
                 const names = (message.contacts || []).map((c: any) => c.name?.formatted_name).filter(Boolean).join(', ');
                 messageText = `[Shared contact${names ? `: ${names}` : ''}]`;
+              } else if (message.type === 'system') {
+                messageText = `[System: ${message.system?.body || message.system?.type || 'notice'}]`;
               }
+
+              // Set on 'unsupported' messages and occasionally alongside other types -
+              // Meta's own explanation for why it couldn't fully process this message.
+              // Checked independently of the type branches above (not an else-if) since
+              // it can co-occur with a type that already set messageText.
+              if (Array.isArray(message.errors) && message.errors[0]) {
+                const err = message.errors[0];
+                errorCode = err.code != null ? String(err.code) : null;
+                errorDetail = err.message || err.title || null;
+                if (!messageText) messageText = `[Unsupported message: ${err.title || err.message || 'could not process'}]`;
+              }
+
+              // Shared by both insert sites below (blocked-lead early-out and the
+              // main path) so the new metadata columns land consistently either way,
+              // without duplicating the extraction logic.
+              const extraMessageFields: Record<string, any> = { forwarded };
+              if (reactionMessageId) extraMessageFields.reaction_message_id = reactionMessageId;
+              if (errorCode) extraMessageFields.error_code = errorCode;
+              if (errorDetail) extraMessageFields.error_detail = errorDetail;
 
               // --- TUTORIAL HUB: "LINK <code>" phone-verification (radacademy.co.za/
               // tutorials, RAD_Tutorial_Hub_Page_Spec.md S5) ---
@@ -651,6 +694,7 @@ export async function POST(request: Request) {
                   ...(referral ? {
                     ad_id: referral.source_id || null,
                     ad_headline: referral.headline || null,
+                    ad_source_type: referral.source_type || null,
                     ctwa_clid: referral.ctwa_clid || null,
                     // Was never set here at all - a CTWA-attributed lead's
                     // ad fields were captured correctly but nothing marked
@@ -695,6 +739,7 @@ export async function POST(request: Request) {
                   direction: 'inbound',
                   body: messageText,
                   ...(mediaFields || {}),
+                  ...extraMessageFields,
                 }]);
                 continue;
               }
@@ -706,7 +751,15 @@ export async function POST(request: Request) {
               // before the bot's had a chance to get a reply to that outreach).
               // An auto-expired 'lost' lead reopens on any new inbound (spec §3);
               // a manually-lost lead does not.
-              const inboundLeadUpdate: Record<string, any> = { last_inbound_at: new Date().toISOString() };
+              const inboundLeadUpdate: Record<string, any> = {
+                last_inbound_at: new Date().toISOString(),
+                // Live attributes, not first-touch-only like the ad referral fields
+                // below - a display name/wa_id genuinely can change, so every inbound
+                // message refreshes them rather than locking in whatever was true the
+                // first time this number wrote in.
+                wa_profile_name: contactInfo?.profile?.name || null,
+                wa_id: contactInfo?.wa_id || null,
+              };
               if (!isNewLead && lead.lifecycle_stage === 'new') {
                 inboundLeadUpdate.lifecycle_stage = 'engaged';
                 inboundLeadUpdate.stage_entered_at = new Date().toISOString();
@@ -730,7 +783,13 @@ export async function POST(request: Request) {
                 direction: 'inbound',
                 body: messageText,
                 ...(mediaFields || {}),
+                ...extraMessageFields,
               }]);
+
+              // --- SYSTEM NOTICE: Meta-generated (e.g. "customer changed number"),
+              // not something the lead said - logged above for the record, but it
+              // shouldn't be run through opt-out/keyword/STAGE-1-2 matching below.
+              if (message.type === 'system') continue;
 
               // --- BOT PAUSED: admin has taken this conversation over manually ---
               // Set from /admin/lead-funnel/messages (or the lead's edit drawer),
