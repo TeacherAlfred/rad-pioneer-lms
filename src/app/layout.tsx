@@ -19,7 +19,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "RAD Academy LMS",
+  title: {
+    template: "%s · RAD",
+    default: "RAD Academy LMS",
+  },
   description: "Redefining African Dreams: A cutting-edge LMS for tech education, empowering the next generation of African innovators with immersive learning, real-world projects, and a vibrant community.",
 };
 

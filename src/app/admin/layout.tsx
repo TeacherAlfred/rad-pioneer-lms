@@ -1,9 +1,17 @@
+import type { Metadata } from "next";
 import AdminNotificationListener from "@/components/admin/AdminNotificationListener";
 import InboundMessageAlert from "@/components/admin/InboundMessageAlert";
 import AdminLeadsChrome from "@/components/admin/AdminLeadsChrome";
 import AdminFinanceChrome from "@/components/admin/AdminFinanceChrome";
 import AdminProjectsChrome from "@/components/admin/AdminProjectsChrome";
 import AdminSystemStatusChrome from "@/components/admin/AdminSystemStatusChrome";
+
+export const metadata: Metadata = {
+  title: {
+    template: "%s · Admin",
+    default: "RAD Admin",
+  },
+};
 
 export default function AdminLayout({
   children,
