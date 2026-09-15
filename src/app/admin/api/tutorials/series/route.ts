@@ -72,7 +72,7 @@ export async function PATCH(req: Request) {
     const { id } = body;
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
 
-    const { title, description, level, category, estimated_minutes, cover_image_url, sort_order, is_hidden } = body;
+    const { title, description, level, category, estimated_minutes, cover_image_url, sort_order, is_hidden, intro_items_visible } = body;
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
     if (title !== undefined) update.title = String(title).trim();
     if (description !== undefined) update.description = description || null;
@@ -82,6 +82,7 @@ export async function PATCH(req: Request) {
     if (cover_image_url !== undefined) update.cover_image_url = cover_image_url || null;
     if (sort_order !== undefined) update.sort_order = Number(sort_order);
     if (is_hidden !== undefined) update.is_hidden = !!is_hidden;
+    if (intro_items_visible !== undefined) update.intro_items_visible = !!intro_items_visible;
 
     const { data, error } = await supabaseAdmin.from('tutorial_series').update(update).eq('id', id).select().single();
     if (error) throw error;

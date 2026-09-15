@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, ChevronUp, ChevronDown, X, MapPin, ImageOff, ExternalLink } from "lucide-react";
+import { Plus, Trash2, ChevronUp, ChevronDown, X, MapPin, ImageOff, ExternalLink, Eye, EyeOff } from "lucide-react";
 
 type Hotspot = { id: string; x: number; y: number; label: string; text: string };
 type IntroItem = {
@@ -28,7 +28,15 @@ const INPUT_CLS = "w-full bg-white border border-slate-200 rounded-lg px-3 py-2 
 // as a tappable dot with a popover. Editing a hotspot's text happens in
 // the list below the image, matched to its dot by number, rather than an
 // inline edit-on-the-image affordance - simpler to build, same result.
-export default function SeriesIntroItemsEditor({ seriesId }: { seriesId: string }) {
+export default function SeriesIntroItemsEditor({
+  seriesId,
+  visible,
+  onToggleVisible,
+}: {
+  seriesId: string;
+  visible: boolean;
+  onToggleVisible: () => void;
+}) {
   const [items, setItems] = useState<IntroItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingItem, setEditingItem] = useState<IntroItem | null>(null);
@@ -116,8 +124,19 @@ export default function SeriesIntroItemsEditor({ seriesId }: { seriesId: string 
     <div className="mb-8">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Getting Started (shown before the tutorials)</h2>
-        <button onClick={addItem} className="flex items-center gap-1 text-xs font-bold text-blue-600"><Plus size={14} /> Add item</button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onToggleVisible}
+            className={`flex items-center gap-1.5 text-xs font-bold rounded-full px-3 py-1.5 ${visible ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}
+          >
+            {visible ? <Eye size={14} /> : <EyeOff size={14} />} {visible ? 'Visible to visitors' : 'Hidden from visitors'}
+          </button>
+          <button onClick={addItem} className="flex items-center gap-1 text-xs font-bold text-blue-600"><Plus size={14} /> Add item</button>
+        </div>
       </div>
+      {!visible && (
+        <p className="text-[11px] text-slate-400 mb-3">This whole section is hidden on the public series page until you tap "Hidden from visitors" above to show it - useful while screenshots and guide points aren't ready yet.</p>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="flex flex-col gap-2">

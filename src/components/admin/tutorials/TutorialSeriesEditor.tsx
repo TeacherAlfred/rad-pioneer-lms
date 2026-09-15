@@ -39,6 +39,7 @@ const INPUT_CLS = "w-full bg-white border border-slate-200 rounded-lg px-3 py-2 
 // nested lists in one screen.
 export default function TutorialSeriesEditor({ seriesId }: { seriesId: string }) {
   const [seriesTitle, setSeriesTitle] = useState("");
+  const [introItemsVisible, setIntroItemsVisible] = useState(false);
   const [tutorials, setTutorials] = useState<Tutorial[]>([]);
   const [selectedTutorialId, setSelectedTutorialId] = useState<string | null>(null);
   const [steps, setSteps] = useState<Step[]>([]);
@@ -54,11 +55,18 @@ export default function TutorialSeriesEditor({ seriesId }: { seriesId: string })
     ]);
     const series = (seriesRes.rows || []).find((s: any) => s.id === seriesId);
     setSeriesTitle(series?.title || 'Series');
+    setIntroItemsVisible(!!series?.intro_items_visible);
     setTutorials(tutorialsRes.rows || []);
     setLoading(false);
   }
 
   useEffect(() => { loadTutorials(); }, [seriesId]);
+
+  async function toggleIntroItemsVisible() {
+    const next = !introItemsVisible;
+    setIntroItemsVisible(next);
+    await fetch('/admin/api/tutorials/series', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: seriesId, intro_items_visible: next }) });
+  }
 
   async function loadSteps(tutorialId: string) {
     const res = await fetch(`/admin/api/tutorials/steps?tutorialId=${tutorialId}`);
@@ -181,7 +189,7 @@ export default function TutorialSeriesEditor({ seriesId }: { seriesId: string })
       </Link>
       <h1 className="text-lg font-black text-slate-900 mb-6">{seriesTitle}</h1>
 
-      <SeriesIntroItemsEditor seriesId={seriesId} />
+      <SeriesIntroItemsEditor seriesId={seriesId} visible={introItemsVisible} onToggleVisible={toggleIntroItemsVisible} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Tutorials column */}

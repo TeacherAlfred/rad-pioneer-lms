@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { getLocalProgress } from "@/lib/tutorialLocalProgress";
 import SeriesIntroCarousel from "@/components/tutorials/SeriesIntroCarousel";
 
-type Series = { id: string; title: string; description: string | null };
+type Series = { id: string; title: string; description: string | null; intro_items_visible: boolean };
 type Tutorial = { id: string; slug: string; title: string; description: string | null; estimated_minutes: number | null };
 type Hotspot = { id: string; x: number; y: number; label: string; text: string };
 type IntroItem = { id: string; title: string; instruction: string; image_url: string | null; hotspots: Hotspot[]; link_url: string | null; link_label: string | null };
@@ -26,17 +26,19 @@ export default function SeriesPage() {
     async function fetchSeries() {
       const { data: seriesRow } = await supabase
         .from("tutorial_series")
-        .select("id, title, description")
+        .select("id, title, description, intro_items_visible")
         .eq("slug", seriesSlug)
         .maybeSingle();
 
       if (seriesRow) {
-        const [{ data: tutorialRows }, { data: introRows }] = await Promise.all([
+        const [{ data: tutorialRows }, introRes] = await Promise.all([
           supabase.from("tutorials").select("id, slug, title, description, estimated_minutes").eq("series_id", seriesRow.id).order("order_index", { ascending: true }),
-          supabase.from("tutorial_series_intro_items").select("id, title, instruction, image_url, hotspots, link_url, link_label").eq("series_id", seriesRow.id).order("order_index", { ascending: true }),
+          seriesRow.intro_items_visible
+            ? supabase.from("tutorial_series_intro_items").select("id, title, instruction, image_url, hotspots, link_url, link_label").eq("series_id", seriesRow.id).order("order_index", { ascending: true })
+            : Promise.resolve({ data: [] as IntroItem[] }),
         ]);
         setTutorials(tutorialRows || []);
-        setIntroItems(introRows || []);
+        setIntroItems(introRes.data || []);
       }
       setSeries(seriesRow);
       setLoading(false);
