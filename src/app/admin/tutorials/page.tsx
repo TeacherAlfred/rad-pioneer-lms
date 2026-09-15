@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, Plus, X, Pencil, Trash2, Eye, EyeOff, ChevronUp, ChevronDown, Sparkles, BookOpen } from "lucide-react";
+import { Loader2, Plus, X, Pencil, Trash2, Eye, EyeOff, ChevronUp, ChevronDown, Sparkles, BookOpen, Heart } from "lucide-react";
+import { TUTORIAL_LEVELS, TUTORIAL_CATEGORIES } from "@/lib/tutorialTaxonomy";
 
 type Series = {
   id: string;
@@ -105,6 +106,9 @@ export default function TutorialSeriesListPage() {
           <p className="text-sm text-slate-500">Manage the series shown at radacademy.co.za/tutorials.</p>
         </div>
         <div className="flex gap-2">
+          <Link href="/admin/tutorials/topics" className="flex items-center gap-1.5 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg px-3 py-2">
+            <Heart size={14} /> Topic Votes
+          </Link>
           <Link href="/admin/tutorials/offer" className="flex items-center gap-1.5 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg px-3 py-2">
             <Sparkles size={14} /> Offer
           </Link>
@@ -165,9 +169,7 @@ export default function TutorialSeriesListPage() {
                 <div>
                   <label className={LABEL_CLS}>Level</label>
                   <select value={form.level} onChange={e => setForm({ ...form, level: e.target.value })} className={INPUT_CLS}>
-                    <option value="beginner">Beginner</option>
-                    <option value="intermediate">Intermediate</option>
-                    <option value="advanced">Advanced</option>
+                    {TUTORIAL_LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}{!l.enabled ? ' (not yet shown on the public filter)' : ''}</option>)}
                   </select>
                 </div>
                 <div>
@@ -177,7 +179,10 @@ export default function TutorialSeriesListPage() {
               </div>
               <div>
                 <label className={LABEL_CLS}>Category (for filtering)</label>
-                <input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className={INPUT_CLS} placeholder="e.g. MakeCode, Web" />
+                <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className={INPUT_CLS}>
+                  <option value="">None</option>
+                  {TUTORIAL_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}{!c.enabled ? ' (not yet shown on the public filter)' : ''}</option>)}
+                </select>
               </div>
               <div>
                 <label className={LABEL_CLS}>Cover image URL</label>

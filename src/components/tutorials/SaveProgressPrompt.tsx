@@ -9,6 +9,12 @@ type Stage = "idle" | "entering_phone" | "waiting" | "verified" | "expired";
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
+// Flip to true to re-enable. The WhatsApp click-to-chat flow underneath
+// (src/lib/tutorialProgress.ts, the webhook's "LINK <code>" branch) is
+// fully built and left in place - this only disables the UI entry point
+// while it's marked "coming soon" per product decision.
+const FEATURE_ENABLED = false;
+
 // The optional "save my progress across devices" affordance (spec S5/S9 -
 // never a gate, offered at a pause point). Verification is proof-of-
 // possession via WhatsApp click-to-chat rather than a password or SMS OTP
@@ -80,6 +86,18 @@ export default function SaveProgressPrompt({ variant = "quiet" }: { variant?: "q
   const wrapperClass = variant === "prominent"
     ? "rounded-3xl border border-slate-200 bg-white p-6"
     : "rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4";
+
+  if (!FEATURE_ENABLED) {
+    return (
+      <div className={`${wrapperClass} flex items-center gap-3 opacity-60`}>
+        <Smartphone className="text-slate-400 shrink-0" size={20} />
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-bold text-slate-500">Save my progress across devices</span>
+          <span className="text-[9px] font-black uppercase tracking-widest text-white bg-slate-400 rounded-full px-2 py-0.5">Coming soon</span>
+        </div>
+      </div>
+    );
+  }
 
   if (stage === "verified") {
     return (

@@ -3,12 +3,15 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Clock, Loader2, CheckCircle2, Circle } from "lucide-react";
+import { ArrowLeft, Clock, Loader2, CheckCircle2, Circle, Compass } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getLocalProgress } from "@/lib/tutorialLocalProgress";
+import SeriesIntroCarousel from "@/components/tutorials/SeriesIntroCarousel";
 
 type Series = { id: string; title: string; description: string | null };
 type Tutorial = { id: string; slug: string; title: string; description: string | null; estimated_minutes: number | null };
+type Hotspot = { id: string; x: number; y: number; label: string; text: string };
+type IntroItem = { id: string; title: string; instruction: string; image_url: string | null; hotspots: Hotspot[]; link_url: string | null; link_label: string | null };
 
 export default function SeriesPage() {
   const params = useParams();
@@ -16,6 +19,7 @@ export default function SeriesPage() {
 
   const [series, setSeries] = useState<Series | null>(null);
   const [tutorials, setTutorials] = useState<Tutorial[]>([]);
+  const [introItems, setIntroItems] = useState<IntroItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -27,12 +31,12 @@ export default function SeriesPage() {
         .maybeSingle();
 
       if (seriesRow) {
-        const { data: tutorialRows } = await supabase
-          .from("tutorials")
-          .select("id, slug, title, description, estimated_minutes")
-          .eq("series_id", seriesRow.id)
-          .order("order_index", { ascending: true });
+        const [{ data: tutorialRows }, { data: introRows }] = await Promise.all([
+          supabase.from("tutorials").select("id, slug, title, description, estimated_minutes").eq("series_id", seriesRow.id).order("order_index", { ascending: true }),
+          supabase.from("tutorial_series_intro_items").select("id, title, instruction, image_url, hotspots, link_url, link_label").eq("series_id", seriesRow.id).order("order_index", { ascending: true }),
+        ]);
         setTutorials(tutorialRows || []);
+        setIntroItems(introRows || []);
       }
       setSeries(seriesRow);
       setLoading(false);
@@ -63,9 +67,20 @@ export default function SeriesPage() {
         <ArrowLeft size={14} /> Tutorial Hub
       </Link>
 
-      <h1 className="text-2xl md:text-3xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">{series.title}</h1>
-      {series.description && <p className="text-slate-500 text-sm mb-8">{series.description}</p>}
+      <h1 className="text-2xl md:text-3xl font-black tracking-tight text-slate-900 mb-2">{series.title}</h1>
+      {series.description && <p className="text-slate-500 leading-relaxed mb-8">{series.description}</p>}
 
+      {introItems.length > 0 && (
+        <div className="mb-10">
+          <div className="flex items-center gap-2 mb-3">
+            <Compass size={16} className="text-rad-blue" />
+            <h2 className="text-xs font-black uppercase tracking-widest text-slate-400">Getting Started</h2>
+          </div>
+          <SeriesIntroCarousel items={introItems} />
+        </div>
+      )}
+
+      <h2 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">Tutorials</h2>
       <div className="flex flex-col gap-3">
         {tutorials.map((t, i) => {
           const progress = getLocalProgress(t.id);

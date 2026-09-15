@@ -10,7 +10,7 @@ import { renderStepMarkdown } from "@/lib/renderStepMarkdown";
 import TutorialOfferCard from "@/components/tutorials/TutorialOfferCard";
 import SaveProgressPrompt from "@/components/tutorials/SaveProgressPrompt";
 
-type Tutorial = { id: string; series_id: string; title: string; link_url: string | null; link_label: string | null };
+type Tutorial = { id: string; series_id: string; title: string; description: string | null; link_url: string | null; link_label: string | null };
 type Step = { id: string; instruction: string; image_url: string | null; why_this_works: string | null; link_url: string | null; link_label: string | null; order_index: number };
 
 // One step visible at a time (spec S2/S3.2) - the always-obvious dot
@@ -27,6 +27,7 @@ export default function TutorialStepPage() {
   const tutorialSlug = params.tutorialSlug as string;
 
   const [tutorial, setTutorial] = useState<Tutorial | null>(null);
+  const [seriesTitle, setSeriesTitle] = useState("");
   const [steps, setSteps] = useState<Step[]>([]);
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
@@ -35,12 +36,13 @@ export default function TutorialStepPage() {
 
   useEffect(() => {
     async function fetchTutorial() {
-      const { data: seriesRow } = await supabase.from("tutorial_series").select("id").eq("slug", seriesSlug).maybeSingle();
+      const { data: seriesRow } = await supabase.from("tutorial_series").select("id, title").eq("slug", seriesSlug).maybeSingle();
       if (!seriesRow) { setLoading(false); return; }
+      setSeriesTitle(seriesRow.title);
 
       const { data: tutorialRow } = await supabase
         .from("tutorials")
-        .select("id, series_id, title, link_url, link_label")
+        .select("id, series_id, title, description, link_url, link_label")
         .eq("series_id", seriesRow.id)
         .eq("slug", tutorialSlug)
         .maybeSingle();
@@ -130,9 +132,17 @@ export default function TutorialStepPage() {
 
   return (
     <div className="max-w-lg mx-auto px-5 py-8">
-      <Link href={`/tutorials/${seriesSlug}`} className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-500 mb-4">
-        <ArrowLeft size={14} /> {tutorial.title}
+      <Link href={`/tutorials/${seriesSlug}`} className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 mb-3 hover:text-slate-600">
+        <ArrowLeft size={14} /> {seriesTitle || "Tutorial Hub"}
       </Link>
+
+      {/* Structured title + description, not just a back-link label - the
+          tutorial's own identity should read clearly before diving into
+          step content. */}
+      <div className="mb-6">
+        <h1 className="text-xl md:text-2xl font-black tracking-tight text-slate-900 leading-tight">{tutorial.title}</h1>
+        {tutorial.description && <p className="text-sm text-slate-500 leading-relaxed mt-1">{tutorial.description}</p>}
+      </div>
 
       {/* Always-obvious "where am I" - spec S2's single biggest requirement */}
       <div className="mb-5">
@@ -160,28 +170,34 @@ export default function TutorialStepPage() {
         </a>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 mb-6 min-h-[200px]">
-        <p className="text-lg text-slate-900 leading-relaxed mb-4">{renderStepMarkdown(step.instruction)}</p>
+      <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden mb-6 min-h-[200px] shadow-[0_8px_30px_-12px_rgba(0,0,0,0.08)]">
+        {/* Bigger, framed image up top - capped to a fixed aspect ratio so
+            a tall screenshot can't stretch the card past the viewport. */}
         {step.image_url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={step.image_url} alt="" className="w-full rounded-2xl border border-slate-100 mb-4" />
-        )}
-        {step.why_this_works && (
-          <div className="flex items-start gap-2 bg-rad-yellow/10 border border-rad-yellow/30 rounded-xl p-3">
-            <Lightbulb size={16} className="text-rad-yellow shrink-0 mt-0.5" />
-            <p className="text-xs text-slate-600 leading-relaxed">{step.why_this_works}</p>
+          <div className="w-full aspect-[16/10] bg-slate-100">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={step.image_url} alt="" className="w-full h-full object-cover" />
           </div>
         )}
-        {step.link_url && (
-          <a
-            href={step.link_url}
-            target="_blank"
-            rel="noreferrer"
-            className={`inline-flex items-center gap-1.5 text-xs font-bold text-rad-blue underline underline-offset-2 ${step.why_this_works ? "mt-3" : ""}`}
-          >
-            <ExternalLink size={12} /> {step.link_label || "View extra resource"}
-          </a>
-        )}
+        <div className="p-6">
+          <p className="text-lg text-slate-900 leading-relaxed mb-4">{renderStepMarkdown(step.instruction)}</p>
+          {step.why_this_works && (
+            <div className="flex items-start gap-2 bg-rad-yellow/10 border border-rad-yellow/30 rounded-xl p-3">
+              <Lightbulb size={16} className="text-rad-yellow shrink-0 mt-0.5" />
+              <p className="text-xs text-slate-600 leading-relaxed">{step.why_this_works}</p>
+            </div>
+          )}
+          {step.link_url && (
+            <a
+              href={step.link_url}
+              target="_blank"
+              rel="noreferrer"
+              className={`inline-flex items-center gap-1.5 text-xs font-bold text-rad-blue underline underline-offset-2 ${step.why_this_works ? "mt-3" : ""}`}
+            >
+              <ExternalLink size={12} /> {step.link_label || "View extra resource"}
+            </a>
+          )}
+        </div>
       </div>
 
       {/* Large, one-handed tap targets (spec S2) */}

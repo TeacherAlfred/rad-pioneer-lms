@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Clock, Loader2, Rocket, CheckCircle2 } from "lucide-react";
+import { Clock, Loader2, Rocket, CheckCircle2, Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getAllLocalProgress } from "@/lib/tutorialLocalProgress";
+import { TUTORIAL_LEVELS, TUTORIAL_CATEGORIES } from "@/lib/tutorialTaxonomy";
 import TutorialOfferCard from "@/components/tutorials/TutorialOfferCard";
 import SaveProgressPrompt from "@/components/tutorials/SaveProgressPrompt";
+import TopicVoteSection from "@/components/tutorials/TopicVoteSection";
 
 type Series = {
   id: string;
@@ -47,8 +49,6 @@ export default function TutorialsHubPage() {
     fetchLibrary();
   }, []);
 
-  const categories = useMemo(() => Array.from(new Set(series.map(s => s.category).filter(Boolean))) as string[], [series]);
-
   const filtered = series.filter(s =>
     (levelFilter === "all" || s.level === levelFilter) &&
     (categoryFilter === "all" || s.category === categoryFilter)
@@ -76,68 +76,87 @@ export default function TutorialsHubPage() {
   return (
     <div className="max-w-3xl mx-auto px-5 py-10">
       <div className="text-center mb-8">
+        <div className="inline-flex items-center gap-1.5 bg-rad-blue/10 text-rad-blue text-[10px] font-black uppercase tracking-widest rounded-full px-3 py-1.5 mb-4">
+          <Sparkles size={12} /> Free coding tutorials
+        </div>
         <h1 className="text-3xl md:text-4xl font-black uppercase italic tracking-tighter text-slate-900 mb-2">Tutorial Hub</h1>
-        <p className="text-slate-500 text-sm">Step-by-step coding tutorials - follow along on your phone while you build.</p>
+        <p className="text-slate-500 text-sm max-w-md mx-auto leading-relaxed">Step-by-step coding tutorials.</p>
       </div>
 
-      {(categories.length > 0 || filtered.length > 3) && (
-        <div className="flex flex-wrap gap-2 justify-center mb-8">
-          <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} className="text-xs font-bold border border-slate-200 rounded-full px-4 py-2 bg-white">
-            <option value="all">All levels</option>
-            {Object.entries(LEVEL_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-          {categories.length > 0 && (
-            <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="text-xs font-bold border border-slate-200 rounded-full px-4 py-2 bg-white">
-              <option value="all">All categories</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          )}
-        </div>
-      )}
+      <div className="flex flex-nowrap gap-2 mb-8">
+        <select value={levelFilter} onChange={e => setLevelFilter(e.target.value)} className="flex-1 min-w-0 text-xs font-bold border border-slate-200 rounded-full px-3 py-2 bg-white truncate">
+          <option value="all">All levels</option>
+          {TUTORIAL_LEVELS.map(o => <option key={o.value} value={o.value} disabled={!o.enabled}>{o.label}{!o.enabled ? ' (Coming soon)' : ''}</option>)}
+        </select>
+        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="flex-1 min-w-0 text-xs font-bold border border-slate-200 rounded-full px-3 py-2 bg-white truncate">
+          <option value="all">All categories</option>
+          {TUTORIAL_CATEGORIES.map(o => <option key={o.value} value={o.value} disabled={!o.enabled}>{o.label}{!o.enabled ? ' (Coming soon)' : ''}</option>)}
+        </select>
+      </div>
 
       <div className="mb-6">
         <TutorialOfferCard placement="hub_card" />
       </div>
 
-      <div className="flex flex-col gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
         {filtered.map(s => {
           const progress = seriesProgress(s.id);
+          const pct = progress ? Math.round((progress.completed / progress.total) * 100) : 0;
           return (
             <Link
               key={s.id}
               href={`/tutorials/${s.slug}`}
-              className="flex gap-4 bg-white border border-slate-200 rounded-2xl p-4 hover:shadow-md transition-all"
+              className="group bg-white border border-slate-200 rounded-3xl overflow-hidden hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200"
             >
-              <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden">
+              <div className="relative w-full aspect-video bg-gradient-to-br from-rad-blue/10 to-rad-purple/10 overflow-hidden">
                 {s.cover_image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={s.cover_image_url} alt="" className="w-full h-full object-cover" />
+                  <img src={s.cover_image_url} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                 ) : (
-                  <Rocket className="text-slate-300" size={28} />
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Rocket className="text-rad-blue/30" size={36} />
+                  </div>
+                )}
+                <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent" />
+                <div className="absolute bottom-2.5 left-3 flex items-center gap-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-white bg-white/20 backdrop-blur-sm rounded-full px-2.5 py-1">{LEVEL_LABEL[s.level]}</span>
+                  {s.category && <span className="text-[9px] font-black uppercase tracking-widest text-white bg-white/20 backdrop-blur-sm rounded-full px-2.5 py-1">{s.category}</span>}
+                </div>
+                {progress?.completed === progress?.total && progress && (
+                  <div className="absolute top-2.5 right-2.5 bg-rad-green rounded-full p-1 shadow-lg">
+                    <CheckCircle2 size={16} className="text-white" />
+                  </div>
                 )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <h2 className="text-sm font-black text-slate-900 truncate">{s.title}</h2>
-                  {progress?.completed === progress?.total && progress && (
-                    <CheckCircle2 size={14} className="text-rad-green shrink-0" />
-                  )}
-                </div>
-                {s.description && <p className="text-xs text-slate-500 line-clamp-2 mb-2">{s.description}</p>}
-                <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                  <span>{LEVEL_LABEL[s.level]}</span>
-                  {s.estimated_minutes && (
+
+              <div className="p-4">
+                <h2 className="text-sm font-black text-slate-900 mb-1 leading-tight">{s.title}</h2>
+                {s.description && <p className="text-xs text-slate-500 leading-relaxed line-clamp-2 mb-3">{s.description}</p>}
+
+                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  {s.estimated_minutes ? (
                     <span className="flex items-center gap-1"><Clock size={11} /> {s.estimated_minutes} min</span>
-                  )}
+                  ) : <span />}
                   {progress && <span className="text-rad-blue">{progress.completed}/{progress.total} done</span>}
                 </div>
+
+                {progress && (
+                  <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                    <div className="h-full bg-rad-blue rounded-full transition-all" style={{ width: `${pct}%` }} />
+                  </div>
+                )}
               </div>
             </Link>
           );
         })}
+
         {filtered.length === 0 && (
-          <p className="text-center text-sm text-slate-400 py-12">No tutorials match those filters yet.</p>
+          <p className="col-span-full text-center text-sm text-slate-400 py-12">No tutorials match those filters yet.</p>
         )}
+      </div>
+
+      <div className="mb-6">
+        <TopicVoteSection />
       </div>
 
       <SaveProgressPrompt variant="quiet" />

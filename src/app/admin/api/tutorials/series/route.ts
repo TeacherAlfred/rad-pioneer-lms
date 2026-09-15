@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { DEFAULT_SERIES_INTRO_ITEMS } from '@/lib/tutorialSeriesIntroDefaults';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -44,6 +45,21 @@ export async function POST(req: Request) {
       .select()
       .single();
     if (error) throw error;
+
+    // Every new series starts with the standard "before the tutorials"
+    // onboarding items (see src/lib/tutorialSeriesIntroDefaults.ts) - a
+    // starting point the admin edits per-series, not a hardcoded fixture,
+    // so a future non-MakeCode series isn't stuck with MakeCode-specific
+    // copy. Best-effort: a failure here shouldn't fail series creation.
+    await supabaseAdmin.from('tutorial_series_intro_items').insert(
+      DEFAULT_SERIES_INTRO_ITEMS.map((item, i) => ({
+        series_id: data.id,
+        title: item.title,
+        instruction: item.instruction,
+        order_index: i,
+      }))
+    );
+
     return NextResponse.json({ row: data });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Loader2, Plus, Trash2, Eye, EyeOff, ChevronUp, ChevronDown, Image as ImageIcon, Lightbulb, ExternalLink, Pencil, X } from "lucide-react";
+import SeriesIntroItemsEditor from "./SeriesIntroItemsEditor";
 
 type Tutorial = {
   id: string;
@@ -179,6 +180,8 @@ export default function TutorialSeriesEditor({ seriesId }: { seriesId: string })
         <ArrowLeft size={14} /> All Series
       </Link>
       <h1 className="text-lg font-black text-slate-900 mb-6">{seriesTitle}</h1>
+
+      <SeriesIntroItemsEditor seriesId={seriesId} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Tutorials column */}
