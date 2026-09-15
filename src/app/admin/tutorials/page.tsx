@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, Plus, X, Pencil, Trash2, Eye, EyeOff, ChevronUp, ChevronDown, Sparkles, BookOpen, Heart } from "lucide-react";
+import { Loader2, Plus, X, Pencil, Trash2, Eye, EyeOff, ChevronUp, ChevronDown, Sparkles, BookOpen, Heart, Clock } from "lucide-react";
 import { TUTORIAL_LEVELS, TUTORIAL_CATEGORIES } from "@/lib/tutorialTaxonomy";
 
 type Series = {
@@ -106,6 +106,9 @@ export default function TutorialSeriesListPage() {
           <p className="text-sm text-slate-500">Manage the series shown at radacademy.co.za/tutorials.</p>
         </div>
         <div className="flex gap-2">
+          <Link href="/admin/tutorials/analytics" className="flex items-center gap-1.5 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg px-3 py-2">
+            <Clock size={14} /> Analytics
+          </Link>
           <Link href="/admin/tutorials/topics" className="flex items-center gap-1.5 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg px-3 py-2">
             <Heart size={14} /> Topic Votes
           </Link>

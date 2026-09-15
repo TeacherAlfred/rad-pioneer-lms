@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
   BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone, ListChecks, Send, Inbox,
+  GraduationCap, Heart, Sparkles, Clock,
 } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
 
@@ -91,6 +92,15 @@ const GROUPS: NavGroup[] = [
     items: [
       { href: '/admin/kids', label: 'Kids', icon: Baby },
       { href: '/admin/sessions', label: 'Upcoming Sessions', icon: CalendarClock },
+    ],
+  },
+  {
+    id: 'tutorials', label: 'Tutorial Hub', icon: GraduationCap, colorKey: 'purple',
+    items: [
+      { href: '/admin/tutorials', label: 'Series & Steps', icon: GraduationCap },
+      { href: '/admin/tutorials/topics', label: 'Topic Votes', icon: Heart },
+      { href: '/admin/tutorials/offer', label: 'Hub Offer', icon: Sparkles },
+      { href: '/admin/tutorials/analytics', label: 'Hub Analytics', icon: Clock },
     ],
   },
 ];

@@ -15,10 +15,20 @@ export async function POST(request: Request) {
     const realIp = request.headers.get('x-real-ip');
     const ipAddress = forwardedFor ? forwardedFor.split(',')[0] : realIp || 'Unknown IP';
 
+    // 1b. Location - Vercel populates these geo headers for free on every
+    // request in production (no third-party geo-IP lookup needed). Absent
+    // locally/off-Vercel, so every field is optional.
+    const geo = {
+      country: request.headers.get('x-vercel-ip-country') || null,
+      region: request.headers.get('x-vercel-ip-country-region') || null,
+      city: request.headers.get('x-vercel-ip-city') ? decodeURIComponent(request.headers.get('x-vercel-ip-city')!) : null,
+    };
+
     // 2. Merge it into our metadata payload
     const enrichedMetadata = {
       ...metadata,
-      ip_address: ipAddress
+      ip_address: ipAddress,
+      geo,
     };
 
     const { error } = await supabase

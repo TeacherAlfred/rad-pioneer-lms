@@ -1,14 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, Loader2, CheckCircle2, Lightbulb, ExternalLink } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getLocalProgress, setLocalProgress, getStoredProgressToken } from "@/lib/tutorialLocalProgress";
 import { renderStepMarkdown } from "@/lib/renderStepMarkdown";
+import { trackEvent } from "@/hooks/useTracker";
 import TutorialOfferCard from "@/components/tutorials/TutorialOfferCard";
 import SaveProgressPrompt from "@/components/tutorials/SaveProgressPrompt";
+
+// Capped so someone leaving a tab open overnight (or backgrounded, which
+// pauseTimer already excludes) can't blow out the average used to judge
+// whether a step needs splitting up.
+const MAX_STEP_SECONDS = 900;
 
 type Tutorial = { id: string; series_id: string; title: string; description: string | null; link_url: string | null; link_label: string | null };
 type Step = { id: string; instruction: string; image_url: string | null; why_this_works: string | null; link_url: string | null; link_label: string | null; order_index: number };
@@ -23,6 +29,7 @@ export default function TutorialStepPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const seriesSlug = params.seriesSlug as string;
   const tutorialSlug = params.tutorialSlug as string;
 
@@ -33,6 +40,71 @@ export default function TutorialStepPage() {
   const [index, setIndex] = useState(0);
   const [resumeOffer, setResumeOffer] = useState<number | null>(null);
   const [completed, setCompleted] = useState(false);
+
+  // Per-step dwell time (spec follow-up: which steps need splitting up or
+  // deepened, judged against tutorials.estimated_minutes). Segment-based
+  // rather than a single start timestamp so backgrounding the tab -
+  // extremely common here given the second-screen companion pattern,
+  // someone switching over to actually work in MakeCode - doesn't inflate
+  // the number: paused while hidden, resumed on return, flushed (sent +
+  // reset) on every step change and on unload.
+  const currentStepInfoRef = useRef<{ step: Step; index: number } | null>(null);
+  const stepAccumulatedMsRef = useRef(0);
+  const stepSegmentStartRef = useRef<number | null>(null);
+
+  function pauseStepSegment() {
+    if (stepSegmentStartRef.current !== null) {
+      stepAccumulatedMsRef.current += Date.now() - stepSegmentStartRef.current;
+      stepSegmentStartRef.current = null;
+    }
+  }
+
+  function resumeStepSegment() {
+    if (stepSegmentStartRef.current === null && currentStepInfoRef.current) {
+      stepSegmentStartRef.current = Date.now();
+    }
+  }
+
+  function flushStepDuration() {
+    pauseStepSegment();
+    const info = currentStepInfoRef.current;
+    const seconds = Math.min(Math.round(stepAccumulatedMsRef.current / 1000), MAX_STEP_SECONDS);
+    stepAccumulatedMsRef.current = 0;
+    if (info && tutorial && seconds >= 1) {
+      trackEvent("tutorial_step_duration", pathname, null, {
+        series_id: tutorial.series_id,
+        series_slug: seriesSlug,
+        tutorial_id: tutorial.id,
+        tutorial_slug: tutorialSlug,
+        step_id: info.step.id,
+        step_order_index: info.index,
+        step_count: steps.length,
+        seconds,
+      });
+    }
+  }
+
+  // Re-registers whenever tutorial/steps settle after load, so the handlers
+  // always close over the current tutorial/steps rather than the stale
+  // (null/empty) values from the render that mounted them.
+  useEffect(() => {
+    function onVisibility() {
+      if (document.hidden) pauseStepSegment();
+      else resumeStepSegment();
+    }
+    function onUnload() {
+      flushStepDuration();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onUnload);
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onUnload);
+      window.removeEventListener("beforeunload", onUnload);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tutorial, steps, pathname, seriesSlug, tutorialSlug]);
 
   useEffect(() => {
     async function fetchTutorial() {
@@ -59,21 +131,36 @@ export default function TutorialStepPage() {
 
       const stepParam = searchParams.get("step");
       const saved = getLocalProgress(tutorialRow.id);
+      const willShowResumeOffer = !stepParam && !!saved && saved.currentStepOrderIndex > 0 && !saved.completedAt;
+      let resolvedIndex = 0;
       if (stepParam) {
-        setIndex(Math.min(Math.max(0, parseInt(stepParam, 10) - 1), (stepRows?.length || 1) - 1));
-      } else if (saved && saved.currentStepOrderIndex > 0 && !saved.completedAt) {
-        setResumeOffer(saved.currentStepOrderIndex);
+        resolvedIndex = Math.min(Math.max(0, parseInt(stepParam, 10) - 1), (stepRows?.length || 1) - 1);
+        setIndex(resolvedIndex);
+      } else if (willShowResumeOffer) {
+        setResumeOffer(saved!.currentStepOrderIndex);
       }
       setCompleted(!!saved?.completedAt);
       setLoading(false);
+
+      // Don't start the clock while the "Welcome back!" interstitial is
+      // showing - it starts once they actually land on a step, via
+      // goToStep's Resume/Start Over call.
+      if (!willShowResumeOffer && stepRows && stepRows[resolvedIndex]) {
+        currentStepInfoRef.current = { step: stepRows[resolvedIndex], index: resolvedIndex };
+        stepSegmentStartRef.current = Date.now();
+      }
     }
     fetchTutorial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seriesSlug, tutorialSlug]);
 
   function goToStep(next: number, markCompleted = false) {
+    flushStepDuration();
     setIndex(next);
     router.replace(`/tutorials/${seriesSlug}/${tutorialSlug}?step=${next + 1}`);
+    currentStepInfoRef.current = steps[next] ? { step: steps[next], index: next } : null;
+    stepSegmentStartRef.current = Date.now();
+
     if (!tutorial) return;
     setLocalProgress(tutorial.id, next, markCompleted);
     if (markCompleted) setCompleted(true);
