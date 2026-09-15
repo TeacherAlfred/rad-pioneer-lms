@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Clock, Loader2, Rocket, CheckCircle2, Sparkles } from "lucide-react";
+import { Clock, Loader2, Rocket, CheckCircle2, Sparkles, ArrowRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { getAllLocalProgress } from "@/lib/tutorialLocalProgress";
 import { TUTORIAL_LEVELS, TUTORIAL_CATEGORIES } from "@/lib/tutorialTaxonomy";
@@ -145,6 +145,12 @@ export default function TutorialsHubPage() {
                     <div className="h-full bg-rad-blue rounded-full transition-all" style={{ width: `${pct}%` }} />
                   </div>
                 )}
+
+                <div className="flex justify-end mt-2">
+                  <span className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-rad-blue">
+                    Click to access <ArrowRight size={11} className="group-hover:translate-x-0.5 transition-transform" />
+                  </span>
+                </div>
               </div>
             </Link>
           );
