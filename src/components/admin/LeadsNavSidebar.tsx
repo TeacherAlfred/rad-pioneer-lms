@@ -84,6 +84,7 @@ const GROUPS: NavGroup[] = [
       { href: '/admin/lead-funnel/notifications', label: 'Notifications', icon: Bell },
       { href: '/admin/template-rollouts', label: 'Template Rollouts', icon: ListChecks },
       { href: '/admin/bot-flows', label: 'Bot Flows', icon: GitBranch },
+      { href: '/admin/bot-flows/map', label: 'Flow Map', icon: Kanban },
       { href: '/admin/bot-media', label: 'Bot Media', icon: FileText },
     ],
   },
@@ -109,9 +110,9 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + '/');
 }
 
-// Small pill in the corner of an icon showing how many leads currently
-// have something queued in admin_notification_buffer. Not a generic
-// "unread" red dot on purpose - it's the buffer's own count, in the
+// Small pill in the corner of an icon showing how many events are currently
+// queued in admin_notification_buffer, waiting for the next digest. Not a
+// generic "unread" red dot on purpose - it's the buffer's own count, in the
 // group's own color, so it reads as "this many pending" not "something's
 // wrong".
 function PendingBadge({ count }: { count: number }) {
@@ -137,7 +138,7 @@ function usePendingBufferCount(): number {
       try {
         const res = await fetch('/admin/api/lead-funnel/notify-flush');
         const data = await res.json();
-        if (!cancelled && res.ok) setCount((data.pending || []).length);
+        if (!cancelled && res.ok) setCount(data.pendingCount || 0);
       } catch {
         // Non-fatal - badge just won't update this cycle.
       }

@@ -84,6 +84,7 @@ export async function POST(req: Request) {
         notify_admin_immediate: !!body.notify_admin_immediate,
         skip_human_handoff: body.skip_human_handoff !== false,
         sets_opted_out: !!body.sets_opted_out,
+        requires_approval: !!body.requires_approval,
         expects_reply: !!body.expects_reply,
         reply_label: body.expects_reply ? body.reply_label.trim() : null,
         reply_confirmation: body.reply_confirmation?.trim() || null,
@@ -127,7 +128,7 @@ export async function PATCH(req: Request) {
     const allowed = [
       'trigger_button_id', 'label', 'action_type', 'message_body', 'message_buttons', 'featured_program_id',
       'template_name', 'template_language', 'template_variables', 'template_variable_names', 'template_button_payloads',
-      'bot_media_keyword', 'set_source', 'add_tags', 'notify_admin', 'notify_admin_immediate', 'skip_human_handoff', 'sets_opted_out', 'active',
+      'bot_media_keyword', 'set_source', 'add_tags', 'notify_admin', 'notify_admin_immediate', 'skip_human_handoff', 'sets_opted_out', 'requires_approval', 'active',
       'expects_reply', 'reply_label', 'reply_confirmation', 'completion_tag', 'reply_validation', 'reply_invalid_message',
     ];
     const update: Record<string, any> = { updated_at: new Date().toISOString() };

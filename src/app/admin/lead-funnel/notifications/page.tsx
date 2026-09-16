@@ -6,11 +6,15 @@ import { ArrowLeft, Loader2, BellOff, Clock, CheckCircle2, Send, Copy } from "lu
 import { DAY_NAMES, type DndDay } from "@/lib/dndSchedule";
 
 type Settings = { id: string; buffer_minutes: number };
-type PendingLead = {
-  leadId: string; leadName: string | null; leadPhone: string | null;
-  count: number; events: string[]; windowStart: string; willFlushAt: string; overdue: boolean;
+type Preview = {
+  pendingCount: number;
+  byCategory: Record<string, number>;
+  dndActive: boolean;
+  digestMinutes: number;
+  lastDigestSentAt: string | null;
+  nextDigestAt: string;
+  overdue: boolean;
 };
-type Preview = { pending: PendingLead[]; dndActive: boolean; bufferMinutes: number; lastFlushedAt: string | null };
 
 function relativeTime(iso: string | null): string {
   if (!iso) return 'Never';
@@ -39,7 +43,7 @@ export default function NotificationSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [releasingId, setReleasingId] = useState<string | 'all' | null>(null);
+  const [releasingId, setReleasingId] = useState<'all' | null>(null);
 
   const loadPreview = useCallback(async () => {
     try {
@@ -126,15 +130,11 @@ export default function NotificationSettingsPage() {
     }
   }
 
-  async function releaseNow(leadId?: string) {
-    setReleasingId(leadId || 'all');
+  async function releaseNow() {
+    setReleasingId('all');
     setError(null);
     try {
-      const res = await fetch('/admin/api/lead-funnel/notify-flush', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(leadId ? { leadId } : {}),
-      });
+      const res = await fetch('/admin/api/lead-funnel/notify-flush', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to release');
       await loadPreview();
@@ -155,7 +155,7 @@ export default function NotificationSettingsPage() {
         <div className="mb-6">
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Notification Settings</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Controls how pipeline alerts reach you. New leads, opt-outs, and delivery failures always ping you right away - everything else (button taps, media downloads, bot flow fires, reply captures) gets batched into one message per lead after the buffer window below.
+            Controls how pipeline alerts reach you. A brand new lead always pings you right away - everything else (opt-outs, delivery failures, button taps, media downloads, bot flow fires, reply captures) rolls into one stats-only digest every digest interval below, with just an "all noted" acknowledgment - no per-lead detail or outcome buttons in the digest itself. Check Message Activity or the Call Queue for who did what.
           </p>
         </div>
 
@@ -166,14 +166,14 @@ export default function NotificationSettingsPage() {
         ) : settings ? (
           <div className="space-y-4">
             <div className="bg-white rounded-2xl border border-slate-200 p-5">
-              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3 flex items-center gap-1.5"><Clock size={13} /> Buffer Window</h3>
+              <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3 flex items-center gap-1.5"><Clock size={13} /> Digest Interval</h3>
               <p className="text-xs text-slate-500 mb-3">
-                A lead's first buffered action starts the clock - everything else they do gets rolled into one summary sent exactly this many minutes later, no matter how many more actions happen in between.
+                A single global clock, not per-lead - every buffered event since the last digest gets rolled into one stats message sent exactly this many minutes later, whether that's a quiet stretch with nothing to report or a burst of activity.
               </p>
               <div className="flex items-center gap-3 mb-4">
                 <input
                   type="number"
-                  min={1}
+                  min={5}
                   max={180}
                   value={settings.buffer_minutes}
                   onChange={e => setSettings(s => s ? { ...s, buffer_minutes: Number(e.target.value) } : s)}
@@ -183,61 +183,41 @@ export default function NotificationSettingsPage() {
                 <span className="text-sm text-slate-500">minutes</span>
               </div>
 
-              <div className="border-t border-slate-100 pt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-slate-500">Last batch sent</span>
-                  <span className="text-xs font-bold text-slate-700">{preview ? relativeTime(preview.lastFlushedAt) : '—'}</span>
+              <div className="border-t border-slate-100 pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">Last digest sent</span>
+                  <span className="text-xs font-bold text-slate-700">{preview ? relativeTime(preview.lastDigestSentAt) : '—'}</span>
                 </div>
 
-                {preview && preview.pending.length === 0 && (
+                {preview && preview.pendingCount === 0 ? (
                   <p className="text-xs text-slate-300 py-3 text-center">Nothing queued right now.</p>
-                )}
-
-                {preview && preview.pending.length > 0 && (
-                  <div className="space-y-2 mt-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pending for next cycle ({preview.pending.length})</span>
+                ) : preview && (
+                  <div className="bg-slate-50 rounded-xl px-3.5 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                        Pending for next digest ({preview.pendingCount})
+                      </span>
                       <button
-                        onClick={() => releaseNow()}
+                        onClick={releaseNow}
                         disabled={releasingId !== null}
                         className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-800 disabled:opacity-50"
                       >
-                        <Send size={11} /> {releasingId === 'all' ? 'Sending...' : 'Send All Now'}
+                        <Send size={11} /> {releasingId === 'all' ? 'Sending...' : 'Send Now'}
                       </button>
                     </div>
-                    {preview.pending.map(p => (
-                      <div key={p.leadId} className="bg-slate-50 rounded-xl px-3 py-2.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm font-bold text-slate-800 truncate">{p.leadName || (p.leadPhone ? `+${p.leadPhone}` : 'Unknown lead')}</div>
-                            <div className="text-[11px] text-slate-400">
-                              {p.count} action{p.count === 1 ? '' : 's'} ·{' '}
-                              {preview.dndActive
-                                ? 'waiting for Do Not Disturb to end'
-                                : p.overdue ? 'due now - waiting for next check' : `sends in ${relativeFuture(p.willFlushAt)}`}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => releaseNow(p.leadId)}
-                            disabled={releasingId !== null}
-                            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50"
-                          >
-                            {releasingId === p.leadId ? 'Sending...' : 'Send Now'}
-                          </button>
+                    <div className="space-y-1">
+                      {Object.entries(preview.byCategory).map(([label, count]) => (
+                        <div key={label} className="text-[11px] text-slate-600 flex items-center justify-between">
+                          <span>{label}</span>
+                          <span className="font-bold">{count}</span>
                         </div>
-                        {/* What they actually did - the whole point of the buffer is
-                            batching, but that shouldn't mean flying blind on whether
-                            this is a hot lead worth releasing early or just noise. */}
-                        <div className="mt-2 pt-2 border-t border-slate-200/70 space-y-1">
-                          {p.events.map((event, i) => (
-                            <div key={i} className="text-[11px] text-slate-600 flex items-start gap-1.5">
-                              <span className="text-slate-300 shrink-0">•</span>
-                              <span className="min-w-0">{event}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-200/70">
+                      {preview.dndActive
+                        ? 'Waiting for Do Not Disturb to end.'
+                        : preview.overdue ? 'Due now - waiting for the next check.' : `Sends in ${relativeFuture(preview.nextDigestAt)}.`}
+                    </p>
                   </div>
                 )}
               </div>
@@ -246,7 +226,7 @@ export default function NotificationSettingsPage() {
             <div className="bg-white rounded-2xl border border-slate-200 p-5">
               <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3 flex items-center gap-1.5"><BellOff size={13} /> Do Not Disturb</h3>
               <p className="text-xs text-slate-500 mb-4">
-                Each day can have its own window, or none at all - e.g. a longer window on weekends than on weekdays. While a day's window is active, <b>nothing</b> sends during it, including new-lead and opt-out alerts that otherwise ping immediately. Everything held back sends the moment the window ends, each lead as its own consolidated message.
+                Each day can have its own window, or none at all - e.g. a longer window on weekends than on weekdays. While a day's window is active, <b>nothing</b> sends during it, including the new-lead alert that otherwise pings immediately. Everything else held back sends as part of the next digest once the window ends.
               </p>
 
               <div className="space-y-2">

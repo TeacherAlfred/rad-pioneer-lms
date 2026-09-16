@@ -2,15 +2,23 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { sendMetaTemplate, sendWhatsAppMessage } from '@/lib/metaTemplate';
 
-// Sends a queued message for real, exactly as sendToLead() would have if
-// the lead weren't flagged is_business_number - see src/lib/leadSend.ts.
-// The logged messages row here uses a generic "(approved)" bracket format
-// rather than the original call site's own success/fail text (e.g.
-// "[Delivered welcome menu]") since that exact wording isn't preserved
-// through the queue, only the row's `label` is - an accepted, minor loss of
-// fidelity rather than a bug.
-export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+// Sends a queued message for real, exactly as sendToLead() would have if it
+// hadn't been intercepted - see src/lib/leadSend.ts. The logged messages
+// row here uses a generic "(approved)" bracket format rather than the
+// original call site's own success/fail text (e.g. "[Delivered welcome
+// menu]") since that exact wording isn't preserved through the queue, only
+// the row's `label` is - an accepted, minor loss of fidelity rather than a bug.
+//
+// `editedText` (optional) lets the admin rewrite a freeform message's
+// wording before it goes out - never mutates the stored row itself, only a
+// copy of send_payload.payload used for this one send, so a since-rejected
+// or still-pending row's own record stays exactly what was originally
+// queued. Only meaningful for kind:'freeform' with a text field to rewrite
+// (see the GET route's `editable` flag) - templates ignore it entirely,
+// since Meta enforces their exact registered wording.
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const { editedText } = await req.json().catch(() => ({ editedText: undefined }));
   const supabase = supabaseAdmin();
 
   const { data: row, error: fetchError } = await supabase
@@ -22,6 +30,12 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   if (row.status !== 'pending') return NextResponse.json({ error: `Already ${row.status}` }, { status: 400 });
 
   const send = row.send_payload;
+  if (send.kind === 'freeform' && editedText?.trim()) {
+    const payload = JSON.parse(JSON.stringify(send.payload));
+    if (payload.text?.body !== undefined) payload.text.body = editedText.trim();
+    else if (payload.interactive?.body?.text !== undefined) payload.interactive.body.text = editedText.trim();
+    send.payload = payload;
+  }
   const result = send.kind === 'template'
     ? await sendMetaTemplate(row.phone, send.templateName, send.templateLanguage, send.bodyValues, send.variableNames || [], send.buttonPayloads || [])
     : await sendWhatsAppMessage(row.phone, send.payload);

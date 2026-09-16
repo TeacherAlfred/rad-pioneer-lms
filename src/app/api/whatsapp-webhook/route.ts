@@ -151,14 +151,14 @@ async function applyMessageStatus(supabase: any, status: any) {
 // it instead of losing it silently; it surfaces as a catch-up summary the
 // moment the admin next messages the bot (see isFromAdmin below).
 //
-// Most events don't send here at all anymore - see
-// RAD_Lead_Stages_and_Followup_Spec-adjacent buffering: everything except
-// { immediate: true } callers (new lead, opt-out, bot_media delivery
-// failure) gets queued into admin_notification_buffer and consolidated into
-// one message per lead by the notify-flush endpoint once that lead's
-// buffer window elapses. During DND, even immediate-tier events queue
-// instead of sending - "any lead notifications are not sent during that
-// time" applies across the board, not just the buffered ones.
+// Most events don't send here at all anymore (2026-09-16) - the only
+// { immediate: true } caller left is the brand-new-lead alert. Every other
+// event (opt-outs, delivery failures, button taps, downloads, reply
+// captures - everything) queues into admin_notification_buffer and goes out
+// as one global, stats-only digest every buffer_minutes, built by
+// flushBufferedNotifications() in src/lib/notificationBuffer.ts - no more
+// per-lead detail reaches the admin's WhatsApp for these. During DND, even
+// the new-lead alert queues instead of sending immediately.
 async function notifyAdmin(supabase: any, senderPhone: string, stageText: string, leadId: string | null, opts?: { immediate?: boolean }) {
   const adminPhone = process.env.ADMIN_PHONE_NUMBER;
   if (!adminPhone) return;
@@ -237,7 +237,7 @@ async function matchVoucherCode(supabase: any, searchText: string) {
     .sort((a: any, b: any) => b.code.length - a.code.length)[0] || null;
 }
 
-async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, matchedMedia: any) {
+async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, matchedMedia: any, opts: { forceQueue?: boolean; botFlowId?: string } = {}) {
   const mediaPayload = {
     type: 'interactive',
     interactive: {
@@ -253,7 +253,7 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
       }
     }
   };
-  const sendResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: mediaPayload }, matchedMedia.title);
+  const sendResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: mediaPayload }, matchedMedia.title, opts);
   if (sendResult.queued) {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[Queued for approval: ${matchedMedia.title}]` }]);
   } else if (sendResult.ok) {
@@ -261,7 +261,7 @@ async function deliverBotMedia(supabase: any, senderPhone: string, lead: any, ma
     await notifyAdmin(supabase, senderPhone, `📥 Downloaded the ${matchedMedia.title}.`, lead.id);
   } else {
     await supabase.from('messages').insert([{ lead_id: lead.id, direction: 'outbound', body: `[FAILED to deliver ${matchedMedia.title}: ${sendResult.error}]` }]);
-    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`, lead.id, { immediate: true });
+    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver "${matchedMedia.title}": ${sendResult.error}`, lead.id);
   }
   return sendResult;
 }
@@ -329,7 +329,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     // notify, same as the old hardcoded btn_guide behavior.
     const matchedMedia = await matchBotMedia(supabase, flow.bot_media_keyword || '', effectiveLead);
     if (matchedMedia) {
-      await deliverBotMedia(supabase, senderPhone, effectiveLead, matchedMedia);
+      await deliverBotMedia(supabase, senderPhone, effectiveLead, matchedMedia, { forceQueue: flow.requires_approval, botFlowId: flow.id });
     } else {
       await handleGenericHandoff(supabase, senderPhone, effectiveLead, buttonTitle);
     }
@@ -368,7 +368,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
           },
         }
       : { type: 'text', text: { body: messageBody } };
-    sendResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload }, `flow: ${flow.label}`);
+    sendResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload }, `flow: ${flow.label}`, { forceQueue: flow.requires_approval, botFlowId: flow.id });
     await supabase.from('messages').insert([{
       lead_id: lead.id,
       direction: 'outbound',
@@ -385,7 +385,7 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
       bodyValues,
       variableNames: flow.template_variable_names || [],
       buttonPayloads: flow.template_button_payloads || [],
-    }, `template: ${flow.template_name}`);
+    }, `template: ${flow.template_name}`, { forceQueue: flow.requires_approval, botFlowId: flow.id });
     await supabase.from('messages').insert([{
       lead_id: lead.id,
       direction: 'outbound',
@@ -399,7 +399,10 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
     await supabase.from('leads').update({ needs_human: true }).eq('id', lead.id);
   }
   if (flow.notify_admin) {
-    await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — ${flow.label}`, lead.id, { immediate: !!flow.notify_admin_immediate });
+    // flow.notify_admin_immediate is no longer honored (2026-09-16) - every
+    // non-new-lead alert, including this one, goes through the global
+    // digest now regardless of a flow's own "instantly" setting.
+    await notifyAdmin(supabase, senderPhone, `🔘 Tapped: "${buttonTitle}" — ${flow.label}`, lead.id);
   }
 }
 
@@ -518,6 +521,13 @@ export async function POST(request: Request) {
 
                 if (message.type === 'interactive' && message.interactive?.type === 'button_reply') {
                   const buttonId = message.interactive.button_reply?.id || '';
+                  // The pipeline digest's one button (src/lib/notificationBuffer.ts) -
+                  // purely an acknowledgment, no per-lead outcome to log since the
+                  // digest is stats-only, not tied to any specific lead.
+                  if (buttonId === 'btn_digest_noted') {
+                    await sendWhatsAppMessage(senderPhone, { type: 'text', text: { body: '👍 Noted.' } });
+                    continue;
+                  }
                   const matchedPrefix = Object.keys(STATUS_BUTTONS).find(prefix => buttonId.startsWith(`${prefix}_`));
                   if (matchedPrefix) {
                     const targetLeadId = buttonId.slice(matchedPrefix.length + 1);
@@ -823,7 +833,7 @@ export async function POST(request: Request) {
               // still logged above and alerted immediately, so a human sees it
               // and can act (including honoring an opt-out) manually.
               if (lead.bot_paused) {
-                await notifyAdmin(supabase, senderPhone, `💬 ${messageText || '[non-text message]'} (bot paused - manual replies only)`, lead.id, { immediate: true });
+                await notifyAdmin(supabase, senderPhone, `💬 ${messageText || '[non-text message]'} (bot paused - manual replies only)`, lead.id);
                 continue;
               }
 
@@ -908,7 +918,7 @@ export async function POST(request: Request) {
                     body: invalidAckResult.queued ? '[Queued for approval: reply-validation-failed handoff]' : invalidAckResult.ok ? '[Delivered reply-validation-failed handoff]' : `[FAILED to deliver reply-validation-failed handoff: ${invalidAckResult.error}]`,
                     wamid: invalidAckResult.wamid || null,
                   }]);
-                  await notifyAdmin(supabase, senderPhone, `⚠️ ${label} expected, no valid email found in: "${messageText}" - handed to a human.`, lead.id, { immediate: true });
+                  await notifyAdmin(supabase, senderPhone, `⚠️ ${label} expected, no valid email found in: "${messageText}" - handed to a human.`, lead.id);
                   continue;
                 }
 
@@ -992,7 +1002,7 @@ export async function POST(request: Request) {
                       body: voucherAckResult.queued ? '[Queued for approval: 75HARD handoff acknowledgment]' : voucherAckResult.ok ? '[Delivered 75HARD handoff acknowledgment]' : `[FAILED to deliver acknowledgment: ${voucherAckResult.error}]`,
                       wamid: voucherAckResult.wamid || null,
                     }]);
-                    await notifyAdmin(supabase, senderPhone, `🏋️ 75HARD voucher - needs a human (personal reply, no automated flow).`, lead.id, { immediate: true });
+                    await notifyAdmin(supabase, senderPhone, `🏋️ 75HARD voucher - needs a human (personal reply, no automated flow).`, lead.id);
                     continue;
                   }
                 }
@@ -1109,7 +1119,7 @@ export async function POST(request: Request) {
                     ...(welcomeResult.queued || welcomeResult.ok ? {} : { status: 'failed', error_code: welcomeResult.errorCode || null, error_detail: welcomeResult.error || null }),
                   }]);
                   if (!welcomeResult.queued && !welcomeResult.ok) {
-                    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver welcome menu: ${welcomeResult.error}`, lead.id, { immediate: true });
+                    await notifyAdmin(supabase, senderPhone, `⚠️ Failed to deliver welcome menu: ${welcomeResult.error}`, lead.id);
                   }
                   // Plain text with no keyword match previously generated no
                   // buffered event at all - the bot replied with the generic

@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getPendingPreview, flushBufferedNotifications } from '@/lib/notificationBuffer';
 
-// GET: what's currently queued in admin_notification_buffer, grouped by
-// lead, plus when it'll naturally flush and when the last flush happened -
-// lets the admin see the pipeline without waiting for the external cron.
+// GET: what's currently queued in admin_notification_buffer (as category
+// counts, same shape the actual digest uses), plus when it'll naturally
+// flush and when the last one went out - lets the admin see the pipeline
+// without waiting for the external cron.
 export async function GET() {
   try {
     const preview = await getPendingPreview();
@@ -13,15 +14,14 @@ export async function GET() {
   }
 }
 
-// POST: manual "release now". { leadId } scopes to one lead; omitted
-// releases everyone currently queued. Always force: true - a human
-// consciously choosing to release right now is exactly the case that
-// should override both the buffer timer and Do Not Disturb, not just the
-// timer - see flushBufferedNotifications.
-export async function POST(req: Request) {
+// POST: manual "release now" - sends the digest immediately with whatever's
+// currently queued. Always force: true - a human consciously choosing to
+// release right now is exactly the case that should override both the
+// digest timer and Do Not Disturb, not just the timer - see
+// flushBufferedNotifications.
+export async function POST() {
   try {
-    const body = await req.json().catch(() => ({}));
-    const result = await flushBufferedNotifications({ force: true, onlyLeadId: body.leadId || undefined });
+    const result = await flushBufferedNotifications({ force: true });
     return NextResponse.json(result);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -30,6 +30,7 @@ type FlowRow = {
   notify_admin_immediate: boolean;
   skip_human_handoff: boolean;
   sets_opted_out: boolean;
+  requires_approval: boolean;
   expects_reply: boolean;
   reply_label: string | null;
   reply_confirmation: string | null;
@@ -78,6 +79,7 @@ const emptyForm = {
   notify_admin_immediate: false,
   skip_human_handoff: true,
   sets_opted_out: false,
+  requires_approval: false,
   expects_reply: false,
   reply_label: '',
   reply_confirmation: '',
@@ -281,6 +283,7 @@ function BotFlowsPageInner() {
       notify_admin_immediate: row.notify_admin_immediate,
       skip_human_handoff: row.skip_human_handoff,
       sets_opted_out: row.sets_opted_out,
+      requires_approval: row.requires_approval,
       expects_reply: row.expects_reply,
       reply_label: row.reply_label || '',
       reply_confirmation: row.reply_confirmation || '',
@@ -384,6 +387,7 @@ function BotFlowsPageInner() {
         notify_admin_immediate: form.notify_admin_immediate,
         skip_human_handoff: form.skip_human_handoff,
         sets_opted_out: form.sets_opted_out,
+        requires_approval: form.requires_approval,
         expects_reply: form.expects_reply,
         reply_label: form.expects_reply ? form.reply_label.trim() : null,
         reply_confirmation: form.reply_confirmation.trim() || null,
@@ -501,7 +505,13 @@ function BotFlowsPageInner() {
                   <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Buttons (max 3, optional)</label>
                   {form.message_buttons.map((b, i) => (
                     <div key={i} className="flex gap-2 mb-2">
-                      <input placeholder="button_id (or another flow's trigger id, to chain)" value={b.id} onChange={e => updateButton(i, 'id', e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 text-xs outline-none w-64" />
+                      <input
+                        list="flow-trigger-ids"
+                        placeholder="button_id (or another flow's trigger id, to chain)"
+                        value={b.id}
+                        onChange={e => updateButton(i, 'id', e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 text-xs outline-none w-64"
+                      />
                       <div className="flex-1 relative">
                         <input placeholder="Button label" value={b.title} onChange={e => updateButton(i, 'title', e.target.value)} maxLength={20} className={`w-full bg-slate-50 border rounded-lg px-3 py-2 pr-10 text-xs outline-none ${b.title.length > 20 ? 'border-rose-400' : 'border-slate-200'}`} />
                         <span className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold ${b.title.length > 20 ? 'text-rose-500' : 'text-slate-300'}`}>{b.title.length}/20</span>
@@ -512,6 +522,15 @@ function BotFlowsPageInner() {
                   {form.message_buttons.length < 3 && (
                     <button type="button" onClick={addButton} className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">+ add button</button>
                   )}
+                  {/* Suggests every existing flow's trigger id (label shown, id filled) so chaining to
+                      another flow doesn't require hunting the id down elsewhere on the page first -
+                      still a free-typeable input underneath, for a genuinely new id or a hardcoded
+                      webhook-origin one like btn_human that isn't its own flow row. */}
+                  <datalist id="flow-trigger-ids">
+                    {rows.map(r => (
+                      <option key={r.id} value={r.trigger_button_id}>{r.label}</option>
+                    ))}
+                  </datalist>
                 </div>
               </>
             ) : form.action_type === 'bot_media' ? (
@@ -624,6 +643,9 @@ function BotFlowsPageInner() {
               <label className="flex items-center gap-2 text-xs font-bold text-rose-600 cursor-pointer" title="Marks leads.opted_out when this flow fires - use on the 'Yes, Stop' confirm button, never on the initial prompt itself">
                 <input type="checkbox" checked={form.sets_opted_out} onChange={e => setForm(p => ({ ...p, sets_opted_out: e.target.checked }))} /> Sets opted_out (compliance)
               </label>
+              <label className="flex items-center gap-2 text-xs font-bold text-amber-600 cursor-pointer" title="Every send this flow produces lands in the Outbox for an admin to approve or reject first, regardless of which lead tapped it - independent of a lead's own is_business_number gate">
+                <input type="checkbox" checked={form.requires_approval} onChange={e => setForm(p => ({ ...p, requires_approval: e.target.checked }))} /> Requires approval before sending
+              </label>
             </div>
 
             {form.action_type === 'message' && (
@@ -718,6 +740,7 @@ function BotFlowsPageInner() {
                     </span>
                     {row.set_source && <span className="text-[10px] font-black uppercase tracking-widest bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">source: {row.set_source}</span>}
                     {row.expects_reply && <span className="text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">captures: {row.reply_label}</span>}
+                    {row.requires_approval && <span className="text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">Requires approval</span>}
                   </div>
                   <p className="text-xs text-slate-500 mt-1 line-clamp-2">
                     {row.action_type === 'template'

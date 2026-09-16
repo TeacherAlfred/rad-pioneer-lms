@@ -1,13 +1,18 @@
 // Server-only: the actual consolidation/send logic for buffered admin
 // notifications, shared between the external cron-triggered endpoint
 // (src/app/api/lead-funnel/notify-flush) and the admin-facing manual
-// "release now" endpoint (src/app/admin/api/lead-funnel/notify-flush) -
-// having two copies of "group by lead, build one message, send, mark
-// flushed, fall back to pending_admin_alerts on failure" was exactly the
-// kind of drift risk that made STATUS_BUTTONS get extracted earlier.
+// "release now" endpoint (src/app/admin/api/lead-funnel/notify-flush).
+//
+// 2026-09-16: retired the old "one consolidated message per lead, after
+// that lead's own buffer window" model in favor of a single global,
+// stats-only digest every buffer_minutes (default 30) - a lead-by-lead
+// blow-by-blow no longer reaches the admin's WhatsApp at all; they read
+// Message Activity/the app itself for who-did-what. New-lead alerts are
+// untouched (still immediate, individual, with STATUS_BUTTONS) - see
+// notifyAdmin() in whatsapp-webhook/route.ts, which now only ever passes
+// { immediate: true } for that one case.
 import { createClient } from '@supabase/supabase-js';
 import { sendWhatsAppMessage } from '@/lib/metaTemplate';
-import { STATUS_BUTTONS } from '@/lib/adminPipelineButtons';
 import { isWithinDnd, type DndDay } from '@/lib/dndSchedule';
 
 const supabaseAdmin = createClient(
@@ -15,83 +20,102 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const DEFAULT_BUFFER_MINUTES = 10;
+const DEFAULT_DIGEST_MINUTES = 30;
+
+// The WhatsApp digest itself is pure counts (no lead names - see the
+// digest's own body text below); this categorization only groups by kind of
+// event, derived from each event_text's own leading emoji/phrasing rather
+// than a stored category column, since every notifyAdmin() call site across
+// the webhook already writes a consistent prefix. Order matters - checked
+// top to bottom, first match wins.
+const CATEGORY_RULES: { test: RegExp; label: string }[] = [
+  { test: /needs a human|passed to educator|manual replies only|handed to a human/i, label: "Needs a human" },
+  { test: /^⚠️|failed/i, label: "Failures" },
+  { test: /^🔘/, label: "Button taps" },
+  { test: /^📥/, label: "Downloads" },
+  { test: /^📝/, label: "Replies captured" },
+  { test: /^🚫/, label: "Opt-out activity" },
+  { test: /^📋/, label: "Queued for approval" },
+  { test: /^💬/, label: "Messages received" },
+];
+
+function categorize(eventText: string): string {
+  for (const rule of CATEGORY_RULES) {
+    if (rule.test.test(eventText)) return rule.label;
+  }
+  return "Other";
+}
+
+function tallyByCategory(rows: { event_text: string }[]): Record<string, number> {
+  const tally: Record<string, number> = {};
+  for (const row of rows) {
+    const cat = categorize(row.event_text);
+    tally[cat] = (tally[cat] || 0) + 1;
+  }
+  return tally;
+}
 
 export async function getDndSchedule(): Promise<DndDay[]> {
   const { data } = await supabaseAdmin.from('admin_dnd_schedule').select('*').order('day_of_week');
   return data || [];
 }
 
-async function getBufferMinutes(): Promise<number> {
-  const { data } = await supabaseAdmin.from('admin_notification_settings').select('buffer_minutes').limit(1).maybeSingle();
-  return data?.buffer_minutes ?? DEFAULT_BUFFER_MINUTES;
-}
-
-type BufferRow = { id: string; lead_id: string; event_text: string; created_at: string };
-
-async function groupPendingByLead(): Promise<Map<string, BufferRow[]>> {
-  const { data: pending, error } = await supabaseAdmin
-    .from('admin_notification_buffer')
-    .select('*')
-    .is('flushed_at', null)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
-
-  const byLead = new Map<string, BufferRow[]>();
-  for (const row of pending || []) {
-    if (!byLead.has(row.lead_id)) byLead.set(row.lead_id, []);
-    byLead.get(row.lead_id)!.push(row);
-  }
-  return byLead;
-}
-
-// What the settings page's "pending for next cycle" panel shows - doesn't
-// send anything, just reports what's queued and when it'll naturally go
-// out (or "waiting for Do Not Disturb to end" if that's what's holding it).
-export async function getPendingPreview() {
-  const [byLead, bufferMinutes, schedule, lastFlushRow] = await Promise.all([
-    groupPendingByLead(),
-    getBufferMinutes(),
-    getDndSchedule(),
-    supabaseAdmin.from('admin_notification_buffer').select('flushed_at').not('flushed_at', 'is', null).order('flushed_at', { ascending: false }).limit(1).maybeSingle(),
-  ]);
-
-  const dndActive = isWithinDnd(schedule);
-  const leadIds = Array.from(byLead.keys());
-  const { data: leads } = leadIds.length > 0
-    ? await supabaseAdmin.from('leads').select('id, name, phone').in('id', leadIds)
-    : { data: [] as any[] };
-  const leadById = new Map((leads || []).map(l => [l.id, l]));
-
-  const pending = Array.from(byLead.entries()).map(([leadId, rows]) => {
-    const lead = leadById.get(leadId);
-    const windowStart = rows[0].created_at;
-    const willFlushAt = new Date(new Date(windowStart).getTime() + bufferMinutes * 60 * 1000).toISOString();
-    return {
-      leadId,
-      leadName: lead?.name || null,
-      leadPhone: lead?.phone || null,
-      count: rows.length,
-      events: rows.map(r => r.event_text),
-      windowStart,
-      willFlushAt,
-      overdue: !dndActive && Date.now() >= new Date(willFlushAt).getTime(),
-    };
-  });
-
+async function getSettings(): Promise<{ digestMinutes: number; lastDigestSentAt: string | null }> {
+  const { data } = await supabaseAdmin.from('admin_notification_settings').select('buffer_minutes, last_digest_sent_at').limit(1).maybeSingle();
   return {
-    pending,
-    dndActive,
-    bufferMinutes,
-    lastFlushedAt: lastFlushRow.data?.flushed_at || null,
+    digestMinutes: data?.buffer_minutes ?? DEFAULT_DIGEST_MINUTES,
+    lastDigestSentAt: data?.last_digest_sent_at ?? null,
   };
 }
 
-// The actual send. `force` bypasses both the buffer timer and DND (used
+// Stamped every time a digest cycle is considered "due," whether or not
+// there was anything to actually send - keeps the cadence a true fixed
+// interval instead of one that resets on bursty activity (an event landing
+// right after a quiet spell would otherwise look "overdue" immediately).
+async function markDigestMoment() {
+  await supabaseAdmin.from('admin_notification_settings').update({ last_digest_sent_at: new Date().toISOString() }).not('id', 'is', null);
+}
+
+type BufferRow = { id: string; lead_id: string | null; event_text: string; created_at: string };
+
+async function getPendingRows(): Promise<BufferRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from('admin_notification_buffer')
+    .select('id, lead_id, event_text, created_at')
+    .is('flushed_at', null)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+// What the settings page shows - doesn't send anything, just reports what's
+// queued (as category counts, same shape the digest itself uses) and when
+// the next one goes out.
+export async function getPendingPreview() {
+  const [rows, { digestMinutes, lastDigestSentAt }, schedule] = await Promise.all([
+    getPendingRows(),
+    getSettings(),
+    getDndSchedule(),
+  ]);
+
+  const dndActive = isWithinDnd(schedule);
+  const nextDigestAt = new Date((lastDigestSentAt ? new Date(lastDigestSentAt).getTime() : Date.now()) + digestMinutes * 60 * 1000).toISOString();
+
+  return {
+    pendingCount: rows.length,
+    byCategory: tallyByCategory(rows),
+    dndActive,
+    digestMinutes,
+    lastDigestSentAt,
+    nextDigestAt,
+    overdue: !dndActive && rows.length > 0 && Date.now() >= new Date(nextDigestAt).getTime(),
+  };
+}
+
+// The actual send. `force` bypasses both the digest timer and DND (used
 // only by the admin's manual "release now" - the automatic cron-triggered
-// route always calls this with force: false). `onlyLeadId` scopes to one
-// lead's queue instead of everyone due.
-export async function flushBufferedNotifications(opts: { force?: boolean; onlyLeadId?: string } = {}): Promise<{ flushed: number; reason?: string }> {
+// route always calls this with force: false).
+export async function flushBufferedNotifications(opts: { force?: boolean } = {}): Promise<{ flushed: number; reason?: string }> {
   const schedule = await getDndSchedule();
   if (!opts.force && isWithinDnd(schedule)) {
     return { flushed: 0, reason: 'dnd' };
@@ -100,69 +124,43 @@ export async function flushBufferedNotifications(opts: { force?: boolean; onlyLe
   const adminPhone = process.env.ADMIN_PHONE_NUMBER;
   if (!adminPhone) throw new Error('ADMIN_PHONE_NUMBER is not configured');
 
-  const bufferMinutes = await getBufferMinutes();
-  const byLead = await groupPendingByLead();
-
-  let dueLeadIds = Array.from(byLead.keys());
-  if (opts.onlyLeadId) {
-    dueLeadIds = dueLeadIds.filter(id => id === opts.onlyLeadId);
-  } else if (!opts.force) {
-    const now = Date.now();
-    dueLeadIds = dueLeadIds.filter(id => now - new Date(byLead.get(id)![0].created_at).getTime() >= bufferMinutes * 60 * 1000);
-  }
-  // force + no onlyLeadId = release everyone currently queued, regardless of window age.
-
-  if (dueLeadIds.length === 0) return { flushed: 0 };
-
-  const { data: leads } = await supabaseAdmin.from('leads').select('id, phone, name').in('id', dueLeadIds);
-  const leadById = new Map((leads || []).map(l => [l.id, l]));
-
-  let flushed = 0;
-  for (const leadId of dueLeadIds) {
-    const rows = byLead.get(leadId)!;
-    const lead = leadById.get(leadId);
-    if (!lead) continue; // lead deleted since - drop the queued rows below without sending
-
-    const lines = rows.map(r => `• ${r.event_text} — ${new Date(r.created_at).toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit' })}`);
-    const alertText = `📋 *Lead Update* (${rows.length} action${rows.length === 1 ? '' : 's'})\n\nLead: +${lead.phone}${lead.name ? ` (${lead.name})` : ''}\n\n${lines.join('\n')}\n\nReach out instantly: https://wa.me/${lead.phone}`;
-
-    const result = await sendWhatsAppMessage(adminPhone, {
-      type: 'interactive',
-      interactive: {
-        type: 'button',
-        body: { text: alertText },
-        action: {
-          buttons: Object.entries(STATUS_BUTTONS).map(([prefix, def]) => ({
-            type: 'reply',
-            reply: { id: `${prefix}_${leadId}`, title: def.title },
-          })),
-        },
-      },
-    });
-
-    // Same outbox logging as the immediate-tier notifyAdmin paths - this is
-    // the consolidated-buffer flush, so it's the one most likely to land
-    // outside the admin's 24h window if they haven't texted the bot lately.
-    await supabaseAdmin.from('messages').insert([{
-      lead_id: leadId,
-      direction: 'outbound',
-      method: 'waba',
-      recipient_phone: adminPhone,
-      body: `[Admin Alert] ${lines.join('; ')}`,
-      wamid: result.wamid || null,
-      status: result.ok ? null : 'failed',
-      error_code: result.errorCode || null,
-      error_detail: result.ok ? null : (result.error || null),
-      meta_message_status: result.messageStatus || null,
-    }]);
-
-    if (!result.ok) {
-      await supabaseAdmin.from('pending_admin_alerts').insert([{ lead_phone: lead.phone, stage_text: alertText }]);
-    }
-
-    await supabaseAdmin.from('admin_notification_buffer').update({ flushed_at: new Date().toISOString() }).in('id', rows.map(r => r.id));
-    flushed++;
+  const { digestMinutes, lastDigestSentAt } = await getSettings();
+  if (!opts.force) {
+    const dueAt = (lastDigestSentAt ? new Date(lastDigestSentAt).getTime() : 0) + digestMinutes * 60 * 1000;
+    if (Date.now() < dueAt) return { flushed: 0, reason: 'not_due' };
   }
 
-  return { flushed };
+  const rows = await getPendingRows();
+  // Counts as a digest moment either way - see markDigestMoment's comment.
+  await markDigestMoment();
+  if (rows.length === 0) return { flushed: 0, reason: 'nothing_pending' };
+
+  const tally = tallyByCategory(rows);
+  const lines = Object.entries(tally)
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, count]) => `• ${count} ${label.toLowerCase()}`);
+  const digestText = `📊 *Pipeline Digest* — last ${digestMinutes} min\n\n${rows.length} event${rows.length === 1 ? '' : 's'} total\n${lines.join('\n')}\n\nCheck Message Activity in the app for who/what.`;
+
+  const result = await sendWhatsAppMessage(adminPhone, {
+    type: 'interactive',
+    interactive: {
+      type: 'button',
+      body: { text: digestText },
+      action: { buttons: [{ type: 'reply', reply: { id: 'btn_digest_noted', title: 'Noted 👍' } }] },
+    },
+  });
+
+  // Deliberately NOT logged to `messages` - a global digest isn't part of
+  // any single lead's conversation, so it has no home in Message Activity
+  // (which is organized per-lead) and shouldn't surface there at all.
+  if (!result.ok) {
+    console.error('❌ Failed to send admin digest:', result.error);
+    // Left unflushed on failure (flushed_at stays null) - they roll into
+    // the next due cycle instead of being lost, a simpler self-healing
+    // retry than the old per-lead pending_admin_alerts fallback table.
+    return { flushed: 0, reason: 'send_failed' };
+  }
+
+  await supabaseAdmin.from('admin_notification_buffer').update({ flushed_at: new Date().toISOString() }).in('id', rows.map(r => r.id));
+  return { flushed: rows.length };
 }
