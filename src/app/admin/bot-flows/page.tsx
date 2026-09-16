@@ -450,9 +450,17 @@ function BotFlowsPageInner() {
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">Bot Flows</h1>
             <p className="text-sm text-slate-500 mt-1">Automated responses keyed by button id - chain a self-serve message, fire a template, or deliver a bot_media item, without a code change.</p>
           </div>
-          <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors">
-            <Plus size={14} /> Add Flow
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link href="/admin/lead-funnel/welcome-menu" className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-colors" title="Edit the catch-all reply sent to a lead with no keyword match">
+              <MessageSquare size={14} /> Welcome Menu
+            </Link>
+            <Link href="/admin/bot-flows/map" className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-colors" title="See how these flows chain together">
+              <GitBranch size={14} /> Flow Map
+            </Link>
+            <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors">
+              <Plus size={14} /> Add Flow
+            </button>
+          </div>
         </div>
 
         {showForm && (

@@ -81,6 +81,7 @@ const GROUPS: NavGroup[] = [
     id: 'messages', label: 'Messages & Notifications', icon: MessageSquare, colorKey: 'teal',
     items: [
       { href: '/admin/lead-funnel/messages', label: 'Message Activity', icon: MessageSquare },
+      { href: '/admin/lead-funnel/welcome-menu', label: 'Welcome Menu', icon: Sparkles },
       { href: '/admin/lead-funnel/notifications', label: 'Notifications', icon: Bell },
       { href: '/admin/template-rollouts', label: 'Template Rollouts', icon: ListChecks },
       { href: '/admin/bot-flows', label: 'Bot Flows', icon: GitBranch },

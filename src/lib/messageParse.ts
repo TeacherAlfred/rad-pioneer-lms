@@ -11,6 +11,7 @@ export type ParsedMessage =
   | { kind: 'template'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'bot_flow'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'bot_media'; status: 'delivered' | 'failed'; label: string; detail?: string }
+  | { kind: 'welcome_menu'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'human_handoff'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'queued'; label: string }
   | { kind: 'admin_alert'; label: string }
@@ -60,6 +61,20 @@ export function parseMessage(m: { direction: string | null; body: string | null 
     match = body.match(/^\[FAILED to deliver "(.+?)": (.+)\]$/);
     if (match) return { kind: 'bot_media', status: 'failed', label: match[1], detail: match[2] };
 
+    // The STAGE 1 catch-all sent to any new/returning lead with no keyword
+    // match - not a real bot_media row (nothing under /admin/bot-media
+    // produces this), so it needs its own case ahead of the generic
+    // catch-all below, same reason bot_flow/queued/admin_alert do. Covers
+    // both the generic welcome menu and the robotics-watch ad set's own
+    // greeting - both log this same body text (see whatsapp-webhook/
+    // route.ts's sendToLead(..., 'welcome menu') call), so this label alone
+    // can't distinguish which variant actually went out.
+    if (body === '[Delivered welcome menu]') {
+      return { kind: 'welcome_menu', status: 'delivered', label: 'Welcome menu' };
+    }
+    match = body.match(/^\[FAILED to deliver welcome menu: (.+)\]$/);
+    if (match) return { kind: 'welcome_menu', status: 'failed', label: 'Welcome menu', detail: match[1] };
+
     match = body.match(/^\[Delivered (.+)\]$/);
     if (match) return { kind: 'bot_media', status: 'delivered', label: match[1] };
 
@@ -82,6 +97,7 @@ export const KIND_LABEL: Record<string, string> = {
   template: 'Template Send',
   bot_flow: 'Bot Flow',
   bot_media: 'Bot Media',
+  welcome_menu: 'Welcome Menu',
   human_handoff: 'Human Handoff',
   queued: 'Awaiting Approval',
   admin_alert: 'Admin Alert',

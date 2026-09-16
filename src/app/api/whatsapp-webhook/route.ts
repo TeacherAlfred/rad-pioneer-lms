@@ -1069,10 +1069,26 @@ export async function POST(request: Request) {
                   // contact, or anyone carried over from the warm-list import) gets a
                   // "good to hear from you" framing instead of a first-contact
                   // "Welcome to RAD Academy", since we may well already have a
-                  // commercial relationship with them.
+                  // commercial relationship with them. Admin-editable from
+                  // /admin/lead-funnel/welcome-menu (2026-09-17) - only fetched
+                  // here, not up front, since it's only needed on this specific
+                  // fallthrough path. Null column = use the hardcoded default
+                  // below, so this ships with zero behavior change until an
+                  // admin actually edits something.
+                  const { data: welcomeSettings } = await supabase
+                    .from('dashboard_settings')
+                    .select('welcome_message_new, welcome_message_returning, welcome_buttons')
+                    .limit(1)
+                    .maybeSingle();
+
                   const welcomeText = isNewLead
-                    ? "👋 Hi! Welcome to RAD Academy.\n\nWhether you're a returning parent or new to our community, we help turn screen time into skill-building. What would you like to explore?"
-                    : "👋 Hey, great to hear from you!\n\nWhat can we help you with today?";
+                    ? (welcomeSettings?.welcome_message_new || "👋 Hi! Welcome to RAD Academy.\n\nWhether you're a returning parent or new to our community, we help turn screen time into skill-building. What would you like to explore?")
+                    : (welcomeSettings?.welcome_message_returning || "👋 Hey, great to hear from you!\n\nWhat can we help you with today?");
+                  const welcomeButtons = (welcomeSettings?.welcome_buttons?.length ? welcomeSettings.welcome_buttons : [
+                    { id: 'btn_guide', title: 'Get Free Guide' },
+                    { id: 'btn_events', title: 'Upcoming Events' },
+                    { id: 'btn_human', title: 'Talk to Educator' },
+                  ]) as { id: string; title: string }[];
 
                   const welcomePayload = isFromRoboticsWatchAdSet ? {
                     type: 'interactive',
@@ -1097,11 +1113,7 @@ export async function POST(request: Request) {
                         text: welcomeText
                       },
                       action: {
-                        buttons: [
-                          { type: 'reply', reply: { id: 'btn_guide', title: 'Get Free Guide' } },
-                          { type: 'reply', reply: { id: 'btn_events', title: 'Upcoming Events' } },
-                          { type: 'reply', reply: { id: 'btn_human', title: 'Talk to Educator' } }
-                        ]
+                        buttons: welcomeButtons.map(b => ({ type: 'reply', reply: { id: b.id, title: b.title } }))
                       }
                     }
                   };
