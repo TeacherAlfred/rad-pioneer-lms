@@ -6,6 +6,7 @@ import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
   Users2, Search, MessageSquare, Reply, X, VolumeX, Plus, Sparkles,
   ChevronDown, ChevronRight, Pencil, Ban, ShieldCheck, FileText, LayoutList,
+  AlertTriangle,
 } from "lucide-react";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
@@ -63,6 +64,10 @@ type LeadGroup = {
   respondentIsParent: boolean | null;
   isBusinessNumber: boolean;
   optedOut: boolean;
+  // Derived from the segment_parent/segment_student tags btn_segment_parent/
+  // btn_segment_student stamp on tap - "do we already have this on record",
+  // so btn_segment_intro isn't sent to someone who's already answered it.
+  segment: 'parent' | 'student' | null;
   messages: MessageRow[];
   inboundCount: number;
   outboundCount: number;
@@ -322,7 +327,7 @@ export default function MessageActivityPage() {
   // see /admin/api/lead-funnel/reply. Can optionally
   // carry up to 3 buttons whose ids are existing bot_flows trigger words,
   // and/or start from an existing bot-flow message as an editable draft.
-  const [replyingTo, setReplyingTo] = useState<{ leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean; isWindowOpen: boolean; windowExpiresAt: Date | null; windowTotalHours: number | null } | null>(null);
+  const [replyingTo, setReplyingTo] = useState<{ leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean; isWindowOpen: boolean; windowExpiresAt: Date | null; windowTotalHours: number | null; segment: 'parent' | 'student' | null } | null>(null);
   const [replyText, setReplyText] = useState('');
   const [replyButtons, setReplyButtons] = useState<ButtonRef[]>([]);
   const [addButtonFlowId, setAddButtonFlowId] = useState('');
@@ -353,7 +358,7 @@ export default function MessageActivityPage() {
 
   const selectedTemplateOption = templateOptions.find(t => t.key === selectedTemplateKey) || null;
 
-  function openReply(info: { leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean; isWindowOpen: boolean; windowExpiresAt: Date | null; windowTotalHours: number | null }) {
+  function openReply(info: { leadId: string; leadName: string | null; leadPhone: string | null; botPaused: boolean; isWindowOpen: boolean; windowExpiresAt: Date | null; windowTotalHours: number | null; segment: 'parent' | 'student' | null }) {
     setReplyingTo(info);
     setReplyText('');
     setReplyButtons([]);
@@ -792,6 +797,9 @@ export default function MessageActivityPage() {
         respondentIsParent: sorted[0]?.lead_respondent_is_parent ?? null,
         isBusinessNumber: !!sorted[0]?.lead_is_business_number,
         optedOut: !!sorted[0]?.lead_opted_out,
+        segment: (sorted[0]?.lead_tags || []).includes('segment_parent') ? 'parent'
+          : (sorted[0]?.lead_tags || []).includes('segment_student') ? 'student'
+          : null,
         messages: sorted,
         inboundCount: sorted.filter(m => m.direction === 'inbound').length,
         outboundCount: sorted.filter(m => m.direction === 'outbound').length,
@@ -1106,7 +1114,7 @@ export default function MessageActivityPage() {
                               <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Replied</span>
                             ) : needsThisReply ? (
                               <button
-                                onClick={() => openReply({ leadId: m.group.leadId, leadName: m.group.leadName, leadPhone: m.group.leadPhone, botPaused: m.group.leadBotPaused, isWindowOpen: m.group.isWindowOpen, windowExpiresAt: m.group.windowExpiresAt, windowTotalHours: m.group.windowTotalHours })}
+                                onClick={() => openReply({ leadId: m.group.leadId, leadName: m.group.leadName, leadPhone: m.group.leadPhone, botPaused: m.group.leadBotPaused, isWindowOpen: m.group.isWindowOpen, windowExpiresAt: m.group.windowExpiresAt, windowTotalHours: m.group.windowTotalHours, segment: m.group.segment })}
                                 className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-rose-600 bg-rose-50 hover:bg-rose-100 px-2 py-1 rounded-lg"
                               >
                                 <Reply size={11} /> Needs Reply
@@ -1209,6 +1217,11 @@ export default function MessageActivityPage() {
                                     <VolumeX size={9} /> Opted Out
                                   </span>
                                 )}
+                                {g.segment && (
+                                  <span title="Already told us via btn_segment_parent/btn_segment_student - don't re-send the segment intro" className="inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
+                                    Segmented: {g.segment === 'parent' ? 'Parent' : 'Student'}
+                                  </span>
+                                )}
                               </div>
                               <div className="text-xs text-slate-400">
                                 +{g.leadPhone}
@@ -1238,7 +1251,7 @@ export default function MessageActivityPage() {
                                   <Pencil size={12} /> Edit
                                 </button>
                                 <button
-                                  onClick={() => openReply({ leadId: g.leadId, leadName: g.leadName, leadPhone: g.leadPhone, botPaused: g.leadBotPaused, isWindowOpen: g.isWindowOpen, windowExpiresAt: g.windowExpiresAt, windowTotalHours: g.windowTotalHours })}
+                                  onClick={() => openReply({ leadId: g.leadId, leadName: g.leadName, leadPhone: g.leadPhone, botPaused: g.leadBotPaused, isWindowOpen: g.isWindowOpen, windowExpiresAt: g.windowExpiresAt, windowTotalHours: g.windowTotalHours, segment: g.segment })}
                                   title={g.isWindowOpen ? 'Reply - free-form or an approved template' : 'Reply - messaging window closed, only approved templates can be sent'}
                                   className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
                                 >
@@ -1454,6 +1467,13 @@ export default function MessageActivityPage() {
                         ))}
                       </select>
                       <p className="text-[11px] text-slate-400 mt-1">Loads that flow's text and buttons here as a starting draft - edit or remove anything before sending, nothing about the original flow is changed.</p>
+                    </div>
+                  )}
+
+                  {loadFlowId && botFlows.find(f => f.id === loadFlowId)?.trigger_button_id === 'btn_segment_intro' && replyingTo.segment && (
+                    <div className="flex items-start gap-1.5 text-xs bg-amber-50 text-amber-700 rounded-xl px-3.5 py-2.5">
+                      <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                      Already on record as a <b>{replyingTo.segment}</b> (tagged via btn_segment_{replyingTo.segment}) - sending the segment intro again may confuse them.
                     </div>
                   )}
 
