@@ -13,6 +13,7 @@ export type ParsedMessage =
   | { kind: 'bot_media'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'welcome_menu'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'human_handoff'; status: 'delivered' | 'failed'; label: string; detail?: string }
+  | { kind: 'freeform_bulk'; status: 'delivered' | 'failed'; label: string; detail?: string }
   | { kind: 'queued'; label: string }
   | { kind: 'admin_alert'; label: string }
   | { kind: 'button_tap'; label: string; detail?: string }
@@ -75,6 +76,17 @@ export function parseMessage(m: { direction: string | null; body: string | null 
     match = body.match(/^\[FAILED to deliver welcome menu: (.+)\]$/);
     if (match) return { kind: 'welcome_menu', status: 'failed', label: 'Welcome menu', detail: match[1] };
 
+    // The Message Funnel page's bulk-send wizard (src/app/admin/bot-flows/
+    // funnel) - a labeled freeform blast, so it lands leads on a real,
+    // reusable stage key next time instead of the generic 'text' bucket
+    // every other freeform send falls into. Checked before the generic
+    // bot_media catch-all below for the same reason bot_flow/welcome_menu
+    // are.
+    match = body.match(/^\[Delivered freeform: (.+)\]$/);
+    if (match) return { kind: 'freeform_bulk', status: 'delivered', label: match[1] };
+    match = body.match(/^\[FAILED to deliver freeform (.+?): (.+)\]$/);
+    if (match) return { kind: 'freeform_bulk', status: 'failed', label: match[1], detail: match[2] };
+
     match = body.match(/^\[Delivered (.+)\]$/);
     if (match) return { kind: 'bot_media', status: 'delivered', label: match[1] };
 
@@ -99,6 +111,7 @@ export const KIND_LABEL: Record<string, string> = {
   bot_media: 'Bot Media',
   welcome_menu: 'Welcome Menu',
   human_handoff: 'Human Handoff',
+  freeform_bulk: 'Bulk Message',
   queued: 'Awaiting Approval',
   admin_alert: 'Admin Alert',
   button_tap: 'Button Tap',

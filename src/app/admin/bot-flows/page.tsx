@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Loader2, Plus, Trash2, CheckCircle2, XCircle, Pencil, AlertTriangle,
-  ArrowLeft, MessageSquare, Send, GitBranch, FileText, Tag,
+  ArrowLeft, MessageSquare, Send, GitBranch, FileText, Tag, Filter as Funnel,
 } from "lucide-react";
 
 type Button = { id: string; title: string };
@@ -456,6 +456,9 @@ function BotFlowsPageInner() {
             </Link>
             <Link href="/admin/bot-flows/map" className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-colors" title="See how these flows chain together">
               <GitBranch size={14} /> Flow Map
+            </Link>
+            <Link href="/admin/bot-flows/funnel" className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black uppercase tracking-widest text-slate-500 hover:border-slate-400 hover:text-slate-700 transition-colors" title="See where leads are stuck and bulk-send a follow-up">
+              <Funnel size={14} /> Message Funnel
             </Link>
             <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors">
               <Plus size={14} /> Add Flow

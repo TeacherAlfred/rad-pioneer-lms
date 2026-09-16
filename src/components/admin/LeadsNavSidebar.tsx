@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
   BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone, ListChecks, Send, Inbox,
-  GraduationCap, Heart, Sparkles, Clock,
+  GraduationCap, Heart, Sparkles, Clock, Filter as Funnel,
 } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
 
@@ -86,6 +86,7 @@ const GROUPS: NavGroup[] = [
       { href: '/admin/template-rollouts', label: 'Template Rollouts', icon: ListChecks },
       { href: '/admin/bot-flows', label: 'Bot Flows', icon: GitBranch },
       { href: '/admin/bot-flows/map', label: 'Flow Map', icon: Kanban },
+      { href: '/admin/bot-flows/funnel', label: 'Message Funnel', icon: Funnel },
       { href: '/admin/bot-media', label: 'Bot Media', icon: FileText },
     ],
   },
