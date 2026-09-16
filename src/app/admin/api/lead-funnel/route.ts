@@ -64,7 +64,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   try {
     const body = await req.json();
-    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused, is_blocked, blocked_reason, dismiss_reply, is_business_number } = body;
+    const { id, tags, lifecycle_stage, lost_reason, session_id, household_id, name, phone, email, school, children_names, is_potential_student, is_confirmed_parent, bot_paused, is_blocked, blocked_reason, dismiss_reply, is_business_number, opted_out } = body;
     // "class" is a reserved word, can't destructure it bare above.
     const className = body.class;
 
@@ -126,6 +126,18 @@ export async function PATCH(req: Request) {
     // /admin/lead-funnel/outbox. Unlike is_blocked, no companion reason
     // field - there's nothing to record beyond the flag itself.
     if (is_business_number !== undefined) update.is_business_number = !!is_business_number;
+    // Standalone reversal of the webhook's "stop"/"unsubscribe" keyword
+    // handler (and of the lifecycle_stage === 'opted_out' branch below,
+    // which only ever sets this true) - previously there was no way to flip
+    // this back to false at all, so an accidental "stop" or a changed mind
+    // had no undo. Independent of lifecycle_stage on purpose: opting back in
+    // doesn't imply any particular stage, and the compliance gates that
+    // actually matter (send-template, the nurture cron) read this flag
+    // directly, not lifecycle_stage.
+    if (opted_out !== undefined) {
+      update.opted_out = !!opted_out;
+      update.opted_out_at = opted_out ? new Date().toISOString() : null;
+    }
     // Message Activity's "Needs Reply" flag is purely derived (last message
     // is inbound) - dismissing it just stamps "don't flag the inbound
     // message that's already here", not a permanent silence. The next
@@ -139,7 +151,7 @@ export async function PATCH(req: Request) {
       update.stage_entered_at = new Date().toISOString();
       if (lifecycle_stage === 'lost') update.lost_reason = lost_reason;
       if (lifecycle_stage !== 'lost') update.lost_reason = null;
-      if (lifecycle_stage === 'opted_out') update.opted_out = true;
+      if (lifecycle_stage === 'opted_out') { update.opted_out = true; update.opted_out_at = new Date().toISOString(); }
       // is_customer never regresses - won is the only stage that sets it.
       if (lifecycle_stage === 'won') {
         update.is_customer = true;

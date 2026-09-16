@@ -298,6 +298,16 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
   const leadUpdate: Record<string, any> = {};
   if (flow.set_source) leadUpdate.source = flow.set_source;
   if (flow.add_tags?.length) leadUpdate.tags = Array.from(new Set([...(lead.tags || []), ...flow.add_tags]));
+  // The confirmed side of the opt-out flow (btn_optout_confirm) - the
+  // initial "stop"/"Stop Receiving messages" tap only ever sends the
+  // confirm/cancel prompt (see STAGE 1's OPT-OUT block), never sets this
+  // itself. A config flag rather than hardcoding that one trigger_button_id
+  // here, consistent with every other button behavior in this file living in
+  // bot_flows, not code.
+  if (flow.sets_opted_out) {
+    leadUpdate.opted_out = true;
+    leadUpdate.opted_out_at = new Date().toISOString();
+  }
   // Marks this lead as mid-question so their next freeform text is captured
   // (see STAGE 1) instead of falling through to the generic welcome.
   if (flow.expects_reply) {
@@ -768,6 +778,16 @@ export async function POST(request: Request) {
                 inboundLeadUpdate.stage_entered_at = new Date().toISOString();
                 inboundLeadUpdate.lost_reason = null;
               }
+              // "Text us again anytime to start receiving messages once more" (the
+              // opt-out prompt's own wording) - any inbound message from a
+              // previously opted-out lead is treated as exactly that, no separate
+              // keyword needed. Runs before STAGE 1/2 below, so a lead who opts
+              // back in and immediately taps a button/types a keyword gets that
+              // reply normally in the same turn, not on their next message.
+              if (lead.opted_out) {
+                inboundLeadUpdate.opted_out = false;
+                inboundLeadUpdate.opted_out_at = null;
+              }
               if (inboundLeadUpdate.lifecycle_stage) {
                 await recordStageChange(supabase, lead.id, {
                   fromStage: lead.lifecycle_stage,
@@ -809,23 +829,40 @@ export async function POST(request: Request) {
 
               // --- OPT-OUT (POPIA) ---
               // Exact-message match only, not substring/keyword-in-sentence - "please
-              // stop by our stand" must never be read as an opt-out. This only records
-              // the flag; it doesn't gate anything in this webhook, since everything
-              // it sends is a reactive reply to something the lead just asked for, not
-              // unsolicited marketing. Any future proactive/campaign send path must
-              // check leads.opted_out before sending.
+              // stop by our stand" must never be read as an opt-out. Asks first rather
+              // than opting out immediately - a stray "stop" (fat-fingered, or a template's
+              // own "Stop Receiving messages" button tapped by mistake, e.g. the *6188
+              // incident 2026-09-15) used to opt someone out with no way back. The actual
+              // flag flip happens on btn_optout_confirm's tap (see runBotFlow's
+              // sets_opted_out handling), not here - this only sends the prompt. Reused
+              // verbatim by the "Stop Receiving messages" bot_flows row for the button-tap
+              // entry point, so both paths land on the same confirm/cancel buttons.
               if (message.type === 'text') {
                 const trimmed = messageText.trim().toLowerCase();
                 if (['stop', 'unsubscribe', 'opt out', 'optout'].includes(trimmed)) {
-                  await supabase.from('leads').update({ opted_out: true }).eq('id', lead.id);
-                  const optOutResult = await sendToLead(supabase, lead, senderPhone, { kind: 'freeform', payload: { type: 'text', text: { body: "You've been unsubscribed from marketing messages from RAD Academy. Reply anytime if you still need help - we're still here for that." } } }, 'opt-out confirmation');
+                  const promptResult = await sendToLead(supabase, lead, senderPhone, {
+                    kind: 'freeform',
+                    payload: {
+                      type: 'interactive',
+                      interactive: {
+                        type: 'button',
+                        body: { text: "Are you sure you'd like to stop receiving messages from RAD Academy? You can text us again anytime to start receiving them once more." },
+                        action: {
+                          buttons: [
+                            { type: 'reply', reply: { id: 'btn_optout_confirm', title: 'Yes, Stop' } },
+                            { type: 'reply', reply: { id: 'btn_optout_cancel', title: 'No, Stay Subscribed' } },
+                          ],
+                        },
+                      },
+                    },
+                  }, 'opt-out confirmation prompt');
                   await supabase.from('messages').insert([{
                     lead_id: lead.id,
                     direction: 'outbound',
-                    body: optOutResult.queued ? '[Queued for approval: opt-out confirmation]' : optOutResult.ok ? '[Delivered opt-out confirmation]' : `[FAILED to deliver opt-out confirmation: ${optOutResult.error}]`,
-                    wamid: optOutResult.wamid || null,
+                    body: promptResult.queued ? '[Queued for approval: opt-out confirmation prompt]' : promptResult.ok ? '[Delivered opt-out confirmation prompt]' : `[FAILED to deliver opt-out confirmation prompt: ${promptResult.error}]`,
+                    wamid: promptResult.wamid || null,
                   }]);
-                  await notifyAdmin(supabase, senderPhone, "🚫 Opted out of marketing.", lead.id, { immediate: true });
+                  await notifyAdmin(supabase, senderPhone, "🚫 Asked to confirm opt-out.", lead.id);
                   continue;
                 }
               }

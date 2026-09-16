@@ -34,6 +34,7 @@ type MessageRow = {
   lead_reply_dismissed_at?: string | null;
   lead_respondent_is_parent?: boolean | null;
   lead_is_business_number?: boolean;
+  lead_opted_out?: boolean;
   media_path?: string | null;
   media_type?: 'image' | 'sticker' | 'video' | 'audio' | 'document' | null;
   media_mime_type?: string | null;
@@ -61,6 +62,7 @@ type LeadGroup = {
   replyDismissedAt: string | null;
   respondentIsParent: boolean | null;
   isBusinessNumber: boolean;
+  optedOut: boolean;
   messages: MessageRow[];
   inboundCount: number;
   outboundCount: number;
@@ -97,6 +99,13 @@ type MetaTemplate = {
   variableLabels?: string[];
   bodyPreview: string;
   quickReplyButtons: { text: string; index: number }[];
+};
+
+type BotMediaItem = {
+  id: string;
+  title: string;
+  active: boolean;
+  archived: boolean;
 };
 
 // One tagged entry per sendable approved template, whichever source it came
@@ -252,6 +261,7 @@ export default function MessageActivityPage() {
   const [botFlows, setBotFlows] = useState<BotFlow[]>([]);
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
   const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [botMedia, setBotMedia] = useState<BotMediaItem[]>([]);
   useEffect(() => {
     loadMessages();
     fetch('/admin/api/bot-flows').then(res => res.json()).then(data => setBotFlows((data.rows || []).filter((f: BotFlow) => f.active)));
@@ -259,6 +269,9 @@ export default function MessageActivityPage() {
       if (data.error) { setTemplatesError(data.error); return; }
       setMetaTemplates(data.templates || []);
     }).catch(err => setTemplatesError(err.message));
+    // Same source /admin/bot-media manages - filtered to what's actually
+    // sendable, same convention as everywhere else this list is read.
+    fetch('/admin/api/bot-media').then(res => res.json()).then(data => setBotMedia((data.rows || []).filter((m: BotMediaItem) => m.active && !m.archived)));
   }, []);
 
   // Merged, tagged picker: template-linked bot-flows first (pre-configured,
@@ -325,10 +338,18 @@ export default function MessageActivityPage() {
   const [templateSending, setTemplateSending] = useState(false);
   const [templateSendError, setTemplateSendError] = useState<string | null>(null);
 
+  // Bot media send state, scoped to the open reply modal - a document
+  // attachment can't be loaded into the plain-text composer as an editable
+  // draft the way a message-type flow can, so this is its own immediate
+  // "pick and send" control rather than folded into loadFlowIntoComposer.
+  const [selectedMediaId, setSelectedMediaId] = useState('');
+  const [mediaSending, setMediaSending] = useState(false);
+  const [mediaSendError, setMediaSendError] = useState<string | null>(null);
+
   // Shared across every send path on this page (free-form reply, template) -
   // a successful send closes the compose modal and hands off to this one,
   // rather than swapping in an inline "sent" banner while the form stays up.
-  const [sendSuccessInfo, setSendSuccessInfo] = useState<{ leadName: string | null; kind: 'Message' | 'Template' } | null>(null);
+  const [sendSuccessInfo, setSendSuccessInfo] = useState<{ leadName: string | null; kind: 'Message' | 'Template' | 'Guide' } | null>(null);
 
   const selectedTemplateOption = templateOptions.find(t => t.key === selectedTemplateKey) || null;
 
@@ -343,6 +364,8 @@ export default function MessageActivityPage() {
     setTemplateVariables([]);
     setTemplateButtonPayloads({});
     setTemplateSendError(null);
+    setSelectedMediaId('');
+    setMediaSendError(null);
   }
 
   function selectTemplateOption(key: string) {
@@ -395,6 +418,30 @@ export default function MessageActivityPage() {
       setTemplateSendError(err.message);
     } finally {
       setTemplateSending(false);
+    }
+  }
+
+  async function sendMediaFromReply() {
+    if (!replyingTo || !selectedMediaId) return;
+    const leadName = replyingTo.leadName;
+    setMediaSending(true);
+    setMediaSendError(null);
+    try {
+      const res = await fetch('/admin/api/lead-funnel/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: replyingTo.leadId, mediaItemId: selectedMediaId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send.');
+      setReplyingTo(null);
+      setSendSuccessInfo({ leadName, kind: 'Guide' });
+      setLoading(true);
+      await loadMessages();
+    } catch (err: any) {
+      setMediaSendError(err.message);
+    } finally {
+      setMediaSending(false);
     }
   }
 
@@ -600,6 +647,31 @@ export default function MessageActivityPage() {
     }
   }
 
+  // Undo an opt-out - the "stop"/"unsubscribe" keyword handler in
+  // whatsapp-webhook/route.ts sets leads.opted_out with no way back until
+  // this existed (a mistaken tap or a changed mind had no fix). Only ever
+  // turns it off from here - re-opting someone out is still done by them
+  // texting "stop" again, not an admin action.
+  const [reactivatingId, setReactivatingId] = useState<string | null>(null);
+  async function reactivateOptOut(group: LeadGroup) {
+    if (!window.confirm(`Resume sending to ${group.leadName || 'this contact'}? They previously opted out of marketing messages.`)) return;
+    setReactivatingId(group.leadId);
+    try {
+      const res = await fetch('/admin/api/lead-funnel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: group.leadId, opted_out: false }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update.');
+      setRows(prev => prev.map(r => r.lead_id === group.leadId ? { ...r, lead_opted_out: data.row.opted_out } : r));
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setReactivatingId(null);
+    }
+  }
+
   // "I handled this another way" - temporary, not a permanent silence. See
   // needsReply()'s comment above for why no explicit re-arm is needed.
   const [dismissingId, setDismissingId] = useState<string | null>(null);
@@ -719,6 +791,7 @@ export default function MessageActivityPage() {
         replyDismissedAt: sorted[0]?.lead_reply_dismissed_at || null,
         respondentIsParent: sorted[0]?.lead_respondent_is_parent ?? null,
         isBusinessNumber: !!sorted[0]?.lead_is_business_number,
+        optedOut: !!sorted[0]?.lead_opted_out,
         messages: sorted,
         inboundCount: sorted.filter(m => m.direction === 'inbound').length,
         outboundCount: sorted.filter(m => m.direction === 'outbound').length,
@@ -1131,6 +1204,11 @@ export default function MessageActivityPage() {
                                     <Ban size={9} /> Blocked
                                   </span>
                                 )}
+                                {g.optedOut && (
+                                  <span title="Opted out of marketing messages - texted stop/unsubscribe" className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-600">
+                                    <VolumeX size={9} /> Opted Out
+                                  </span>
+                                )}
                               </div>
                               <div className="text-xs text-slate-400">
                                 +{g.leadPhone}
@@ -1178,6 +1256,17 @@ export default function MessageActivityPage() {
                                   {blockingId === g.leadId ? <Loader2 size={12} className="animate-spin" /> : g.leadIsBlocked ? <ShieldCheck size={12} /> : <Ban size={12} />}
                                   {g.leadIsBlocked ? 'Unblock' : 'Block'}
                                 </button>
+                                {g.optedOut && (
+                                  <button
+                                    onClick={() => reactivateOptOut(g)}
+                                    disabled={reactivatingId === g.leadId}
+                                    title="Resume sending - they previously opted out, this undoes that"
+                                    className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-lg disabled:opacity-50"
+                                  >
+                                    {reactivatingId === g.leadId ? <Loader2 size={12} className="animate-spin" /> : <VolumeX size={12} />}
+                                    Reactivate
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -1323,6 +1412,34 @@ export default function MessageActivityPage() {
             <div className="px-6 pt-4 pb-5 space-y-3 overflow-y-auto">
               {replyingTo.isWindowOpen ? (
                 <>
+                  {botMedia.length > 0 && (
+                    <div className="border border-slate-200 rounded-xl p-3 space-y-2">
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1"><FileText size={11} /> Send a guide/file instead (optional)</label>
+                      <div className="flex gap-2">
+                        <select
+                          value={selectedMediaId}
+                          onChange={e => { setSelectedMediaId(e.target.value); setMediaSendError(null); }}
+                          className="flex-1 bg-slate-50 border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-700 outline-none focus:border-blue-400"
+                        >
+                          <option value="">Choose a guide...</option>
+                          {botMedia.map(m => (
+                            <option key={m.id} value={m.id}>{m.title}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={sendMediaFromReply}
+                          disabled={!selectedMediaId || mediaSending}
+                          className="px-4 py-2.5 rounded-xl text-[13px] font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 shrink-0"
+                        >
+                          {mediaSending ? <Loader2 size={14} className="animate-spin" /> : 'Send'}
+                        </button>
+                      </div>
+                      {mediaSendError && <p className="text-[12px] text-rose-600">{mediaSendError}</p>}
+                      <p className="text-[11px] text-slate-400">Sends that item's file, caption, and buttons exactly as configured in Bot Media - not editable here.</p>
+                    </div>
+                  )}
+
                   {botFlows.filter(f => f.action_type === 'message').length > 0 && (
                     <div>
                       <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5 flex items-center gap-1"><Sparkles size={11} /> Start from a bot-flow message (optional)</label>

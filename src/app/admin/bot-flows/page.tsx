@@ -29,6 +29,7 @@ type FlowRow = {
   notify_admin: boolean;
   notify_admin_immediate: boolean;
   skip_human_handoff: boolean;
+  sets_opted_out: boolean;
   expects_reply: boolean;
   reply_label: string | null;
   reply_confirmation: string | null;
@@ -76,6 +77,7 @@ const emptyForm = {
   notify_admin: false,
   notify_admin_immediate: false,
   skip_human_handoff: true,
+  sets_opted_out: false,
   expects_reply: false,
   reply_label: '',
   reply_confirmation: '',
@@ -278,6 +280,7 @@ function BotFlowsPageInner() {
       notify_admin: row.notify_admin,
       notify_admin_immediate: row.notify_admin_immediate,
       skip_human_handoff: row.skip_human_handoff,
+      sets_opted_out: row.sets_opted_out,
       expects_reply: row.expects_reply,
       reply_label: row.reply_label || '',
       reply_confirmation: row.reply_confirmation || '',
@@ -380,6 +383,7 @@ function BotFlowsPageInner() {
         notify_admin: form.notify_admin,
         notify_admin_immediate: form.notify_admin_immediate,
         skip_human_handoff: form.skip_human_handoff,
+        sets_opted_out: form.sets_opted_out,
         expects_reply: form.expects_reply,
         reply_label: form.expects_reply ? form.reply_label.trim() : null,
         reply_confirmation: form.reply_confirmation.trim() || null,
@@ -617,6 +621,9 @@ function BotFlowsPageInner() {
                   <input type="checkbox" checked={form.notify_admin_immediate} onChange={e => setForm(p => ({ ...p, notify_admin_immediate: e.target.checked }))} /> Instantly (skip buffering/DND)
                 </label>
               )}
+              <label className="flex items-center gap-2 text-xs font-bold text-rose-600 cursor-pointer" title="Marks leads.opted_out when this flow fires - use on the 'Yes, Stop' confirm button, never on the initial prompt itself">
+                <input type="checkbox" checked={form.sets_opted_out} onChange={e => setForm(p => ({ ...p, sets_opted_out: e.target.checked }))} /> Sets opted_out (compliance)
+              </label>
             </div>
 
             {form.action_type === 'message' && (
