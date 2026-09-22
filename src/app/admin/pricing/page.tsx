@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, ArrowLeft, DollarSign, Plus, X, Pencil, Trash2, Boxes, Package, Check, Link2, AlertTriangle, RefreshCw } from "lucide-react";
-import { computeCostRollup, computeRecommendedFee } from "@/lib/pricingEngine";
+import { Loader2, ArrowLeft, DollarSign, Plus, X, Pencil, Trash2, Boxes, Package, Check, Link2, AlertTriangle, RefreshCw, Globe, CheckCircle2 } from "lucide-react";
+import { computeCostRollup, computeRecommendedFee, computeMarginPct, guardrailCheck } from "@/lib/pricingEngine";
 
 type InventoryItem = {
   id: string;
@@ -78,7 +78,7 @@ const LABEL_CLS = "block text-[13px] font-medium text-slate-700 mb-1.5";
 const INPUT_CLS = "w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none transition-all duration-150 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10";
 
 export default function PricingLibraryPage() {
-  const [tab, setTab] = useState<'inventory' | 'packages' | 'costLinking'>('inventory');
+  const [tab, setTab] = useState<'inventory' | 'packages' | 'global' | 'costLinking'>('inventory');
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
@@ -103,12 +103,15 @@ export default function PricingLibraryPage() {
           <button onClick={() => setTab('packages')} className={`px-4 py-2.5 text-[13px] font-bold flex items-center gap-1.5 border-b-2 -mb-px transition-colors ${tab === 'packages' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
             <Package size={14} /> Packages
           </button>
+          <button onClick={() => setTab('global')} className={`px-4 py-2.5 text-[13px] font-bold flex items-center gap-1.5 border-b-2 -mb-px transition-colors ${tab === 'global' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+            <Globe size={14} /> Global Pricing
+          </button>
           <button onClick={() => setTab('costLinking')} className={`px-4 py-2.5 text-[13px] font-bold flex items-center gap-1.5 border-b-2 -mb-px transition-colors ${tab === 'costLinking' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
             <Link2 size={14} /> Cost Linking
           </button>
         </div>
 
-        {tab === 'inventory' ? <InventoryTab /> : tab === 'packages' ? <PackagesTab /> : <CostLinkingTab />}
+        {tab === 'inventory' ? <InventoryTab /> : tab === 'packages' ? <PackagesTab /> : tab === 'global' ? <GlobalPricingTab /> : <CostLinkingTab />}
       </div>
     </div>
   );
@@ -716,6 +719,260 @@ function PackageItemEditRow({ item, onUpdate, onRemove }: {
         <button onClick={onRemove} className="text-slate-300 hover:text-rose-500" title="Remove"><Trash2 size={14} /></button>
       </div>
       {isZero && <p className="text-[11px] text-rose-500">Quantity can&apos;t be 0 — remove the item instead (trash icon) if it doesn&apos;t belong in this package.</p>}
+    </div>
+  );
+}
+
+// Attaches/prices a package with no featured_program_id - the only place
+// in the admin that can create one (every other attach flow lives on a
+// specific Featured Program's edit page and always sends that program's
+// id). Global + published event_packages rows are what
+// /api/register-interest/packages ORs into every program's public tier
+// picker (e.g. Priority Coaching), so this is real public-facing surface,
+// not just an internal quoting convenience - same fields/guardrails as
+// Featured Programs' EventPackageRow, minus the program-scoped bits that
+// don't apply (no quote email template gate here), plus an
+// Expected Attendees field since there's no program to inherit one from.
+function GlobalPricingTab() {
+  const [eventPackages, setEventPackages] = useState<any[]>([]);
+  const [packagesList, setPackagesList] = useState<Pkg[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [attachPackageId, setAttachPackageId] = useState('');
+  const [attaching, setAttaching] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    const [epRes, pRes] = await Promise.all([
+      fetch('/admin/api/pricing/event-packages'),
+      fetch('/admin/api/pricing/packages'),
+    ]);
+    const epData = await epRes.json();
+    const pData = await pRes.json();
+    setEventPackages((epData.rows || []).filter((r: any) => !r.featured_program_id));
+    setPackagesList(pData.rows || []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function attachPackage() {
+    if (!attachPackageId) return;
+    setAttaching(true);
+    try {
+      const chosenPackage = packagesList.find(p => p.id === attachPackageId);
+      const res = await fetch('/admin/api/pricing/event-packages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          featured_program_id: null,
+          package_id: attachPackageId,
+          target_margin_pct: chosenPackage?.recommended_margin_pct ?? undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setAttachPackageId('');
+      await load();
+    } catch (err: any) {
+      alert(err.message || 'Failed to attach package.');
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  return (
+    <div>
+      <p className="text-[13px] text-slate-500 mb-4">
+        Packages attached here aren&apos;t tied to any Featured Program — they show as &quot;Global&quot; in the Quote Composer&apos;s Pricing Package picker, and (if Published) also appear on <em>every</em> program&apos;s public tier picker. Attach on a specific program&apos;s own edit page instead, under <Link href="/admin/featured-programs" target="_blank" className="underline hover:text-slate-700">Featured Programs</Link>, if a package should only ever apply there.
+      </p>
+
+      {loading ? (
+        <div className="py-24 flex items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading...</div>
+      ) : (
+        <div className="space-y-3 mb-5">
+          {eventPackages.map(ep => (
+            <GlobalPackageRow key={ep.id} eventPackage={ep} onChange={load} />
+          ))}
+          {eventPackages.length === 0 && <p className="text-[13px] text-slate-400">No globally-attached packages yet.</p>}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <select value={attachPackageId} onChange={e => setAttachPackageId(e.target.value)} className={`${INPUT_CLS} appearance-none cursor-pointer flex-1`}>
+          <option value="">— attach a package globally —</option>
+          {packagesList.map(p => <option key={p.id} value={p.id}>{p.name} ({p.event_type.replace('_', ' ')})</option>)}
+        </select>
+        <button type="button" onClick={attachPackage} disabled={!attachPackageId || attaching} className="px-4 py-2.5 rounded-[10px] bg-slate-900 text-white text-[13px] font-medium hover:bg-slate-800 disabled:opacity-50 shrink-0 flex items-center gap-1.5">
+          {attaching ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Attach
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GlobalPackageRow({ eventPackage, onChange }: { eventPackage: any; onChange: () => void }) {
+  const ep = eventPackage;
+  const pkg = ep.package;
+  const [tierRole, setTierRole] = useState(ep.tier_role || '');
+  const [displayOrder, setDisplayOrder] = useState(String(ep.display_order ?? 0));
+  const [unitMultiplier, setUnitMultiplier] = useState(String(ep.unit_multiplier ?? 1));
+  const [expectedAttendeeOverride, setExpectedAttendeeOverride] = useState(ep.expected_attendee_count_override === null ? '' : String(ep.expected_attendee_count_override));
+  const [displayName, setDisplayName] = useState(ep.display_name || '');
+  const [displayDescription, setDisplayDescription] = useState(ep.display_description || '');
+  const [targetMarginPct, setTargetMarginPct] = useState(ep.target_margin_pct === null ? '' : String(ep.target_margin_pct));
+  const [finalFee, setFinalFee] = useState(ep.final_fee === null ? '' : String(ep.final_fee));
+  const [overrideCategory, setOverrideCategory] = useState(ep.override_reason_category || '');
+  const [overrideReason, setOverrideReason] = useState(ep.margin_override_reason || '');
+  const [published, setPublished] = useState(ep.published);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const computedCost = Number(ep.computed_cost || 0);
+  const finalFeeNum = finalFee === '' ? null : Number(finalFee);
+  const guardrail = finalFeeNum !== null ? guardrailCheck(finalFeeNum, computedCost, pkg?.event_type || 'workshop') : null;
+  const marginPct = finalFeeNum ? computeMarginPct(finalFeeNum, computedCost) : null;
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch('/admin/api/pricing/event-packages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: ep.id,
+          tier_role: tierRole || null,
+          display_order: displayOrder === '' ? 0 : Number(displayOrder),
+          unit_multiplier: unitMultiplier === '' ? 1 : Number(unitMultiplier),
+          expected_attendee_count_override: expectedAttendeeOverride === '' ? null : Number(expectedAttendeeOverride),
+          target_margin_pct: targetMarginPct === '' ? null : Number(targetMarginPct),
+          final_fee: finalFee === '' ? null : Number(finalFee),
+          override_reason_category: overrideCategory || null,
+          margin_override_reason: overrideReason || null,
+          published,
+          display_name: displayName || null,
+          display_description: displayDescription || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      onChange();
+    } catch (err: any) {
+      setError(err.message || 'Failed to save.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!confirm(`Detach "${pkg?.name}" from Global?`)) return;
+    setError(null);
+    const res = await fetch('/admin/api/pricing/event-packages', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: ep.id }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || 'Failed to delete.');
+      return;
+    }
+    onChange();
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-[14px] text-slate-800">{ep.display_name || pkg?.name}</span>
+          {ep.display_name && <span className="text-[10px] text-slate-400">(package: {pkg?.name})</span>}
+          {published ? (
+            <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 flex items-center gap-1"><CheckCircle2 size={10} /> Published</span>
+          ) : (
+            <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Draft</span>
+          )}
+        </div>
+        <button type="button" onClick={remove} className="text-slate-300 hover:text-rose-500"><Trash2 size={14} /></button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+        <div>
+          <label className="text-[11px] text-slate-400">Tier</label>
+          <select value={tierRole} onChange={e => setTierRole(e.target.value)} className="w-full text-[13px] border border-slate-200 rounded-lg px-2 py-1.5">
+            <option value="">— untiered —</option>
+            <option value="anchor">Anchor</option>
+            <option value="recommended">Recommended</option>
+            <option value="lighter">Lighter</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-[11px] text-slate-400">Order</label>
+          <input type="number" value={displayOrder} onChange={e => setDisplayOrder(e.target.value)} className="w-full text-[13px] border border-slate-200 rounded-lg px-2 py-1.5" />
+        </div>
+        <div>
+          <label className="text-[11px] text-slate-400" title="Scales this whole attachment's cost (per-child and flat items alike) - e.g. attach the same package at ×10 for a 10-lesson bucket instead of composing a separate package.">Units ×</label>
+          <input type="number" min={1} value={unitMultiplier} onChange={e => setUnitMultiplier(e.target.value)} className="w-full text-[13px] border border-slate-200 rounded-lg px-2 py-1.5" />
+        </div>
+        <div>
+          <label className="text-[11px] text-slate-400" title="No Featured Program to inherit Expected Attendees from here - set it directly if this package has any flat/shared cost items that need apportioning.">Expected Attendees</label>
+          <input type="number" min={1} value={expectedAttendeeOverride} onChange={e => setExpectedAttendeeOverride(e.target.value)} className="w-full text-[13px] border border-slate-200 rounded-lg px-2 py-1.5" placeholder="n/a" />
+        </div>
+        <div>
+          <label className="text-[11px] text-slate-400">Target Margin %</label>
+          <input type="number" value={targetMarginPct} onChange={e => setTargetMarginPct(e.target.value)} className="w-full text-[13px] border border-slate-200 rounded-lg px-2 py-1.5" />
+        </div>
+        <div>
+          <label className="text-[11px] text-slate-400">Final Fee (R)</label>
+          <input type="number" value={finalFee} onChange={e => setFinalFee(e.target.value)} className="w-full text-[13px] border border-slate-200 rounded-lg px-2 py-1.5" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-[11px] text-slate-400">Display Name (optional override)</label>
+          <input placeholder={pkg?.name} value={displayName} onChange={e => setDisplayName(e.target.value)} className="w-full text-[13px] border border-slate-200 rounded-lg px-2 py-1.5" />
+        </div>
+        <div>
+          <label className="text-[11px] text-slate-400">Display Description (optional override)</label>
+          <input placeholder={pkg?.description || '—'} value={displayDescription} onChange={e => setDisplayDescription(e.target.value)} className="w-full text-[13px] border border-slate-200 rounded-lg px-2 py-1.5" />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-4 text-[12px] text-slate-500 flex-wrap">
+        <span>Cost: <strong>R {computedCost.toFixed(2)}</strong>{expectedAttendeeOverride ? '' : ' (set Expected Attendees above for an accurate rollup if this package has flat costs)'}{Number(ep.unit_multiplier || 1) > 1 ? ` (×${ep.unit_multiplier} applied)` : ''}</span>
+        {ep.recommended_fee !== null && <span>Recommended: <strong>R {Number(ep.recommended_fee).toFixed(2)}</strong></span>}
+        {marginPct !== null && <span>Margin at this fee: <strong>{marginPct.toFixed(1)}%</strong></span>}
+      </div>
+
+      {guardrail && guardrail.level !== 'ok' && (
+        <div className={`text-[12px] rounded-lg px-3 py-2 flex items-start gap-1.5 ${guardrail.level === 'hard' ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+          <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {guardrail.message}
+        </div>
+      )}
+
+      {guardrail?.level === 'hard' && (
+        <div className="grid grid-cols-2 gap-2">
+          <select value={overrideCategory} onChange={e => setOverrideCategory(e.target.value)} className="text-[13px] border border-slate-200 rounded-lg px-2 py-1.5">
+            <option value="">— override reason category —</option>
+            <option value="penetration_pricing">Penetration pricing</option>
+            <option value="loyalty_referral_discount">Loyalty/referral discount</option>
+            <option value="competitive_response">Competitive response</option>
+            <option value="loss_leader_lead_gen">Loss leader / lead gen</option>
+            <option value="founder_discretion_other">Founder discretion (other)</option>
+          </select>
+          <input placeholder="Why this is priced below cost..." value={overrideReason} onChange={e => setOverrideReason(e.target.value)} className="text-[13px] border border-slate-200 rounded-lg px-2 py-1.5" />
+        </div>
+      )}
+
+      <div className="flex items-center justify-between pt-1">
+        <label className="flex items-center gap-2 text-[13px] text-slate-600 cursor-pointer" title="Published + Global means this shows on every program's public tier picker, not just one.">
+          <input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} className="w-4 h-4 accent-blue-600" />
+          Published (visible on every program&apos;s public picker)
+        </label>
+        <button type="button" onClick={save} disabled={saving} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[12px] font-medium hover:bg-slate-800 disabled:opacity-50">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {error && <p className="text-[12px] text-rose-500">{error}</p>}
     </div>
   );
 }

@@ -155,7 +155,16 @@ export async function DELETE(req: Request) {
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 });
     const supabase = supabaseAdmin();
     const { error } = await supabase.from('event_packages').delete().eq('id', id);
-    if (error) throw error;
+    if (error) {
+      // Postgres FK-violation code - quotes/quote_line_items still reference
+      // this row (a real quote already went out priced against it), so
+      // deleting it would orphan that billing history. Surfaced as a plain
+      // message rather than the raw constraint-name error.
+      if (error.code === '23503') {
+        return NextResponse.json({ error: 'This attachment is still referenced by an existing quote or line item, so it can\'t be deleted - unpublishing it (Draft) is enough to stop it being offered again.' }, { status: 409 });
+      }
+      throw error;
+    }
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -1017,11 +1017,17 @@ function EventPackageRow({ eventPackage, expectedAttendeeCount, onChange }: { ev
 
   async function remove() {
     if (!confirm(`Detach "${pkg?.name}" from this program?`)) return;
-    await fetch('/admin/api/pricing/event-packages', {
+    setError(null);
+    const res = await fetch('/admin/api/pricing/event-packages', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: ep.id }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || 'Failed to delete.');
+      return;
+    }
     onChange();
   }
 
