@@ -38,7 +38,19 @@ type FeaturedProgram = {
   expected_attendee_count: number | null;
   quote_email_template_id: string | null;
   quote_email_template_needs_review: boolean;
+  age_label: string | null;
+  fee_label: string | null;
+  spots_label: string | null;
+  status_label: string | null;
+  card_kind: string;
+  show_on_term_page: boolean;
 };
+
+const CARD_KINDS = [
+  { value: 'session', label: 'Session', hint: '"Select this session"' },
+  { value: 'interest', label: 'Interest', hint: '"Register interest" + TBC styling' },
+  { value: 'term', label: 'Term', hint: '"Enrol for this term" + glow styling' },
+];
 
 const LABEL_CLS = "block text-[13px] font-medium text-slate-700 mb-1.5";
 const INPUT_CLS = "w-full bg-white border border-slate-200 rounded-[10px] px-3.5 py-2.5 text-[14px] text-slate-900 placeholder:text-slate-400 outline-none transition-all duration-150 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10";
@@ -58,6 +70,8 @@ const emptyForm = {
   counts_general_attendees: false,
   programs_id: '', default_session_id: '', expected_attendee_count: '',
   quote_email_template_id: '',
+  age_label: '', fee_label: '', spots_label: '', status_label: '',
+  card_kind: 'session', show_on_term_page: false,
 };
 
 // datetime-local inputs need "YYYY-MM-DDTHH:mm" in local time.
@@ -90,7 +104,7 @@ function statusOf(p: FeaturedProgram): { label: string; cls: string } {
 // shared via a direct link. Distinct from Draft/Hidden: the card still
 // exists and is reachable, it's just not surfaced on either public listing.
 function isLocked(p: FeaturedProgram): boolean {
-  return !p.show_on_events_page && !p.show_on_homepage;
+  return !p.show_on_events_page && !p.show_on_homepage && !p.show_on_term_page;
 }
 
 export default function FeaturedProgramsPage() {
@@ -192,6 +206,12 @@ export default function FeaturedProgramsPage() {
       default_session_id: p.default_session_id || '',
       expected_attendee_count: p.expected_attendee_count === null ? '' : String(p.expected_attendee_count),
       quote_email_template_id: p.quote_email_template_id || '',
+      age_label: p.age_label || '',
+      fee_label: p.fee_label || '',
+      spots_label: p.spots_label || '',
+      status_label: p.status_label || '',
+      card_kind: p.card_kind || 'session',
+      show_on_term_page: p.show_on_term_page,
     });
     setDateOptions(p.date_options || []);
     setFormError(null);
@@ -244,6 +264,12 @@ export default function FeaturedProgramsPage() {
         default_session_id: form.default_session_id || null,
         expected_attendee_count: form.expected_attendee_count === '' ? null : Number(form.expected_attendee_count),
         quote_email_template_id: form.quote_email_template_id || null,
+        age_label: form.age_label.trim() || null,
+        fee_label: form.fee_label.trim() || null,
+        spots_label: form.spots_label.trim() || null,
+        status_label: form.status_label.trim() || null,
+        card_kind: form.card_kind,
+        show_on_term_page: form.show_on_term_page,
       };
       const res = await fetch('/admin/api/featured-programs', {
         method: editing ? 'PATCH' : 'POST',
@@ -596,9 +622,57 @@ export default function FeaturedProgramsPage() {
                       <span className="block text-[12px] text-slate-400 mt-0.5">The &quot;Featured Events&quot; carousel.</span>
                     </span>
                   </label>
+                  <label className="flex items-start gap-2.5 p-3 rounded-[10px] bg-slate-50 border border-slate-200 cursor-pointer">
+                    <input type="checkbox" checked={form.show_on_term_page} onChange={e => setForm(f => ({ ...f, show_on_term_page: e.target.checked }))} className="mt-0.5 w-4 h-4 shrink-0 accent-blue-600" />
+                    <span>
+                      <span className="block text-[13px] font-medium text-slate-700">List on /term-program</span>
+                      <span className="block text-[12px] text-slate-400 mt-0.5">This term's self-contained &quot;one stop shop&quot; page. Doesn&apos;t need packages or a quote email template - the publish gate below is skipped for these cards.</span>
+                    </span>
+                  </label>
                 </div>
-                <p className={HINT_CLS}>Turn both off to keep this card live but unlisted on either public surface - for something not ready to announce yet. There&apos;s no direct-link detail page for a single card today, so &quot;unlisted&quot; currently means &quot;not visible anywhere&quot; rather than &quot;visible only via a private link&quot; - ask if you need that.</p>
+                <p className={HINT_CLS}>Turn all off to keep this card live but unlisted on any public surface - for something not ready to announce yet. There&apos;s no direct-link detail page for a single card today, so &quot;unlisted&quot; currently means &quot;not visible anywhere&quot; rather than &quot;visible only via a private link&quot; - ask if you need that.</p>
               </div>
+
+              {form.show_on_term_page && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
+                  <h4 className="text-[14px] font-semibold text-slate-800">Term Program Card</h4>
+                  <div>
+                    <label className={LABEL_CLS}>Card Kind</label>
+                    <div className="flex gap-2">
+                      {CARD_KINDS.map(k => (
+                        <button
+                          key={k.value}
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, card_kind: k.value }))}
+                          title={k.hint}
+                          className={`flex-1 px-3 py-2.5 rounded-[10px] border text-[13px] font-medium transition-colors duration-150 ${form.card_kind === k.value ? 'border-slate-900 bg-white' : 'border-slate-200 hover:border-slate-300 bg-white'}`}
+                        >
+                          {k.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className={HINT_CLS}>{CARD_KINDS.find(k => k.value === form.card_kind)?.hint}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={LABEL_CLS}>Age Band</label>
+                      <input placeholder="e.g. Grade 4+ (10yrs+)" value={form.age_label} onChange={e => setForm(f => ({ ...f, age_label: e.target.value }))} className={INPUT_CLS} />
+                    </div>
+                    <div>
+                      <label className={LABEL_CLS}>Status Badge</label>
+                      <input placeholder="e.g. Topic & Age TBC" value={form.status_label} onChange={e => setForm(f => ({ ...f, status_label: e.target.value }))} className={INPUT_CLS} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={LABEL_CLS}>Fee</label>
+                    <input placeholder="e.g. R1,300 — includes the workshop and a Micro:Bit to take home" value={form.fee_label} onChange={e => setForm(f => ({ ...f, fee_label: e.target.value }))} className={INPUT_CLS} />
+                  </div>
+                  <div>
+                    <label className={LABEL_CLS}>Spots</label>
+                    <input placeholder="e.g. Capped at 10 per session" value={form.spots_label} onChange={e => setForm(f => ({ ...f, spots_label: e.target.value }))} className={INPUT_CLS} />
+                  </div>
+                </div>
+              )}
 
               <div className="pt-1 border-t border-slate-100" />
 
@@ -640,6 +714,7 @@ export default function FeaturedProgramsPage() {
                   eventPackages={eventPackages}
                   loading={loadingEventPackages}
                   onRefresh={() => loadEventPackages(editing.id)}
+                  requiredToGoLive={!form.show_on_term_page}
                 />
               ) : (
                 <div className="p-4 rounded-[10px] bg-amber-50 border border-amber-200 text-[13px] text-amber-700 flex items-start gap-2">
@@ -859,7 +934,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 function PackagesQuoteEmailSection({
   featuredProgramId, expectedAttendeeCount, packagesList, emailTemplatesList,
   quoteEmailTemplateId, onQuoteEmailTemplateChange, needsReview,
-  eventPackages, loading, onRefresh,
+  eventPackages, loading, onRefresh, requiredToGoLive,
 }: {
   featuredProgramId: string;
   expectedAttendeeCount: number | null;
@@ -871,6 +946,7 @@ function PackagesQuoteEmailSection({
   eventPackages: any[];
   loading: boolean;
   onRefresh: () => void;
+  requiredToGoLive: boolean;
 }) {
   const [attachPackageId, setAttachPackageId] = useState('');
   const [attaching, setAttaching] = useState(false);
@@ -922,7 +998,11 @@ function PackagesQuoteEmailSection({
       <div className="flex items-center gap-2">
         <Package size={15} className="text-blue-500" />
         <h4 className="text-[14px] font-semibold text-slate-800">Packages & Quote Email</h4>
-        <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">Required to go live</span>
+        {requiredToGoLive ? (
+          <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">Required to go live</span>
+        ) : (
+          <span className="text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">Skipped — Term Program card</span>
+        )}
       </div>
 
       <div>

@@ -73,6 +73,7 @@ export async function POST(req: Request) {
       image_url, is_video, accent, sort_order, live_from, live_until, date_options, draft, allow_multi_date,
       show_on_events_page, show_on_homepage, counts_general_attendees,
       programs_id, default_session_id, expected_attendee_count, quote_email_template_id,
+      age_label, fee_label, spots_label, status_label, card_kind, show_on_term_page,
     } = body;
 
     // A brand-new program can never satisfy the publish gate yet (packages
@@ -105,6 +106,12 @@ export async function POST(req: Request) {
         default_session_id: default_session_id || null,
         expected_attendee_count: expected_attendee_count === '' || expected_attendee_count === undefined ? null : Number(expected_attendee_count),
         quote_email_template_id: quote_email_template_id || null,
+        age_label: age_label || null,
+        fee_label: fee_label || null,
+        spots_label: spots_label || null,
+        status_label: status_label || null,
+        card_kind: card_kind || 'session',
+        show_on_term_page: !!show_on_term_page,
       }])
       .select()
       .single();
@@ -128,14 +135,25 @@ export async function PATCH(req: Request) {
       image_url, is_video, accent, sort_order, live_from, live_until, date_options, draft, allow_multi_date,
       show_on_events_page, show_on_homepage, counts_general_attendees,
       programs_id, default_session_id, expected_attendee_count, quote_email_template_id, quote_email_template_needs_review,
+      age_label, fee_label, spots_label, status_label, card_kind, show_on_term_page,
     } = body;
 
     // Publish gate: only checked when this PATCH is actually the moment
     // draft flips to false - editing an already-live program, or staying in
-    // draft, never hits it.
+    // draft, never hits it. Term Program cards (/term-program) bypass it
+    // entirely - they don't use the Quote & Pricing Engine, so requiring a
+    // priced package and a quote email template would block every one of
+    // them from ever going live. show_on_term_page may not be in this PATCH
+    // body (e.g. a plain draft-flip from the row list), so fall back to the
+    // row's current value rather than assuming false.
     if (draft === false) {
-      const gateErr = await checkPublishGate(supabaseAdmin, id);
-      if (gateErr) return NextResponse.json({ error: gateErr }, { status: 400 });
+      const effectiveShowOnTermPage = show_on_term_page !== undefined
+        ? !!show_on_term_page
+        : (await supabaseAdmin.from('featured_programs').select('show_on_term_page').eq('id', id).single()).data?.show_on_term_page;
+      if (!effectiveShowOnTermPage) {
+        const gateErr = await checkPublishGate(supabaseAdmin, id);
+        if (gateErr) return NextResponse.json({ error: gateErr }, { status: 400 });
+      }
     }
 
     const update: Record<string, any> = { updated_at: new Date().toISOString() };
@@ -170,6 +188,12 @@ export async function PATCH(req: Request) {
       if (quote_email_template_id) update.quote_email_template_needs_review = false;
     }
     if (quote_email_template_needs_review !== undefined) update.quote_email_template_needs_review = !!quote_email_template_needs_review;
+    if (age_label !== undefined) update.age_label = age_label || null;
+    if (fee_label !== undefined) update.fee_label = fee_label || null;
+    if (spots_label !== undefined) update.spots_label = spots_label || null;
+    if (status_label !== undefined) update.status_label = status_label || null;
+    if (card_kind !== undefined) update.card_kind = card_kind || 'session';
+    if (show_on_term_page !== undefined) update.show_on_term_page = !!show_on_term_page;
 
     const { data, error } = await supabaseAdmin
       .from('featured_programs')
