@@ -126,6 +126,23 @@ function ClampedText({ text, clampClass = "line-clamp-3", className = "" }: { te
   );
 }
 
+// Shared between the footer summary and the registration modal - both show
+// the same selected-sessions list with a remove button per row.
+function RecapList({ cards, recapLabel, onRemove }: { cards: Card[]; recapLabel: (c: Card) => string; onRemove: (id: string) => void }) {
+  return (
+    <div className="space-y-2">
+      {cards.map(c => (
+        <div key={c.id} className="flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+          <span className="text-sm">{recapLabel(c)}</span>
+          <button type="button" onClick={() => onRemove(c.id)} aria-label="Remove" className="text-slate-400 hover:text-slate-700">
+            <X size={16} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function TermProgramPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,7 +160,7 @@ export default function TermProgramPage() {
   const [form, setForm] = useState({ parentName: "", phone: "", email: "", childrenInfo: "", numberOfChildren: "1", note: "" });
   const [consent, setConsent] = useState(false);
   const [botField, setBotField] = useState("");
-  const [showForm, setShowForm] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -214,7 +231,12 @@ export default function TermProgramPage() {
   function recapLabel(card: Card): string {
     const dateOptionId = cart[card.id];
     const match = card.date_options.find(d => d.id === dateOptionId);
-    return `${card.title}${match ? ` — ${match.label}` : ""}`;
+    if (match) return `${card.title} — ${match.label}`;
+    // A day pick isn't required to submit - flag it here rather than
+    // silently leaving it out, so it's clear (to the parent and to us)
+    // that the day still needs confirming when we follow up.
+    if (card.date_options.length > 1) return `${card.title} — day to be confirmed`;
+    return card.title;
   }
 
   function buildWaLink(): string {
@@ -232,11 +254,6 @@ export default function TermProgramPage() {
     setSubmitError(null);
 
     if (selectedCards.length === 0) return setSubmitError("Select at least one session first.");
-    for (const c of selectedCards) {
-      if (c.date_options.length > 1 && !cart[c.id]) {
-        return setSubmitError(`Please choose a day for "${c.title}".`);
-      }
-    }
     if (!form.parentName.trim()) return setSubmitError("Please enter your name.");
     if (!form.phone.trim()) return setSubmitError("Please enter a WhatsApp number.");
     const nChildren = parseInt(form.numberOfChildren, 10);
@@ -263,6 +280,7 @@ export default function TermProgramPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Something went wrong. Please try again.");
       window.open(buildWaLink(), "_blank", "noopener");
+      setModalOpen(false);
       setSuccess(true);
     } catch (err: any) {
       setSubmitError(err.message);
@@ -275,16 +293,106 @@ export default function TermProgramPage() {
     <div className={`min-h-screen bg-slate-50 text-slate-900 ${bodyFont.className}`}>
       {/* Floating cart */}
       <AnimatePresence>
-        {selectedCards.length > 0 && !showForm && (
+        {selectedCards.length > 0 && !modalOpen && (
           <motion.button
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            onClick={() => setShowForm(true)}
+            onClick={() => setModalOpen(true)}
             className="fixed top-5 right-5 z-40 flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-full text-sm font-semibold shadow-xl shadow-slate-900/20"
           >
             <ShoppingBag size={16} /> {selectedCards.length} selected — Message us
           </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* Registration modal - the floating button above and the footer's
+          "Complete registration" button both just open this; the actual
+          form lives here only, not duplicated inline in the page. */}
+      <AnimatePresence>
+        {modalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setModalOpen(false)}
+            className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-md max-h-[85vh] overflow-y-auto bg-white rounded-2xl p-6 md:p-8 space-y-5 relative"
+            >
+              <button type="button" onClick={() => setModalOpen(false)} aria-label="Close" className="absolute top-4 right-4 text-slate-400 hover:text-slate-700">
+                <X size={20} />
+              </button>
+
+              <div className="pr-6">
+                <h2 className={`${headingFont.className} text-xl font-semibold`}>Complete your registration</h2>
+                <p className="text-sm text-slate-500 mt-1">We'll confirm availability and sort out the rest with you directly.</p>
+              </div>
+
+              {selectedCards.length === 0 ? (
+                <p className="text-sm text-slate-400">No sessions selected yet — close this and choose one or more first.</p>
+              ) : (
+                <>
+                  <RecapList cards={selectedCards} recapLabel={recapLabel} onRemove={removeCard} />
+
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold mb-1.5">Parent's name</label>
+                        <input value={form.parentName} onChange={e => setForm(f => ({ ...f, parentName: e.target.value }))} placeholder="e.g. Thandi Mokoena" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold mb-1.5">WhatsApp number</label>
+                        <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="e.g. 082 123 4567" type="tel" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5">Child's name &amp; age (or names, if more than one)</label>
+                      <input value={form.childrenInfo} onChange={e => setForm(f => ({ ...f, childrenInfo: e.target.value }))} placeholder="e.g. Lindiwe, 11" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold mb-1.5">Number of children</label>
+                        <input type="number" min={1} value={form.numberOfChildren} onChange={e => setForm(f => ({ ...f, numberOfChildren: e.target.value }))} className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold mb-1.5">Email (optional)</label>
+                        <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1.5">Anything else we should know? (optional)</label>
+                      <textarea rows={3} value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="e.g. she's done a bit of Scratch before" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400 resize-none" />
+                    </div>
+
+                    <input type="text" value={botField} onChange={e => setBotField(e.target.value)} tabIndex={-1} autoComplete="off" className="hidden" aria-hidden="true" />
+
+                    <label className="flex items-start gap-2.5 text-xs text-slate-500">
+                      <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} className="mt-0.5 w-4 h-4 accent-slate-900" />
+                      I consent to RAD Academy contacting me about these sessions on WhatsApp.
+                    </label>
+
+                    {submitError && (
+                      <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 flex items-start gap-2">
+                        <AlertCircle className="text-rose-500 shrink-0 mt-0.5" size={15} />
+                        <p className="text-rose-700 text-xs font-medium">{submitError}</p>
+                      </div>
+                    )}
+
+                    <button type="submit" disabled={submitting} className="w-full py-3.5 rounded-full bg-slate-900 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
+                      {submitting ? <Loader2 size={16} className="animate-spin" /> : <Users size={16} />}
+                      {submitting ? "Sending..." : "Send via WhatsApp"}
+                    </button>
+                  </form>
+                </>
+              )}
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -300,6 +408,40 @@ export default function TermProgramPage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={settings.heroImage} alt="" className="w-full h-auto rounded-2xl border border-slate-200" />
         </div>
+
+        {/* Quick select - a checkbox here is the same toggle as "Select this
+            session" on the full card below, sharing the same cart state, so
+            either one stays in sync with the other. */}
+        {!loading && cards.some(card => card.card_kind !== "interest") && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-6">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-1">Quick select</h3>
+            <p className="text-xs text-slate-400 mb-2">Tick what interests you - scroll down to pick a day and register.</p>
+            <div className="divide-y divide-slate-100">
+              {cards.filter(card => card.card_kind !== "interest").map(card => {
+                const isSelected = cart[card.id] !== undefined;
+                const summary = dateSummary(card.date_options);
+                return (
+                  <label key={card.id} className="flex items-center gap-3 py-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleCard(card)}
+                      className="w-4 h-4 shrink-0 accent-slate-900"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-slate-900 truncate">{card.title}</div>
+                      <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-1.5">
+                        {summary && <span>{summary}</span>}
+                        {summary && card.location && <span className="text-slate-300">·</span>}
+                        {card.location && <span>{card.location}</span>}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <hr className="border-slate-200" />
 
@@ -338,7 +480,7 @@ export default function TermProgramPage() {
                   {showSectionDivider && (
                     <div className="flex items-center gap-3 pt-2">
                       <div className="h-px flex-1 bg-slate-200" />
-                      <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400 whitespace-nowrap">Not a workshop — Online Term Lessons</span>
+                      <span className={`${headingFont.className} text-sm md:text-base font-extrabold uppercase tracking-widest text-slate-400 whitespace-nowrap`}>Online Term Lessons</span>
                       <div className="h-px flex-1 bg-slate-200" />
                     </div>
                   )}
@@ -430,12 +572,13 @@ export default function TermProgramPage() {
           </div>
         </div>
 
-        {/* Ready to register */}
+        {/* Ready to register - a summary only; the actual form lives in the
+            modal above, opened from here or from the floating button. */}
         {!loading && cards.length > 0 && (
           <div className="rounded-2xl border-t-[3px] border-t-amber-500 border border-slate-200 bg-white p-8 space-y-5">
             <div>
               <h2 className={`${headingFont.className} text-xl font-semibold`}>Ready to register?</h2>
-              <p className="text-sm text-slate-600 mt-1">Select the session(s) you're interested in above, then add your details and send your request through on WhatsApp.</p>
+              <p className="text-sm text-slate-600 mt-1">Select the session(s) you're interested in above, then complete your registration.</p>
             </div>
 
             {success ? (
@@ -450,72 +593,10 @@ export default function TermProgramPage() {
               <p className="text-sm text-slate-400">No sessions selected yet — choose one or more above to get started.</p>
             ) : (
               <>
-                <div className="space-y-2">
-                  {selectedCards.map(c => (
-                    <div key={c.id} className="flex items-center justify-between gap-3 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                      <span className="text-sm">{recapLabel(c)}</span>
-                      <button type="button" onClick={() => removeCard(c.id)} aria-label="Remove" className="text-slate-400 hover:text-slate-700">
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                {!showForm ? (
-                  <button type="button" onClick={() => setShowForm(true)} className="px-6 py-3 rounded-full bg-slate-900 text-white text-sm font-semibold">
-                    Add your details
-                  </button>
-                ) : (
-                  <form onSubmit={handleSubmit} className="space-y-4 pt-2">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold mb-1.5">Parent's name</label>
-                        <input value={form.parentName} onChange={e => setForm(f => ({ ...f, parentName: e.target.value }))} placeholder="e.g. Thandi Mokoena" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold mb-1.5">WhatsApp number</label>
-                        <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="e.g. 082 123 4567" type="tel" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold mb-1.5">Child's name &amp; age (or names, if more than one)</label>
-                      <input value={form.childrenInfo} onChange={e => setForm(f => ({ ...f, childrenInfo: e.target.value }))} placeholder="e.g. Lindiwe, 11" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold mb-1.5">Number of children</label>
-                        <input type="number" min={1} value={form.numberOfChildren} onChange={e => setForm(f => ({ ...f, numberOfChildren: e.target.value }))} className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold mb-1.5">Email (optional)</label>
-                        <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400" />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold mb-1.5">Anything else we should know? (optional)</label>
-                      <textarea rows={3} value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} placeholder="e.g. she's done a bit of Scratch before" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm outline-none focus:border-slate-400 resize-none" />
-                    </div>
-
-                    <input type="text" value={botField} onChange={e => setBotField(e.target.value)} tabIndex={-1} autoComplete="off" className="hidden" aria-hidden="true" />
-
-                    <label className="flex items-start gap-2.5 text-xs text-slate-500">
-                      <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} className="mt-0.5 w-4 h-4 accent-slate-900" />
-                      I consent to RAD Academy contacting me about these sessions on WhatsApp.
-                    </label>
-
-                    {submitError && (
-                      <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 flex items-start gap-2">
-                        <AlertCircle className="text-rose-500 shrink-0 mt-0.5" size={15} />
-                        <p className="text-rose-700 text-xs font-medium">{submitError}</p>
-                      </div>
-                    )}
-
-                    <button type="submit" disabled={submitting} className="w-full py-3.5 rounded-full bg-slate-900 text-white text-sm font-semibold disabled:opacity-50 flex items-center justify-center gap-2">
-                      {submitting ? <Loader2 size={16} className="animate-spin" /> : <Users size={16} />}
-                      {submitting ? "Sending..." : "Send via WhatsApp"}
-                    </button>
-                  </form>
-                )}
+                <RecapList cards={selectedCards} recapLabel={recapLabel} onRemove={removeCard} />
+                <button type="button" onClick={() => setModalOpen(true)} className="px-6 py-3 rounded-full bg-slate-900 text-white text-sm font-semibold">
+                  Complete registration
+                </button>
               </>
             )}
           </div>

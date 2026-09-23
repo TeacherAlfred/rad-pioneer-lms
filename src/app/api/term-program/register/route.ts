@@ -78,10 +78,16 @@ export async function POST(req: Request) {
       const program: any = programById.get(s.program_id);
       const dateOptions = program.date_options || [];
       const match = dateOptions.find((d: any) => d.id === s.date_option_id);
+      // A day pick isn't required to submit - a parent can register and
+      // have the day confirmed when we contact them. Flag it explicitly
+      // rather than leaving date_label blank, so it's visible in
+      // event_registrations and the admin alert as something to follow up
+      // on, not just missing data.
+      const dateLabel = match ? match.label : (dateOptions.length > 1 ? 'Day to be confirmed' : null);
       return {
         program,
         date_option_id: s.date_option_id || null,
-        date_label: match ? match.label : null,
+        date_label: dateLabel,
       };
     });
 
