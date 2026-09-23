@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Space_Grotesk, IBM_Plex_Sans } from "next/font/google";
 import {
@@ -77,16 +77,38 @@ function splitFee(feeLabel: string | null): { amount: string; includes: string |
   return { amount: feeLabel, includes: null };
 }
 
-// Self-contained read-more: only shows the toggle when the text is long
-// enough to plausibly overflow its clamp, so a short description never
-// grows a pointless "Read more" link.
-function ClampedText({ text, clampClass = "line-clamp-3", threshold = 140, className = "" }: { text: string; clampClass?: string; threshold?: number; className?: string }) {
+// Self-contained read-more: measures whether the text actually overflows
+// its line-clamp (rather than guessing from character count, which can be
+// wrong at any given viewport width/font size), so the toggle only ever
+// appears when there's truly more to read. Re-measures on resize and once
+// web fonts finish loading, since a font swap can change how the text
+// wraps after the first paint.
+function ClampedText({ text, clampClass = "line-clamp-3", className = "" }: { text: string; clampClass?: string; className?: string }) {
   const [expanded, setExpanded] = useState(false);
-  const needsToggle = text.length > threshold;
+  const [overflowing, setOverflowing] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    function measure() {
+      if (!el) return;
+      setOverflowing(el.scrollHeight - el.clientHeight > 1);
+    }
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    document.fonts?.ready?.then(measure);
+
+    return () => ro.disconnect();
+  }, [text, clampClass]);
+
   return (
     <div>
-      <p className={`${className} ${expanded || !needsToggle ? "" : clampClass}`}>{text}</p>
-      {needsToggle && (
+      <p ref={ref} className={`${className} ${expanded ? "" : clampClass}`}>{text}</p>
+      {(overflowing || expanded) && (
         <button type="button" onClick={() => setExpanded(v => !v)} className="text-xs font-semibold text-slate-900 underline underline-offset-2 mt-1">
           {expanded ? "Show less" : "Read more"}
         </button>
@@ -288,7 +310,7 @@ export default function TermProgramPage() {
                   )}
 
                   <div className={`bg-white rounded-2xl border p-7 space-y-5 ${style.border} ${style.ring}`}>
-                    {card.image_url && (
+                    {card.image_url && card.card_kind !== "interest" && (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={card.image_url} alt="" className="w-full h-auto rounded-xl" />
                     )}
@@ -321,18 +343,18 @@ export default function TermProgramPage() {
                       <div className="rounded-xl bg-amber-50 border border-amber-100 p-4 space-y-1.5">
                         <p className="text-sm font-semibold text-amber-900">Details land by {TBC_DETAILS_DEADLINE}</p>
                         {card.details && <p className="text-sm text-amber-800 leading-relaxed">{card.details}</p>}
-                        <p className="text-xs text-amber-700 leading-relaxed">Register your interest now and help decide what we cover — we'll ask everyone who's signed up before locking in the topic.</p>
+                        <p className="text-xs text-amber-700 leading-relaxed">Register your interest now and help decide what we cover — we'll ask everyone who's registered interest before locking in the topic.</p>
                       </div>
                     ) : (
                       card.details && <ClampedText text={card.details} className="text-slate-600 leading-relaxed" />
                     )}
 
-                    {(fee || card.spots_label) && (
+                    {card.card_kind !== "interest" && (fee || card.spots_label) && (
                       <div className="space-y-2 pt-3 border-t border-slate-100">
                         {fee && (
                           <div>
                             <div className={`${headingFont.className} text-2xl font-semibold`}>{fee.amount}</div>
-                            {fee.includes && <ClampedText text={fee.includes} clampClass="line-clamp-2" threshold={70} className="text-sm text-slate-600 mt-0.5" />}
+                            {fee.includes && <ClampedText text={fee.includes} clampClass="line-clamp-2" className="text-sm text-slate-600 mt-0.5" />}
                           </div>
                         )}
                         {card.spots_label && <div className="text-sm text-slate-500">{card.spots_label}</div>}
