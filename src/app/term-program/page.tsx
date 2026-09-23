@@ -31,16 +31,25 @@ type Card = {
   series: string | null;
 };
 
-// Page-level hero copy - unlike the card list below, this changes only
-// ~4x/year (once per term) so a small code edit each term is fine; it's
-// the per-card content that needs to be admin-editable since that changes
-// throughout a term's run-up. Update these each term.
-const HERO_TITLE = "This Term's Workshops";
-const HERO_SUBTITLE = "A more focused structure this term — select what interests you below and we'll follow up on WhatsApp.";
-const HERO_IMAGE = "https://pub-5baa3fb9dc2549008c18dac88b524ed9.r2.dev/marketing_material/uncaptioned_images/2.jpg";
-// Shown on every "interest" card (topic/age still TBC) - when this changes
-// (or stops being true), update the copy in the TBC panel below too.
-const TBC_DETAILS_DEADLINE = "mid-October";
+// Page-level hero/section copy - admin-editable at /admin/term-program-
+// settings (dashboard_settings.term_program_* columns) so it can be
+// refreshed once a term with no code deploy. These are just the built-in
+// fallback shown until an admin customizes something, same "null means
+// default" convention as the welcome menu settings.
+const DEFAULT_HERO_TITLE = "This Term's Workshops";
+const DEFAULT_HERO_SUBTITLE = "A more focused structure this term — select what interests you below and we'll follow up on WhatsApp.";
+const DEFAULT_HERO_IMAGE = "https://pub-5baa3fb9dc2549008c18dac88b524ed9.r2.dev/marketing_material/uncaptioned_images/2.jpg";
+const DEFAULT_SESSIONS_HEADING = "This term's sessions";
+// Shown on every "interest" card (topic/age still TBC).
+const DEFAULT_TBC_DEADLINE = "mid-October";
+
+type PageSettings = {
+  heroTitle: string;
+  heroSubtitle: string;
+  heroImage: string;
+  sessionsHeading: string;
+  tbcDeadline: string;
+};
 
 const CARD_STYLE: Record<Card["card_kind"], { border: string; ring: string; button: string }> = {
   session: { border: "border-slate-200", ring: "", button: "Select this session" },
@@ -121,6 +130,13 @@ export default function TermProgramPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<PageSettings>({
+    heroTitle: DEFAULT_HERO_TITLE,
+    heroSubtitle: DEFAULT_HERO_SUBTITLE,
+    heroImage: DEFAULT_HERO_IMAGE,
+    sessionsHeading: DEFAULT_SESSIONS_HEADING,
+    tbcDeadline: DEFAULT_TBC_DEADLINE,
+  });
 
   // program_id -> chosen date_option_id (or '' when not yet chosen / no dates)
   const [cart, setCart] = useState<Record<string, string>>({});
@@ -147,6 +163,22 @@ export default function TermProgramPage() {
       setLoading(false);
     }
     load();
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/term-program/settings")
+      .then(res => res.json())
+      .then(data => {
+        const s = data.settings || {};
+        setSettings({
+          heroTitle: s.term_program_hero_title || DEFAULT_HERO_TITLE,
+          heroSubtitle: s.term_program_hero_subtitle || DEFAULT_HERO_SUBTITLE,
+          heroImage: s.term_program_hero_image_url || DEFAULT_HERO_IMAGE,
+          sessionsHeading: s.term_program_sessions_heading || DEFAULT_SESSIONS_HEADING,
+          tbcDeadline: s.term_program_tbc_deadline_label || DEFAULT_TBC_DEADLINE,
+        });
+      })
+      .catch(() => {}); // keep the built-in defaults already in state
   }, []);
 
   const selectedIds = Object.keys(cart);
@@ -263,17 +295,19 @@ export default function TermProgramPage() {
             <span className="w-2 h-2 rounded-full bg-amber-500" />
             <span className="text-xs font-bold tracking-widest uppercase text-slate-900">RAD Academy · Pretoria</span>
           </div>
-          <h1 className={`${headingFont.className} text-4xl md:text-5xl font-bold tracking-tight leading-[1.08]`}>{HERO_TITLE}</h1>
-          <p className="text-lg text-slate-600 max-w-xl leading-relaxed">{HERO_SUBTITLE}</p>
+          <h1 className={`${headingFont.className} text-4xl md:text-5xl font-bold tracking-tight leading-[1.08]`}>{settings.heroTitle}</h1>
+          <p className="text-lg text-slate-600 max-w-xl leading-relaxed">{settings.heroSubtitle}</p>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={HERO_IMAGE} alt="" className="w-full h-auto rounded-2xl border border-slate-200" />
+          <img src={settings.heroImage} alt="" className="w-full h-auto rounded-2xl border border-slate-200" />
         </div>
+
+        <hr className="border-slate-200" />
 
         {/* Sessions */}
         <div className="space-y-4">
-          <div>
-            <h2 className={`${headingFont.className} text-xl font-semibold`}>This term's sessions</h2>
-            <p className="text-sm text-slate-500">Select any that interest you — you can choose more than one.</p>
+          <div className="text-center">
+            <h2 className={`${headingFont.className} text-3xl md:text-4xl font-bold`}>{settings.sessionsHeading}</h2>
+            <p className="text-sm text-slate-500 mt-2">Select any that interest you — you can choose more than one.</p>
           </div>
 
           {loading && (
@@ -341,7 +375,7 @@ export default function TermProgramPage() {
 
                     {card.card_kind === "interest" ? (
                       <div className="rounded-xl bg-amber-50 border border-amber-100 p-4 space-y-1.5">
-                        <p className="text-sm font-semibold text-amber-900">Details land by {TBC_DETAILS_DEADLINE}</p>
+                        <p className="text-sm font-semibold text-amber-900">Details land by {settings.tbcDeadline}</p>
                         {card.details && <p className="text-sm text-amber-800 leading-relaxed">{card.details}</p>}
                         <p className="text-xs text-amber-700 leading-relaxed">Register your interest now and help decide what we cover — we'll ask everyone who's registered interest before locking in the topic.</p>
                       </div>

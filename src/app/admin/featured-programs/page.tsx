@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   Loader2, ArrowLeft, Sparkles, Plus, X, Pencil, Trash2, GripVertical,
   Image as ImageIcon, Clock, MapPin, Eye, EyeOff, Calendar, CalendarDays,
-  Lock, CalendarClock, Home, Package, Mail, AlertTriangle, CheckCircle2, Maximize2,
+  Lock, CalendarClock, Home, Package, Mail, AlertTriangle, CheckCircle2, Maximize2, Settings,
 } from "lucide-react";
 import { computeMarginPct, guardrailCheck } from "@/lib/pricingEngine";
 import RegisterInterestModal, { dateOptionsWithCombo } from "@/components/RegisterInterestModal";
@@ -356,6 +356,9 @@ export default function FeaturedProgramsPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Link href="/admin/term-program-settings" className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-50">
+              <Settings size={14} /> Term Program Page
+            </Link>
             <Link href="/admin/registrations" className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-50">
               <CalendarDays size={14} /> Registrations
             </Link>
