@@ -253,6 +253,16 @@ export default function MessageActivityPage() {
   // window can't be found at all. lastServerQuery is what the current rows were
   // loaded for, so the inbound-poll refresh keeps the same search applied.
   const lastServerQuery = useRef('');
+
+  // URL-button clicks per template, logged by the public /t/<template>
+  // redirect (Meta sends no webhook for those). Non-fatal if unavailable.
+  const [templateClicks, setTemplateClicks] = useState<{ templateName: string; clicks: number }[]>([]);
+  useEffect(() => {
+    fetch('/admin/api/lead-funnel/template-clicks')
+      .then(res => res.json())
+      .then(data => setTemplateClicks(data.rows || []))
+      .catch(() => { /* card just doesn't show */ });
+  }, []);
   async function loadMessages(q: string = lastServerQuery.current) {
     try {
       const res = await fetch(`/admin/api/lead-funnel/messages${q ? `?q=${encodeURIComponent(q)}` : ''}`);
@@ -1030,6 +1040,22 @@ Send anyway?`)) {
                   title="Template Sends By Name"
                   data={stats.byTemplate}
                   mode={countMode}
+                  activeKey={templateFilter}
+                  onSelect={k => setTemplateFilter(prev => prev === k ? null : k)}
+                />
+              </div>
+            )}
+
+            {templateClicks.length > 0 && (
+              <div className="mb-6">
+                <BreakdownCard
+                  title="Template Link Clicks (URL button)"
+                  data={Object.fromEntries(templateClicks.map(t => [t.templateName, { messages: t.clicks, leads: new Set<string>() }]))}
+                  mode="messages"
+                  keyLabel={k => {
+                    const sent = stats.byTemplate[k]?.messages;
+                    return sent ? `${k} (${sent} sent)` : k;
+                  }}
                   activeKey={templateFilter}
                   onSelect={k => setTemplateFilter(prev => prev === k ? null : k)}
                 />
