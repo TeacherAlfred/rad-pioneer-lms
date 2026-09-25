@@ -298,15 +298,28 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
   const leadUpdate: Record<string, any> = {};
   if (flow.set_source) leadUpdate.source = flow.set_source;
   if (flow.add_tags?.length) leadUpdate.tags = Array.from(new Set([...(lead.tags || []), ...flow.add_tags]));
-  // The confirmed side of the opt-out flow (btn_optout_confirm) - the
-  // initial "stop"/"Stop Receiving messages" tap only ever sends the
-  // confirm/cancel prompt (see STAGE 1's OPT-OUT block), never sets this
-  // itself. A config flag rather than hardcoding that one trigger_button_id
-  // here, consistent with every other button behavior in this file living in
-  // bot_flows, not code.
+  // The opt-out conversation, one bot_flows row per step (config flags, not
+  // hardcoded button ids, like every other button behavior in this file):
+  //   opt_out_step 'request'  - "Stop Receiving messages" tap: opted out
+  //     IMMEDIATELY, marked pending until they answer the confirm prompt
+  //     this flow sends. Someone who never answers still stops receiving.
+  //   sets_opted_out          - btn_optout_confirm: confirmed.
+  //   opt_out_step 'cancel'   - btn_optout_cancel: "No, Stay Subscribed".
+  // No admin alert on any of these - review is the flag on the contact.
+  if (flow.opt_out_step === 'request') {
+    leadUpdate.opted_out = true;
+    leadUpdate.opted_out_at = new Date().toISOString();
+    leadUpdate.opt_out_state = 'pending';
+  }
   if (flow.sets_opted_out) {
     leadUpdate.opted_out = true;
     leadUpdate.opted_out_at = new Date().toISOString();
+    leadUpdate.opt_out_state = 'confirmed';
+  }
+  if (flow.opt_out_step === 'cancel') {
+    leadUpdate.opted_out = false;
+    leadUpdate.opted_out_at = null;
+    leadUpdate.opt_out_state = 'cancelled';
   }
   // Marks this lead as mid-question so their next freeform text is captured
   // (see STAGE 1) instead of falling through to the generic welcome.
@@ -794,9 +807,14 @@ export async function POST(request: Request) {
               // keyword needed. Runs before STAGE 1/2 below, so a lead who opts
               // back in and immediately taps a button/types a keyword gets that
               // reply normally in the same turn, not on their next message.
-              if (lead.opted_out) {
+              // Not for a stop that's still pending: they've just tapped Stop and
+              // are yet to answer the confirm prompt, so a stray tap or message
+              // in between (e.g. another button) must not silently undo it -
+              // only "No, Stay Subscribed" or an admin reactivating does.
+              if (lead.opted_out && lead.opt_out_state !== 'pending') {
                 inboundLeadUpdate.opted_out = false;
                 inboundLeadUpdate.opted_out_at = null;
+                inboundLeadUpdate.opt_out_state = null;
               }
               if (inboundLeadUpdate.lifecycle_stage) {
                 await recordStageChange(supabase, lead.id, {
@@ -850,6 +868,11 @@ export async function POST(request: Request) {
               if (message.type === 'text') {
                 const trimmed = messageText.trim().toLowerCase();
                 if (['stop', 'unsubscribe', 'opt out', 'optout'].includes(trimmed)) {
+                  // Same as the button-tap entry point: stops immediately, pending
+                  // until they answer the prompt below.
+                  const pendingOptOut = { opted_out: true, opted_out_at: new Date().toISOString(), opt_out_state: 'pending' };
+                  await supabase.from('leads').update(pendingOptOut).eq('id', lead.id);
+                  lead = { ...lead, ...pendingOptOut };
                   const promptResult = await sendToLead(supabase, lead, senderPhone, {
                     kind: 'freeform',
                     payload: {
@@ -872,7 +895,6 @@ export async function POST(request: Request) {
                     body: promptResult.queued ? '[Queued for approval: opt-out confirmation prompt]' : promptResult.ok ? '[Delivered opt-out confirmation prompt]' : `[FAILED to deliver opt-out confirmation prompt: ${promptResult.error}]`,
                     wamid: promptResult.wamid || null,
                   }]);
-                  await notifyAdmin(supabase, senderPhone, "🚫 Asked to confirm opt-out.", lead.id);
                   continue;
                 }
               }

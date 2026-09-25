@@ -36,6 +36,7 @@ type MessageRow = {
   lead_respondent_is_parent?: boolean | null;
   lead_is_business_number?: boolean;
   lead_opted_out?: boolean;
+  lead_opt_out_state?: 'pending' | 'confirmed' | 'cancelled' | null;
   media_path?: string | null;
   media_type?: 'image' | 'sticker' | 'video' | 'audio' | 'document' | null;
   media_mime_type?: string | null;
@@ -64,6 +65,7 @@ type LeadGroup = {
   respondentIsParent: boolean | null;
   isBusinessNumber: boolean;
   optedOut: boolean;
+  optOutState: 'pending' | 'confirmed' | 'cancelled' | null;
   // Derived from the segment_parent/segment_student tags btn_segment_parent/
   // btn_segment_student stamp on tap - "do we already have this on record",
   // so btn_segment_intro isn't sent to someone who's already answered it.
@@ -669,7 +671,7 @@ export default function MessageActivityPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to update.');
-      setRows(prev => prev.map(r => r.lead_id === group.leadId ? { ...r, lead_opted_out: data.row.opted_out } : r));
+      setRows(prev => prev.map(r => r.lead_id === group.leadId ? { ...r, lead_opted_out: data.row.opted_out, lead_opt_out_state: data.row.opt_out_state ?? null } : r));
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -797,6 +799,7 @@ export default function MessageActivityPage() {
         respondentIsParent: sorted[0]?.lead_respondent_is_parent ?? null,
         isBusinessNumber: !!sorted[0]?.lead_is_business_number,
         optedOut: !!sorted[0]?.lead_opted_out,
+        optOutState: sorted[0]?.lead_opt_out_state || null,
         segment: (sorted[0]?.lead_tags || []).includes('segment_parent') ? 'parent'
           : (sorted[0]?.lead_tags || []).includes('segment_student') ? 'student'
           : null,
@@ -1212,9 +1215,19 @@ export default function MessageActivityPage() {
                                     <Ban size={9} /> Blocked
                                   </span>
                                 )}
-                                {g.optedOut && (
+                                {g.optedOut && g.optOutState === 'pending' && (
+                                  <span title="Tapped Stop but hasn't answered the confirmation yet - no messages are being sent. Review, then Reactivate if it was a mistake." className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                                    <VolumeX size={9} /> Stop Pending
+                                  </span>
+                                )}
+                                {g.optedOut && g.optOutState !== 'pending' && (
                                   <span title="Opted out of marketing messages - texted stop/unsubscribe" className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-600">
                                     <VolumeX size={9} /> Opted Out
+                                  </span>
+                                )}
+                                {!g.optedOut && g.optOutState === 'cancelled' && (
+                                  <span title="Tapped Stop, then chose No, Stay Subscribed - still receiving messages" className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">
+                                    Stop Cancelled
                                   </span>
                                 )}
                                 {g.segment && (

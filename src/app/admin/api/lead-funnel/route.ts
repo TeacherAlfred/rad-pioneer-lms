@@ -147,6 +147,9 @@ export async function PATCH(req: Request) {
     if (opted_out !== undefined) {
       update.opted_out = !!opted_out;
       update.opted_out_at = opted_out ? new Date().toISOString() : null;
+      // An admin opting someone out is a confirmed stop; reactivating clears
+      // the whole opt-out history flag (pending/cancelled included).
+      update.opt_out_state = opted_out ? 'confirmed' : null;
     }
     // Message Activity's "Needs Reply" flag is purely derived (last message
     // is inbound) - dismissing it just stamps "don't flag the inbound
@@ -161,7 +164,7 @@ export async function PATCH(req: Request) {
       update.stage_entered_at = new Date().toISOString();
       if (lifecycle_stage === 'lost') update.lost_reason = lost_reason;
       if (lifecycle_stage !== 'lost') update.lost_reason = null;
-      if (lifecycle_stage === 'opted_out') { update.opted_out = true; update.opted_out_at = new Date().toISOString(); }
+      if (lifecycle_stage === 'opted_out') { update.opted_out = true; update.opted_out_at = new Date().toISOString(); update.opt_out_state = 'confirmed'; }
       // is_customer never regresses - won is the only stage that sets it.
       if (lifecycle_stage === 'won') {
         update.is_customer = true;

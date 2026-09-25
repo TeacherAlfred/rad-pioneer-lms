@@ -36,6 +36,7 @@ type Lead = {
   ad_headline?: string | null;
   ctwa_clid?: string | null;
   opted_out?: boolean | null;
+  opt_out_state?: 'pending' | 'confirmed' | 'cancelled' | null;
   contacted_at?: string | null;
   created_at?: string | null;
   household_id?: string | null;
@@ -1140,7 +1141,9 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
                           {(r.children_names || []).length > 0 && (
                             <div className="text-[11px] text-slate-400 mt-0.5">Children: {(r.children_names || []).join(', ')}</div>
                           )}
-                          {r.opted_out && <span className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-rose-50 text-rose-500 px-2 py-0.5 rounded-full">Opted out</span>}
+                          {r.opted_out && r.opt_out_state === 'pending' && <span title="Tapped Stop but hasn't answered the confirmation - no messages are being sent. Review, then reactivate if it was a mistake." className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Stop pending</span>}
+                          {r.opted_out && r.opt_out_state !== 'pending' && <span className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-rose-50 text-rose-500 px-2 py-0.5 rounded-full">Opted out</span>}
+                          {!r.opted_out && r.opt_out_state === 'cancelled' && <span title="Tapped Stop, then chose No, Stay Subscribed - still receiving messages" className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">Stop cancelled</span>}
                           {r.household_name && (
                             <div className="inline-flex items-center gap-1 mt-1">
                               <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">
@@ -1659,7 +1662,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
                   <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-blue-50 text-blue-500">Awaiting: {viewingLead.awaiting_reply_label}</span>
                 )}
                 {viewingLead.opted_out && (
-                  <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full bg-rose-50 text-rose-500">Opted Out</span>
+                  <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${viewingLead.opt_out_state === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-rose-50 text-rose-500'}`}>{viewingLead.opt_out_state === 'pending' ? 'Stop Pending' : 'Opted Out'}</span>
                 )}
               </div>
             </div>
