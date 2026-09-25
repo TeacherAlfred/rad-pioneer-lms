@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getSeries } from '@/content/labs';
-import { getPublishedLab, loadPublishedLabs } from '@/lib/labsRepo';
+import { getPublishedLab, loadPublishedLabs, loadSharedFaqs } from '@/lib/labsRepo';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { LabView, type Workshop } from '@/components/labs/LabView';
 
@@ -62,8 +62,8 @@ async function nextLiveWorkshop(programCode?: string): Promise<Workshop | null> 
 
 export default async function LabPage({ params }: Props) {
   const { slug } = await params;
-  const [lab, allLabs] = await Promise.all([getPublishedLab(slug), loadPublishedLabs()]);
+  const [lab, allLabs, sharedFaqs] = await Promise.all([getPublishedLab(slug), loadPublishedLabs(), loadSharedFaqs()]);
   if (!lab) notFound();
   const workshop = await nextLiveWorkshop(lab.fork.workshopProgramCode);
-  return <LabView lab={lab} allLabs={allLabs} workshop={workshop} />;
+  return <LabView lab={lab} allLabs={allLabs} workshop={workshop} sharedFaqs={sharedFaqs} />;
 }

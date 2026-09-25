@@ -267,7 +267,7 @@ export function SectionPanel({
       return (
         <div className="space-y-4">
           <p className="rounded-lg bg-slate-100 px-3 py-2 text-[12px] leading-snug text-slate-600">
-            These are the <b>This lab</b> questions. The series and “all labs” questions are shared across labs and aren’t edited here yet.
+            These are the <b>This lab</b> questions. The series and “all labs” questions are shared across labs — edit them under <b>Shared FAQs</b> on the <a href="/admin/labs" target="_blank" rel="noopener noreferrer" className="font-semibold text-violet-700 underline">All labs</a> page.
           </p>
           {draft.faqs.map((f, i) => (
             <div key={i} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">

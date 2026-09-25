@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { defaultWalkthrough, faqsForLab, getSeries, labsInSeries, seriesNeighbours, SERIES } from '@/content/labs';
+import { defaultWalkthrough, faqsForLab, getSeries, labsInSeries, seriesNeighbours, SERIES, type SharedFaqs } from '@/content/labs';
 import type { LabContent } from '@/content/labs/types';
 import s from '@/app/labs/[slug]/rad-lab.module.css';
 import { labFontVars } from './fonts';
@@ -28,11 +28,12 @@ export type Workshop = { startsAt: string; venue: string | null };
 const pad = (n: number) => String(n).padStart(2, '0');
 
 export function LabView({
-  lab, allLabs, workshop, editing = false,
+  lab, allLabs, workshop, sharedFaqs, editing = false,
 }: {
   lab: LabContent;
   allLabs: LabContent[];      // published labs (for nav, dots, prev/next, topic grid)
   workshop: Workshop | null;  // next bookable session for Fork Card C, if any
+  sharedFaqs?: SharedFaqs;    // live "all labs" + series FAQs (code defaults if omitted)
   editing?: boolean;
 }) {
   // Include this lab even if it isn't published yet (editor preview), with
@@ -43,7 +44,7 @@ export function LabView({
   const series = getSeries(lab.seriesKey) ?? { key: lab.seriesKey, name: 'Labs', platform: 'the editor' };
   const seriesLabs = labsInSeries(labs, lab.seriesKey);
   const { prev, next } = seriesNeighbours(labs, lab);
-  const faqs = faqsForLab(lab);
+  const faqs = faqsForLab(lab, sharedFaqs);
   const nextLabLabel = `Lab ${pad(lab.labNumber + 1)}`;
   const walkthrough = lab.walkthrough ?? defaultWalkthrough(series.platform);
   // Card C shows when a workshop is bookable (and as a placeholder in the editor).

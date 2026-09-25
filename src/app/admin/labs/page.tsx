@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { SERIES } from '@/content/labs';
+import { SharedFaqsPanel } from '@/components/admin/labs/SharedFaqsPanel';
 
 // RAD Labs admin index: every lab (database + seed files) with its publish
 // state, and a quick "new lab" form that drops you straight into the
@@ -119,6 +120,8 @@ export default function AdminLabsPage() {
             </table>
           )}
         </div>
+
+        <SharedFaqsPanel />
 
         <form onSubmit={create} className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-lg font-bold">New lab</h2>

@@ -1,8 +1,8 @@
 import 'server-only';
 import { cache } from 'react';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { SEED_LABS } from '@/content/labs';
-import type { LabContent } from '@/content/labs/types';
+import { defaultSharedFaqs, SEED_LABS, type SharedFaqs } from '@/content/labs';
+import type { Faq, LabContent } from '@/content/labs/types';
 
 // Where lab content comes from. A `labs` row (edited at /admin/labs/[slug])
 // wins over the TS seed with the same slug; seeds with no row are served
@@ -49,3 +49,19 @@ export const loadPublishedLabs = cache(async (): Promise<LabContent[]> => {
 export async function getPublishedLab(slug: string): Promise<LabContent | undefined> {
   return (await loadPublishedLabs()).find(l => l.slug === slug);
 }
+
+// Shared FAQ buckets ("About RAD Labs" + per series). A saved row replaces
+// that bucket's code default wholesale - including an empty list, which
+// deliberately hides the bucket. Unsaved buckets keep the defaults.
+export const loadSharedFaqs = cache(async (): Promise<SharedFaqs> => {
+  const shared = defaultSharedFaqs();
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return shared;
+  try {
+    const { data, error } = await supabaseAdmin().from('lab_shared_faqs').select('key, items');
+    if (error) throw error;
+    for (const row of data || []) shared[row.key as string] = (row.items || []) as Faq[];
+  } catch (e) {
+    console.error('[labsRepo] shared FAQs falling back to code defaults:', e);
+  }
+  return shared;
+});

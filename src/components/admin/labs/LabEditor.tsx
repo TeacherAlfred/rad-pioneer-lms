@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { LabContent } from '@/content/labs/types';
+import type { SharedFaqs } from '@/content/labs';
 import { LabView } from '@/components/labs/LabView';
 import { LabEditContext, type EditTarget } from '@/components/labs/LabEditContext';
 import { SectionPanel, panelTitle } from './SectionPanel';
@@ -23,6 +24,7 @@ export function LabEditor({ slug }: { slug: string }) {
   const [savedJson, setSavedJson] = useState('');
   const [status, setStatus] = useState<Status | null>(null);
   const [allLabs, setAllLabs] = useState<LabContent[]>([]);
+  const [sharedFaqs, setSharedFaqs] = useState<SharedFaqs | undefined>(undefined);
   const [target, setTarget] = useState<EditTarget | null>(null);
   const [busy, setBusy] = useState<null | 'save' | 'publish' | 'discard'>(null);
   const [flash, setFlash] = useState<{ tone: 'ok' | 'warn' | 'error'; text: string; items?: string[] } | null>(null);
@@ -37,6 +39,7 @@ export function LabEditor({ slug }: { slug: string }) {
     setSavedJson(JSON.stringify(data.lab));
     setStatus(data.status);
     setAllLabs(data.allLabs || []);
+    setSharedFaqs(data.sharedFaqs);
   }, [slug]);
 
   useEffect(() => {
@@ -181,7 +184,7 @@ export function LabEditor({ slug }: { slug: string }) {
             <div className="border-b border-violet-200 bg-violet-50 px-4 py-2 text-center text-[12px] text-violet-900">
               Editing mode — hover any section and click <b>Edit</b>. Forms on this preview don&apos;t submit.
             </div>
-            <LabView lab={draft} allLabs={allLabs} workshop={null} editing />
+            <LabView lab={draft} allLabs={allLabs} workshop={null} sharedFaqs={sharedFaqs} editing />
           </div>
         </div>
 

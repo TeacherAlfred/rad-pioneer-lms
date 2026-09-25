@@ -43,11 +43,21 @@ export function defaultWalkthrough(platform: string) {
 
 export type ScopedFaq = Faq & { scope: FaqScope };
 
-export function faqsForLab(lab: LabContent): ScopedFaq[] {
+// Shared FAQ buckets: 'global' ("About RAD Labs", every lab) plus one per
+// series key. Live values come from the lab_shared_faqs table via
+// src/lib/labsRepo.ts; these code defaults cover any bucket not yet saved.
+export const GLOBAL_FAQ_KEY = 'global';
+export type SharedFaqs = Record<string, Faq[]>;
+
+export function defaultSharedFaqs(): SharedFaqs {
+  return { [GLOBAL_FAQ_KEY]: GLOBAL_FAQS, ...SERIES_FAQS };
+}
+
+export function faqsForLab(lab: LabContent, shared: SharedFaqs = defaultSharedFaqs()): ScopedFaq[] {
   return [
     ...lab.faqs.map(f => ({ ...f, scope: 'lab' as const })),
-    ...(SERIES_FAQS[lab.seriesKey] || []).map(f => ({ ...f, scope: 'series' as const })),
-    ...GLOBAL_FAQS.map(f => ({ ...f, scope: 'global' as const })),
+    ...(shared[lab.seriesKey] || []).map(f => ({ ...f, scope: 'series' as const })),
+    ...(shared[GLOBAL_FAQ_KEY] || []).map(f => ({ ...f, scope: 'global' as const })),
   ];
 }
 

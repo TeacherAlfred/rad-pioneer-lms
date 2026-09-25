@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { SEED_LABS } from '@/content/labs';
 import type { LabContent } from '@/content/labs/types';
 import { validateLabContent } from '@/lib/labContentValidate';
-import { loadPublishedLabs } from '@/lib/labsRepo';
+import { loadPublishedLabs, loadSharedFaqs } from '@/lib/labsRepo';
 import { adminEmail } from '@/lib/adminIdentity';
 
 // In-place editor backend for one lab (/admin/labs/[slug]).
@@ -39,7 +39,7 @@ function statusOf(row: Awaited<ReturnType<typeof readRow>>, seed?: LabContent) {
 export async function GET(_req: Request, { params }: Params) {
   const { slug } = await params;
   try {
-    const [row, allLabs] = await Promise.all([readRow(slug), loadPublishedLabs()]);
+    const [row, allLabs, sharedFaqs] = await Promise.all([readRow(slug), loadPublishedLabs(), loadSharedFaqs()]);
     const seed = SEED_LABS.find(l => l.slug === slug);
     const lab = row?.draft_content || row?.content || seed;
     if (!lab) return NextResponse.json({ error: 'Lab not found.' }, { status: 404 });
@@ -47,6 +47,7 @@ export async function GET(_req: Request, { params }: Params) {
       lab: { ...lab, slug },
       status: statusOf(row, seed),
       allLabs: allLabs.filter(l => l.slug !== slug),
+      sharedFaqs,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Failed to load lab.' }, { status: 500 });
