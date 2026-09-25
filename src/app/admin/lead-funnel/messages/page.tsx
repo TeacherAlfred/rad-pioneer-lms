@@ -1792,6 +1792,12 @@ function StatCard({ icon: Icon, label, value, accent, suffix }: { icon: any; lab
 // row again clears it, handled by the caller's onSelect). `mode` picks
 // message-count vs distinct-lead-count out of each entry without the
 // caller needing two separate data shapes.
+// Shows the top BREAKDOWN_COLLAPSED_ROWS by count (already sorted highest
+// first, so the default view is the most-engaged items) with a "View more"
+// toggle for the rest. A row picked from the expanded list stays visible
+// after collapsing, so an active filter is never hidden from view.
+const BREAKDOWN_COLLAPSED_ROWS = 5;
+
 function BreakdownCard({ title, data, mode, keyLabel, activeKey, onSelect }: {
   title: string;
   data: Record<string, { messages: number; leads: Set<string> }>;
@@ -1800,15 +1806,22 @@ function BreakdownCard({ title, data, mode, keyLabel, activeKey, onSelect }: {
   activeKey?: string | null;
   onSelect: (key: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const entries = Object.entries(data)
     .map(([key, v]) => [key, mode === 'leads' ? v.leads.size : v.messages] as const)
     .sort((a, b) => b[1] - a[1]);
   const max = Math.max(1, ...entries.map(([, v]) => v));
+  const hiddenCount = Math.max(0, entries.length - BREAKDOWN_COLLAPSED_ROWS);
+  const top = entries.slice(0, BREAKDOWN_COLLAPSED_ROWS);
+  const pinned = !expanded && activeKey && !top.some(([k]) => k === activeKey)
+    ? entries.filter(([k]) => k === activeKey)
+    : [];
+  const visibleEntries = expanded ? entries : [...top, ...pinned];
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">{title}</h3>
       <div className="space-y-2">
-        {entries.map(([key, count]) => {
+        {visibleEntries.map(([key, count]) => {
           const isActive = activeKey === key;
           return (
             <button
@@ -1829,6 +1842,15 @@ function BreakdownCard({ title, data, mode, keyLabel, activeKey, onSelect }: {
         })}
         {entries.length === 0 && <p className="text-xs text-slate-400">No data yet.</p>}
       </div>
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(e => !e)}
+          className="mt-3 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700"
+        >
+          {expanded ? 'Show top 5' : `View ${hiddenCount} more`}
+        </button>
+      )}
     </div>
   );
 }

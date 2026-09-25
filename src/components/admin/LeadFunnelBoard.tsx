@@ -1882,12 +1882,40 @@ function StatCard({ icon: Icon, label, value, accent }: { icon: any; label: stri
   );
 }
 
+// Breakdown cards show only the top few rows (already sorted highest first)
+// with a "View more" toggle, same as the cards on Message Activity. A row
+// picked from the expanded list stays visible after collapsing so an active
+// filter is never hidden.
+const BREAKDOWN_COLLAPSED_ROWS = 5;
+
+function useCollapsedEntries(entries: (readonly [string, number])[], activeKey?: string | null) {
+  const [expanded, setExpanded] = useState(false);
+  const top = entries.slice(0, BREAKDOWN_COLLAPSED_ROWS);
+  const pinned = !expanded && activeKey && !top.some(([k]) => k === activeKey) ? entries.filter(([k]) => k === activeKey) : [];
+  return {
+    visible: expanded ? entries : [...top, ...pinned],
+    hiddenCount: Math.max(0, entries.length - BREAKDOWN_COLLAPSED_ROWS),
+    expanded,
+    toggle: () => setExpanded(e => !e),
+  };
+}
+
+function ViewMoreToggle({ hiddenCount, expanded, onToggle }: { hiddenCount: number; expanded: boolean; onToggle: () => void }) {
+  if (hiddenCount <= 0) return null;
+  return (
+    <button type="button" onClick={onToggle} className="mt-3 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700">
+      {expanded ? 'Show top 5' : `View ${hiddenCount} more`}
+    </button>
+  );
+}
+
 // Same visual as BreakdownCard, but each row is a button that sets the
 // campaign filter above - the drill-down the Ad Campaigns page exists for.
 // "All Campaigns" clears back to active === 'all'.
 function CampaignBreakdownCard({ data, active, onSelect }: { data: Record<string, number>; active: string; onSelect: (key: string) => void }) {
   const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
   const max = Math.max(1, ...entries.map(([, v]) => v));
+  const { visible, hiddenCount, expanded, toggle } = useCollapsedEntries(entries, active !== 'all' ? active : null);
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-3">
@@ -1897,7 +1925,7 @@ function CampaignBreakdownCard({ data, active, onSelect }: { data: Record<string
         )}
       </div>
       <div className="space-y-2">
-        {entries.map(([key, count]) => (
+        {visible.map(([key, count]) => (
           <button
             key={key}
             onClick={() => onSelect(active === key ? 'all' : key)}
@@ -1912,6 +1940,7 @@ function CampaignBreakdownCard({ data, active, onSelect }: { data: Record<string
         ))}
         {entries.length === 0 && <p className="text-xs text-slate-400">No ad-attributed leads yet.</p>}
       </div>
+      <ViewMoreToggle hiddenCount={hiddenCount} expanded={expanded} onToggle={toggle} />
     </div>
   );
 }
@@ -1919,11 +1948,12 @@ function CampaignBreakdownCard({ data, active, onSelect }: { data: Record<string
 function BreakdownCard({ title, data, formatLabel }: { title: string; data: Record<string, number>; formatLabel?: (s: string) => string }) {
   const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
   const max = Math.max(1, ...entries.map(([, v]) => v));
+  const { visible, hiddenCount, expanded, toggle } = useCollapsedEntries(entries);
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 mb-3">{title}</h3>
       <div className="space-y-2">
-        {entries.map(([key, count]) => (
+        {visible.map(([key, count]) => (
           <div key={key} className="flex items-center gap-3">
             <span className="text-xs text-slate-600 w-40 shrink-0 truncate" title={key}>{formatLabel ? formatLabel(key) : key}</span>
             <div className="flex-1 bg-slate-50 rounded-full h-2 overflow-hidden">
@@ -1934,6 +1964,7 @@ function BreakdownCard({ title, data, formatLabel }: { title: string; data: Reco
         ))}
         {entries.length === 0 && <p className="text-xs text-slate-400">No data yet.</p>}
       </div>
+      <ViewMoreToggle hiddenCount={hiddenCount} expanded={expanded} onToggle={toggle} />
     </div>
   );
 }
