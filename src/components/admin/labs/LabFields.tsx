@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState } from 'react';
 import type { Screenshot } from '@/content/labs/types';
+import { isVideoSrc } from '@/components/labs/Shot';
 
 // Form controls for the lab editor's side panel. Deliberately plain: a
 // label, a box, one line of help. The live page beside the panel is the
@@ -111,33 +112,40 @@ export function ImageField({
   const id = useId();
   const src = value.src?.trim() || '';
   const valid = /^https:\/\/\S+/.test(src);
+  const video = valid && isVideoSrc(src);
   return (
     <fieldset className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
       <legend className="px-1 text-[12px] font-semibold text-slate-700">{label}</legend>
       <div className="flex gap-3">
         <div className="relative h-[72px] w-[104px] shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
-          {valid ? (
+          {video ? (
+            <>
+              <video src={src} muted loop autoPlay playsInline preload="metadata" className="h-full w-full object-cover" />
+              <span className="absolute bottom-1 left-1 rounded bg-slate-900/75 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">Video</span>
+            </>
+          ) : valid ? (
             // eslint-disable-next-line @next/next/no-img-element -- admin thumbnail of an arbitrary pasted URL
             <img src={src} alt="" className="h-full w-full object-cover" />
           ) : (
-            <div className="flex h-full items-center justify-center text-[10px] font-medium uppercase tracking-wider text-slate-400">No image</div>
+            <div className="flex h-full items-center justify-center text-[10px] font-medium uppercase tracking-wider text-slate-400">Nothing yet</div>
           )}
         </div>
         <div className="min-w-0 flex-1 space-y-2">
           <input
             id={id}
             className={inputCls}
-            placeholder="https://pub-….r2.dev/…/image.jpg"
+            placeholder="https://pub-….r2.dev/…/step-1.jpg or .mp4"
             value={value.src ?? ''}
             onChange={e => onChange({ ...value, src: e.target.value })}
-            aria-label={`${label} image link`}
+            aria-label={`${label} image or video link`}
           />
           {src && !valid && <p className="text-[12px] text-red-600">Must be a full https:// link.</p>}
+          {!src && <p className="text-[11px] leading-snug text-slate-500">Image (JPG, PNG, WebP) or video (MP4) from R2. Videos play silently on a loop; visitors tap to watch larger with sound.</p>}
           <select
             className={`${inputCls} py-1.5`}
             value={value.ratio ?? '16/9'}
             onChange={e => onChange({ ...value, ratio: e.target.value as Screenshot['ratio'] })}
-            aria-label="Image shape"
+            aria-label="Shape of the slot"
           >
             <option value="16/9">Wide (16:9)</option>
             <option value="4/3">Standard (4:3)</option>
@@ -146,11 +154,11 @@ export function ImageField({
       </div>
       <div className="mt-3">
         <TextField
-          label="Describe the image"
+          label="Describe what it shows"
           value={value.alt}
           onChange={alt => onChange({ ...value, alt })}
           maxLength={300}
-          hint="Read aloud by screen readers. Shown on the placeholder while there's no image, so write what the screenshot should show."
+          hint="Read aloud by screen readers and shown as the caption when opened larger. Also shown on the placeholder until the image or video is added."
         />
       </div>
     </fieldset>

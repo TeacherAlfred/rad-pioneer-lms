@@ -1657,6 +1657,142 @@ a.cluster:hover {
   font-size: 24px;
 }
 
+/* ─── Screenshot lightbox ─────────────────────────────── */
+.shotButton {
+  display: block;
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: zoom-in;
+  -webkit-touch-callout: none;
+}
+.shotButton img {
+  user-select: none;
+  -webkit-user-drag: none;
+  transition: transform 0.4s var(--ease);
+}
+.shotButton:hover img {
+  transform: scale(1.015);
+}
+.shotMedia {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  background: var(--surface-2);
+}
+.lightboxVideo {
+  display: block;
+  max-width: min(1200px, 92vw);
+  max-height: 80vh;
+  width: auto;
+  height: auto;
+  border-radius: 10px;
+  background: #000;
+  box-shadow: 0 24px 64px -20px rgba(0, 0, 0, 0.6);
+}
+.shotZoomHint {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(6px);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s, transform 0.2s var(--ease);
+  pointer-events: none;
+}
+.shotButton:hover .shotZoomHint,
+.shotButton:focus-visible .shotZoomHint {
+  opacity: 1;
+  transform: none;
+}
+/* No hover on touch screens - keep the hint visible so it's clearly tappable. */
+@media (hover: none) {
+  .shotZoomHint {
+    opacity: 1;
+    transform: none;
+  }
+}
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 16px 24px;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+  animation: fadeIn 0.2s ease;
+}
+.lightboxFigure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  cursor: default;
+  animation: lightboxIn 0.3s var(--ease);
+}
+@keyframes lightboxIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+.lightboxFrame {
+  position: relative;
+  width: min(1200px, 92vw);
+  height: min(80vh, calc(92vw * 0.75));
+  -webkit-touch-callout: none;
+}
+.lightboxImg {
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+.lightboxCaption {
+  max-width: 640px;
+  text-align: center;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+.lightboxClose {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.lightboxClose:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
 /* ─── Inline rich text ────────────────────────────────── */
 .concept {
   color: var(--text);

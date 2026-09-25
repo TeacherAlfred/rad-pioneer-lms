@@ -106,7 +106,7 @@ export function SectionPanel({
         <div className="space-y-5">
           <TextField label="Heading" value={draft.context.heading} onChange={v => update(d => { d.context.heading = v; })} maxLength={120} />
           <RichField label="Body" value={draft.context.body} onChange={v => update(d => { d.context.body = v; })} maxLength={1200} hint="Under 80 words: what the platform is, what it costs, what you need." />
-          <ImageField label="Screenshot" value={draft.context.screenshot} onChange={v => update(d => { d.context.screenshot = v; })} />
+          <ImageField label="Screenshot or video" value={draft.context.screenshot} onChange={v => update(d => { d.context.screenshot = v; })} />
         </div>
       );
 
@@ -149,7 +149,7 @@ export function SectionPanel({
           />
           <TextField label="Step title" value={step.title} onChange={v => update(d => { d.steps[i].title = v; })} maxLength={120} />
           <RichField label="Instructions" value={step.body} onChange={v => update(d => { d.steps[i].body = v; })} rows={7} hint="Exactly what to click and what they'll see. Use Link for addresses like makecode.microbit.org - it opens in a new tab." />
-          <ImageField label="Screenshot" value={step.screenshot} onChange={v => update(d => { d.steps[i].screenshot = v; })} />
+          <ImageField label="Screenshot or video" value={step.screenshot} onChange={v => update(d => { d.steps[i].screenshot = v; })} />
           <RichField label="Callout (optional)" value={step.callout ?? ''} onChange={v => update(d => { d.steps[i].callout = v; })} rows={3} hint="The 💡 box under the screenshot: a tip, a 'notice this', or a bonus challenge. Leave blank to hide." />
         </div>
       );
@@ -201,7 +201,7 @@ export function SectionPanel({
           </div>
           <TextField label="Card title" value={card.title} onChange={v => update(d => { d.aha.cards[i].title = v; })} maxLength={120} />
           <RichField label="Text" value={card.body} onChange={v => update(d => { d.aha.cards[i].body = v; })} rows={5} maxLength={800} />
-          <ImageField label="Photo" value={card.image} onChange={v => update(d => { d.aha.cards[i].image = v; })} />
+          <ImageField label="Photo or video" value={card.image} onChange={v => update(d => { d.aha.cards[i].image = v; })} />
         </div>
       );
     }
