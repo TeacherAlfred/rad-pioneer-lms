@@ -6,8 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
   BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone, ListChecks, Send, Inbox,
-  GraduationCap, Heart, Sparkles, Clock, Filter as Funnel, FlaskConical,
-} from "lucide-react";
+  GraduationCap, Heart, Sparkles, Clock, Filter as Funnel, Megaphone, FlaskConical } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
 
 const PENDING_POLL_MS = 30000;
@@ -72,6 +71,7 @@ const GROUPS: NavGroup[] = [
     id: 'leads', label: 'Leads', icon: Users, colorKey: 'blue',
     items: [
       { href: '/admin/lead-funnel/list', label: 'Lead Funnel', icon: Users },
+      { href: '/admin/lead-funnel/ads', label: 'Ad Campaigns', icon: Megaphone },
       { href: '/admin/lead-funnel/stages', label: 'Funnel Stages', icon: GitBranch },
       { href: '/admin/warm-list', label: 'Warm List', icon: ClipboardList },
       { href: '/admin/dashboard-v2/lead-journey', label: 'Lead Journey', icon: Kanban },
