@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
@@ -34,6 +34,7 @@ type MessageRow = {
   lead_blocked_reason?: string | null;
   lead_reply_dismissed_at?: string | null;
   lead_respondent_is_parent?: boolean | null;
+  lead_role?: 'parent' | 'student' | null;
   lead_is_business_number?: boolean;
   lead_opted_out?: boolean;
   lead_opt_out_state?: 'pending' | 'confirmed' | 'cancelled' | null;
@@ -246,9 +247,15 @@ export default function MessageActivityPage() {
     if (next) setShowInhouseRaw(false);
   }
 
-  async function loadMessages() {
+  // The feed only holds the newest few thousand messages, so a search of 3+
+  // characters is also sent to the server (which pulls a matching lead's whole
+  // history) - otherwise a quiet contact whose last message is older than that
+  // window can't be found at all. lastServerQuery is what the current rows were
+  // loaded for, so the inbound-poll refresh keeps the same search applied.
+  const lastServerQuery = useRef('');
+  async function loadMessages(q: string = lastServerQuery.current) {
     try {
-      const res = await fetch('/admin/api/lead-funnel/messages');
+      const res = await fetch(`/admin/api/lead-funnel/messages${q ? `?q=${encodeURIComponent(q)}` : ''}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load messages');
       setRows(data.rows || []);
@@ -264,6 +271,14 @@ export default function MessageActivityPage() {
   // grouped/sorted (needsReply, window state) in ways that are cheaper to
   // recompute from a fresh fetch than to patch incrementally.
   useInboundMessagePoll(useCallback(() => { loadMessages(); }, []));
+
+  useEffect(() => {
+    const q = search.trim().length >= 3 ? search.trim() : '';
+    if (q === lastServerQuery.current) return;
+    const t = setTimeout(() => { lastServerQuery.current = q; loadMessages(q); }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const [botFlows, setBotFlows] = useState<BotFlow[]>([]);
   const [metaTemplates, setMetaTemplates] = useState<MetaTemplate[]>([]);
@@ -322,6 +337,23 @@ export default function MessageActivityPage() {
     const id = setInterval(() => setClockTick(t => t + 1), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  // A blocked contact is never contacted unless the admin explicitly says so
+  // for this one send. Returns whether to pass overrideBlocked to the API;
+  // throws (caught by each caller's own error state) if they decline.
+  function confirmBlockedOverride(leadId: string): boolean {
+    const row = rows.find(r => r.lead_id === leadId);
+    if (!row?.lead_is_blocked) return false;
+    const reason = row.lead_blocked_reason ? `
+
+Reason: ${row.lead_blocked_reason}` : '';
+    if (!window.confirm(`This contact is BLOCKED and is not meant to be contacted.${reason}
+
+Send anyway?`)) {
+      throw new Error('Not sent - this contact is blocked.');
+    }
+    return true;
+  }
 
   // Free-form reply, sent from here since replying to a lead who just
   // messaged in (messaging window open - 24h normally, 72h for a
@@ -401,10 +433,12 @@ export default function MessageActivityPage() {
       const maxIndex = Math.max(-1, ...Object.keys(templateButtonPayloads).map(Number));
       const buttonPayloads = selectedTemplateOption.presetButtonPayloads
         || Array.from({ length: maxIndex + 1 }, (_, i) => templateButtonPayloads[i] || '');
+      const overrideBlocked = confirmBlockedOverride(replyingTo.leadId);
       const res = await fetch('/admin/api/lead-funnel/send-template', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          overrideBlocked,
           leadIds: [replyingTo.leadId],
           templateName: selectedTemplateOption.templateName,
           languageCode: selectedTemplateOption.languageCode,
@@ -434,10 +468,11 @@ export default function MessageActivityPage() {
     setMediaSending(true);
     setMediaSendError(null);
     try {
+      const overrideBlocked = confirmBlockedOverride(replyingTo.leadId);
       const res = await fetch('/admin/api/lead-funnel/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: replyingTo.leadId, mediaItemId: selectedMediaId }),
+        body: JSON.stringify({ leadId: replyingTo.leadId, mediaItemId: selectedMediaId, overrideBlocked }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send.');
@@ -499,10 +534,11 @@ export default function MessageActivityPage() {
     setReplySending(true);
     setReplyError(null);
     try {
+      const overrideBlocked = confirmBlockedOverride(replyingTo.leadId);
       const res = await fetch('/admin/api/lead-funnel/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: replyingTo.leadId, body: replyText.trim(), buttons: replyButtons }),
+        body: JSON.stringify({ leadId: replyingTo.leadId, body: replyText.trim(), buttons: replyButtons, overrideBlocked }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send.');
@@ -589,7 +625,7 @@ export default function MessageActivityPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save.');
       setEditingLead(prev => prev ? { ...prev, respondentIsParent: passed } : prev);
-      setRows(prev => prev.map(r => r.lead_id === editingLead.leadId ? { ...r, lead_respondent_is_parent: passed } : r));
+      setRows(prev => prev.map(r => r.lead_id === editingLead.leadId ? { ...r, lead_respondent_is_parent: passed, lead_role: passed ? 'parent' : 'student' } : r));
       if (data.movedToLost) {
         setEditError('Marked as Child - this lead was automatically moved to Lost (not the parent).');
       }
@@ -796,13 +832,11 @@ export default function MessageActivityPage() {
         leadIsBlocked: !!sorted[0]?.lead_is_blocked,
         leadBlockedReason: sorted[0]?.lead_blocked_reason || null,
         replyDismissedAt: sorted[0]?.lead_reply_dismissed_at || null,
-        respondentIsParent: sorted[0]?.lead_respondent_is_parent ?? null,
+        respondentIsParent: sorted[0]?.lead_role === 'parent' ? true : sorted[0]?.lead_role === 'student' ? false : null,
         isBusinessNumber: !!sorted[0]?.lead_is_business_number,
         optedOut: !!sorted[0]?.lead_opted_out,
         optOutState: sorted[0]?.lead_opt_out_state || null,
-        segment: (sorted[0]?.lead_tags || []).includes('segment_parent') ? 'parent'
-          : (sorted[0]?.lead_tags || []).includes('segment_student') ? 'student'
-          : null,
+        segment: sorted[0]?.lead_role ?? null,
         messages: sorted,
         inboundCount: sorted.filter(m => m.direction === 'inbound').length,
         outboundCount: sorted.filter(m => m.direction === 'outbound').length,
@@ -1195,9 +1229,9 @@ export default function MessageActivityPage() {
                                     {formatCountdown(g.msRemaining)}
                                   </span>
                                 )}
-                                {g.respondentIsParent !== null && (
-                                  <span className={`inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full ${g.respondentIsParent ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
-                                    {g.respondentIsParent ? 'Parent' : 'Child'}
+                                {g.segment && (
+                                  <span title="Parent/student on record - same answer as the Lead Funnel list, whichever screen or bot button it came from. Don't re-send the segment intro." className={`inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full ${g.segment === 'parent' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                                    {g.segment === 'parent' ? 'Parent' : 'Student'}
                                   </span>
                                 )}
                                 {g.isBusinessNumber && (
@@ -1228,11 +1262,6 @@ export default function MessageActivityPage() {
                                 {!g.optedOut && g.optOutState === 'cancelled' && (
                                   <span title="Tapped Stop, then chose No, Stay Subscribed - still receiving messages" className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">
                                     Stop Cancelled
-                                  </span>
-                                )}
-                                {g.segment && (
-                                  <span title="Already told us via btn_segment_parent/btn_segment_student - don't re-send the segment intro" className="inline-flex items-center text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
-                                    Segmented: {g.segment === 'parent' ? 'Parent' : 'Student'}
                                   </span>
                                 )}
                               </div>

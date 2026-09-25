@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizePhone } from '@/lib/registerInterest';
 import { recordStageChange } from '@/lib/leadStageHistory';
+import { applyLeadRole, roleFromLead } from '@/lib/leadRole';
 
 // Shared by /api/labs/optin and /api/labs/help (public /labs/[slug] page).
 // Phone-keyed, same as /api/term-program/register: leads.phone is NOT NULL
@@ -56,7 +57,7 @@ export async function upsertLabLead(supabase: SupabaseClient, p: UpsertParams): 
 
   const { data: existing } = await supabase
     .from('leads')
-    .select('id, name, tags, is_potential_student')
+    .select('id, name, tags, is_potential_student, is_confirmed_parent')
     .eq('phone', p.phone)
     .maybeSingle();
 
@@ -68,8 +69,10 @@ export async function upsertLabLead(supabase: SupabaseClient, p: UpsertParams): 
       ...consentFields,
     };
     if (!existing.name && p.name) update.name = p.name;
-    if (p.role === 'student' && !existing.is_potential_student) update.is_potential_student = true;
     await supabase.from('leads').update(update).eq('id', existing.id);
+    // Only fills a gap - never overrides a parent/student answer the funnel
+    // already has on record (same "never regress" rule as the fields above).
+    if (p.role && !roleFromLead(existing)) await applyLeadRole(supabase, existing.id, p.role);
     return { leadId: existing.id, isNew: false };
   }
 
@@ -97,6 +100,7 @@ export async function upsertLabLead(supabase: SupabaseClient, p: UpsertParams): 
     return { leadId: raced.id, isNew: false };
   }
 
+  if (p.role) await applyLeadRole(supabase, inserted.id, p.role);
   await recordStageChange(supabase, inserted.id, { toStage: 'new', changedBy: 'lab_page' });
   return { leadId: inserted.id, isNew: true };
 }

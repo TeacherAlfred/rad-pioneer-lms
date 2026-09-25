@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { recordStageChange } from '@/lib/leadStageHistory';
 import { LIFECYCLE_STAGES } from '@/lib/funnelStages';
 import { parseOutboundLabel, isFailedOutbound } from '@/lib/outboundMessageLabel';
+import { applyLeadRole, roleFromLead, SEGMENT_PARENT_TAG, SEGMENT_STUDENT_TAG, LeadRole } from '@/lib/leadRole';
 
 // Service role: leads has zero anon RLS policies since the 2026-08-12
 // lockdown, so a browser-side client can no longer read this table directly.
@@ -120,8 +121,30 @@ export async function PATCH(req: Request) {
     if (school !== undefined) update.school = school || null;
     if (className !== undefined) update.class = className || null;
     if (children_names !== undefined) update.children_names = children_names;
-    if (is_potential_student !== undefined) update.is_potential_student = !!is_potential_student;
-    if (is_confirmed_parent !== undefined) update.is_confirmed_parent = !!is_confirmed_parent;
+    // Parent/student is one answer kept in four places - see lib/leadRole.ts.
+    // The two toggles, an explicit `role`, and hand-added/removed
+    // segment_parent / segment_student tags all resolve to one role change
+    // applied after the main update, rather than each writing its own column.
+    let roleTarget: LeadRole | undefined;
+    if (body.role !== undefined) {
+      roleTarget = body.role === 'parent' || body.role === 'student' ? body.role : null;
+    } else if (is_confirmed_parent !== undefined || is_potential_student !== undefined || tags !== undefined) {
+      const { data: cur } = await supabaseAdmin.from('leads').select('is_confirmed_parent, is_potential_student, tags').eq('id', id).maybeSingle();
+      const curRole = roleFromLead(cur || {});
+      if (is_confirmed_parent !== undefined) {
+        if (is_confirmed_parent) roleTarget = 'parent';
+        else if (curRole === 'parent') roleTarget = null;
+      }
+      if (is_potential_student !== undefined && roleTarget === undefined) {
+        if (is_potential_student) roleTarget = 'student';
+        else if (curRole === 'student') roleTarget = null;
+      }
+      if (roleTarget === undefined && tags !== undefined) {
+        const tagRole = (t: string[]): LeadRole => t.includes(SEGMENT_PARENT_TAG) ? 'parent' : t.includes(SEGMENT_STUDENT_TAG) ? 'student' : null;
+        const incoming = tagRole(tags);
+        if (incoming !== tagRole(cur?.tags || [])) roleTarget = incoming;
+      }
+    }
     if (bot_paused !== undefined) {
       update.bot_paused = !!bot_paused;
       update.bot_paused_at = bot_paused ? new Date().toISOString() : null;
@@ -178,16 +201,20 @@ export async function PATCH(req: Request) {
         update.interested_session_id = session_id || null;
       }
     }
-    if (Object.keys(update).length === 0) {
+    if (Object.keys(update).length === 0 && roleTarget === undefined) {
       return NextResponse.json({ error: 'Nothing to update' }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin
-      .from('leads')
-      .update(update)
-      .eq('id', id)
-      .select()
-      .single();
+    let data: any = null;
+    let error: any = null;
+    if (Object.keys(update).length > 0) {
+      ({ data, error } = await supabaseAdmin
+        .from('leads')
+        .update(update)
+        .eq('id', id)
+        .select()
+        .single());
+    }
 
     if (error) {
       if (error.code === '23505') {
@@ -202,6 +229,12 @@ export async function PATCH(req: Request) {
         changedBy: 'admin',
         reason: lifecycle_stage === 'lost' ? lost_reason : null,
       });
+    }
+    if (roleTarget !== undefined) {
+      await applyLeadRole(supabaseAdmin, id, roleTarget);
+      const { data: refreshed, error: refreshErr } = await supabaseAdmin.from('leads').select('*').eq('id', id).single();
+      if (refreshErr) throw refreshErr;
+      data = refreshed;
     }
     return NextResponse.json({ row: data });
   } catch (error: any) {

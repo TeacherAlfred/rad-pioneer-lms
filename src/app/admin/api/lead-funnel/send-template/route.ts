@@ -15,7 +15,7 @@ const MAX_RECIPIENTS = 50;
 
 export async function POST(req: Request) {
   try {
-    const { leadIds, templateName, languageCode, variables, variableNames, buttonPayloads } = await req.json();
+    const { leadIds, templateName, languageCode, variables, variableNames, buttonPayloads, overrideBlocked } = await req.json();
 
     if (!Array.isArray(leadIds) || leadIds.length === 0) {
       return NextResponse.json({ error: 'leadIds[] is required' }, { status: 400 });
@@ -43,6 +43,15 @@ export async function POST(req: Request) {
       // lead that has opted out, regardless of what the caller selected.
       if (lead.opted_out) {
         results.push({ leadId: lead.id, phone: lead.phone, ok: false, skipped: true, error: 'Opted out' });
+        continue;
+      }
+
+      // A blocked contact is never messaged in bulk, regardless of what the
+      // caller selected (the UI also disables them, but this is the authority).
+      // overrideBlocked is only ever sent by the Messages reply modal (one lead,
+      // after an explicit confirm) - never by any bulk path.
+      if (lead.is_blocked && !(overrideBlocked === true && leadIds.length === 1)) {
+        results.push({ leadId: lead.id, phone: lead.phone, ok: false, skipped: true, error: 'Blocked' });
         continue;
       }
 

@@ -29,6 +29,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (fetchError || !row) return NextResponse.json({ error: 'Queued message not found' }, { status: 404 });
   if (row.status !== 'pending') return NextResponse.json({ error: `Already ${row.status}` }, { status: 400 });
 
+  // Queued before the contact was blocked - approving must not send it now.
+  const { data: queuedLead } = await supabase.from('leads').select('is_blocked').eq('id', row.lead_id).maybeSingle();
+  if (queuedLead?.is_blocked) {
+    return NextResponse.json({ error: 'This contact is blocked - unblock them first if you really want to send this. Reject it to clear it from the queue.' }, { status: 403 });
+  }
+
   const send = row.send_payload;
   if (send.kind === 'freeform' && editedText?.trim()) {
     const payload = JSON.parse(JSON.stringify(send.payload));

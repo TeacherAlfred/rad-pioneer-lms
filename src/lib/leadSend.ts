@@ -68,12 +68,27 @@ const REASON_LABEL: Record<string, string> = {
 
 export async function sendToLead(
   supabase: any,
-  lead: { id: string; is_business_number?: boolean | null },
+  lead: { id: string; is_business_number?: boolean | null; is_blocked?: boolean | null },
   phone: string,
   send: LeadSend,
   label: string,
   opts: SendToLeadOptions = {}
 ): Promise<LeadSendResult> {
+  // A blocked contact is never contacted automatically - no bot flow, cron,
+  // ad follow-up or self-serve message, and not even queued for approval.
+  // Only an admin acting on them directly (an explicit override on the manual
+  // routes) can reach them. Callers that already loaded the lead pass
+  // is_blocked; anyone who didn't gets it looked up here, so no automated
+  // send path can skip the check by passing a minimal lead object.
+  let blocked = lead.is_blocked;
+  if (blocked === undefined || blocked === null) {
+    const { data } = await supabase.from('leads').select('is_blocked').eq('id', lead.id).maybeSingle();
+    blocked = !!data?.is_blocked;
+  }
+  if (blocked) {
+    return { ok: false, queued: false, error: 'Lead is blocked - not contacted', errorCode: 'blocked' };
+  }
+
   const reasons: string[] = [];
   if (lead.is_business_number) reasons.push('business_number');
   if (opts.forceQueue) reasons.push('flow_requires_approval');

@@ -36,6 +36,7 @@ type Lead = {
   ad_headline?: string | null;
   ctwa_clid?: string | null;
   opted_out?: boolean | null;
+  is_blocked?: boolean | null;
   opt_out_state?: 'pending' | 'confirmed' | 'cancelled' | null;
   contacted_at?: string | null;
   created_at?: string | null;
@@ -283,7 +284,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
   }
 
   function toggleSelectAllVisible() {
-    const selectable = pagedRows.filter(r => !r.opted_out);
+    const selectable = pagedRows.filter(r => !r.opted_out && !r.is_blocked);
     const allSelected = selectable.length > 0 && selectable.every(r => selectedIds.has(r.id));
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -526,30 +527,30 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
     const currentTags = editingLead.tags || [];
     if (currentTags.some(t => t.toLowerCase() === tag.toLowerCase())) { setNewTag(''); return; }
     const nextTags = [...currentTags, tag];
-    await patchLeadField(editingLead.id, { tags: nextTags });
-    setEditingLead(l => l ? { ...l, tags: nextTags } : l);
+    const row = await patchLeadField(editingLead.id, { tags: nextTags });
+    setEditingLead(l => l ? { ...l, ...(row || { tags: nextTags }) } : l);
     setNewTag('');
   }
 
   async function removeTag(tag: string) {
     if (!editingLead) return;
     const nextTags = (editingLead.tags || []).filter(t => t !== tag);
-    await patchLeadField(editingLead.id, { tags: nextTags });
-    setEditingLead(l => l ? { ...l, tags: nextTags } : l);
+    const row = await patchLeadField(editingLead.id, { tags: nextTags });
+    setEditingLead(l => l ? { ...l, ...(row || { tags: nextTags }) } : l);
   }
 
   async function togglePotentialStudent() {
     if (!editingLead) return;
     const next = !editingLead.is_potential_student;
-    await patchLeadField(editingLead.id, { is_potential_student: next });
-    setEditingLead(l => l ? { ...l, is_potential_student: next } : l);
+    const row = await patchLeadField(editingLead.id, { is_potential_student: next });
+    setEditingLead(l => l ? { ...l, ...(row || { is_potential_student: next }) } : l);
   }
 
   async function toggleConfirmedParent() {
     if (!editingLead) return;
     const next = !editingLead.is_confirmed_parent;
-    await patchLeadField(editingLead.id, { is_confirmed_parent: next });
-    setEditingLead(l => l ? { ...l, is_confirmed_parent: next } : l);
+    const row = await patchLeadField(editingLead.id, { is_confirmed_parent: next });
+    setEditingLead(l => l ? { ...l, ...(row || { is_confirmed_parent: next }) } : l);
   }
 
   async function patchLeadField(id: string, patch: Record<string, any>) {
@@ -560,6 +561,9 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
     });
     const data = await res.json();
     if (res.ok) setRows(prev => prev.map(r => r.id === id ? { ...r, ...data.row } : r));
+    // Returned so callers can adopt server-side side effects (marking a parent
+    // also clears student and rewrites the segment tags - lib/leadRole.ts).
+    return res.ok ? data.row : null;
   }
 
   // Hard stop on all automated bot sends for this lead - see the
@@ -1091,7 +1095,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
                       <th className="px-4 py-3">
                         <input
                           type="checkbox"
-                          checked={pagedRows.filter(r => !r.opted_out).length > 0 && pagedRows.filter(r => !r.opted_out).every(r => selectedIds.has(r.id))}
+                          checked={pagedRows.filter(r => !r.opted_out && !r.is_blocked).length > 0 && pagedRows.filter(r => !r.opted_out && !r.is_blocked).every(r => selectedIds.has(r.id))}
                           onChange={toggleSelectAllVisible}
                         />
                       </th>
@@ -1112,8 +1116,8 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
                           <input
                             type="checkbox"
                             checked={selectedIds.has(r.id)}
-                            disabled={!!r.opted_out}
-                            title={r.opted_out ? "Opted out - can't send a template to this lead" : undefined}
+                            disabled={!!r.opted_out || !!r.is_blocked}
+                            title={r.is_blocked ? "Blocked - never contacted unless unblocked" : r.opted_out ? "Opted out - can't send a template to this lead" : undefined}
                             onChange={() => toggleSelect(r.id)}
                           />
                         </td>
@@ -1141,6 +1145,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
                           {(r.children_names || []).length > 0 && (
                             <div className="text-[11px] text-slate-400 mt-0.5">Children: {(r.children_names || []).join(', ')}</div>
                           )}
+                          {r.is_blocked && <span title="Blocked - not contacted by any automated or bulk send" className="inline-block mt-1 mr-1 text-[10px] font-black uppercase tracking-widest bg-rose-100 text-rose-700 px-2 py-0.5 rounded-full">Blocked</span>}
                           {r.opted_out && r.opt_out_state === 'pending' && <span title="Tapped Stop but hasn't answered the confirmation - no messages are being sent. Review, then reactivate if it was a mistake." className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Stop pending</span>}
                           {r.opted_out && r.opt_out_state !== 'pending' && <span className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-rose-50 text-rose-500 px-2 py-0.5 rounded-full">Opted out</span>}
                           {!r.opted_out && r.opt_out_state === 'cancelled' && <span title="Tapped Stop, then chose No, Stay Subscribed - still receiving messages" className="inline-block mt-1 text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">Stop cancelled</span>}
@@ -1197,7 +1202,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
                                 <UserCheck size={10} /> Parent
                               </span>
                             )}
-                            {(r.tags || []).map(t => (
+                            {(r.tags || []).filter(t => t !== 'segment_parent' && t !== 'segment_student').map(t => (
                               <span key={t} className="text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{t}</span>
                             ))}
                           </div>

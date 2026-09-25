@@ -8,6 +8,7 @@ import { isWithinDnd } from '@/lib/dndSchedule';
 import { isRoboticsWatchAd } from '@/lib/adFollowups';
 import { sendToLead } from '@/lib/leadSend';
 import { normalizePhone, generateProgressToken, progressTokenExpiresAt, buildResumeUrl } from '@/lib/tutorialProgress';
+import { applyLeadRole, SEGMENT_PARENT_TAG, SEGMENT_STUDENT_TAG } from '@/lib/leadRole';
 
 // Verifies the request actually came from Meta by checking the HMAC-SHA256
 // signature Meta signs the raw body with, using the app secret.
@@ -333,6 +334,13 @@ async function runBotFlow(supabase: any, senderPhone: string, lead: any, flow: a
   }
   if (Object.keys(leadUpdate).length > 0) {
     await supabase.from('leads').update(leadUpdate).eq('id', lead.id);
+  }
+  // btn_segment_parent / btn_segment_student stamp a segment tag - mirror it
+  // into the parent/student flags + qualification check so the Lead Funnel
+  // list and Message Activity show it too (lib/leadRole.ts). Never disqualifies.
+  const segmentTags: string[] = flow.add_tags || [];
+  if (segmentTags.includes(SEGMENT_PARENT_TAG) || segmentTags.includes(SEGMENT_STUDENT_TAG)) {
+    await applyLeadRole(supabase, lead.id, segmentTags.includes(SEGMENT_PARENT_TAG) ? 'parent' : 'student');
   }
   const effectiveLead = { ...lead, ...leadUpdate };
 
@@ -681,6 +689,11 @@ export async function POST(request: Request) {
                     && visitor.phone === normalizedSender
                     && !!visitor.pending_link_code_expires_at
                     && new Date(visitor.pending_link_code_expires_at) > new Date();
+
+                  // Runs before the lead is loaded (and so before the blocked hard
+                  // stop further down) - a blocked number gets no reply at all.
+                  const { data: linkLead } = await supabase.from('leads').select('is_blocked').eq('phone', senderPhone).maybeSingle();
+                  if (linkLead?.is_blocked) continue;
 
                   if (valid) {
                     await supabase.from('tutorial_visitors').update({

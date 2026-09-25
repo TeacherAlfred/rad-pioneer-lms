@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { QUALIFICATION_STAGES, YOUNG_ADULT_TRACK_TAG } from '@/lib/leadQualification';
 import { recordStageChange } from '@/lib/leadStageHistory';
+import { applyLeadRole } from '@/lib/leadRole';
 
 // Stages a disqualified lead should never be auto-moved out of - it's
 // already reached a real outcome (a sale, or a deliberate exit) that a
@@ -22,6 +23,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   const supabase = supabaseAdmin();
+
+  // Parent/Child is the same answer the Lead Funnel list toggles and the bot's
+  // segment buttons record - keep them in step (lib/leadRole.ts). Runs BEFORE
+  // the check upsert below so that write (checked_by 'admin', detail, notes)
+  // is the one that stands. "too_old" isn't a student, so it leaves the role
+  // alone. The Lost auto-move further down stays specific to this endpoint:
+  // marking Student anywhere else never disqualifies.
+  if (stage_key === 'respondent_is_parent') {
+    if (passed) await applyLeadRole(supabase, id, 'parent');
+    else if (detail !== 'too_old') await applyLeadRole(supabase, id, 'student');
+  }
+
   const { error } = await supabase
     .from('lead_qualification_checks')
     .upsert(

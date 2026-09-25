@@ -77,7 +77,7 @@ export async function GET() {
       const chunk = leadIds.slice(i, i + ID_CHUNK_SIZE);
       const { data, error: leadsErr } = await supabaseAdmin
         .from('leads')
-        .select('id, name, phone, email, opted_out, is_business_number, tags, merged_into_id')
+        .select('id, name, phone, email, opted_out, is_blocked, is_business_number, tags, merged_into_id')
         .in('id', chunk);
       if (leadsErr) throw leadsErr;
       leads.push(...(data || []));
@@ -102,6 +102,7 @@ export async function GET() {
           phone: lead.phone,
           email: lead.email,
           optedOut: !!lead.opted_out,
+          isBlocked: !!lead.is_blocked,
           isBusinessNumber: !!lead.is_business_number,
           tags: lead.tags || [],
           currentStageKey: current?.key || null,

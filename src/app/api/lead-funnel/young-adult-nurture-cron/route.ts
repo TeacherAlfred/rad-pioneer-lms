@@ -46,7 +46,8 @@ export async function GET(request: Request) {
       .select('*')
       .contains('tags', [YOUNG_ADULT_TRACK_TAG])
       .eq('bot_paused', false)
-      .eq('opted_out', false);
+      .eq('opted_out', false)
+      .eq('is_blocked', false);
     if (error) throw error;
 
     const cutoff = Date.now() - RESEND_GAP_DAYS * DAY_MS;

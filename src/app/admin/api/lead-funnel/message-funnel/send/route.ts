@@ -191,6 +191,10 @@ export async function POST(req: Request) {
         results.push({ leadId: lead.id, phone: lead.phone, ok: false, skipped: true, error: 'Opted out' });
         continue;
       }
+      if (lead.is_blocked) {
+        results.push({ leadId: lead.id, phone: lead.phone, ok: false, skipped: true, error: 'Blocked' });
+        continue;
+      }
       const resolved = perLead.get(lead.id);
       if (!resolved || resolved.error) {
         results.push({ leadId: lead.id, phone: lead.phone, ok: false, skipped: true, error: resolved?.error || 'Could not resolve message for this lead' });

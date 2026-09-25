@@ -10,7 +10,7 @@ import {
 type Stage = { key: string; label: string; kind: string; kindLabel: string; currentCount: number; everCount: number; flowId: string | null };
 type FunnelLead = {
   leadId: string; name: string | null; phone: string; email: string | null;
-  optedOut: boolean; isBusinessNumber: boolean; tags: string[];
+  optedOut: boolean; isBlocked: boolean; isBusinessNumber: boolean; tags: string[];
   currentStageKey: string | null; lastActivityAt: string | null;
   everStageKeys: { key: string; sentAt: string }[];
 };
@@ -129,7 +129,7 @@ export default function MessageFunnelPage() {
   }
 
   function toggleSelectAllVisible() {
-    const selectable = filteredLeads.filter(l => !l.optedOut);
+    const selectable = filteredLeads.filter(l => !l.optedOut && !l.isBlocked);
     const allSelected = selectable.length > 0 && selectable.every(l => selectedLeadIds.has(l.leadId));
     setSelectedLeadIds(allSelected ? new Set() : new Set(selectable.map(l => l.leadId)));
   }
@@ -328,7 +328,7 @@ export default function MessageFunnelPage() {
                     <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={filteredLeads.filter(l => !l.optedOut).length > 0 && filteredLeads.filter(l => !l.optedOut).every(l => selectedLeadIds.has(l.leadId))}
+                        checked={filteredLeads.filter(l => !l.optedOut && !l.isBlocked).length > 0 && filteredLeads.filter(l => !l.optedOut && !l.isBlocked).every(l => selectedLeadIds.has(l.leadId))}
                         onChange={toggleSelectAllVisible}
                       />
                       Select all ({filteredLeads.length})
@@ -342,13 +342,14 @@ export default function MessageFunnelPage() {
 
                 <div className="divide-y divide-slate-100 max-h-[420px] overflow-y-auto">
                   {filteredLeads.map(lead => (
-                    <label key={lead.leadId} className={`flex items-center gap-3 py-2.5 px-1 text-sm ${lead.optedOut ? 'opacity-40' : 'hover:bg-slate-50 cursor-pointer'}`}>
-                      <input type="checkbox" disabled={lead.optedOut} checked={selectedLeadIds.has(lead.leadId)} onChange={() => toggleLead(lead.leadId)} />
+                    <label key={lead.leadId} className={`flex items-center gap-3 py-2.5 px-1 text-sm ${lead.optedOut || lead.isBlocked ? 'opacity-40' : 'hover:bg-slate-50 cursor-pointer'}`}>
+                      <input type="checkbox" disabled={lead.optedOut || lead.isBlocked} checked={selectedLeadIds.has(lead.leadId)} onChange={() => toggleLead(lead.leadId)} />
                       <span className="flex-1 min-w-0">
                         <span className="font-semibold text-slate-800">{lead.name || 'Unnamed'}</span>{' '}
                         <span className="text-slate-400">{lead.phone}</span>
                       </span>
                       {lead.optedOut && <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Opted Out</span>}
+                      {lead.isBlocked && <span className="text-[10px] font-black uppercase tracking-widest text-rose-600">Blocked</span>}
                       {lead.isBusinessNumber && <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">Business #</span>}
                       {lead.lastActivityAt && <span className="text-[11px] text-slate-400 tabular-nums">{new Date(lead.lastActivityAt).toLocaleDateString()}</span>}
                     </label>

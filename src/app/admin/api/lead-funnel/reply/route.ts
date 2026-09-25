@@ -31,7 +31,7 @@ const MAX_BUTTON_TITLE = 20; // Meta error 131009 above this.
 // typing its trigger keyword had no manual fallback.
 export async function POST(req: Request) {
   try {
-    const { leadId, body, buttons, mediaItemId } = await req.json();
+    const { leadId, body, buttons, mediaItemId, overrideBlocked } = await req.json();
     if (!leadId) {
       return NextResponse.json({ error: 'leadId is required' }, { status: 400 });
     }
@@ -44,11 +44,17 @@ export async function POST(req: Request) {
 
     const { data: lead, error: leadErr } = await supabaseAdmin
       .from('leads')
-      .select('id, phone')
+      .select('id, phone, is_blocked')
       .eq('id', leadId)
       .maybeSingle();
     if (leadErr) throw leadErr;
     if (!lead) return NextResponse.json({ error: 'Lead not found' }, { status: 404 });
+    // A blocked contact is never contacted unless an admin explicitly
+    // overrides it for this send - the UI asks for that confirmation and
+    // retries with overrideBlocked:true.
+    if (lead.is_blocked && overrideBlocked !== true) {
+      return NextResponse.json({ error: 'This contact is blocked.', code: 'blocked' }, { status: 403 });
+    }
 
     let payload: any;
     let logBody: string;
