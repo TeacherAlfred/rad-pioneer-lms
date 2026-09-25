@@ -85,7 +85,7 @@ export function LabView({
             <div className={s.labNumBg} aria-hidden="true">#{pad(lab.labNumber)}</div>
             <p className={s.eyebrow}><span className={s.eyebrowDot} />{series.name} series · Lab {pad(lab.labNumber)}</p>
             <h1 className={s.labTitle}>{lab.title}</h1>
-            <p className={s.labSub}>{lab.subtitle}</p>
+            <p className={s.labSub}><Rich text={lab.subtitle} /></p>
             <ChipRow chips={lab.chips} />
             <div className={s.heroCta}>
               <a href="#walkthrough" className={`${s.btn} ${s.btnPrimary}`}>Start the lab ↓</a>

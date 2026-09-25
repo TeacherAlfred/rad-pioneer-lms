@@ -3,6 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { LabChip } from '@/content/labs/types';
 import s from '@/app/labs/[slug]/rad-lab.module.css';
+import { Rich } from './Rich';
 
 // Header chips (time / age / platform / hardware). A chip with `info` is a
 // button: hover or keyboard focus shows its tooltip on desktop, a tap
@@ -73,7 +74,7 @@ export function ChipRow({ chips }: { chips: LabChip[] }) {
                 role="tooltip"
                 className={s.tooltip}
               >
-                {c.info}
+                <Rich text={c.info} />
               </span>
             )}
           </span>

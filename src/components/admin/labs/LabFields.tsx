@@ -98,7 +98,7 @@ export function RichField({
         />
       </div>
       <p className={hintCls}>
-        {note ? <span className="text-red-600">{note}</span> : hint ?? 'Select words, then use the toolbar. Highlight is for the ideas you want to stick: loop, event, Boolean condition…'}
+        {note ? <span className="text-red-600">{note}</span> : hint ?? 'Select words, then use the toolbar. Highlight is for the ideas you want to stick: loop, event, Boolean condition… Press Enter for a new line, twice for a blank line.'}
       </p>
     </div>
   );

@@ -3,6 +3,7 @@
 import { useId, useRef, useState } from 'react';
 import s from '@/app/labs/[slug]/rad-lab.module.css';
 import { useLabEdit } from './LabEditContext';
+import { Rich } from './Rich';
 
 // Body of Fork Card A ("send me the next lab") and Card B ("workshop
 // waitlist"); the card heading itself is ForkCard's. Same 3-step flow for
@@ -129,14 +130,14 @@ export function ForkOptIn({
         </div>
       ) : !open ? (
         <>
-          <p className={s.fcardBody}>{body}</p>
+          <p className={s.fcardBody}><Rich text={body} /></p>
           <button type="button" className={`${s.btn} ${s.btnSecondary} ${s.pushDown}`} onClick={() => { setOpen(true); focusFirst(); }}>
             {ctaLabel}
           </button>
         </>
       ) : (
         <>
-          {step === 0 && <p className={s.fcardBody}>{body}</p>}
+          {step === 0 && <p className={s.fcardBody}><Rich text={body} /></p>}
           {pips}
 
           {step === 0 && (
