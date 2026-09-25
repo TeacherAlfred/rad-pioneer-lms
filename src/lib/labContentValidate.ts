@@ -79,7 +79,7 @@ export function validateLabContent(input: unknown, slug: string): { lab: LabCont
     // Omitted (page shows the default) until the author sets it.
     ...(walkHeading || walkIntro ? { walkthrough: { heading: walkHeading, intro: walkIntro } } : {}),
     steps,
-    aha: { heading: str(ahaIn.heading, 160), intro: str(ahaIn.intro, 600), cards },
+    aha: { heading: str(ahaIn.heading, 160), intro: str(ahaIn.intro, 600), showImages: ahaIn.showImages !== false, cards },
     reveal: { eyebrow: str(reveal.eyebrow, 80), concept: str(reveal.concept, 60), body: str(reveal.body, 1200), quote: str(reveal.quote, 600) },
     fork: {
       nextLabTeaser: str(fork.nextLabTeaser, 400),
@@ -103,7 +103,8 @@ export function validateLabContent(input: unknown, slug: string): { lab: LabCont
     if (!c.title || !c.body) errors.push(`"Whole life" card ${i + 1} needs a title and text.`);
   });
   if (!lab.reveal.concept) errors.push('The Reveal needs a concept name.');
-  const badImage = [lab.context.screenshot, ...lab.steps.map(x => x.screenshot), ...lab.aha.cards.map(x => x.image)]
+  // Card images only count when the section actually shows them.
+  const badImage = [lab.context.screenshot, ...lab.steps.map(x => x.screenshot), ...(lab.aha.showImages ? lab.aha.cards.map(x => x.image) : [])]
     .find(x => x.src && !/^https:\/\//.test(x.src));
   if (badImage) errors.push(`Image links must start with https:// (check "${badImage.src}").`);
 

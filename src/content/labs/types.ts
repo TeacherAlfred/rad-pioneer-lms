@@ -73,7 +73,9 @@ export type LabContent = {
   // existed keep rendering the default ("Let's build it" / "...next to <platform>").
   walkthrough?: { heading: string; intro: Rich };
   steps: LabStep[];
-  aha: { heading: string; intro: Rich; cards: AhaCard[] };
+  // showImages: false = text-only cards (no image slots). Absent means true,
+  // so labs saved before the switch existed keep their images.
+  aha: { heading: string; intro: Rich; showImages?: boolean; cards: AhaCard[] };
   reveal: { eyebrow: string; concept: string; body: Rich; quote: Rich };
   fork: {
     nextLabTeaser: string;       // Card A body

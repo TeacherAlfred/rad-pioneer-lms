@@ -160,6 +160,30 @@ export function SectionPanel({
         <div className="space-y-5">
           <TextField label="Heading" value={draft.aha.heading} onChange={v => update(d => { d.aha.heading = v; })} maxLength={160} />
           <RichField label="Intro" value={draft.aha.intro} onChange={v => update(d => { d.aha.intro = v; })} rows={4} maxLength={600} />
+          <fieldset className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+            <legend className="px-1 text-[12px] font-semibold text-slate-700">Will these cards use images?</legend>
+            <div className="grid grid-cols-2 gap-2" role="radiogroup">
+              {([true, false] as const).map(on => {
+                const active = (draft.aha.showImages !== false) === on;
+                return (
+                  <button
+                    key={String(on)}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => update(d => { d.aha.showImages = on; })}
+                    className={`rounded-lg border px-3 py-2.5 text-left transition ${active ? 'border-violet-500 bg-violet-50 ring-2 ring-violet-200' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                  >
+                    <span className="block text-[13px] font-semibold text-slate-900">{on ? 'Yes, with images' : 'No, text only'}</span>
+                    <span className="block text-[11px] leading-snug text-slate-500">{on ? 'Photo or video on top of every card.' : 'No image spaces at all. Cards use a coloured wash instead.'}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {draft.aha.showImages === false && (
+              <p className="mt-2 text-[11px] leading-snug text-slate-500">Any image links already on the cards are kept, just hidden. Switch back to bring them back.</p>
+            )}
+          </fieldset>
           <div className="space-y-2">
             <p className={sub}>Cards</p>
             {draft.aha.cards.map((c, i) => (
@@ -201,7 +225,13 @@ export function SectionPanel({
           </div>
           <TextField label="Card title" value={card.title} onChange={v => update(d => { d.aha.cards[i].title = v; })} maxLength={120} />
           <RichField label="Text" value={card.body} onChange={v => update(d => { d.aha.cards[i].body = v; })} rows={5} maxLength={800} />
-          <ImageField label="Photo or video" value={card.image} onChange={v => update(d => { d.aha.cards[i].image = v; })} />
+          {draft.aha.showImages !== false ? (
+            <ImageField label="Photo or video" value={card.image} onChange={v => update(d => { d.aha.cards[i].image = v; })} />
+          ) : (
+            <p className="rounded-lg bg-slate-100 px-3 py-2 text-[12px] leading-snug text-slate-600">
+              This section is set to <b>text only</b>, so cards have no image. Change it under <button type="button" className="font-semibold text-violet-700 underline" onClick={() => retarget({ section: 'aha' })}>section settings</button>.
+            </p>
+          )}
         </div>
       );
     }

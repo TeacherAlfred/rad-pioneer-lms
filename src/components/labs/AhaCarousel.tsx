@@ -12,7 +12,10 @@ import { EditSlot } from './EditSlot';
 // buttons sit over the track's edges and only appear when there's another
 // card in that direction, so it's obvious there's more to see - and they
 // double as the way to page on a mouse without a trackpad.
-export function AhaCarousel({ cards }: { cards: AhaCard[] }) {
+//
+// showImages=false renders text-only cards: no empty image slots, and the
+// card leans on a tinted wash + large type badge instead of a photo.
+export function AhaCarousel({ cards, showImages = true }: { cards: AhaCard[]; showImages?: boolean }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [canPrev, setCanPrev] = useState(false);
   const [canNext, setCanNext] = useState(false);
@@ -42,13 +45,24 @@ export function AhaCarousel({ cards }: { cards: AhaCard[] }) {
     <div className={s.ahaStage}>
       <div ref={trackRef} className={s.ahaTrack} onScroll={sync} role="list">
         {cards.map((card, i) => (
-          <article key={i} className={`${s.ahaCard} ${s.editable}`} role="listitem" tabIndex={0} aria-label={card.title}>
+          <article
+            key={i}
+            className={`${s.ahaCard} ${s.editable} ${showImages ? '' : `${s.ahaCardText} ${card.kind === 'unplugged' ? s.ahaWashUnplugged : s.ahaWashTech}`}`}
+            role="listitem"
+            tabIndex={0}
+            aria-label={card.title}
+          >
             <EditSlot target={{ section: 'ahaCard', index: i }} label={`card ${i + 1}`} />
-            <Shot shot={card.image} label={`Image · Card ${String(i + 1).padStart(2, '0')}`} sizes="(max-width: 640px) 82vw, 360px" />
+            {showImages ? (
+              <Shot shot={card.image} label={`Image · Card ${String(i + 1).padStart(2, '0')}`} sizes="(max-width: 640px) 82vw, 360px" />
+            ) : (
+              <div className={s.ahaGlyph} aria-hidden="true">{card.kind === 'unplugged' ? '🌿' : '💻'}</div>
+            )}
             <div className={s.ahaBody}>
               <div className={s.ahaTypeRow}>
                 <span className={`${s.ahaType} ${card.kind === 'unplugged' ? s.ahaUnplugged : s.ahaTech}`}>
-                  {card.kind === 'unplugged' ? '🌿 Unplugged' : '💻 Tech'}
+                  {/* Text-only cards already show the icon in the big badge. */}
+                  {showImages ? (card.kind === 'unplugged' ? '🌿 Unplugged' : '💻 Tech') : (card.kind === 'unplugged' ? 'Unplugged' : 'Tech')}
                 </span>
                 {card.concept && <span className={s.ahaConcept}>{card.concept}</span>}
               </div>

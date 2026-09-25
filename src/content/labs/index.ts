@@ -87,6 +87,7 @@ export function blankLab(slug: string, seriesKey: string, labNumber: number, tit
     aha: {
       heading: 'You\'ve been using this your whole life.',
       intro: 'Where the idea from this lab already shows up in everyday life.',
+      showImages: true,
       cards: [
         { kind: 'unplugged', concept: 'Concept', title: 'Everyday example', body: 'How this everyday moment uses the same idea.', image: { alt: 'Photo idea for this example' } },
         { kind: 'tech', concept: 'Concept', title: 'Tech example', body: 'How this piece of tech uses the same idea.', image: { alt: 'Photo idea for this example' } },

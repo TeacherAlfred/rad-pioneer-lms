@@ -128,12 +128,12 @@ export function LabView({
           <section className={s.section} id="aha" aria-labelledby="aha-head">
             <ZoneLabel>ZONE 4B — AHA carousel · child-addressed · 3 unplugged + 3 tech</ZoneLabel>
             <div className={s.editable}>
-              <EditSlot target={{ section: 'aha' }} label="section intro" />
+              <EditSlot target={{ section: 'aha' }} label="section & images" />
               <span className={`${s.badge} ${s.badgeChild}`}>🧠 For you</span>
               <h2 className={s.sectionHead} id="aha-head">{lab.aha.heading}</h2>
               <p className={s.sectionBody}><Rich text={lab.aha.intro} /></p>
             </div>
-            <AhaCarousel cards={lab.aha.cards} />
+            <AhaCarousel cards={lab.aha.cards} showImages={lab.aha.showImages !== false} />
           </section>
         </div>
 
