@@ -33,8 +33,17 @@ export async function GET() {
   if (outboundError) return NextResponse.json({ error: outboundError.message }, { status: 500 });
 
   const lastSentByLead = new Map<string, { created_at: string; body: string }>();
+  // Separate from lastSent: an [Admin Alert] row is a message TO the admin
+  // ABOUT the lead, a [Queued...] row hasn't gone out yet and a [FAILED...]
+  // row never arrived - none of those mean the lead actually received
+  // something, which is what the "hide recently messaged" filter needs.
+  const lastReceivedByLead = new Map<string, string>();
   for (const m of outbound || []) {
     if (!lastSentByLead.has(m.lead_id)) lastSentByLead.set(m.lead_id, m);
+    const b = m.body || '';
+    if (!lastReceivedByLead.has(m.lead_id) && !b.startsWith('[Admin Alert]') && !b.startsWith('[Queued') && !b.startsWith('[FAILED')) {
+      lastReceivedByLead.set(m.lead_id, m.created_at);
+    }
   }
 
   const rows = (data || []).map((r: any) => {
@@ -44,6 +53,7 @@ export async function GET() {
       ...rest,
       household_name: households?.name || null,
       last_sent_at: lastSent?.created_at || null,
+      last_received_at: lastReceivedByLead.get(r.id) || null,
       last_sent_label: lastSent ? parseOutboundLabel(lastSent.body) : null,
       last_sent_failed: lastSent ? isFailedOutbound(lastSent.body) : false,
     };

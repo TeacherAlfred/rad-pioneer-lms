@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Search, GitMerge, Loader2, X, CheckCircle2, ArrowRight } from "lucide-react";
+import { ArrowLeft, Search, GitMerge, Loader2, X, CheckCircle2, ArrowRight, AlertTriangle } from "lucide-react";
 
 type Lead = {
   id: string;
@@ -30,6 +30,23 @@ const CARD_CLS = "bg-white rounded-2xl border border-slate-200 p-4";
 type ContactMode = 'A' | 'B' | 'both';
 type ContactChoice = { mode: ContactMode; primary: 'A' | 'B' };
 type PickChoice = 'A' | 'B';
+
+type DuplicatePair = { id: string; lead_a_id: string; lead_b_id: string; reason: string };
+
+// Mirrors lead_phone_key() in 20260925170000_lead_duplicate_candidates.sql -
+// 0738... and 27738... are the same number.
+function phoneKey(p: string | null | undefined): string {
+  let d = String(p || '').replace(/\D/g, '').replace(/^00/, '');
+  if (d.length === 10 && d.startsWith('0')) d = '27' + d.slice(1);
+  else if (d.length === 9) d = '27' + d;
+  return d;
+}
+
+// The 27... form is what WhatsApp itself uses, so it's the safer record to
+// keep the phone of.
+function isIntlFormat(p: string | null | undefined): boolean {
+  return String(p || '').replace(/\D/g, '').startsWith('27');
+}
 
 function displayVal(v: any) {
   if (v === null || v === undefined || v === '') return <span className="text-slate-300">—</span>;
@@ -116,6 +133,14 @@ export default function MergeLeadsPage() {
   const [merging, setMerging] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [pairs, setPairs] = useState<DuplicatePair[]>([]);
+
+  function loadPairs() {
+    fetch('/admin/api/leads/duplicates')
+      .then(res => res.json())
+      .then(data => setPairs(data.pairs || []))
+      .catch(() => { /* non-fatal - manual merge still works without the suggestions */ });
+  }
 
   useEffect(() => {
     fetch('/admin/api/lead-funnel')
@@ -123,7 +148,39 @@ export default function MergeLeadsPage() {
       .then(data => setLeads(data.rows || []))
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
+    loadPairs();
   }, []);
+
+  const leadsById = useMemo(() => new Map(leads.map(l => [l.id, l])), [leads]);
+
+  const suggestions = useMemo(() => {
+    return pairs
+      .map(p => {
+        const x = leadsById.get(p.lead_a_id);
+        const y = leadsById.get(p.lead_b_id);
+        if (!x || !y) return null;
+        // 27... record first (becomes Lead A / the survivor by default).
+        const [a, b] = isIntlFormat(x.phone) || !isIntlFormat(y.phone) ? [x, y] : [y, x];
+        return { id: p.id, a, b };
+      })
+      .filter((s): s is { id: string; a: Lead; b: Lead } => !!s);
+  }, [pairs, leadsById]);
+
+  function reviewPair(a: Lead, b: Lead) {
+    setSurvivor('A');
+    setLeadA(a);
+    setLeadB(b);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function dismissPair(id: string) {
+    setPairs(prev => prev.filter(p => p.id !== id));
+    await fetch('/admin/api/leads/duplicates', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+  }
 
   // Re-seed every picker's default choice whenever the pair changes -
   // default to whichever side is non-empty, or the survivor's side if
@@ -152,8 +209,12 @@ export default function MergeLeadsPage() {
       mode: bothDiffer(leadA.email, leadB.email) ? 'both' : pick(l => l.email),
       primary: survivor,
     });
+    // 0738... vs 27738... is one number written two ways - keeping both as
+    // primary + backup would just store the same number twice, so keep the
+    // survivor's own.
+    const samePhoneNumber = !!phoneKey(leadA.phone) && phoneKey(leadA.phone) === phoneKey(leadB.phone);
     setPhoneChoice({
-      mode: bothDiffer(leadA.phone, leadB.phone) ? 'both' : pick(l => l.phone),
+      mode: samePhoneNumber ? survivor : bothDiffer(leadA.phone, leadB.phone) ? 'both' : pick(l => l.phone),
       primary: survivor,
     });
   }, [leadA, leadB, survivor]);
@@ -217,6 +278,7 @@ export default function MergeLeadsPage() {
     // Refresh the list so the just-merged lead disappears from search.
     setLoading(true);
     fetch('/admin/api/lead-funnel').then(res => res.json()).then(data => setLeads(data.rows || [])).finally(() => setLoading(false));
+    loadPairs();
   }
 
   const PickRow = ({ label, aVal, bVal, choice, onChange }: { label: string; aVal: any; bVal: any; choice: PickChoice; onChange: (c: PickChoice) => void }) => (
@@ -299,6 +361,31 @@ export default function MergeLeadsPage() {
           </div>
         ) : (
           <div className="space-y-4">
+            {suggestions.length > 0 && !leadA && !leadB && (
+              <div className={`${CARD_CLS} border-amber-200 bg-amber-50/40`}>
+                <p className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-amber-600 mb-1">
+                  <AlertTriangle size={12} /> Possible duplicates ({suggestions.length})
+                </p>
+                <p className="text-[11px] text-slate-500 mb-3">Same phone number written two ways (0738… vs +27738…). Nothing has been changed - review each pair and merge, or dismiss it if they really are different people.</p>
+                <div className="divide-y divide-amber-100 max-h-96 overflow-y-auto">
+                  {suggestions.map(s => (
+                    <div key={s.id} className="py-2.5 flex items-center gap-3 flex-wrap">
+                      <div className="flex-1 min-w-[260px] grid grid-cols-2 gap-3 text-xs">
+                        {[s.a, s.b].map(l => (
+                          <div key={l.id} className="min-w-0">
+                            <p className="font-bold text-slate-800 truncate">{l.name || '(no name)'}</p>
+                            <p className="text-slate-400 truncate">{l.phone}{l.email ? ` · ${l.email}` : ''}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <button onClick={() => reviewPair(s.a, s.b)} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest">Review &amp; merge</button>
+                      <button onClick={() => dismissPair(s.id)} className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-500 text-[10px] font-black uppercase tracking-widest hover:border-slate-400">Not a duplicate</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid md:grid-cols-2 gap-4">
               <LeadPicker label="Lead A" leads={leads} excludeId={leadB?.id} selected={leadA} onSelect={setLeadA} />
               <LeadPicker label="Lead B" leads={leads} excludeId={leadA?.id} selected={leadB} onSelect={setLeadB} />
