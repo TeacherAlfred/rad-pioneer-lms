@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Users, MessageSquare, Baby, LayoutDashboard, GitBranch, ClipboardList,
   BookOpen, Bell, FileText, CalendarClock, Gauge, Kanban, Phone, ListChecks, Send, Inbox,
-  GraduationCap, Heart, Sparkles, Clock, Filter as Funnel,
+  GraduationCap, Heart, Sparkles, Clock, Filter as Funnel, FlaskConical,
 } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
 
@@ -104,6 +104,7 @@ const GROUPS: NavGroup[] = [
       { href: '/admin/tutorials/topics', label: 'Topic Votes', icon: Heart },
       { href: '/admin/tutorials/offer', label: 'Hub Offer', icon: Sparkles },
       { href: '/admin/tutorials/analytics', label: 'Hub Analytics', icon: Clock },
+      { href: '/admin/labs', label: 'RAD Labs', icon: FlaskConical },
     ],
   },
 ];

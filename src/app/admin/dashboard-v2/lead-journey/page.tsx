@@ -11,7 +11,7 @@ import { QUALIFICATION_STAGES, isLeadQualified, nextStageToCheck } from "@/lib/l
 import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
 import { DesktopSendButton } from "@/components/admin/DesktopSendButton";
 
-const LANE_OPTIONS: (SourceLane | "All")[] = ["All", "Meta", "Irene", "Warm List", "Organic", "Unknown"];
+const LANE_OPTIONS: (SourceLane | "All")[] = ["All", "Meta", "Irene", "Warm List", "Organic", "Labs", "Unknown"];
 const HEALTH_OPTIONS = ["All", "active", "stalled", "dormant"];
 
 const HEALTH_COLOR: Record<string, string> = {
