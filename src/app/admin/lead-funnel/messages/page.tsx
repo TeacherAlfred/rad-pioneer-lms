@@ -6,8 +6,9 @@ import {
   Loader2, ArrowLeft, Send, CheckCircle2, XCircle, MousePointerClick,
   Users2, Search, MessageSquare, Reply, X, VolumeX, Plus, Sparkles,
   ChevronDown, ChevronRight, Pencil, Ban, ShieldCheck, FileText, LayoutList,
-  AlertTriangle,
+  AlertTriangle, History,
 } from "lucide-react";
+import { LeadHistoryModal } from "@/components/admin/LeadHistoryModal";
 import { SortableHeader } from "@/components/admin/SortableHeader";
 import { sortRows, type SortDirection } from "@/lib/tableSort";
 import { QueueQuickAdd } from "@/components/admin/QueueQuickAdd";
@@ -406,6 +407,10 @@ Send anyway?`)) {
   // Shared across every send path on this page (free-form reply, template) -
   // a successful send closes the compose modal and hands off to this one,
   // rather than swapping in an inline "sent" banner while the form stays up.
+  // Read-only full-history modal (see LeadHistoryModal) - for context when
+  // the inline thread doesn't reach back far enough.
+  const [historyFor, setHistoryFor] = useState<{ leadId: string; leadName: string | null; leadPhone: string | null } | null>(null);
+
   const [sendSuccessInfo, setSendSuccessInfo] = useState<{ leadName: string | null; kind: 'Message' | 'Template' | 'Guide' } | null>(null);
 
   const selectedTemplateOption = templateOptions.find(t => t.key === selectedTemplateKey) || null;
@@ -1170,7 +1175,16 @@ Send anyway?`)) {
                           </td>
                           <td className="px-4 py-3">
                             <div className="font-bold text-slate-800 truncate max-w-[180px]">{m.lead_name || '(no name)'}</div>
-                            <div className="text-xs text-slate-400">+{m.lead_phone}</div>
+                            <div className="text-xs text-slate-400 flex items-center gap-2">
+                              +{m.lead_phone}
+                              <button
+                                onClick={() => setHistoryFor({ leadId: m.lead_id, leadName: m.lead_name || null, leadPhone: m.lead_phone || null })}
+                                title="View full conversation history (read-only)"
+                                className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700"
+                              >
+                                <History size={11} /> History
+                              </button>
+                            </div>
                           </td>
                           <td className="px-4 py-3 max-w-sm">
                             {parsed.kind !== 'text' && (
@@ -1324,6 +1338,13 @@ Send anyway?`)) {
                             <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                               <div className="flex items-center flex-wrap justify-end gap-1.5">
                                 {!g.leadIsBlocked && <QueueQuickAdd leadId={g.leadId} leadName={g.leadName} />}
+                                <button
+                                  onClick={() => setHistoryFor({ leadId: g.leadId, leadName: g.leadName, leadPhone: g.leadPhone })}
+                                  title="View full conversation history (read-only)"
+                                  className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg"
+                                >
+                                  <History size={12} /> History
+                                </button>
                                 <button
                                   onClick={() => openEditLead(g)}
                                   title="Edit lead details"
@@ -1673,6 +1694,17 @@ Send anyway?`)) {
             </div>
           </div>
         </div>
+      )}
+
+      {historyFor && (
+        <LeadHistoryModal
+          leadId={historyFor.leadId}
+          leadName={historyFor.leadName}
+          leadPhone={historyFor.leadPhone}
+          templates={metaTemplates}
+          flows={botFlows}
+          onClose={() => setHistoryFor(null)}
+        />
       )}
 
       {sendSuccessInfo && (
