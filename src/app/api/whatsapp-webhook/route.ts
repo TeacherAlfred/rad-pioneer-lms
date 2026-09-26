@@ -855,15 +855,41 @@ export async function POST(request: Request) {
               // --- BOT PAUSED: admin has taken this conversation over manually ---
               // Set from /admin/lead-funnel/messages (or the lead's edit drawer),
               // this is a hard stop before every other automated branch below -
-              // opt-out detection, Irene/voucher routing, reply-capture,
-              // needs_human nudges, STAGE 1/2 - so nothing gets auto-sent, not
-              // even a STOP confirmation. Deliberately different from
-              // needs_human, which still sends one nudge and is meant to clear
-              // itself once handled; bot_paused sends nothing at all and stays
-              // set until an admin explicitly turns it back off. The message is
-              // still logged above and alerted immediately, so a human sees it
-              // and can act (including honoring an opt-out) manually.
+              // Irene/voucher routing, reply-capture, needs_human nudges,
+              // STAGE 1/2 - so nothing gets auto-sent. Deliberately different
+              // from needs_human, which still sends one nudge and is meant to
+              // clear itself once handled; bot_paused sends nothing at all and
+              // stays set until an admin explicitly turns it back off. The
+              // message is still logged above, so a human sees it in Message
+              // Activity and can act (including honoring an opt-out) manually.
+              //
+              // EXCEPTION: a stop request (button tap or free text) still goes
+              // through - pausing suppresses AUTOMATED replies, it was never
+              // meant to block a lead's own compliance request. Goes straight to
+              // 'confirmed' rather than 'pending', skipping the normal confirm/
+              // cancel prompt entirely - no automated prompt can go out while
+              // paused anyway, and most leads who tap this by mistake say so in
+              // a later freeform message, which the auto-clear-on-any-inbound
+              // rule above already reactivates for a non-pending opt-out - so
+              // nothing is lost by confirming immediately instead of leaving it
+              // stuck pending forever with no prompt ever sent to answer.
               if (lead.bot_paused) {
+                let stopButtonId: string | null = null;
+                if (message.type === 'interactive' && message.interactive?.type === 'button_reply') stopButtonId = message.interactive.button_reply?.id || null;
+                else if (message.type === 'button') stopButtonId = message.button?.payload || null;
+
+                const isStopText = message.type === 'text' && ['stop', 'unsubscribe', 'opt out', 'optout'].includes(messageText.trim().toLowerCase());
+                let isStopButton = false;
+                if (stopButtonId) {
+                  const { data: stopFlow } = await supabase.from('bot_flows').select('id').eq('trigger_button_id', stopButtonId).eq('opt_out_step', 'request').eq('active', true).maybeSingle();
+                  isStopButton = !!stopFlow;
+                }
+
+                if (isStopText || isStopButton) {
+                  await supabase.from('leads').update({ opted_out: true, opted_out_at: new Date().toISOString(), opt_out_state: 'confirmed' }).eq('id', lead.id);
+                  continue;
+                }
+
                 await notifyAdmin(supabase, senderPhone, `💬 ${messageText || '[non-text message]'} (bot paused - manual replies only)`, lead.id);
                 continue;
               }
