@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { sastDateKey, sastMondayOf, sastWeekday } from '@/lib/sastDate';
 
-const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri'] as const;
+const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 const STREAK_LOOKBACK_DAYS = 120;
 
 // Consecutive work days (Mon-Fri) that hit that day's target, walking
@@ -79,13 +79,21 @@ export async function GET() {
   const totalInQueue = (pendingRows || []).length;
   const waitingToProcess = (pendingRows || []).filter(r => r.target_date <= todayKey).length;
 
-  const processedByDay: Record<string, number> = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0 };
+  const processedByDay: Record<string, number> = { mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0, sun: 0 };
   for (const row of doneRows || []) {
     if (!row.completed_at) continue;
     const dow = sastWeekday(new Date(row.completed_at)); // 0=Sun..6=Sat
-    const idx = dow - 1; // Mon=0 ... Fri=4; Sun=-1, Sat=5 (weekend, not shown per-day)
-    if (idx >= 0 && idx <= 4) processedByDay[DAY_KEYS[idx]]++;
+    const idx = (dow + 6) % 7; // Monday-indexed: Mon=0 ... Sat=5, Sun=6
+    processedByDay[DAY_KEYS[idx]]++;
   }
+
+  // Divides by days elapsed so far this week (Mon=1 .. Sun=7), not always 7 -
+  // dividing by 7 on a Tuesday would understate the average by counting 5
+  // days that haven't happened yet. Includes today's (partial) count, same
+  // "as-of-now" treatment processedThisWeek and the streak calc above already
+  // give today.
+  const daysElapsedThisWeek = (sastWeekday(now) + 6) % 7 + 1;
+  const avgPerDay = (doneRows || []).length / daysElapsedThisWeek;
 
   const processedByDate = new Map<string, number>();
   for (const row of streakDoneRows || []) {
@@ -103,6 +111,7 @@ export async function GET() {
     waitingToProcess,
     processedByDay,
     processedThisWeek: (doneRows || []).length,
+    avgPerDay,
     streak,
   });
 }

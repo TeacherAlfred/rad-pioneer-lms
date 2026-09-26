@@ -49,15 +49,22 @@ type QueueStats = {
   waitingToProcess: number;
   processedByDay: Record<string, number>;
   processedThisWeek: number;
+  avgPerDay: number;
   streak: number;
 };
 
-const DAY_LABELS: { key: string; label: string }[] = [
-  { key: 'mon', label: 'Mon' },
-  { key: 'tue', label: 'Tue' },
-  { key: 'wed', label: 'Wed' },
-  { key: 'thu', label: 'Thu' },
-  { key: 'fri', label: 'Fri' },
+// Sat/Sun are shown for visibility (leads still get worked over a weekend)
+// but carry no daily target - the target is a workday quota, and the streak
+// deliberately never counts or breaks against a weekend (see the stats
+// route's computeStreak) - so their cards below never show a "/target".
+const DAY_LABELS: { key: string; label: string; isWeekday: boolean }[] = [
+  { key: 'mon', label: 'Mon', isWeekday: true },
+  { key: 'tue', label: 'Tue', isWeekday: true },
+  { key: 'wed', label: 'Wed', isWeekday: true },
+  { key: 'thu', label: 'Thu', isWeekday: true },
+  { key: 'fri', label: 'Fri', isWeekday: true },
+  { key: 'sat', label: 'Sat', isWeekday: false },
+  { key: 'sun', label: 'Sun', isWeekday: false },
 ];
 
 function urgencyLabel(lead: QueueLead | null): { text: string; className: string } | null {
@@ -369,19 +376,23 @@ export default function CallQueuePage() {
 
         <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-3">
           <h3 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Processed Per Day This Week</h3>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-4 md:grid-cols-8 gap-2">
             {DAY_LABELS.map(d => {
               const count = stats?.processedByDay[d.key] ?? 0;
               return (
                 <div key={d.key} className="bg-slate-50 rounded-xl p-2.5 text-center">
                   <div className="text-lg font-black text-slate-900">
                     {statsLoading ? '—' : count}
-                    {stats?.target != null && <span className="text-xs font-bold text-slate-400">/{stats.target}</span>}
+                    {d.isWeekday && stats?.target != null && <span className="text-xs font-bold text-slate-400">/{stats.target}</span>}
                   </div>
                   <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-0.5">{d.label}</div>
                 </div>
               );
             })}
+            <div className="bg-slate-900 rounded-xl p-2.5 text-center">
+              <div className="text-lg font-black text-white">{statsLoading ? '—' : stats?.avgPerDay.toFixed(1)}</div>
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Avg/Day</div>
+            </div>
           </div>
         </div>
 
