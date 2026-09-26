@@ -164,6 +164,9 @@ function isInhouseRow(m: MessageRow) {
 function isBlockedRow(m: MessageRow) {
   return !!m.lead_is_blocked;
 }
+function isOptedOutRow(m: MessageRow) {
+  return !!m.lead_opted_out;
+}
 
 // Glow intensity communicates urgency, not just "open vs closed" - a lead
 // with 60 hours left (a 72h ad-referral window) doesn't need the same visual
@@ -238,13 +241,18 @@ export default function MessageActivityPage() {
   // else. Off (the default) excludes both.
   const [showInhouse, setShowInhouseRaw] = useState(false);
   const [showBlocked, setShowBlockedRaw] = useState(false);
+  const [showOptedOut, setShowOptedOutRaw] = useState(false);
   function setShowInhouse(next: boolean) {
     setShowInhouseRaw(next);
-    if (next) setShowBlockedRaw(false);
+    if (next) { setShowBlockedRaw(false); setShowOptedOutRaw(false); }
+  }
+  function setShowOptedOut(next: boolean) {
+    setShowOptedOutRaw(next);
+    if (next) { setShowInhouseRaw(false); setShowBlockedRaw(false); }
   }
   function setShowBlocked(next: boolean) {
     setShowBlockedRaw(next);
-    if (next) setShowInhouseRaw(false);
+    if (next) { setShowInhouseRaw(false); setShowOptedOutRaw(false); }
   }
 
   // The feed only holds the newest few thousand messages, so a search of 3+
@@ -748,13 +756,16 @@ Send anyway?`)) {
     }
   }
 
-  const statsRows = useMemo(() => rows.filter(r => !isInhouseRow(r) && !isBlockedRow(r)), [rows]);
+  const statsRows = useMemo(() => rows.filter(r => !isInhouseRow(r) && !isBlockedRow(r) && !isOptedOutRow(r)), [rows]);
   // Lead counts, not message counts - these label a "how many contacts"
-  // toggle, and one chatty inhouse/blocked contact shouldn't inflate it.
-  const inhouseCount = new Set(rows.filter(r => isInhouseRow(r) && !isBlockedRow(r)).map(r => r.lead_id)).size;
+  // toggle, and one chatty inhouse/blocked/opted-out contact shouldn't
+  // inflate it.
+  const inhouseCount = new Set(rows.filter(r => isInhouseRow(r) && !isBlockedRow(r) && !isOptedOutRow(r)).map(r => r.lead_id)).size;
   const blockedCount = new Set(rows.filter(isBlockedRow).map(r => r.lead_id)).size;
+  const optedOutCount = new Set(rows.filter(r => isOptedOutRow(r) && !isBlockedRow(r)).map(r => r.lead_id)).size;
   const visibleMessageCount = showInhouse ? rows.filter(isInhouseRow).length
     : showBlocked ? rows.filter(isBlockedRow).length
+    : showOptedOut ? rows.filter(isOptedOutRow).length
     : statsRows.length;
 
   const parsedStatsRows = useMemo(() => statsRows.map(r => ({ row: r, parsed: parseMessage(r) })), [statsRows]);
@@ -821,7 +832,8 @@ Send anyway?`)) {
   const groups = useMemo<LeadGroup[]>(() => {
     const source = showInhouse ? rows.filter(isInhouseRow)
       : showBlocked ? rows.filter(isBlockedRow)
-      : rows.filter(r => !isInhouseRow(r) && !isBlockedRow(r));
+      : showOptedOut ? rows.filter(isOptedOutRow)
+      : rows.filter(r => !isInhouseRow(r) && !isBlockedRow(r) && !isOptedOutRow(r));
     const byLead = new Map<string, MessageRow[]>();
     for (const r of source) {
       if (!byLead.has(r.lead_id)) byLead.set(r.lead_id, []);
@@ -860,7 +872,7 @@ Send anyway?`)) {
         windowTotalHours: windowState.totalHours,
       };
     });
-  }, [rows, showInhouse, showBlocked]);
+  }, [rows, showInhouse, showBlocked, showOptedOut]);
 
   const dateCutoffHours = DATE_RANGE_OPTIONS.find(o => o.value === dateRangeFilter)?.hours ?? null;
   const dateCutoffMs = dateCutoffHours !== null ? Date.now() - dateCutoffHours * 60 * 60 * 1000 : null;
@@ -964,7 +976,7 @@ Send anyway?`)) {
 
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, buttonFilter, templateFilter, search, showInhouse, showBlocked, viewMode, dateRangeFilter, hideReplied]);
+  useEffect(() => { setPage(0); }, [directionFilter, kindFilter, buttonFilter, templateFilter, search, showInhouse, showBlocked, showOptedOut, viewMode, dateRangeFilter, hideReplied]);
   const totalItems = viewMode === 'list' ? sortedMessages.length : sortedGroups.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
@@ -1123,6 +1135,7 @@ Send anyway?`)) {
               />
               <ViewToggle label={`Show inhouse (${inhouseCount})`} checked={showInhouse} onChange={setShowInhouse} activeColor="bg-slate-900" />
               <ViewToggle label={`Show blocked (${blockedCount})`} checked={showBlocked} onChange={setShowBlocked} activeColor="bg-rose-500" />
+              <ViewToggle label={`Show opted out (${optedOutCount})`} checked={showOptedOut} onChange={setShowOptedOut} activeColor="bg-amber-500" />
               <span className="text-xs text-slate-400 ml-auto">
                 {viewMode === 'list'
                   ? `${filteredMessages.length} message${filteredMessages.length === 1 ? '' : 's'}`

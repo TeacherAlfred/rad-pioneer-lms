@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, Users, UserPlus, CalendarClock, PhoneOff,
@@ -153,6 +153,12 @@ const INHOUSE_TAG = 'Inhouse';
 function isInhouse(lead: Lead) {
   return (lead.tags || []).some(t => t.toLowerCase() === INHOUSE_TAG.toLowerCase());
 }
+function isBlockedLead(lead: Lead) {
+  return !!lead.is_blocked;
+}
+function isOptedOutLead(lead: Lead) {
+  return !!lead.opted_out;
+}
 
 // Matches the server-side cap in /admin/api/lead-funnel/send-template -
 // sends happen sequentially in one request, and a Vercel function has a
@@ -200,7 +206,26 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
   // that window (see last_received_at in the lead-funnel API) so a bulk
   // send doesn't double-message someone who was just contacted.
   const [hideReceivedHours, setHideReceivedHours] = useState(0);
-  const [showInhouse, setShowInhouse] = useState(false);
+  // "Show inhouse" is additive (adds inhouse leads back into the default
+  // view). Blocked/opted-out are exclusive lenses instead, matching Message
+  // Activity's "Show blocked" - they don't belong in the working view at
+  // all, so checking one narrows to ONLY that category and clears the other
+  // two, rather than adding them back alongside everyone else.
+  const [showInhouse, setShowInhouseRaw] = useState(false);
+  const [showBlocked, setShowBlockedRaw] = useState(false);
+  const [showOptedOut, setShowOptedOutRaw] = useState(false);
+  function setShowInhouse(next: boolean) {
+    setShowInhouseRaw(next);
+    if (next) { setShowBlockedRaw(false); setShowOptedOutRaw(false); }
+  }
+  function setShowBlocked(next: boolean) {
+    setShowBlockedRaw(next);
+    if (next) { setShowInhouseRaw(false); setShowOptedOutRaw(false); }
+  }
+  function setShowOptedOut(next: boolean) {
+    setShowOptedOutRaw(next);
+    if (next) { setShowInhouseRaw(false); setShowBlockedRaw(false); }
+  }
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -210,6 +235,11 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
   const [languageCode, setLanguageCode] = useState('en_US');
   const [variables, setVariables] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
+  // Live progress for a bulk send - {done, total} while the client-driven
+  // per-lead loop below is running, null once nothing's in flight.
+  const [sendProgress, setSendProgress] = useState<{ done: number; total: number } | null>(null);
+  const [stopRequested, setStopRequested] = useState(false);
+  const cancelSendRef = useRef(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendResults, setSendResults] = useState<SendResult[] | null>(null);
 
@@ -309,6 +339,14 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
     setVariables(prev => prev.filter((_, i) => i !== idx));
   }
 
+  // Sends one lead at a time (a separate request per lead) instead of one
+  // request for the whole batch. A single request doing up to MAX_RECIPIENTS
+  // sequential Meta calls left the "Send to N" button just sitting on
+  // "Sending..." with no sign of progress for however long that took, which
+  // reads as frozen on a big batch. This also removes the original reason
+  // for the Vercel-timeout-driven recipient cap (see MAX_RECIPIENTS above) -
+  // each request now only ever does one send - though the cap is left as a
+  // sane bulk-select limit regardless.
   async function handleSend() {
     setSendError(null);
     if (!templateName.trim() || !languageCode.trim()) {
@@ -319,40 +357,51 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
       setSendError('Every body variable needs a value - fill in each field (or use a {{column}} token) before sending. Meta rejects the whole send otherwise.');
       return;
     }
-    setSending(true);
-    setSendResults(null);
-    try {
-      // Sparse -> dense array up to the highest button index actually set,
-      // since sendMetaTemplate positions these by array index directly.
-      const maxIndex = Math.max(-1, ...Object.keys(buttonPayloads).map(Number));
-      const buttonPayloadsArray = Array.from({ length: maxIndex + 1 }, (_, i) => buttonPayloads[i] || '');
 
-      const res = await fetch('/admin/api/lead-funnel/send-template', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          leadIds: Array.from(selectedIds),
-          templateName: templateName.trim(),
-          languageCode: languageCode.trim(),
-          variables,
-          variableNames: manualEntry ? [] : selectedVariableNames,
-          buttonPayloads: buttonPayloadsArray,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Send failed');
-      // Send succeeded - close the form modal and hand off to the separate
-      // results modal, rather than swapping this modal's own content in
-      // place (which read as "did my Cancel click do nothing?").
-      setSendResults(data.results || []);
-      setShowSendModal(false);
-      resetSendForm();
-      setShowSendResultsModal(true);
-    } catch (err: any) {
-      setSendError(err.message);
-    } finally {
-      setSending(false);
+    const ids = Array.from(selectedIds);
+    // Sparse -> dense array up to the highest button index actually set,
+    // since sendMetaTemplate positions these by array index directly.
+    const maxIndex = Math.max(-1, ...Object.keys(buttonPayloads).map(Number));
+    const buttonPayloadsArray = Array.from({ length: maxIndex + 1 }, (_, i) => buttonPayloads[i] || '');
+    const payloadBase = {
+      templateName: templateName.trim(),
+      languageCode: languageCode.trim(),
+      variables,
+      variableNames: manualEntry ? [] : selectedVariableNames,
+      buttonPayloads: buttonPayloadsArray,
+    };
+
+    setSending(true);
+    setStopRequested(false);
+    cancelSendRef.current = false;
+    setSendResults([]);
+    setSendProgress({ done: 0, total: ids.length });
+    // Hand off to the results modal immediately, before anything's actually
+    // sent - it doubles as the live progress view now, not just the final
+    // summary, so there's something visibly happening from the first click.
+    setShowSendModal(false);
+    setShowSendResultsModal(true);
+
+    for (const id of ids) {
+      if (cancelSendRef.current) break;
+      let result: SendResult;
+      try {
+        const res = await fetch('/admin/api/lead-funnel/send-template', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leadIds: [id], ...payloadBase }),
+        });
+        const data = await res.json();
+        result = (data.results || [])[0] || { leadId: id, phone: '', ok: false, error: data.error || 'Send failed' };
+      } catch (err: any) {
+        result = { leadId: id, phone: '', ok: false, error: err.message };
+      }
+      setSendResults(prev => [...(prev || []), result]);
+      setSendProgress(prev => prev ? { ...prev, done: prev.done + 1 } : prev);
     }
+
+    setSending(false);
+    resetSendForm();
   }
 
   function resetSendForm() {
@@ -376,6 +425,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
   function closeSendResultsModal() {
     setShowSendResultsModal(false);
     setSendResults(null);
+    setSendProgress(null);
     setSelectedIds(new Set());
   }
 
@@ -809,15 +859,21 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
 
   // Every stat below is computed off statsRows (inhouse leads excluded) -
   // the table listing is the only thing the showInhouse toggle affects.
-  const statsRows = useMemo(() => dateRows.filter(r => !isInhouse(r)), [dateRows]);
-  const inhouseCount = dateRows.length - statsRows.length;
+  const statsRows = useMemo(() => dateRows.filter(r => !isInhouse(r) && !isBlockedLead(r) && !isOptedOutLead(r)), [dateRows]);
+  const inhouseCount = dateRows.filter(r => isInhouse(r) && !isBlockedLead(r) && !isOptedOutLead(r)).length;
+  const blockedCount = dateRows.filter(isBlockedLead).length;
+  const optedOutListCount = dateRows.filter(r => isOptedOutLead(r) && !isBlockedLead(r)).length;
 
   const stats = useMemo(() => {
     const total = statsRows.length;
     const newToday = statsRows.filter(r => isToday(r.created_at)).length;
     const newThisWeek = statsRows.filter(r => isWithinDays(r.created_at, 7)).length;
     const needsHuman = statsRows.filter(r => r.needs_human).length;
-    const optedOut = statsRows.filter(r => r.opted_out).length;
+    // Not statsRows - that now excludes opted-out leads entirely (they're
+    // their own exclusive lens, see showOptedOut above), so this stat would
+    // always read 0 from it. Scoped to dateRows (still respects the date
+    // range and Ad Campaigns' ad-only narrowing) minus inhouse only.
+    const optedOut = dateRows.filter(r => !isInhouse(r) && r.opted_out).length;
     const fromAds = statsRows.filter(r => r.ad_id).length;
 
     // Distinct households + leads with no household count once each - the
@@ -845,7 +901,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
     }
 
     return { total, newToday, newThisWeek, needsHuman, optedOut, fromAds, households, byStatus, bySource, byAd };
-  }, [statsRows]);
+  }, [statsRows, dateRows]);
 
   const statusOptions = useMemo(() => Array.from(new Set(baseRows.map(r => r.lifecycle_stage || 'unknown'))).sort(), [baseRows]);
   const sourceOptions = useMemo(() => Array.from(new Set(baseRows.map(r => r.source || 'organic / direct'))).sort(), [baseRows]);
@@ -858,7 +914,10 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const source = showInhouse ? dateRows : statsRows;
+    const source = showInhouse ? dateRows.filter(isInhouse)
+      : showBlocked ? dateRows.filter(isBlockedLead)
+      : showOptedOut ? dateRows.filter(isOptedOutLead)
+      : statsRows;
     return source
       .filter(r => {
         if (statusFilter !== 'all' && (r.lifecycle_stage || 'unknown') !== statusFilter) return false;
@@ -877,7 +936,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
       // queueOnly is active - sortRows treats it like any other numeric
       // column, so clicking a different header still works normally.
       .map(r => ({ ...r, _queuePosition: queuePositions.get(r.id) ?? null }));
-  }, [dateRows, statsRows, showInhouse, statusFilter, sourceFilter, adOnly, scope, campaignFilter, queueOnly, queuePositions, search, hideReceivedHours]);
+  }, [dateRows, statsRows, showInhouse, showBlocked, showOptedOut, statusFilter, sourceFilter, adOnly, scope, campaignFilter, queueOnly, queuePositions, search, hideReceivedHours]);
 
   const [sortColumn, setSortColumn] = useState<string | null>('created_at');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -895,7 +954,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
   // rendering itself is paged, so this never truncates what the numbers say.
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  useEffect(() => { setPage(0); }, [statusFilter, sourceFilter, adOnly, campaignFilter, dateFrom, dateTo, queueOnly, search, showInhouse]);
+  useEffect(() => { setPage(0); }, [statusFilter, sourceFilter, adOnly, campaignFilter, dateFrom, dateTo, queueOnly, search, showInhouse, showBlocked, showOptedOut]);
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
   const pagedRows = useMemo(
@@ -1033,6 +1092,12 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
               <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
                 <input type="checkbox" checked={showInhouse} onChange={e => setShowInhouse(e.target.checked)} /> Show inhouse ({inhouseCount})
               </label>
+              <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
+                <input type="checkbox" checked={showBlocked} onChange={e => setShowBlocked(e.target.checked)} /> Show blocked ({blockedCount})
+              </label>
+              <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500 cursor-pointer">
+                <input type="checkbox" checked={showOptedOut} onChange={e => setShowOptedOut(e.target.checked)} /> Show opted out ({optedOutListCount})
+              </label>
               <label className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-slate-500">
                 Hide messaged in last
                 <select
@@ -1061,7 +1126,7 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
                 <input type="checkbox" checked={queueOnly} onChange={e => toggleQueueOnly(e.target.checked)} />
                 In Call Queue only {queueLoading ? <Loader2 size={11} className="animate-spin" /> : queueOnly ? `(${queuePositions.size})` : ''}
               </label>
-              <span className="text-xs text-slate-400 ml-auto">{filteredRows.length} of {showInhouse ? dateRows.length : statsRows.length}</span>
+              <span className="text-xs text-slate-400 ml-auto">{filteredRows.length} of {showInhouse ? dateRows.filter(isInhouse).length : showBlocked ? dateRows.filter(isBlockedLead).length : showOptedOut ? dateRows.filter(isOptedOutLead).length : statsRows.length}</span>
             </div>
 
             {selectedIds.size > 0 && (
@@ -1398,29 +1463,53 @@ export default function LeadFunnelBoard({ scope }: { scope: LeadFunnelScope }) {
         </div>
       )}
 
-      {showSendResultsModal && sendResults && (
+      {showSendResultsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-black text-slate-800 flex items-center gap-2">
-                <CheckCircle2 size={18} className="text-emerald-500" /> Template Sent
+                {sending ? <Loader2 size={18} className="animate-spin text-slate-400" /> : <CheckCircle2 size={18} className="text-emerald-500" />}
+                {sending ? (stopRequested ? 'Stopping...' : 'Sending Template...') : 'Template Sent'}
               </h3>
-              <button onClick={closeSendResultsModal} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+              {!sending && <button onClick={closeSendResultsModal} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>}
             </div>
+
+            {sendProgress && (
+              <div className="mb-4">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-1.5">
+                  <span>{sendProgress.done} of {sendProgress.total} processed</span>
+                  <span>{Math.round((sendProgress.done / sendProgress.total) * 100)}%</span>
+                </div>
+                <div className="bg-slate-100 rounded-full h-2 overflow-hidden">
+                  <div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${(sendProgress.done / sendProgress.total) * 100}%` }} />
+                </div>
+              </div>
+            )}
+
             <div className="space-y-3">
               <div className="flex gap-3 text-xs font-black uppercase tracking-widest">
-                <span className="flex items-center gap-1 text-emerald-600"><CheckCircle2 size={14} /> {sendResults.filter(r => r.ok).length} delivered</span>
-                <span className="flex items-center gap-1 text-rose-500"><XCircle size={14} /> {sendResults.filter(r => !r.ok && !r.skipped).length} failed</span>
-                <span className="flex items-center gap-1 text-slate-400"><PhoneOff size={14} /> {sendResults.filter(r => r.skipped).length} skipped</span>
+                <span className="flex items-center gap-1 text-emerald-600"><CheckCircle2 size={14} /> {(sendResults || []).filter(r => r.ok).length} delivered</span>
+                <span className="flex items-center gap-1 text-rose-500"><XCircle size={14} /> {(sendResults || []).filter(r => !r.ok && !r.skipped).length} failed</span>
+                <span className="flex items-center gap-1 text-slate-400"><PhoneOff size={14} /> {(sendResults || []).filter(r => r.skipped).length} skipped</span>
               </div>
               <div className="max-h-64 overflow-y-auto space-y-1">
-                {sendResults.filter(r => !r.ok).map(r => (
-                  <div key={r.leadId} className="text-xs bg-rose-50 text-rose-600 rounded-lg px-3 py-2">
-                    +{r.phone}: {r.skipped ? 'Skipped (opted out)' : r.error}
+                {(sendResults || []).filter(r => !r.ok).map((r, i) => (
+                  <div key={`${r.leadId}-${i}`} className="text-xs bg-rose-50 text-rose-600 rounded-lg px-3 py-2">
+                    +{r.phone || '?'}: {r.skipped ? `Skipped (${r.error || 'opted out'})` : r.error}
                   </div>
                 ))}
               </div>
-              <button onClick={closeSendResultsModal} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900">Done</button>
+              {sending ? (
+                <button
+                  onClick={() => { cancelSendRef.current = true; setStopRequested(true); }}
+                  disabled={stopRequested}
+                  className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-rose-600 border border-rose-200 disabled:opacity-50"
+                >
+                  {stopRequested ? 'Stopping after current send...' : 'Stop Sending'}
+                </button>
+              ) : (
+                <button onClick={closeSendResultsModal} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900">Done</button>
+              )}
             </div>
           </div>
         </div>

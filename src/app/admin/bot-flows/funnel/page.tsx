@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Loader2, AlertTriangle, X, Send, CheckCircle2, Search,
@@ -75,6 +75,11 @@ export default function MessageFunnelPage() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendResults, setSendResults] = useState<{ leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string }[] | null>(null);
+  // Live progress for the per-lead send loop below - null while nothing's
+  // in flight.
+  const [sendProgress, setSendProgress] = useState<{ done: number; total: number } | null>(null);
+  const [stopRequested, setStopRequested] = useState(false);
+  const cancelSendRef = useRef(false);
 
   async function load() {
     setLoading(true);
@@ -225,41 +230,73 @@ export default function MessageFunnelPage() {
     setFreeformButtons(prev => [...prev, { id: '', title: '' }]);
   }
 
+  // Sends one lead at a time (a separate request per lead) rather than one
+  // request for the whole batch, so progress is visible live instead of the
+  // Send button just sitting there for however long a big batch takes.
   async function doSend(force: boolean) {
-    setSending(true);
     setSendError(null);
-    try {
-      let target: any;
-      if (source === 'flow') target = { kind: 'flow', flowId };
-      else if (source === 'template' && selectedTemplate) {
-        target = {
-          kind: 'template', templateName: selectedTemplate.name, languageCode: selectedTemplate.language,
-          variables: templateVariables, variableNames: selectedTemplate.variableNames, buttonPayloads: [],
-        };
-      } else {
-        target = { kind: 'freeform', body: freeformBody, buttons: freeformButtons.filter(b => b.id.trim() && b.title.trim()), label: freeformLabel.trim() };
-      }
-      const res = await fetch('/admin/api/lead-funnel/message-funnel/send', {
+
+    let target: any;
+    if (source === 'flow') target = { kind: 'flow', flowId };
+    else if (source === 'template' && selectedTemplate) {
+      target = {
+        kind: 'template', templateName: selectedTemplate.name, languageCode: selectedTemplate.language,
+        variables: templateVariables, variableNames: selectedTemplate.variableNames, buttonPayloads: [],
+      };
+    } else {
+      target = { kind: 'freeform', body: freeformBody, buttons: freeformButtons.filter(b => b.id.trim() && b.title.trim()), label: freeformLabel.trim() };
+    }
+
+    // A single lead first, to reuse the server's resend re-check (409) with
+    // its existing whole-batch semantics before committing to the loop -
+    // cheap (a history lookup, not a send) and reliable, since the same
+    // history lookup for the FULL set from the client would just duplicate
+    // logic that already lives server-side in messageFunnel.ts.
+    const ids = Array.from(selectedLeadIds);
+    if (!force) {
+      const precheck = await fetch('/admin/api/lead-funnel/message-funnel/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadIds: Array.from(selectedLeadIds), target, confirmResend: force }),
+        body: JSON.stringify({ leadIds: ids, target, confirmResend: false, dryRun: true }),
       });
-      const data = await res.json();
-      if (res.status === 409 && !force) {
-        // Server disagrees with (or confirms) the client's own flagged set -
-        // trust it and require the checkbox rather than silently retrying.
+      if (precheck.status === 409) {
         setSendError('Some selected leads already received this exact message - tick the confirmation below and send again.');
         return;
       }
-      if (!res.ok) throw new Error(data.error || 'Send failed');
-      setSendResults(data.results || []);
-      setSelectedLeadIds(new Set());
-      load();
-    } catch (err: any) {
-      setSendError(err.message);
-    } finally {
-      setSending(false);
+      if (!precheck.ok) {
+        const data = await precheck.json().catch(() => ({}));
+        setSendError(data.error || 'Send failed');
+        return;
+      }
     }
+
+    setSending(true);
+    setStopRequested(false);
+    cancelSendRef.current = false;
+    setSendResults([]);
+    setSendProgress({ done: 0, total: ids.length });
+
+    for (const id of ids) {
+      if (cancelSendRef.current) break;
+      let result: { leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string };
+      try {
+        const res = await fetch('/admin/api/lead-funnel/message-funnel/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ leadIds: [id], target, confirmResend: true }),
+        });
+        const data = await res.json();
+        result = (data.results || [])[0] || { leadId: id, phone: '', ok: false, error: data.error || 'Send failed' };
+      } catch (err: any) {
+        result = { leadId: id, phone: '', ok: false, error: err.message };
+      }
+      setSendResults(prev => [...(prev || []), result]);
+      setSendProgress(prev => prev ? { ...prev, done: prev.done + 1 } : prev);
+    }
+
+    setSending(false);
+    setSelectedLeadIds(new Set());
+    load();
   }
 
   return (
@@ -375,28 +412,50 @@ export default function MessageFunnelPage() {
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-2xl max-h-[88vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-black text-slate-800">
-                  {sendResults ? 'Send Results' : `Send Message — Step ${wizardStep} of 3`}
+                <h3 className="font-black text-slate-800 flex items-center gap-2">
+                  {sending && <Loader2 size={16} className="animate-spin text-slate-400" />}
+                  {sendResults ? (sending ? (stopRequested ? 'Stopping...' : 'Sending...') : 'Send Results') : `Send Message — Step ${wizardStep} of 3`}
                 </h3>
-                <button onClick={() => setWizardOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
+                {!sending && <button onClick={() => setWizardOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>}
               </div>
 
               {sendResults ? (
                 <div>
+                  {sendProgress && (
+                    <div className="mb-4">
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-1.5">
+                        <span>{sendProgress.done} of {sendProgress.total} processed</span>
+                        <span>{Math.round((sendProgress.done / sendProgress.total) * 100)}%</span>
+                      </div>
+                      <div className="bg-slate-100 rounded-full h-2 overflow-hidden">
+                        <div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${(sendProgress.done / sendProgress.total) * 100}%` }} />
+                      </div>
+                    </div>
+                  )}
                   <p className="text-sm text-slate-500 mb-4">
                     {sendResults.filter(r => r.ok).length} sent, {sendResults.filter(r => r.skipped).length} skipped, {sendResults.filter(r => !r.ok && !r.skipped).length} failed.
                   </p>
                   <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto mb-4">
-                    {sendResults.map(r => (
-                      <div key={r.leadId} className="flex items-center justify-between py-2 text-sm">
-                        <span className="text-slate-600">{r.phone}</span>
+                    {sendResults.map((r, i) => (
+                      <div key={`${r.leadId}-${i}`} className="flex items-center justify-between py-2 text-sm">
+                        <span className="text-slate-600">{r.phone || '?'}</span>
                         {r.ok ? <span className="text-emerald-600 flex items-center gap-1 text-xs font-bold"><CheckCircle2 size={13} /> Sent</span>
                           : r.skipped ? <span className="text-slate-400 text-xs">{r.error}</span>
                           : <span className="text-rose-500 text-xs">{r.error}</span>}
                       </div>
                     ))}
                   </div>
-                  <button onClick={() => setWizardOpen(false)} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900">Done</button>
+                  {sending ? (
+                    <button
+                      onClick={() => { cancelSendRef.current = true; setStopRequested(true); }}
+                      disabled={stopRequested}
+                      className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-rose-600 border border-rose-200 disabled:opacity-50"
+                    >
+                      {stopRequested ? 'Stopping after current send...' : 'Stop Sending'}
+                    </button>
+                  ) : (
+                    <button onClick={() => setWizardOpen(false)} className="w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white bg-slate-900">Done</button>
+                  )}
                 </div>
               ) : (
                 <>

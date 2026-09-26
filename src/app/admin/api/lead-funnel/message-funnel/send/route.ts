@@ -117,7 +117,7 @@ async function sendOne(target: Target, flow: any, media: any, lead: any): Promis
 
 export async function POST(req: Request) {
   try {
-    const { leadIds, target, confirmResend } = await req.json();
+    const { leadIds, target, confirmResend, dryRun } = await req.json();
 
     if (!Array.isArray(leadIds) || leadIds.length === 0) {
       return NextResponse.json({ error: 'leadIds[] is required' }, { status: 400 });
@@ -182,6 +182,15 @@ export async function POST(req: Request) {
           leadIdsAlreadyReceived: alreadyReceived,
         }, { status: 409 });
       }
+    }
+
+    // Client-side per-lead send loops (the funnel page) call this once
+    // up front with the FULL leadIds set just to run the resend re-check
+    // above before committing to the loop, with nothing meant to send yet -
+    // reaching here means that check passed (or confirmResend was already
+    // true), so there's nothing left to do.
+    if (dryRun) {
+      return NextResponse.json({ ok: true });
     }
 
     const results: { leadId: string; phone: string; ok: boolean; skipped?: boolean; error?: string }[] = [];
