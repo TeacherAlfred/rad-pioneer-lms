@@ -5,7 +5,7 @@ const lab: LabContent = {
   seriesKey: 'makecode',
   labNumber: 1,
   title: 'Code Your First Program Tonight',
-  subtitle: 'No kit needed. Free to use right now. Your child builds a real, working program in 20 minutes — and learns what their school forgot to name.',
+  subtitle: 'No kit needed. Free to use right now. Your child builds a real, working program — and sees exactly how the logic inside every app and game works.',
   seo: {
     description: 'A free 20-minute MakeCode lab for ages 8–14. No hardware, no downloads — your child builds a real, working program tonight.',
   },

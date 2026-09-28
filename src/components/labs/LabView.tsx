@@ -59,8 +59,8 @@ export function LabView({
         <div className={s.navInner}>
           <Link href="/" className={s.navBrand} aria-label="RAD Academy home">
             <Image src="/logo/rad-logo.png" alt="RAD Academy" width={70} height={23} priority unoptimized />
-            <span className={s.navBrandLabel}>Labs</span>
           </Link>
+          <Link href="/labs" className={`${s.navBrandLabel} ${s.navHubLink}`}>All labs</Link>
           <div className={s.seriesTabs}>
             {SERIES.map(ser => {
               const first = labsInSeries(labs, ser.key)[0];
@@ -271,6 +271,7 @@ export function LabView({
           <footer className={s.footer}>
             <Image src="/logo/rad-logo.png" alt="RAD Academy" width={70} height={23} unoptimized />
             <div className={s.footerLinks}>
+              <Link href="/labs">All labs</Link>
               <Link href="/term-program">Workshops</Link>
             </div>
             <span className={s.footerNote}>© {new Date().getFullYear()} RAD Academy</span>

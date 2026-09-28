@@ -27,6 +27,17 @@ function Lines({ text }: { text: string }) {
   );
 }
 
+// Same string with the tokens stripped - for places that can't hold markup
+// (e.g. inside a card that is itself a link, where a nested <a> is invalid).
+export function plainText(text: string): string {
+  return (text || '')
+    .replace(BR_TAG, ' ')
+    .replace(/\[([^\]]+)\]\(https?:\/\/[^\s)]+\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*|==([^=]+)==|_([^_]+)_/g, (_m, a, b, c) => a ?? b ?? c)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function Rich({ text }: { text: string }) {
   const normalised = (text || '').replace(/\r\n?/g, '\n').replace(BR_TAG, '\n');
   const parts = normalised.split(TOKEN).filter(Boolean);

@@ -7,7 +7,7 @@ import makecode01 from './makecode-01';
 // everything here takes that list as an argument rather than reading it.
 
 export const SERIES: LabSeries[] = [
-  { key: 'makecode', name: 'MakeCode', platform: 'MakeCode' },
+  { key: 'makecode', name: 'MakeCode', platform: 'MakeCode', about: 'How apps actually think — in 20 minutes' },
   { key: 'robotics', name: 'Robotics', platform: 'Robotics', comingSoon: true },
   { key: 'scratch', name: 'Scratch', platform: 'Scratch', comingSoon: true },
   { key: 'app-dev', name: 'App Dev', platform: 'App Dev', comingSoon: true },

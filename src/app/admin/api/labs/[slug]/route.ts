@@ -100,8 +100,11 @@ export async function PUT(req: Request, { params }: Params) {
     if (error) throw error;
 
     // Neighbouring labs' prev/next + topic grid change too, so refresh
-    // every lab page, not just this one.
-    if (action === 'publish') revalidatePath('/labs/[slug]', 'page');
+    // every lab page, not just this one - and the /labs hub that lists them.
+    if (action === 'publish') {
+      revalidatePath('/labs/[slug]', 'page');
+      revalidatePath('/labs');
+    }
 
     const fresh = await readRow(slug);
     return NextResponse.json({ ok: true, warnings: errors, status: statusOf(fresh, seed) });

@@ -49,6 +49,7 @@ export type LabSeries = {
   key: string;         // e.g. 'makecode' - also the series FAQ bucket key
   name: string;        // e.g. 'MakeCode'
   platform: string;    // chip label, e.g. 'MakeCode'
+  about?: string;      // what the series teaches, e.g. 'How apps actually think' (hub card sub-heading)
   comingSoon?: boolean;
 };
 

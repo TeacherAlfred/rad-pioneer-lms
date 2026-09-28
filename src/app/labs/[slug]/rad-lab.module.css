@@ -198,6 +198,14 @@
   border-left: 1px solid var(--border);
   padding-left: 8px;
 }
+.navHubLink {
+  flex-shrink: 0;
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.navHubLink:hover {
+  color: var(--text);
+}
 .seriesTabs {
   display: flex;
   gap: 2px;
@@ -1977,6 +1985,10 @@ a.cluster:hover {
   .labDots,
   .navBrandLabel {
     display: none;
+  }
+  /* The way back to the /labs hub stays visible on phones. */
+  .navBrandLabel.navHubLink {
+    display: inline;
   }
   .header {
     padding-top: 44px;
