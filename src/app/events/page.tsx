@@ -16,6 +16,7 @@ type FeaturedProgram = {
   date_options: { id: string; label: string; starts_at: string }[];
   sort_order: number;
   page_content: unknown;
+  listing_image_url: string | null;
 };
 
 // Sources from the same featured_programs table the homepage carousel
@@ -36,7 +37,7 @@ export default function EventsDirectoryPage() {
       // additional surface filter specific to this page.
       const { data, error } = await supabase
         .from('featured_programs')
-        .select('id, title, location, details, image_url, date_options, sort_order, page_content')
+        .select('id, title, location, details, image_url, date_options, sort_order, page_content, listing_image_url')
         .eq('show_on_events_page', true)
         .order('sort_order', { ascending: true });
       if (!error && data) setEvents(data);
@@ -100,16 +101,16 @@ export default function EventsDirectoryPage() {
 
             <div className="flex flex-col lg:flex-row">
               {/* Image Side */}
-              {/* Never cropped - the image keeps its natural aspect ratio at
-                  full column width; if the text column is taller, the image
-                  sits centred on the slate background instead of being
-                  stretched/cropped to fill it. */}
-              <div className="w-full lg:w-1/2 relative bg-slate-100 flex items-center justify-center">
-                {featuredEvent.image_url ? (
+              {/* Uses the program's listing_image_url when set - a crop-
+                  tolerant image picked for this card, since it fills the
+                  column and zooms on hover. Falls back to image_url, which
+                  /events/[id] shows uncropped. */}
+              <div className="w-full lg:w-1/2 aspect-square lg:aspect-auto relative overflow-hidden bg-slate-100">
+                {featuredEvent.listing_image_url || featuredEvent.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={featuredEvent.image_url} alt={featuredEvent.title} className="block w-full h-auto" />
+                  <img src={featuredEvent.listing_image_url || featuredEvent.image_url} alt={featuredEvent.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
                 ) : (
-                  <div className="w-full aspect-square bg-slate-100 flex items-center justify-center">
+                  <div className="w-full h-full bg-slate-100 flex items-center justify-center">
                     <Rocket size={80} className="text-slate-300" />
                   </div>
                 )}

@@ -2648,6 +2648,7 @@ export type Database = {
           label: string
           live_from: string
           live_until: string
+          listing_image_url: string | null
           location: string | null
           page_content: Json
           programs_id: string | null
@@ -2678,6 +2679,7 @@ export type Database = {
           label?: string
           live_from?: string
           live_until: string
+          listing_image_url?: string | null
           location?: string | null
           page_content?: Json
           programs_id?: string | null
@@ -2708,6 +2710,7 @@ export type Database = {
           label?: string
           live_from?: string
           live_until?: string
+          listing_image_url?: string | null
           location?: string | null
           page_content?: Json
           programs_id?: string | null

@@ -75,7 +75,7 @@ export async function POST(req: Request) {
       show_on_events_page, show_on_homepage, counts_general_attendees,
       programs_id, default_session_id, expected_attendee_count, quote_email_template_id,
       age_label, fee_label, spots_label, status_label, card_kind, show_on_term_page,
-      page_content,
+      page_content, listing_image_url,
     } = body;
 
     // A brand-new program can never satisfy the publish gate yet (packages
@@ -115,6 +115,7 @@ export async function POST(req: Request) {
         card_kind: card_kind || 'session',
         show_on_term_page: !!show_on_term_page,
         page_content: normalizePageContent(page_content),
+        listing_image_url: listing_image_url ? String(listing_image_url).trim() : null,
       }])
       .select()
       .single();
@@ -139,7 +140,7 @@ export async function PATCH(req: Request) {
       show_on_events_page, show_on_homepage, counts_general_attendees,
       programs_id, default_session_id, expected_attendee_count, quote_email_template_id, quote_email_template_needs_review,
       age_label, fee_label, spots_label, status_label, card_kind, show_on_term_page,
-      page_content,
+      page_content, listing_image_url,
     } = body;
 
     // Publish gate: only checked when this PATCH is actually the moment
@@ -199,6 +200,7 @@ export async function PATCH(req: Request) {
     if (card_kind !== undefined) update.card_kind = card_kind || 'session';
     if (show_on_term_page !== undefined) update.show_on_term_page = !!show_on_term_page;
     if (page_content !== undefined) update.page_content = normalizePageContent(page_content);
+    if (listing_image_url !== undefined) update.listing_image_url = listing_image_url ? String(listing_image_url).trim() : null;
 
     const { data, error } = await supabaseAdmin
       .from('featured_programs')

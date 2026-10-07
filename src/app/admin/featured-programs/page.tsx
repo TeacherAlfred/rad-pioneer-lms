@@ -46,6 +46,7 @@ type FeaturedProgram = {
   card_kind: string;
   show_on_term_page: boolean;
   page_content: FeaturedProgramPageContent | null;
+  listing_image_url: string | null;
 };
 
 const CARD_KINDS = [
@@ -66,7 +67,7 @@ const ACCENTS = [
 
 const emptyForm = {
   title: '', label: 'Program', location: '', details: '', duration: '', form_label: '', series: '',
-  image_url: '', is_video: false, accent: 'bg-rad-blue', sort_order: '0',
+  image_url: '', listing_image_url: '', is_video: false, accent: 'bg-rad-blue', sort_order: '0',
   live_from: '', live_until: '', allow_multi_date: false,
   show_on_events_page: true, show_on_homepage: true,
   counts_general_attendees: false,
@@ -207,6 +208,7 @@ export default function FeaturedProgramsPage() {
       form_label: p.form_label || '',
       series: p.series || '',
       image_url: p.image_url,
+      listing_image_url: p.listing_image_url || '',
       is_video: p.is_video,
       accent: p.accent,
       sort_order: String(p.sort_order),
@@ -272,6 +274,7 @@ export default function FeaturedProgramsPage() {
         form_label: form.form_label.trim() || null,
         series: form.series.trim() || null,
         image_url: form.image_url.trim(),
+        listing_image_url: form.listing_image_url.trim() || null,
         is_video: form.is_video,
         accent: form.accent,
         sort_order: form.sort_order,
@@ -758,7 +761,13 @@ export default function FeaturedProgramsPage() {
               <div>
                 <label className={LABEL_CLS}>Image / Video URL</label>
                 <input placeholder="https://...r2.dev/..." value={form.image_url} onChange={e => setForm(f => ({ ...f, image_url: e.target.value }))} className={INPUT_CLS} />
-                <p className={HINT_CLS}>Paste the R2 URL for the uploaded image or video.</p>
+                <p className={HINT_CLS}>Paste the R2 URL for the uploaded image or video. Shown uncropped on this program&apos;s /events detail page.</p>
+              </div>
+
+              <div>
+                <label className={LABEL_CLS}>/events Listing Image URL (optional)</label>
+                <input placeholder="https://...r2.dev/..." value={form.listing_image_url} onChange={e => setForm(f => ({ ...f, listing_image_url: e.target.value }))} className={INPUT_CLS} />
+                <p className={HINT_CLS}>A separate image for this program&apos;s card on the /events page, which crops to fit and zooms on hover - so use something crop-friendly. Leave blank to reuse the image above.</p>
               </div>
 
               <div className="flex items-center justify-between pt-1">
