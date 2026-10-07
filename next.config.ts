@@ -30,6 +30,20 @@ const nextConfig: any = {
       },
     ],
   },
+  // Dev-only: swap the tab favicon for a distinct mark so a localhost tab
+  // is never mistaken for the live site. beforeFiles is required so this
+  // wins over the generated /icon.png route itself; production keeps the
+  // real icon.png untouched since this rewrite doesn't exist outside dev.
+  async rewrites() {
+    if (process.env.NODE_ENV !== 'development') {
+      return { beforeFiles: [], afterFiles: [], fallback: [] };
+    }
+    return {
+      beforeFiles: [{ source: '/icon.png', destination: '/dev-icon' }],
+      afterFiles: [],
+      fallback: [],
+    };
+  },
 };
 
 export default nextConfig;
