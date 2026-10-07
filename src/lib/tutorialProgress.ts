@@ -13,7 +13,7 @@ export { normalizePhone };
 // click-to-chat message to RAD's own WhatsApp Business number, resolved by
 // the existing inbound webhook - no new SMS/OTP vendor needed. Matches the
 // number already used as the general "contact us" WhatsApp link elsewhere
-// (src/app/page.tsx, send-invite, send-registration-conf).
+// (src/app/page.tsx homepage + src/app/classic, send-invite, send-registration-conf).
 export const RAD_WHATSAPP_NUMBER = '27769065959';
 
 const LINK_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I - typed by hand off a phone screen
