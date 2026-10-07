@@ -2649,6 +2649,7 @@ export type Database = {
           live_from: string
           live_until: string
           location: string | null
+          page_content: Json
           programs_id: string | null
           quote_email_template_id: string | null
           quote_email_template_needs_review: boolean
@@ -2678,6 +2679,7 @@ export type Database = {
           live_from?: string
           live_until: string
           location?: string | null
+          page_content?: Json
           programs_id?: string | null
           quote_email_template_id?: string | null
           quote_email_template_needs_review?: boolean
@@ -2707,6 +2709,7 @@ export type Database = {
           live_from?: string
           live_until?: string
           location?: string | null
+          page_content?: Json
           programs_id?: string | null
           quote_email_template_id?: string | null
           quote_email_template_needs_review?: boolean

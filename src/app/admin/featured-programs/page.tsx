@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { computeMarginPct, guardrailCheck } from "@/lib/pricingEngine";
 import RegisterInterestModal, { dateOptionsWithCombo } from "@/components/RegisterInterestModal";
+import { normalizePageContent, type FeaturedProgramPageContent } from "@/lib/featuredProgramPageContent";
 
 type DateOption = { id: string; label: string; starts_at: string; description?: string };
 
@@ -44,6 +45,7 @@ type FeaturedProgram = {
   status_label: string | null;
   card_kind: string;
   show_on_term_page: boolean;
+  page_content: FeaturedProgramPageContent | null;
 };
 
 const CARD_KINDS = [
@@ -80,6 +82,16 @@ function toDatetimeLocal(iso: string | null): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// "Sat 17 Oct, 10:00" - same "<day>, <time>" shape admins have been typing
+// by hand, which /term-program's stripTime() relies on (splits at the comma).
+function defaultDateLabel(iso: string) {
+  const d = new Date(iso);
+  const tz = { timeZone: 'Africa/Johannesburg' };
+  const day = d.toLocaleDateString('en-ZA', { ...tz, weekday: 'short', day: 'numeric', month: 'short' }).replace(/,/g, '');
+  const time = d.toLocaleTimeString('en-ZA', { ...tz, hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${day}, ${time}`;
 }
 
 function fmtDate(iso: string) {
@@ -156,6 +168,7 @@ export default function FeaturedProgramsPage() {
   const [editing, setEditing] = useState<FeaturedProgram | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [dateOptions, setDateOptions] = useState<DateOption[]>([]);
+  const [pageContent, setPageContent] = useState<FeaturedProgramPageContent>({});
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [eventPackages, setEventPackages] = useState<any[]>([]);
@@ -177,6 +190,7 @@ export default function FeaturedProgramsPage() {
     const nextOrder = rows.length ? Math.max(...rows.map(r => r.sort_order)) + 1 : 0;
     setForm({ ...emptyForm, sort_order: String(nextOrder), live_from: toDatetimeLocal(new Date().toISOString()) });
     setDateOptions([]);
+    setPageContent({});
     setEventPackages([]);
     setFormError(null);
     setShowModal(true);
@@ -214,6 +228,7 @@ export default function FeaturedProgramsPage() {
       show_on_term_page: p.show_on_term_page,
     });
     setDateOptions(p.date_options || []);
+    setPageContent(normalizePageContent(p.page_content));
     setFormError(null);
     setShowModal(true);
     loadEventPackages(p.id);
@@ -235,9 +250,16 @@ export default function FeaturedProgramsPage() {
     if (!form.title.trim()) return setFormError('Title is required.');
     if (!form.image_url.trim()) return setFormError('Image URL is required.');
     if (!form.live_until) return setFormError('Live until date is required.');
-    const cleanedDateOptions = dateOptions
+    // A row with a date but no label gets one generated from the date
+    // (e.g. "Sat 17 Oct, 10:00"); a row with no date can't be booked, so
+    // it's flagged instead of being silently dropped as it used to be.
+    const filledDateOptions = dateOptions
       .map(d => ({ ...d, label: d.label.trim() }))
-      .filter(d => d.label && d.starts_at);
+      .filter(d => d.label || d.starts_at);
+    if (filledDateOptions.some(d => !d.starts_at)) {
+      return setFormError('Every date option needs a date & time - pick one, or remove the row.');
+    }
+    const cleanedDateOptions = filledDateOptions.map(d => ({ ...d, label: d.label || defaultDateLabel(d.starts_at) }));
     setSaving(true);
     setFormError(null);
     try {
@@ -270,6 +292,7 @@ export default function FeaturedProgramsPage() {
         status_label: form.status_label.trim() || null,
         card_kind: form.card_kind,
         show_on_term_page: form.show_on_term_page,
+        page_content: normalizePageContent(pageContent),
       };
       const res = await fetch('/admin/api/featured-programs', {
         method: editing ? 'PATCH' : 'POST',
@@ -341,7 +364,7 @@ export default function FeaturedProgramsPage() {
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <Link href="/admin/dashboard" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+          <Link href="/admin/dashboard-v2" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
             <ArrowLeft size={14} /> Command Center
           </Link>
         </div>
@@ -562,21 +585,21 @@ export default function FeaturedProgramsPage() {
                       <div key={d.id} className="p-3 rounded-[10px] bg-slate-50 border border-slate-200 space-y-2">
                         <div className="flex items-center gap-2">
                           <input
-                            placeholder="Label, e.g. Sat 6 Sept, 10:00"
-                            value={d.label}
-                            onChange={e => updateDateOption(d.id, { label: e.target.value })}
-                            className={`${INPUT_CLS} flex-1`}
-                          />
-                          <input
                             type="datetime-local"
                             value={toDatetimeLocal(d.starts_at || null)}
                             onChange={e => updateDateOption(d.id, { starts_at: e.target.value ? new Date(e.target.value).toISOString() : '' })}
-                            className={`${INPUT_CLS} w-56 shrink-0`}
+                            className={`${INPUT_CLS} flex-1 min-w-0`}
                           />
-                          <button type="button" onClick={() => removeDateOption(d.id)} className="text-slate-300 hover:text-rose-500 shrink-0">
+                          <button type="button" onClick={() => removeDateOption(d.id)} title="Remove date" className="text-slate-300 hover:text-rose-500 shrink-0 p-1">
                             <Trash2 size={15} />
                           </button>
                         </div>
+                        <input
+                          placeholder={d.starts_at ? `Label shown to parents — blank uses "${defaultDateLabel(d.starts_at)}"` : 'Label shown to parents, e.g. Sat 17 Oct, 10:00 – 12:30'}
+                          value={d.label}
+                          onChange={e => updateDateOption(d.id, { label: e.target.value })}
+                          className={INPUT_CLS}
+                        />
                         <input
                           placeholder="What's this day about, e.g. Minecraft Education — game-based learning and creative problem-solving (optional)"
                           value={d.description || ''}
@@ -635,6 +658,10 @@ export default function FeaturedProgramsPage() {
                 </div>
                 <p className={HINT_CLS}>Turn all off to keep this card live but unlisted on any public surface - for something not ready to announce yet. There&apos;s no direct-link detail page for a single card today, so &quot;unlisted&quot; currently means &quot;not visible anywhere&quot; rather than &quot;visible only via a private link&quot; - ask if you need that.</p>
               </div>
+
+              {form.show_on_events_page && (
+                <PageContentEditor value={pageContent} onChange={setPageContent} />
+              )}
 
               {form.show_on_term_page && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
@@ -1207,6 +1234,87 @@ function EventPackageRow({ eventPackage, expectedAttendeeCount, onChange }: { ev
         </button>
       </div>
       {error && <p className="text-[12px] text-rose-500">{error}</p>}
+    </div>
+  );
+}
+
+// Optional flyer-style sections for this program's /events/[id] detail
+// page (featured_programs.page_content). Everything here is optional -
+// leave it all blank and the detail page renders from the fields above.
+function PageContentEditor({ value, onChange }: { value: FeaturedProgramPageContent; onChange: (v: FeaturedProgramPageContent) => void }) {
+  const learnItems = value.learn_items || [];
+  const takeaway = value.takeaway || { label: '', title: '', desc: '' };
+
+  function set<K extends keyof FeaturedProgramPageContent>(key: K, v: FeaturedProgramPageContent[K]) {
+    onChange({ ...value, [key]: v });
+  }
+
+  function setLearnItem(i: number, patch: Partial<{ title: string; desc: string }>) {
+    set('learn_items', learnItems.map((item, idx) => idx === i ? { ...item, ...patch } : item));
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5 space-y-4">
+      <div>
+        <h4 className="text-[14px] font-semibold text-slate-800">Event Page Content</h4>
+        <p className={HINT_CLS}>Optional extra sections for this program&apos;s /events detail page. Leave blank to show just the basics above.</p>
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Eyebrow</label>
+        <input placeholder="e.g. Robotics · Electronics · Computational Thinking" value={value.eyebrow || ''} onChange={e => set('eyebrow', e.target.value)} className={INPUT_CLS} />
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Headline</label>
+        <input placeholder="e.g. From *player* to _builder_ — in one afternoon." value={value.headline || ''} onChange={e => set('headline', e.target.value)} className={INPUT_CLS} />
+        <p className={HINT_CLS}>Wrap words in *stars* for amber or _underscores_ for green. Falls back to the title when blank.</p>
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Subheading</label>
+        <textarea rows={2} placeholder="Falls back to Details when blank" value={value.subheading || ''} onChange={e => set('subheading', e.target.value)} className={`${INPUT_CLS} resize-none`} />
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className={LABEL_CLS.replace('mb-1.5', 'mb-0')}>What your child learns</label>
+          <button type="button" onClick={() => set('learn_items', [...learnItems, { title: '', desc: '' }])} className="text-[12px] font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1">
+            <Plus size={13} /> Add item
+          </button>
+        </div>
+        {learnItems.length > 0 && (
+          <div className="space-y-3 mt-2">
+            {learnItems.map((item, i) => (
+              <div key={i} className="p-3 rounded-[10px] bg-white border border-slate-200 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-semibold text-slate-400 w-6 shrink-0">{String(i + 1).padStart(2, '0')}</span>
+                  <input placeholder="Title, e.g. Electronics, Circuits & Wiring" value={item.title} onChange={e => setLearnItem(i, { title: e.target.value })} className={`${INPUT_CLS} flex-1`} />
+                  <button type="button" onClick={() => set('learn_items', learnItems.filter((_, idx) => idx !== i))} className="text-slate-300 hover:text-rose-500 shrink-0">
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+                <input placeholder="Description" value={item.desc} onChange={e => setLearnItem(i, { desc: e.target.value })} className={`${INPUT_CLS} text-[13px]`} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label className={LABEL_CLS}>Take-home card</label>
+        <div className="grid grid-cols-2 gap-3">
+          <input placeholder="Label, e.g. Every attendee takes home" value={takeaway.label} onChange={e => set('takeaway', { ...takeaway, label: e.target.value })} className={INPUT_CLS} />
+          <input placeholder="Title, e.g. A MicroBit Kit — to keep" value={takeaway.title} onChange={e => set('takeaway', { ...takeaway, title: e.target.value })} className={INPUT_CLS} />
+        </div>
+        <input placeholder="Description" value={takeaway.desc} onChange={e => set('takeaway', { ...takeaway, desc: e.target.value })} className={`${INPUT_CLS} mt-2 text-[13px]`} />
+      </div>
+
+      <div>
+        <label className={LABEL_CLS}>Parent quote</label>
+        <textarea rows={2} placeholder="e.g. Most parents say their child asked about the next session before leaving the venue." value={value.quote || ''} onChange={e => set('quote', e.target.value)} className={`${INPUT_CLS} resize-none`} />
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Group-size note</label>
+        <input placeholder="e.g. Limited to 12 students per session · Direct mentor time for every child" value={value.scarcity_note || ''} onChange={e => set('scarcity_note', e.target.value)} className={INPUT_CLS} />
+      </div>
     </div>
   );
 }

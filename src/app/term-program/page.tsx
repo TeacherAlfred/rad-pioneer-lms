@@ -2,15 +2,12 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Space_Grotesk, IBM_Plex_Sans } from "next/font/google";
 import {
   Loader2, AlertCircle, CheckCircle2, MapPin, Users, ShoppingBag, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { RAD_WHATSAPP_NUMBER } from "@/lib/tutorialProgress";
-
-const headingFont = Space_Grotesk({ subsets: ["latin"], weight: ["500", "600", "700"] });
-const bodyFont = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"] });
+import { headingFont, bodyFont } from "@/lib/termTheme";
 
 type DateOption = { id: string; label: string; starts_at: string; description?: string };
 

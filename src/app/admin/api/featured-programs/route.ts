@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { normalizePageContent } from '@/lib/featuredProgramPageContent';
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -74,6 +75,7 @@ export async function POST(req: Request) {
       show_on_events_page, show_on_homepage, counts_general_attendees,
       programs_id, default_session_id, expected_attendee_count, quote_email_template_id,
       age_label, fee_label, spots_label, status_label, card_kind, show_on_term_page,
+      page_content,
     } = body;
 
     // A brand-new program can never satisfy the publish gate yet (packages
@@ -112,6 +114,7 @@ export async function POST(req: Request) {
         status_label: status_label || null,
         card_kind: card_kind || 'session',
         show_on_term_page: !!show_on_term_page,
+        page_content: normalizePageContent(page_content),
       }])
       .select()
       .single();
@@ -136,6 +139,7 @@ export async function PATCH(req: Request) {
       show_on_events_page, show_on_homepage, counts_general_attendees,
       programs_id, default_session_id, expected_attendee_count, quote_email_template_id, quote_email_template_needs_review,
       age_label, fee_label, spots_label, status_label, card_kind, show_on_term_page,
+      page_content,
     } = body;
 
     // Publish gate: only checked when this PATCH is actually the moment
@@ -194,6 +198,7 @@ export async function PATCH(req: Request) {
     if (status_label !== undefined) update.status_label = status_label || null;
     if (card_kind !== undefined) update.card_kind = card_kind || 'session';
     if (show_on_term_page !== undefined) update.show_on_term_page = !!show_on_term_page;
+    if (page_content !== undefined) update.page_content = normalizePageContent(page_content);
 
     const { data, error } = await supabaseAdmin
       .from('featured_programs')

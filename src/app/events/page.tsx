@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { CalendarDays, MapPin, Loader2, ArrowRight, Star, Users, Rocket, ChevronRight } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { normalizePageContent } from "@/lib/featuredProgramPageContent";
 
 type FeaturedProgram = {
   id: string;
@@ -14,6 +15,7 @@ type FeaturedProgram = {
   image_url: string;
   date_options: { id: string; label: string; starts_at: string }[];
   sort_order: number;
+  page_content: unknown;
 };
 
 // Sources from the same featured_programs table the homepage carousel
@@ -34,7 +36,7 @@ export default function EventsDirectoryPage() {
       // additional surface filter specific to this page.
       const { data, error } = await supabase
         .from('featured_programs')
-        .select('id, title, location, details, image_url, date_options, sort_order')
+        .select('id, title, location, details, image_url, date_options, sort_order, page_content')
         .eq('show_on_events_page', true)
         .order('sort_order', { ascending: true });
       if (!error && data) setEvents(data);
@@ -98,12 +100,16 @@ export default function EventsDirectoryPage() {
 
             <div className="flex flex-col lg:flex-row">
               {/* Image Side */}
-              <div className="w-full lg:w-1/2 aspect-square lg:aspect-auto relative overflow-hidden bg-slate-100">
+              {/* Never cropped - the image keeps its natural aspect ratio at
+                  full column width; if the text column is taller, the image
+                  sits centred on the slate background instead of being
+                  stretched/cropped to fill it. */}
+              <div className="w-full lg:w-1/2 relative bg-slate-100 flex items-center justify-center">
                 {featuredEvent.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={featuredEvent.image_url} alt={featuredEvent.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+                  <img src={featuredEvent.image_url} alt={featuredEvent.title} className="block w-full h-auto" />
                 ) : (
-                  <div className="w-full h-full bg-slate-100 flex items-center justify-center">
+                  <div className="w-full aspect-square bg-slate-100 flex items-center justify-center">
                     <Rocket size={80} className="text-slate-300" />
                   </div>
                 )}
@@ -116,7 +122,7 @@ export default function EventsDirectoryPage() {
                 </h2>
 
                 <p className="text-slate-600 mb-8 font-medium leading-relaxed">
-                  {featuredEvent.details || "A fun, interactive holiday program where kids learn to create, build, and code their own digital projects."}
+                  {normalizePageContent(featuredEvent.page_content).subheading || featuredEvent.details || "A fun, interactive holiday program where kids learn to create, build, and code their own digital projects."}
                 </p>
 
                 {/* Clear, Simple Details */}
