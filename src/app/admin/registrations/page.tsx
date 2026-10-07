@@ -200,7 +200,7 @@ export default function RegistrationsPage() {
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
       <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-          <Link href="/admin/dashboard" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
+          <Link href="/admin/dashboard-v2" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">
             <ArrowLeft size={14} /> Command Center
           </Link>
           <Link href="/admin/featured-programs" className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-slate-400 hover:text-slate-600">

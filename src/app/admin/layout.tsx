@@ -5,6 +5,7 @@ import AdminLeadsChrome from "@/components/admin/AdminLeadsChrome";
 import AdminFinanceChrome from "@/components/admin/AdminFinanceChrome";
 import AdminProjectsChrome from "@/components/admin/AdminProjectsChrome";
 import AdminSystemStatusChrome from "@/components/admin/AdminSystemStatusChrome";
+import AdminProgramsChrome from "@/components/admin/AdminProgramsChrome";
 
 export const metadata: Metadata = {
   title: {
@@ -23,13 +24,16 @@ export default function AdminLayout({
       {/* Renders whatever specific admin page you are currently on - each
           Chrome adds its own grouped hover sidebar only within its own
           section (leads/messages/kids vs. finance-v2/pricing/money-admin vs.
-          dashboard-v2/projects vs. dashboard-v2/systems-status+landmines),
-          untouched everywhere else. The four section prefix lists never
-          overlap, so nesting them is safe. */}
+          dashboard-v2/projects vs. dashboard-v2/systems-status+landmines vs.
+          featured-programs/registrations/term-program-settings), untouched
+          everywhere else. The five section prefix lists never overlap, so
+          nesting them is safe. */}
       <AdminFinanceChrome>
         <AdminLeadsChrome>
           <AdminProjectsChrome>
-            <AdminSystemStatusChrome>{children}</AdminSystemStatusChrome>
+            <AdminSystemStatusChrome>
+              <AdminProgramsChrome>{children}</AdminProgramsChrome>
+            </AdminSystemStatusChrome>
           </AdminProjectsChrome>
         </AdminLeadsChrome>
       </AdminFinanceChrome>

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, ChevronLeft, ChevronRight, Gauge, Wallet, LayoutList, Users, FolderKanban, ListChecks } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Gauge, Wallet, LayoutList, Users, FolderKanban, ListChecks, Sparkles } from "lucide-react";
 
 // Light theme is deliberate for dashboard-v2 specifically (design doc §4):
 // status-colour scanning (red/amber/green) reads faster on light than dark.
@@ -17,6 +17,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Gauge, Wallet, LayoutList, Users,
 const TABS = [
   { label: "Home", path: "/admin/dashboard-v2", icon: Gauge },
   { label: "Leads", path: "/admin/lead-funnel/overview", icon: Users },
+  { label: "Programs", path: "/admin/featured-programs", icon: Sparkles },
   { label: "System Status", path: "/admin/dashboard-v2/systems-status", icon: LayoutList },
   { label: "Money & Admin", path: "/admin/dashboard-v2/money-admin", icon: Wallet },
   { label: "Projects", path: "/admin/dashboard-v2/projects", icon: FolderKanban },
