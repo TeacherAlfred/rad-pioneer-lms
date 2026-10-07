@@ -539,6 +539,7 @@ export default function NotesPage() {
                     ref={constellationRef}
                     nodes={graphData.nodes}
                     edges={graphData.edges}
+                    groups={noteGroups}
                     onViewportChange={setVisibleNoteIds}
                     otherGroupCounts={otherGroupCounts}
                     onGroupFocusCleared={() => setSelectedGroupIds(new Set())}

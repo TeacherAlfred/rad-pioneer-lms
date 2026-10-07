@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   forceSimulation,
@@ -8,11 +8,14 @@ import {
   forceLink,
   forceCenter,
   forceCollide,
+  forceX,
+  forceY,
   type Simulation,
   type SimulationNodeDatum,
 } from "d3-force";
-import { Plus, Minus, Maximize2, X, ArrowRight } from "lucide-react";
+import { Plus, Minus, Maximize2, X, ArrowRight, Eye, EyeOff } from "lucide-react";
 import type { NoteGraphNode, NoteGraphEdge, NoteEdgeReason } from "../../reader/_actions/notes";
+import type { NoteGroup } from "../_lib/derive-note-groups";
 
 interface SimNode extends SimulationNodeDatum, NoteGraphNode {}
 interface SimLink {
@@ -47,6 +50,10 @@ const HOVER_RADIUS = 7;
 const CLICK_DRAG_THRESHOLD = 4;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
+// Pulls each note toward its largest shared grouping so the graph resolves into
+// visible clusters instead of one hairball; notes with no grouping get 0 and are
+// left to drift under charge/collide alone, same population the isolate toggle hides.
+const CLUSTER_STRENGTH = 0.12;
 
 interface Transform {
   x: number;
@@ -57,6 +64,7 @@ interface Transform {
 interface NotesConstellationProps {
   nodes: NoteGraphNode[];
   edges: NoteGraphEdge[];
+  groups?: NoteGroup[];
   onViewportChange?: (visibleIds: Set<string>) => void;
   otherGroupCounts?: Map<string, number>;
   onGroupFocusCleared?: () => void;
@@ -68,7 +76,7 @@ export interface NotesConstellationHandle {
 }
 
 function NotesConstellation(
-  { nodes: rawNodes, edges: rawEdges, onViewportChange, otherGroupCounts, onGroupFocusCleared }: NotesConstellationProps,
+  { nodes: rawNodes, edges: rawEdges, groups, onViewportChange, otherGroupCounts, onGroupFocusCleared }: NotesConstellationProps,
   ref: React.Ref<NotesConstellationHandle>
 ) {
   const router = useRouter();
@@ -82,6 +90,8 @@ function NotesConstellation(
   const neighborIdsRef = useRef<Set<string>>(new Set());
   const focusedGroupRef = useRef<Set<string> | null>(null);
   const otherGroupCountsRef = useRef<Map<string, number>>(new Map());
+  const connectedIdsRef = useRef<Set<string>>(new Set());
+  const hideIsolatedRef = useRef(false);
   const onViewportChangeRef = useRef(onViewportChange);
   const lastViewportEmitRef = useRef(0);
   const transformRef = useRef<Transform>({ x: 0, y: 0, k: 1 });
@@ -95,6 +105,33 @@ function NotesConstellation(
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [focusedNode, setFocusedNode] = useState<SimNode | null>(null);
   const [focusedGroup, setFocusedGroup] = useState<Set<string> | null>(null);
+  const [hideIsolated, setHideIsolated] = useState(false);
+
+  // Notes with no edges at all - the singleton dots that drift around the
+  // clustered core with nothing pulling them anywhere. Degree, not group
+  // membership, since a "keyword" edge counts as connected even without a group.
+  const connectedIds = useMemo(() => {
+    const ids = new Set<string>();
+    rawEdges.forEach((e) => {
+      ids.add(e.source);
+      ids.add(e.target);
+    });
+    return ids;
+  }, [rawEdges]);
+  const isolatedCount = rawNodes.length - connectedIds.size;
+
+  // Each note's largest shared grouping (groups are pre-sorted biggest-first),
+  // used to anchor the cluster force below. A note in several groups clusters
+  // with its biggest one; a note in none gets no anchor.
+  const dominantGroupId = useMemo(() => {
+    const map = new Map<string, string>();
+    (groups ?? []).forEach((group) => {
+      group.memberIds.forEach((id) => {
+        if (!map.has(id)) map.set(id, group.id);
+      });
+    });
+    return map;
+  }, [groups]);
 
   useEffect(() => {
     onViewportChangeRef.current = onViewportChange;
@@ -103,6 +140,17 @@ function NotesConstellation(
   useEffect(() => {
     otherGroupCountsRef.current = otherGroupCounts ?? new Map();
   }, [otherGroupCounts]);
+
+  useEffect(() => {
+    connectedIdsRef.current = connectedIds;
+  }, [connectedIds]);
+
+  useEffect(() => {
+    hideIsolatedRef.current = hideIsolated;
+    draw();
+    if (!focusedIdRef.current && !focusedGroupRef.current) fitToView(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hideIsolated]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -168,8 +216,12 @@ function NotesConstellation(
       if (count > 0) groupCentroid = { x: sx / count, y: sy / count };
     }
 
+    const hideIsolated = hideIsolatedRef.current;
+    const connected = connectedIdsRef.current;
+
     simNodesRef.current.forEach((node) => {
       if (node.x === undefined || node.y === undefined) return;
+      if (hideIsolated && !connected.has(node.id)) return;
       const inGroup = groupIds ? groupIds.has(node.id) : true;
       const isEmphasized = !groupIds && node.id === emphasizeId;
       const isDimmed = groupIds
@@ -220,6 +272,7 @@ function NotesConstellation(
         const visible = new Set<string>();
         simNodesRef.current.forEach((node) => {
           if (node.x === undefined || node.y === undefined) return;
+          if (hideIsolated && !connected.has(node.id)) return;
           const sx = node.x * k + tx;
           const sy = node.y * k + ty;
           if (sx >= -20 && sx <= dims.width + 20 && sy >= -20 && sy <= dims.height + 20) {
@@ -238,6 +291,20 @@ function NotesConstellation(
     simNodesRef.current = simNodes;
     simLinksRef.current = simLinks;
 
+    // Arrange each grouping's anchor around a ring so members that share a
+    // dominant tag/collection/author settle near each other instead of the
+    // undifferentiated blob charge+link alone produce.
+    const groupList = groups ?? [];
+    const anchorByGroup = new Map<string, { x: number; y: number }>();
+    const ringRadius = Math.min(dims.width, dims.height) * 0.35;
+    groupList.forEach((g, i) => {
+      const angle = groupList.length > 0 ? (i / groupList.length) * Math.PI * 2 : 0;
+      anchorByGroup.set(g.id, {
+        x: dims.width / 2 + ringRadius * Math.cos(angle),
+        y: dims.height / 2 + ringRadius * Math.sin(angle),
+      });
+    });
+
     const simulation = forceSimulation(simNodes)
       .force("charge", forceManyBody().strength(-35))
       .force(
@@ -248,7 +315,19 @@ function NotesConstellation(
           .strength(0.2)
       )
       .force("center", forceCenter(dims.width / 2, dims.height / 2))
-      .force("collide", forceCollide(NODE_RADIUS + 3));
+      .force("collide", forceCollide(NODE_RADIUS + 3))
+      .force(
+        "clusterX",
+        forceX<SimNode>((d) => anchorByGroup.get(dominantGroupId.get(d.id) ?? "")?.x ?? dims.width / 2).strength(
+          (d) => (dominantGroupId.has(d.id) ? CLUSTER_STRENGTH : 0)
+        )
+      )
+      .force(
+        "clusterY",
+        forceY<SimNode>((d) => anchorByGroup.get(dominantGroupId.get(d.id) ?? "")?.y ?? dims.height / 2).strength(
+          (d) => (dominantGroupId.has(d.id) ? CLUSTER_STRENGTH : 0)
+        )
+      );
 
     simulationRef.current = simulation;
     simulation.on("tick", draw);
@@ -257,7 +336,7 @@ function NotesConstellation(
       simulation.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawNodes, rawEdges, dims.width, dims.height]);
+  }, [rawNodes, rawEdges, dims.width, dims.height, dominantGroupId]);
 
   // Hover/focus changes redraw immediately without perturbing the simulation.
   useEffect(() => {
@@ -324,7 +403,11 @@ function NotesConstellation(
   };
 
   const boundsOf = (ids: Set<string> | null): { minX: number; maxX: number; minY: number; maxY: number } | null => {
-    const nodes = ids ? simNodesRef.current.filter((n) => ids.has(n.id)) : simNodesRef.current;
+    const nodes = ids
+      ? simNodesRef.current.filter((n) => ids.has(n.id))
+      : hideIsolatedRef.current
+        ? simNodesRef.current.filter((n) => connectedIdsRef.current.has(n.id))
+        : simNodesRef.current;
     const withPos = nodes.filter((n) => n.x !== undefined && n.y !== undefined);
     if (withPos.length === 0) return null;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -373,6 +456,7 @@ function NotesConstellation(
     const hitRadius = (HOVER_RADIUS + 3) / k;
     for (const node of simNodesRef.current) {
       if (node.x === undefined || node.y === undefined) continue;
+      if (hideIsolatedRef.current && !connectedIdsRef.current.has(node.id)) continue;
       const dx = node.x - wx;
       const dy = node.y - wy;
       if (dx * dx + dy * dy <= hitRadius ** 2) return node;
@@ -486,6 +570,22 @@ function NotesConstellation(
           className="cursor-grab active:cursor-grabbing"
         />
 
+        {/* Isolate toggle - hides notes with zero connections */}
+        {isolatedCount > 0 && (
+          <button
+            onClick={() => setHideIsolated((v) => !v)}
+            title={hideIsolated ? "Show notes with no connections" : "Hide notes with no connections"}
+            className={`absolute top-4 right-4 z-10 flex items-center gap-1.5 px-3 py-2 rounded-full border text-xs font-bold uppercase tracking-widest shadow-sm transition-colors ${
+              hideIsolated
+                ? "bg-slate-900 text-white border-slate-900"
+                : "bg-white text-slate-500 border-slate-200 hover:text-slate-900"
+            }`}
+          >
+            {hideIsolated ? <EyeOff size={13} strokeWidth={2.5} /> : <Eye size={13} strokeWidth={2.5} />}
+            {hideIsolated ? `Isolated hidden (${isolatedCount})` : `Hide isolated (${isolatedCount})`}
+          </button>
+        )}
+
         {/* Zoom controls */}
         <div className="absolute bottom-4 right-4 z-10 flex flex-col bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
           <button onClick={() => zoomBy(1.3)} className="p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition-colors" title="Zoom in">
@@ -568,7 +668,10 @@ function NotesConstellation(
           </span>
         ))}
         <span className="text-slate-300">·</span>
-        <span>{rawNodes.length} notes, {rawEdges.length} connections</span>
+        <span>
+          {hideIsolated ? connectedIds.size : rawNodes.length} notes, {rawEdges.length} connections
+          {hideIsolated && ` (${isolatedCount} hidden)`}
+        </span>
         <span className="text-slate-300">·</span>
         <span>Scroll to zoom, drag background to pan, double-click to clear focus</span>
       </div>
