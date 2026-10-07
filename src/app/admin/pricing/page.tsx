@@ -385,6 +385,7 @@ function PackagesTab() {
   const [addItemId, setAddItemId] = useState('');
   const [addItemQty, setAddItemQty] = useState<'per_child' | 'flat'>('per_child');
   const [addItemMultiplier, setAddItemMultiplier] = useState('');
+  const [addingItem, setAddingItem] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -454,22 +455,31 @@ function PackagesTab() {
       setError('Quantity can\'t be 0 — just don\'t add the item if it doesn\'t belong in this package.');
       return;
     }
-    const res = await fetch('/admin/api/pricing/packages/items', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        package_id: editing.id,
-        inventory_item_id: addItemId,
-        quantity_type: addItemQty,
-        quantity_override: addItemMultiplier === '' ? null : Number(addItemMultiplier),
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) { setError(data.error); return; }
+    setAddingItem(true);
     setError(null);
-    setAddItemId('');
-    setAddItemMultiplier('');
-    await load();
+    try {
+      const res = await fetch('/admin/api/pricing/packages/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          package_id: editing.id,
+          inventory_item_id: addItemId,
+          quantity_type: addItemQty,
+          quantity_override: addItemMultiplier === '' ? null : Number(addItemMultiplier),
+        }),
+      });
+      // Parsed defensively - a non-JSON response (e.g. an HTML 404/redirect
+      // page) used to throw here and make the click silently do nothing.
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(data.error || `Couldn't add the item (HTTP ${res.status}).`); return; }
+      setAddItemId('');
+      setAddItemMultiplier('');
+      await load();
+    } catch (err: any) {
+      setError(err.message || "Couldn't add the item - network error.");
+    } finally {
+      setAddingItem(false);
+    }
   }
 
   async function updateItem(itemId: string, patch: { quantity_type?: 'per_child' | 'flat'; quantity_override?: number | null }) {
@@ -647,8 +657,8 @@ function PackagesTab() {
                         <label className="text-[11px] font-medium text-slate-500">× multiplier</label>
                         <input type="number" min={1} placeholder="1" value={addItemMultiplier} onChange={e => setAddItemMultiplier(e.target.value)} className={`${INPUT_CLS} mt-1`} />
                       </div>
-                      <button onClick={addItem} disabled={!addItemId || (addItemMultiplier !== '' && Number(addItemMultiplier) === 0)} className="h-[46px] px-4 rounded-[10px] bg-slate-900 text-white text-[13px] font-medium disabled:opacity-50 shrink-0 flex items-center gap-1.5">
-                        <Plus size={14} /> Add
+                      <button onClick={addItem} disabled={addingItem || !addItemId || (addItemMultiplier !== '' && Number(addItemMultiplier) === 0)} className="h-[46px] px-4 rounded-[10px] bg-slate-900 text-white text-[13px] font-medium disabled:opacity-50 shrink-0 flex items-center gap-1.5">
+                        {addingItem ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
                       </button>
                     </div>
                   </div>
