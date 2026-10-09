@@ -22,13 +22,12 @@ export type CommunityConfig = {
   programIds: string[];
   // leads.source (new leads only) and event_registrations.source (always).
   source: string;
+  // voucher_codes.source_value for the same community's offline channel
+  // (e.g. a market-night QR straight to WhatsApp) - listed here so those
+  // leads land in the same "Community" lane as the page's own.
+  otherSources: string[];
   // Small extra line under the offers, e.g. a market-night bonus. null hides it.
   bonusLine: string | null;
-  // Approved Meta template sent to the parent straight after submit. null
-  // until approved - the form still works, the admin alert still fires,
-  // only the parent's instant WhatsApp is skipped. Body must take exactly
-  // two positional values: {{1}} first name, {{2}} chosen session(s).
-  confirmTemplate: { name: string; language: string } | null;
 };
 
 export const COMMUNITIES: CommunityConfig[] = [
@@ -40,11 +39,11 @@ export const COMMUNITIES: CommunityConfig[] = [
     disclaimer: "RAD Academy runs this page independently. It is not affiliated with or endorsed by Southdowns College.",
     programIds: [
       "17043a46-186e-47e8-8cb5-0bc04f80c33f", // Design It, Wire It, Watch It Work - Gr 4+, Oct 17/18, R1,300
-      "e710c84a-6173-4d48-bb87-e3d52e91099d", // Build It, Then Make It Move - under Gr 4, Oct 30/31, R750
+      "e710c84a-6173-4d48-bb87-e3d52e91099d", // Build It, Then Make It Move - under Gr 4, 31 Oct/1 Nov, R750
     ],
     source: "website_southdowns",
-    bonusLine: null,
-    confirmTemplate: null,
+    otherSources: ["market_southdowns"], // MOON voucher code, market night 9 Oct 2026
+    bonusLine: "Market special: book a spot for your child and bring a friend along for free.",
   },
 ];
 
@@ -52,4 +51,4 @@ export function getCommunity(slug: string): CommunityConfig | undefined {
   return COMMUNITIES.find(c => c.slug === slug);
 }
 
-export const COMMUNITY_SOURCES = new Set(COMMUNITIES.map(c => c.source));
+export const COMMUNITY_SOURCES = new Set(COMMUNITIES.flatMap(c => [c.source, ...c.otherSources]));

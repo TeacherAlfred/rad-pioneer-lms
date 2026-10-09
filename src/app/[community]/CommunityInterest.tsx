@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, CheckCircle2, AlertCircle, Loader2, Sparkles, QrCode, X, HelpCircle } from "lucide-react";
+import { Check, CheckCircle2, AlertCircle, Loader2, Sparkles, QrCode, X, HelpCircle, MessageCircle } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { headingFont, bodyFont } from "@/lib/termTheme";
 import { RAD_WHATSAPP_NUMBER } from "@/lib/tutorialProgress";
@@ -35,7 +35,9 @@ export default function CommunityInterest({ slug, audienceLabel, heroTitle, hero
   const [botField, setBotField] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ confirmationSent: boolean } | null>(null);
+  // The wa.me link to the RAD business number, prefilled from what was
+  // just submitted - built at submit time so it captures ?code= too.
+  const [done, setDone] = useState<{ waLink: string } | null>(null);
   // "Not sure which fits" is its own choice, exclusive with picking a
   // workshop - the API flags these leads for a personal recommendation.
   const [notSure, setNotSure] = useState(false);
@@ -76,6 +78,18 @@ export default function CommunityInterest({ slug, audienceLabel, heroTitle, hero
 
   const hasChoice = selected.length > 0 || notSure;
 
+  // No template goes out from us - the parent sends this themselves, which
+  // opens WhatsApp's 24-hour window so we can reply freely. Carrying the
+  // code in the text also lets the webhook's voucher match attribute it if
+  // this number reaches us before the form's lead row does.
+  function buildWaLink(code: string | null): string {
+    const picked = notSure
+      ? "help choosing a workshop"
+      : offers.filter(o => selected.includes(o.id)).map(o => o.title).join(" & ");
+    const text = `Hi RAD Academy! I'm ${form.name.trim()} and I've just registered for ${picked} for my child (${form.childAge.trim()}).${code ? ` Code: ${code.toUpperCase()}` : ""}`;
+    return `https://wa.me/${RAD_WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -85,6 +99,7 @@ export default function CommunityInterest({ slug, audienceLabel, heroTitle, hero
     if (!form.childAge.trim()) return setError("Please enter your child's age or grade.");
     if (!consent) return setError("Please tick the consent box so we can contact you.");
 
+    const code = new URLSearchParams(window.location.search).get("code");
     setSubmitting(true);
     try {
       const res = await fetch("/api/community-interest", {
@@ -99,13 +114,13 @@ export default function CommunityInterest({ slug, audienceLabel, heroTitle, hero
           not_sure: notSure,
           consent: true,
           // Hidden attribution - the follow-up link carries ?code=MOON etc.
-          voucher_code: new URLSearchParams(window.location.search).get("code"),
+          voucher_code: code,
           bot_field: botField,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Something went wrong. Please try again.");
-      setDone({ confirmationSent: !!data.confirmationSent });
+      setDone({ waLink: buildWaLink(code) });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
@@ -145,11 +160,22 @@ export default function CommunityInterest({ slug, audienceLabel, heroTitle, hero
               <p className="font-semibold">{notSure ? "We'll help you choose" : chosenTitles.join(" & ")}</p>
               <p className="text-slate-600 leading-relaxed">
                 {notSure
-                  ? "One of our team will contact you on WhatsApp to recommend the right workshop for your child."
-                  : done.confirmationSent
-                    ? "Check WhatsApp: we've just sent you a message. Reply there to confirm your day and we'll do the rest."
-                    : "We'll message you on WhatsApp shortly to confirm your day and sort out the rest."}
+                  ? "We'll contact you on WhatsApp to recommend the right workshop for your child."
+                  : "We'll contact you on WhatsApp to confirm your day and sort out the rest."}
+                {" "}On your own phone? Send us a quick message now and we can reply straight away.
               </p>
+              {/* A link, not an automatic redirect: on a shared stand device
+                  this would otherwise message us from the wrong phone. */}
+              <motion.a
+                href={done.waLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                className="flex items-center justify-center gap-2 w-full py-4 rounded-full bg-emerald-600 text-white font-semibold"
+              >
+                <MessageCircle size={18} /> Message us on WhatsApp
+              </motion.a>
               <button type="button" onClick={startOver} className="text-sm font-semibold text-slate-500 underline underline-offset-2 hover:text-slate-900">
                 Start again for another family
               </button>

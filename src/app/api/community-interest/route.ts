@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { recordStageChange } from '@/lib/leadStageHistory';
 import { normalizePhone, notifyAdminOfRegistration } from '@/lib/registerInterest';
-import { sendToLead } from '@/lib/leadSend';
 import { getCommunity } from '@/lib/communities';
 
 const supabaseAdmin = createClient(
@@ -16,16 +15,16 @@ const supabaseAdmin = createClient(
 // Differences that matter: offers are validated against the community's own
 // program list (not show_on_term_page), every row is tagged with the
 // community's source, a voucher code off the page URL lands in
-// leads.voucher_code, and the parent gets an instant WhatsApp template
-// when the community has an approved one configured. A parent who isn't
+// leads.voucher_code. No template goes to the parent - the page instead
+// hands them a prefilled wa.me message to the RAD business number, so the
+// parent's own message opens the 24-hour reply window. A parent who isn't
 // sure which workshop fits sends not_sure instead of picking - no
 // registration rows, and the lead is flagged needs_human so it tops the
 // admin call queue for a personal recommendation.
 
 // Leads created by Meta's webhook are stored as 27XXXXXXXXX, and Meta only
 // delivers to that international form - a parent typing "082 123 4567"
-// would otherwise never match their own bot lead nor receive the
-// confirmation template.
+// would otherwise never match the lead the bot creates when they message us.
 function toSaInternational(digits: string): string {
   if (digits.length === 10 && digits.startsWith('0')) return `27${digits.slice(1)}`;
   return digits;
@@ -106,11 +105,11 @@ export async function POST(req: Request) {
 
     const { data: existingLead } = await supabaseAdmin
       .from('leads')
-      .select('id, voucher_code, is_business_number, is_blocked')
+      .select('id, voucher_code')
       .eq('phone', normPhone)
       .maybeSingle();
 
-    let lead: { id: string; is_business_number?: boolean | null; is_blocked?: boolean | null };
+    let lead: { id: string };
 
     if (existingLead) {
       lead = existingLead;
@@ -138,7 +137,7 @@ export async function POST(req: Request) {
           marketing_consent_at: nowIso,
           needs_human: notSure,
         }])
-        .select('id, is_business_number, is_blocked')
+        .select('id')
         .single();
       if (insertErr) throw insertErr;
       lead = newLead;
@@ -160,8 +159,7 @@ export async function POST(req: Request) {
       }))
     );
 
-    const titles = notSure ? 'our workshops' : chosen.map(p => p.title).join(' & ');
-    const pickedText = notSure ? 'Not sure which workshop fits - wants a recommendation' : titles;
+    const pickedText = notSure ? 'Not sure which workshop fits - wants a recommendation' : chosen.map(p => p.title).join(' & ');
     await supabaseAdmin.from('lead_activities').insert([{
       lead_id: lead.id,
       channel: 'website',
@@ -171,37 +169,13 @@ export async function POST(req: Request) {
       created_by: 'community_page_form',
     }]);
 
-    let confirmation = 'not configured';
-    if (community.confirmTemplate) {
-      const firstName = trimmedName.split(/\s+/)[0];
-      const result = await sendToLead(supabaseAdmin, lead, normPhone, {
-        kind: 'template',
-        templateName: community.confirmTemplate.name,
-        templateLanguage: community.confirmTemplate.language,
-        bodyValues: [firstName, titles],
-      }, `/${community.slug} registration confirmation`);
-      const label = `template: ${community.confirmTemplate.name}`;
-      await supabaseAdmin.from('messages').insert([{
-        lead_id: lead.id,
-        direction: 'outbound',
-        method: 'waba',
-        body: result.queued ? `[Queued for approval: ${label}]` : result.ok ? `[Delivered ${label}]` : `[FAILED to deliver ${label}: ${result.error}]`,
-        wamid: result.wamid || null,
-        status: result.ok ? null : 'failed',
-        error_code: result.errorCode || null,
-        error_detail: result.ok ? null : (result.error || null),
-        meta_message_status: result.messageStatus || null,
-      }]);
-      confirmation = result.queued ? 'queued' : result.ok ? 'sent' : 'FAILED';
-    }
-
     await notifyAdminOfRegistration(
       supabaseAdmin,
       lead.id,
-      `${existingLead ? '🔁 Returning' : '🆕 New'} lead from /${community.slug}.\n${notSure ? '❓ Not sure which workshop fits - please call to recommend one' : chosen.map(p => `- ${p.title}`).join('\n')}\nChild: ${childAge}${voucher ? `\nCode: ${voucher}` : ''}\nContact: +${normPhone}\nConfirmation WhatsApp: ${confirmation}`
+      `${existingLead ? '🔁 Returning' : '🆕 New'} lead from /${community.slug}.\n${notSure ? '❓ Not sure which workshop fits - please call to recommend one' : chosen.map(p => `- ${p.title}`).join('\n')}\nChild: ${childAge}${voucher ? `\nCode: ${voucher}` : ''}\nContact: +${normPhone}`
     );
 
-    return NextResponse.json({ ok: true, confirmationSent: confirmation === 'sent' || confirmation === 'queued' });
+    return NextResponse.json({ ok: true });
   } catch (error: unknown) {
     console.error('community-interest error', error);
     return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 });
