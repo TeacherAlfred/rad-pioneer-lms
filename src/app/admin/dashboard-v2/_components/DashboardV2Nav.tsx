@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, ChevronLeft, ChevronRight, Gauge, Wallet, LayoutList, Users, FolderKanban, ListChecks, Sparkles } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Gauge, Wallet, LayoutList, Users, FolderKanban, ListChecks, Sparkles, ClipboardCheck } from "lucide-react";
 
 // Light theme is deliberate for dashboard-v2 specifically (design doc §4):
 // status-colour scanning (red/amber/green) reads faster on light than dark.
@@ -13,11 +13,14 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Gauge, Wallet, LayoutList, Users,
 // Lead Journey and Landmines & Risk used to be their own top-level tabs -
 // they're now reached as left-panel buttons from within Leads and System
 // Status respectively (see LeadsNavSidebar / SystemStatusNavSidebar), to
-// keep this bar from growing a tab per sub-view.
+// keep this bar from growing a tab per sub-view. Report Cards is the
+// exception: it's a weekly staff workflow (capture -> review -> send), so it
+// gets its own tab as well as its icon in the Programs rail.
 const TABS = [
   { label: "Home", path: "/admin/dashboard-v2", icon: Gauge },
   { label: "Leads", path: "/admin/lead-funnel/overview", icon: Users },
   { label: "Programs", path: "/admin/featured-programs", icon: Sparkles },
+  { label: "Report Cards", path: "/admin/reports", icon: ClipboardCheck },
   { label: "System Status", path: "/admin/dashboard-v2/systems-status", icon: LayoutList },
   { label: "Money & Admin", path: "/admin/dashboard-v2/money-admin", icon: Wallet },
   { label: "Projects", path: "/admin/dashboard-v2/projects", icon: FolderKanban },

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, Sparkles, Users, Settings, Package, Globe, CalendarDays, GraduationCap, Home,
+  LayoutDashboard, Sparkles, Users, Settings, Package, Globe, CalendarDays, GraduationCap, Home, ClipboardCheck,
   type LucideIcon,
 } from "lucide-react";
 import AdminMobileNav from "./AdminMobileNav";
@@ -27,6 +27,7 @@ type NavItem = { href: string; label: string; icon: LucideIcon };
 const HOME_LINK: NavItem = { href: '/admin/featured-programs', label: 'Featured Programs', icon: Sparkles };
 const SINGLE_LINKS: { item: NavItem; colorKey: RadColorKey }[] = [
   { item: { href: '/admin/registrations', label: 'Registrations', icon: Users }, colorKey: 'blue' },
+  { item: { href: '/admin/reports', label: 'Report Cards', icon: ClipboardCheck }, colorKey: 'purple' },
   { item: { href: '/admin/term-program-settings', label: 'Term Program Page', icon: Settings }, colorKey: 'teal' },
   // Lives under the Finance rail (AdminFinanceChrome) - linked here because
   // a program can't go live without a published package (the publish gate).

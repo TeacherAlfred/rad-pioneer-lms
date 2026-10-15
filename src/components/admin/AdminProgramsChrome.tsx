@@ -12,6 +12,7 @@ const PROGRAMS_SECTION_PREFIXES = [
   '/admin/featured-programs',
   '/admin/registrations',
   '/admin/term-program-settings',
+  '/admin/reports',
 ];
 
 function isProgramsSection(pathname: string): boolean {
